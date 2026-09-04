@@ -62,6 +62,12 @@ class MonitorView:
     #: not give it: two identical panels produce two identically-named live
     #: endpoints, and picking one would be a coin flip presented as a fact.
     audio_note: str = ""
+    #: Is this monitor's endpoint hidden from the sound device list? None
+    #: when there is no endpoint or its state could not be read — never
+    #: False, which would offer an "off" button for something we cannot see
+    #: the state of. An endpoint is routinely ACTIVE *and* hidden, so this
+    #: is a different question from the endpoint's state.
+    audio_hidden: Optional[bool] = None
     #: A `ddc.DdcCapability` with NO live handle, or None when this monitor
     #: has no GDI device to talk to. `responded` False inside it is the
     #: different answer: present, but not speaking DDC/CI.
@@ -374,5 +380,19 @@ def _with_hardware(views: Sequence[MonitorView]) -> List[MonitorView]:
         filled.append(replace(view, audio_endpoint=endpoint,
                               audio_is_default=is_default,
                               audio_note=note,
+                              audio_hidden=_hidden_state(endpoint),
                               ddc=capabilities.get(view.target_id)))
     return filled
+
+
+def _hidden_state(endpoint) -> Optional[bool]:
+    """Is this endpoint hidden, or don't we know? Never a guess."""
+    if endpoint is None:
+        return None
+    from modules.monitor_control import display_audio as da
+
+    try:
+        return da.is_hidden(getattr(endpoint, "raw_state", None))
+    except Exception:                                    # noqa: BLE001
+        logger.debug("Could not read the hidden flag", exc_info=True)
+        return None

@@ -170,10 +170,11 @@ def test_an_unknown_native_resolution_makes_no_claim():
 # still has to produce a full set of monitors.
 
 class _FakeEndpoint:
-    def __init__(self, endpoint_id, name):
+    def __init__(self, endpoint_id, name, raw_state=0x1):
         self.endpoint_id = endpoint_id
         self.friendly_name = name
         self.label = name
+        self.raw_state = raw_state
 
 
 class _FakeCap:
@@ -254,6 +255,8 @@ def _two_monitors(monkeypatch, *, audio=None, ddc_by_device=None,
         lambda endpoints, monitor_name: (ambiguous or {}).get(monitor_name, []))
     monkeypatch.setattr(da, "endpoint_guid",
                         lambda value: value.rsplit(".", 1)[-1])
+    # `is_hidden` is the real one — its whole job is reading a raw value,
+    # and faking it would test nothing.
     monkeypatch.setattr(
         da, "default_render_endpoint_detail",
         lambda: type("R", (), {"endpoint_id": default_id,
@@ -360,3 +363,37 @@ def test_an_unreadable_endpoint_list_is_a_note_not_a_silent_absence(
     for view in vm.build_views():
         assert view.audio_endpoint is None
         assert "could not be read" in view.audio_note
+
+
+# ── hidden: the state the on/off button reads ──────────────────────────
+
+def test_a_hidden_endpoint_is_carried_through_as_hidden(monkeypatch):
+    """0x10000001 is ACTIVE and hidden at once — the exact value the
+    supervised round trip produced."""
+    endpoint = _FakeEndpoint("{guid-a}", "2 - MO27Q28G", raw_state=0x10000001)
+    _two_monitors(monkeypatch, audio=[endpoint])
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_hidden is True
+
+
+def test_a_visible_endpoint_is_carried_through_as_visible(monkeypatch):
+    endpoint = _FakeEndpoint("{guid-a}", "2 - MO27Q28G", raw_state=0x1)
+    _two_monitors(monkeypatch, audio=[endpoint])
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_hidden is False
+
+
+def test_a_monitor_with_no_endpoint_has_no_hidden_state(monkeypatch):
+    """None, not False — there is no switch to offer for a monitor whose
+    endpoint we never found."""
+    _two_monitors(monkeypatch, audio=[])
+    for view in vm.build_views():
+        assert view.audio_hidden is None
+
+
+def test_an_endpoint_whose_state_could_not_be_read_has_no_hidden_state(
+        monkeypatch):
+    endpoint = _FakeEndpoint("{guid-a}", "2 - MO27Q28G", raw_state=None)
+    _two_monitors(monkeypatch, audio=[endpoint])
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_hidden is None

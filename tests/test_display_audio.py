@@ -97,6 +97,41 @@ def test_the_undocumented_bits_are_reported_not_discarded():
     assert da.undocumented_state_bits(0x4) == 0
 
 
+# ── hidden is a separate question from state ───────────────────────────
+#
+# Measured 2026-09-04: SetEndpointVisibility(id, 0) sets 0x10000000 and
+# (id, 1) clears it, leaving the documented nibble at ACTIVE. So an endpoint
+# is routinely ACTIVE and invisible at the same time, and `state` cannot
+# answer "is this on?" on its own.
+
+def test_a_hidden_endpoint_is_still_active():
+    """The exact pair the round trip produced, and the reason `is_hidden`
+    exists at all."""
+    raw = da.DEVICE_STATE_ACTIVE | da.DEVICE_STATE_HIDDEN
+    assert da.decode_state(raw) is da.EndpointState.ACTIVE
+    assert da.is_hidden(raw) is True
+
+
+def test_a_visible_endpoint_says_so():
+    assert da.is_hidden(da.DEVICE_STATE_ACTIVE) is False
+
+
+def test_an_unreadable_state_is_not_a_claim_that_it_is_visible():
+    """None, never False: False would say "you can pick this device" on the
+    strength of a read that did not happen."""
+    assert da.is_hidden(None) is None
+
+
+def test_hiding_does_not_disturb_the_documented_nibble():
+    for documented in (da.DEVICE_STATE_ACTIVE, da.DEVICE_STATE_DISABLED,
+                       da.DEVICE_STATE_NOTPRESENT,
+                       da.DEVICE_STATE_UNPLUGGED):
+        hidden = documented | da.DEVICE_STATE_HIDDEN
+        assert da.decode_state(hidden) is da.decode_state(documented)
+        assert da.is_hidden(hidden) is True
+        assert da.is_hidden(documented) is False
+
+
 @pytest.mark.parametrize("raw,expected", [
     (0x1, da.EndpointState.ACTIVE),
     (0x2, da.EndpointState.DISABLED),
@@ -360,11 +395,13 @@ def test_live_undocumented_state_bits_never_change_the_decoded_state(
     """The masking is the invariant; the extra bits are not.
 
     This asserted that every active display endpoint carries `0x10000000`,
-    which was true of the machine the module was written on and is NOT true
-    of the one it was rebuilt on: after an OS reinstall the same three
-    monitors report a bare `0x1` / `0x8`, with nothing above the documented
-    nibble at all. Both are legitimate — the bit is undocumented, so a
-    driver setting it is a quirk and a driver not setting it is a quirk.
+    which was true of the machine the module was written on and is not true
+    of the one it was rebuilt on. That looked like a driver difference and
+    was not: `0x10000000` is `DEVICE_STATE_HIDDEN`, the flag
+    `SetEndpointVisibility` toggles, so the old machine simply had those
+    endpoints HIDDEN from the sound list. Either value is a legitimate
+    reading of a working endpoint, which is exactly why no count of it
+    belongs in an assertion.
 
     What must hold either way is that whatever rides above the documented
     nibble is masked off and does not move the verdict, which is what

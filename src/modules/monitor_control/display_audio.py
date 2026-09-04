@@ -17,10 +17,17 @@ Microsoft has never published a header for. Nothing in this file has ever
 been executed against a real endpoint: disabling the wrong one takes the
 sound off the machine, and the machine this was written on was in use. Both
 write paths are therefore behind a `confirm_supervised=True` interlock, and
-refuse otherwise — see `SupervisionRequired`. Before either is trusted it
-needs a supervised round-trip: disable -> re-read the state -> re-enable ->
-re-read, on an endpoint nobody is listening to, confirming that the state
-actually moved and actually came back.
+refuse otherwise — see `SupervisionRequired`.
+
+**That round-trip has now been done** (2026-09-04, this machine): hide ->
+re-read -> show -> re-read, three times over, on an active display endpoint
+that was not the default output. `SetEndpointVisibility` returned S_OK every
+time and the state moved and came back deterministically — though not where
+it was expected to. It does not touch the documented nibble at all: it
+flips `DEVICE_STATE_HIDDEN` (`0x10000000`), leaving the endpoint ACTIVE and
+merely invisible. The interlock stays, no longer because the path is
+unproven but because hiding an endpoint is a machine-wide change that the
+caller must mean.
 
 Four things about the real data would break an implementation written from
 the documentation alone. All four are handled here rather than found later.
@@ -98,6 +105,22 @@ DEVICE_STATE_UNPLUGGED = 0x00000008
 #: business, and is reported rather than assumed away.
 DEVICE_STATE_MASK = 0x0000000F
 
+#: NOT from mmdeviceapi.h -- measured, on this machine, 2026-09-04.
+#:
+#: `IPolicyConfig::SetEndpointVisibility(id, 0)` SETS this bit and
+#: `(id, 1)` clears it, six times out of six across three round trips, with
+#: the documented nibble untouched at ACTIVE throughout. So it is the
+#: "hidden from the sound device list" flag -- Windows' own "Don't allow" --
+#: and NOT the driver quirk it looked like before anything wrote to it.
+#:
+#: That matters twice over. It is why an endpoint can be ACTIVE and still be
+#: invisible in Sound settings, so `state` alone cannot answer "is this on?"
+#: -- `is_hidden` does. And it retires the earlier reading of this bit: the
+#: machine this module was written on reported `0x10000001` on every live
+#: display endpoint because those endpoints were HIDDEN, not because its
+#: driver differed from this one's.
+DEVICE_STATE_HIDDEN = 0x10000000
+
 
 class EndpointState(str, Enum):
     """What Windows says about an endpoint. `UNKNOWN` means exactly that."""
@@ -163,16 +186,29 @@ def undocumented_state_bits(raw: Optional[int]) -> int:
     """Whatever `DeviceState` carried above the documented nibble.
 
     Reported so a change in Windows is visible rather than silently masked
-    away. What rides up there is a driver quirk and NOT something to depend
-    on in either direction: the machine this was written on set `0x10000000`
-    on every live display endpoint, and the machine it was rebuilt on — same
-    three monitors, after an OS reinstall — sets nothing at all, reporting a
-    bare `0x1`. So an empty result here is a normal reading, not a sign the
-    read failed.
+    away. Mostly this is `DEVICE_STATE_HIDDEN`, which is not a quirk at all
+    but the visibility flag — see that constant. An empty result is a normal
+    reading of a visible endpoint, not a sign the read failed.
     """
     if raw is None:
         return 0
     return raw & ~DEVICE_STATE_MASK
+
+
+def is_hidden(raw: Optional[int]) -> Optional[bool]:
+    """Is this endpoint hidden from the sound device list?
+
+    None when `DeviceState` could not be read — never False, which would
+    claim an endpoint is visible on the strength of a read that failed.
+
+    Kept separate from `decode_state` because they answer different
+    questions and an endpoint routinely disagrees with itself: hiding one
+    leaves it ACTIVE and merely invisible, so `state` says it is working
+    and this says you cannot pick it.
+    """
+    if raw is None:
+        return None
+    return bool(raw & DEVICE_STATE_HIDDEN)
 
 
 # ── naming ─────────────────────────────────────────────────────────────
@@ -754,10 +790,10 @@ def endpoint_guid(endpoint_id: str) -> str:
 def _require_supervision(confirm_supervised: bool, what: str) -> None:
     if not confirm_supervised:
         raise SupervisionRequired(
-            f"{what} refused: this path has never been executed against a "
-            "real audio endpoint and disabling the wrong one takes the sound "
-            "off the machine. Pass confirm_supervised=True only during a "
-            "watched round-trip (disable -> re-read -> re-enable -> re-read).")
+            f"{what} refused: hiding an audio endpoint is a machine-wide "
+            "change and hiding the wrong one takes the sound off the "
+            "machine. Pass confirm_supervised=True only when the caller "
+            "has actually asked a person first.")
 
 
 def set_endpoint_enabled(endpoint_id: str, enabled: bool, *,

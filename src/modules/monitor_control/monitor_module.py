@@ -70,6 +70,10 @@ class _MonitorCard(QFrame):
     brightness_requested = pyqtSignal(int, int)
     contrast_requested = pyqtSignal(int, int)
     input_source_requested = pyqtSignal(int, int)
+    #: (target_id, hz) — a rate offered AT the resolution already in use.
+    refresh_rate_requested = pyqtSignal(int, float)
+    #: (target_id, turn_on) — show or hide this monitor's audio endpoint.
+    audio_enabled_requested = pyqtSignal(int, bool)
 
     def __init__(self, view, parent=None):
         super().__init__(parent)
@@ -122,6 +126,8 @@ class _MonitorCard(QFrame):
             note.setObjectName("statusWarning")
             layout.addWidget(note)
 
+        self._add_refresh_buttons(layout, view)
+        self._add_audio_toggle(layout, view)
         self._add_ddc_controls(layout, view)
 
         actions = QHBoxLayout()
@@ -135,6 +141,92 @@ class _MonitorCard(QFrame):
                 self.toggle_requested.emit(t, a))
         actions.addWidget(toggle)
         layout.addLayout(actions)
+
+    # ── refresh rate, one button per rate ──
+
+    def _add_refresh_buttons(self, layout, view) -> None:
+        """A button per rate offered AT the resolution already in use.
+
+        Deliberately not every rate the device can do: the fastest mode on a
+        panel is often at a resolution nobody asked for, and offering it here
+        would change resolution underneath someone who clicked "240".
+
+        The rate in use is shown checked and disabled — it is a statement of
+        where you are, not a button that does nothing.
+        """
+        if not view.active or not view.rates_at_resolution:
+            return
+        if len(view.rates_at_resolution) < 2:
+            # One rate is not a choice, and a lone dead button reads as a
+            # control that is broken rather than as a panel with no options.
+            return
+
+        row = QHBoxLayout()
+        name = QLabel("Refresh")
+        name.setObjectName("muted")
+        name.setMinimumWidth(70)
+        row.addWidget(name)
+
+        for rate in sorted(view.rates_at_resolution):
+            current = abs(rate - view.refresh_hz) < 0.01
+            button = QPushButton(f"{rate:g} Hz")
+            button.setCheckable(True)
+            button.setChecked(current)
+            button.setEnabled(not current)
+            button.setToolTip(
+                f"Already running at {rate:g} Hz" if current else
+                f"Switch to {rate:g} Hz at "
+                f"{view.resolution[0]}x{view.resolution[1]}. Reverts itself "
+                f"in 15 seconds unless you confirm.")
+            button.clicked.connect(
+                lambda _checked=False, t=view.target_id, r=rate:
+                    self.refresh_rate_requested.emit(t, float(r)))
+            row.addWidget(button)
+
+        row.addStretch(1)
+        layout.addLayout(row)
+
+    # ── the monitor's audio, on or off ──
+
+    def _add_audio_toggle(self, layout, view) -> None:
+        """One button: hide or show this monitor's audio endpoint.
+
+        Only when we know which endpoint is this monitor's AND what state it
+        is in. `audio_hidden` is None for "no endpoint" and for "could not
+        read it", and neither is something to offer a switch for — an on/off
+        button whose position is a guess is worse than no button.
+        """
+        if view.audio_endpoint is None or view.audio_hidden is None:
+            return
+
+        hidden = view.audio_hidden
+        row = QHBoxLayout()
+        name = QLabel("Audio")
+        name.setObjectName("muted")
+        name.setMinimumWidth(70)
+        row.addWidget(name)
+
+        button = QPushButton("Off — click to turn on" if hidden
+                             else "On — click to turn off")
+        button.setToolTip(
+            "This monitor's audio output is hidden from Windows' sound "
+            "device list. Click to show it again."
+            if hidden else
+            "Hide this monitor's audio output from Windows' sound device "
+            "list, the same as 'Don't allow' in Sound settings. Takes "
+            "effect immediately.")
+        button.clicked.connect(
+            lambda _checked=False, t=view.target_id, on=hidden:
+                self.audio_enabled_requested.emit(t, on))
+        row.addWidget(button)
+
+        if view.audio_is_default:
+            warning = QLabel("this is your default output")
+            warning.setObjectName("statusWarning")
+            row.addWidget(warning)
+
+        row.addStretch(1)
+        layout.addLayout(row)
 
     # ── the DDC/CI half of the card ──
 
@@ -250,6 +342,28 @@ class _MonitorCard(QFrame):
         return row
 
 
+#: What `IMMDevice::GetId` prefixes a render endpoint's guid with. The
+#: registry enumerates endpoints by the trailing guid alone, and
+#: `SetEndpointVisibility` will not accept that bare form, so the prefix has
+#: to go back on. Render endpoints all live under this one flow id.
+_RENDER_ID_PREFIX = "{0.0.0.00000000}."
+
+
+def _full_endpoint_id(endpoint) -> str:
+    """The MMDevice-form id for an endpoint that may only know its guid.
+
+    Returns "" rather than a half-built id when there is nothing to work
+    from — passing a malformed id to an undocumented COM interface is not
+    an experiment worth running.
+    """
+    raw = (getattr(endpoint, "endpoint_id", "") or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith("{0."):
+        return raw
+    return _RENDER_ID_PREFIX + raw
+
+
 def _describe_write(name: str, what: str, result) -> str:
     """What to say about a VCP write, with `verified` reported honestly.
 
@@ -280,6 +394,11 @@ def _audio_text(view) -> str:
     endpoint = view.audio_endpoint
     if endpoint is not None:
         label = getattr(endpoint, "label", "") or "(unnamed endpoint)"
+        if view.audio_hidden:
+            # Worth saying on the row as well as on the button: an endpoint
+            # is ACTIVE while hidden, so every other reading of it looks
+            # perfectly healthy while Windows will not offer it to anyone.
+            return f"{label} · hidden from the sound list"
         return f"{label} · default output" if view.audio_is_default else label
     return view.audio_note or ""
 
@@ -440,6 +559,8 @@ class MonitorControlModule(BaseModule):
             card.brightness_requested.connect(self._do_brightness)
             card.contrast_requested.connect(self._do_contrast)
             card.input_source_requested.connect(self._do_input_source)
+            card.refresh_rate_requested.connect(self._do_set_refresh_rate)
+            card.audio_enabled_requested.connect(self._do_set_audio_enabled)
             self._cards_layout.insertWidget(index, card)
 
     # ── changing things ──
@@ -528,6 +649,98 @@ class MonitorControlModule(BaseModule):
         self._guarded(
             _apply,
             f"{name}: {'connected' if activate else 'disconnected'}")
+
+    def _do_set_refresh_rate(self, target_id: int, hz: float) -> None:
+        """Move ONE monitor to one rate, at the resolution it already has.
+
+        Same guard as everything else that changes a mode: a rate the panel
+        cannot show leaves a black screen, and the button that would undo it
+        is on it. `apply_modes` takes the resolution explicitly so raising a
+        rate can never change resolution as a side effect.
+        """
+        view = self._view_for(target_id)
+        if view is None or not view.device_name or not view.resolution:
+            return
+        width, height = view.resolution
+
+        def _apply():
+            ok, reason = dw.apply_modes([(view.device_name, width, height, hz)])
+            if not ok:
+                raise OSError(reason)
+
+        self._guarded(_apply, f"{view.name} to {hz:g} Hz at {width}x{height}")
+
+    def _do_set_audio_enabled(self, target_id: int, turn_on: bool) -> None:
+        """Show or hide this monitor's audio endpoint, after asking.
+
+        `SetEndpointVisibility` is confirmed working and immediate (measured
+        2026-09-04, three round trips), but it is still a machine-wide
+        change, so `confirm_supervised` is passed only once a person has
+        actually said yes — that is what the interlock now means.
+
+        Hiding the default output is called out separately: the machine
+        keeps its sound, Windows falls back to another device, but it is not
+        what someone clicking a monitor's button is likely to expect.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+        from modules.monitor_control import display_audio as da
+
+        view = self._view_for(target_id)
+        if view is None or view.audio_endpoint is None:
+            return
+        endpoint = view.audio_endpoint
+        label = getattr(endpoint, "label", view.name)
+
+        if not turn_on:
+            question = (f"Hide the audio output of {view.name}?\n\n{label}\n\n"
+                        "It disappears from Windows' sound device list until "
+                        "you turn it back on here.")
+            if view.audio_is_default:
+                question += ("\n\nThis is currently your DEFAULT output — "
+                             "Windows will fall back to another device.")
+            answer = QMessageBox.question(
+                self._widget, "Hide this monitor's audio", question,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer is not QMessageBox.StandardButton.Yes:
+                return
+
+        # IPolicyConfig wants the full MMDevice form; the registry key is
+        # only the trailing guid, which is what the endpoint carries.
+        full_id = _full_endpoint_id(endpoint)
+        if not full_id:
+            self._status.setText(
+                f"{view.name}: the audio endpoint has no id to act on")
+            return
+
+        self._status.setText(
+            f"{'Showing' if turn_on else 'Hiding'} {view.name} audio…")
+
+        def _run(_worker):
+            da.set_endpoint_enabled(full_id, turn_on, confirm_supervised=True)
+            return turn_on
+
+        def _done(now_on: bool):
+            if not widget_is_valid(self._widget):
+                return
+            self._status.setText(
+                f"{view.name} audio is now "
+                f"{'available' if now_on else 'hidden'}")
+            self.refresh_data()
+
+        def _error(message: str):
+            if not widget_is_valid(self._widget):
+                return
+            self._status.setText(f"Could not change {view.name} audio: "
+                                 f"{message}")
+            logger.warning("Audio visibility write failed for %s: %s",
+                           view.name, message)
+
+        worker = Worker(_run)
+        worker.signals.result.connect(_done)
+        worker.signals.error.connect(_error)
+        self._workers.append(worker)
+        self._thread_pool().start(worker)
 
     # ── the monitor's own controls (DDC/CI) ──
     #

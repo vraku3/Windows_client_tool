@@ -53,8 +53,15 @@ def _edid(mfg: str, product: int, serial32: int,
 
 #: Gigabyte MO27Q28G. Its 4-byte numeric serial is the 0x01010101 filler —
 #: the only real serial it has is the 0xFF descriptor.
+#:
+#: That descriptor is **NUL-terminated, not newline-terminated**, and fills
+#: all 13 bytes: `b"25362F004687\x00"`. EDID 1.4 says terminate with 0x0A and
+#: pad with 0x20, which is what the Dell below actually does — this panel
+#: does not. Read off the real registry blob on 2026-09-04; the fixture said
+#: `\n` for a long time, which is why nothing caught the NUL surviving into
+#: the key.
 EDID_GIGABYTE = _edid("GBT", 0x273C, 0x01010101,
-                      [(0xFC, b"MO27Q28G\n"), (0xFF, b"25362F004687\n")])
+                      [(0xFC, b"MO27Q28G\n"), (0xFF, b"25362F004687\x00")])
 
 #: Dell S2719DGF. Carries both a real numeric serial and an 0xFF descriptor.
 EDID_DELL = _edid("DEL", 0xD0E6, 808797013,
@@ -92,6 +99,30 @@ def test_a_descriptor_serial_is_preferred_over_the_numeric_one():
     edid = P.parse_edid(EDID_DELL)
     assert edid.serial == "8DYM7P2"
     assert edid.serial_source == P.SERIAL_FROM_DESCRIPTOR
+
+
+def test_a_nul_terminated_descriptor_does_not_carry_the_nul_into_the_key():
+    r"""The Gigabyte terminates its 0xFF descriptor with `\x00` and fills all
+    13 bytes, where the spec says 0x0A padded with spaces.
+
+    `.strip()` does not remove NUL — it is not whitespace — so the serial
+    came out as `'25362F004687\x00'` and the EDID key with it. That key is
+    written into profile JSON, compared against live monitors, and shown in
+    labels, and it is exactly the "key that looks stable and is not" this
+    module exists to prevent: anything that normalises the NUL away stops
+    matching, and a profile silently declines to apply.
+    """
+    edid = P.parse_edid(EDID_GIGABYTE)
+    assert edid.serial == "25362F004687"
+    assert "\x00" not in (edid.serial or "")
+
+
+def test_no_descriptor_text_keeps_a_control_character():
+    """The model name comes through the same parser as the serial."""
+    for blob in (EDID_GIGABYTE, EDID_DELL, EDID_LG):
+        edid = P.parse_edid(blob)
+        for text in (edid.serial or "", edid.model_name):
+            assert not any(ch < " " for ch in text), repr(text)
 
 
 def test_a_filler_numeric_serial_is_not_mistaken_for_a_serial():

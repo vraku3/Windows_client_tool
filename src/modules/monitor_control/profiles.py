@@ -143,10 +143,27 @@ def _pnp_id(value: int) -> str:
 
 
 def _descriptor_text(blob: bytes, offset: int) -> Optional[Tuple[int, str]]:
+    r"""The 13-byte text of a descriptor block, terminated and cleaned.
+
+    EDID 1.4 says terminate with 0x0A and pad with 0x20, and the Dell here
+    does exactly that (`b"8DYM7P2\n     "`). **The Gigabyte does not**: it
+    fills all 13 bytes and terminates with NUL (`b"25362F004687\x00"`).
+
+    So both terminators are honoured, and the result is stripped of control
+    characters rather than only whitespace -- `str.strip()` leaves `\x00`
+    alone, because NUL is not whitespace, and the serial went on to become
+    part of the EDID key. That key is written into profile JSON and compared
+    against live monitors, so a stray NUL is the "identifier that looks
+    stable and is not" this module was written to avoid.
+    """
     block = blob[offset:offset + 18]
     if len(block) < 18 or block[0:3] != b"\x00\x00\x00":
         return None
-    text = block[5:18].split(b"\n")[0].decode("ascii", "ignore").strip()
+    body = block[5:18].split(b"\n")[0].split(b"\x00")[0]
+    text = body.decode("ascii", "ignore").strip()
+    # Anything else below 0x20 would survive `.strip()` in the middle of a
+    # string too; a descriptor has no business carrying one.
+    text = "".join(ch for ch in text if ch >= " ")
     return block[3], text
 
 

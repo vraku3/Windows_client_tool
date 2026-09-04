@@ -731,6 +731,74 @@ so anything elevated goes through a `.ps1` wrapper that writes its own log.
 
 **Worker tracking**: every tab here is a `QWidget` (not `BaseModule`) with its own `self._workers: list` and `_cancel_all()`, per the general widget-subclass rule below. `UpdatesModule.on_deactivate()` / `on_stop()` call `_cancel_all()` on all four stateful tabs explicitly — `BaseModule.cancel_all_workers()` only covers workers created directly on the module itself, not on child tab widgets.
 
+### Monitor Control (`src/modules/monitor_control/`)
+
+One tab (`ModuleGroup.SYSTEM`, `requires_admin` with `read_only_unelevated`)
+over the displays: topology, refresh rates, the four Win+P arrangements,
+connect/disconnect, DDC/CI brightness/contrast/input, the audio a monitor
+carries, and saved display profiles. Only `monitor_module.py`,
+`_arrangement_canvas.py` and `_screen_overlay.py` import Qt — the same split
+`scan/`+`store/` keep in TreeSize, which is why the engines test headless.
+
+**Every change goes through `_apply_guard`**: snapshot, apply, then a
+15-second countdown that puts it back unless someone confirms. The failure
+being designed around is a mode the monitor cannot show — the screen goes
+dark and the control that would undo it is on that screen — so doing nothing
+has to be the safe answer, and doing nothing reverts.
+
+Rules here, each one measured:
+
+- **A `MonitorView` is paired to a DDC handle by GDI device name, never by
+  description.** `GetMonitorInfoW`'s `szDevice` matches `view.device_name`
+  exactly and one-to-one. `find_monitor(monitors, view.name)` cannot work:
+  Windows calls the Gigabyte here "Generic PnP Monitor" while its view is
+  named "MO27Q28G". Use `find_monitor_for_device` / `probe_device` /
+  `set_*_for_device`.
+- **A `PhysicalMonitor` handle must not outlive its `open_monitors()`
+  block.** `probe_device` returns a capability with `monitor=None` for that
+  reason; a tab refreshing on a timer would otherwise call into memory
+  `DestroyPhysicalMonitors` already took back. Every write re-finds its
+  monitor.
+- **A DDC write costs ~0.28s and a re-probe ~1.5s**, and `build_views()` is
+  ~3.4s for three monitors. So writes run on a worker, fire on
+  `sliderReleased` (never `valueChanged`), and the card is NEVER re-probed
+  after a write — `WriteResult` already carries the applied value and
+  whether the read-back agreed. Report `verified` as three outcomes: False
+  means the monitor took the call and ignored it, None means the read-back
+  itself was refused.
+- **Sliders run over the monitor's OWN maximum**, never an assumed 0..100,
+  and a maximum of 0 is refused upstream rather than shown as a range.
+- **Input source needs the countdown and brightness/contrast do not** — the
+  slider that undoes those stays on screen. The input confirm must land on a
+  screen OTHER than the one being switched
+  (`choose_confirm_screen_avoiding`): the GPU is still driving that panel so
+  Qt still lists it, while it is showing another machine. **Qt names screens
+  by MODEL** (`S2719DGF`), not by device path, so match a view to a QScreen
+  by name with a geometry fallback.
+- **`0x10000000` in an audio endpoint's `DeviceState` is `DEVICE_STATE_HIDDEN`**,
+  the flag `IPolicyConfig::SetEndpointVisibility` toggles — measured, six
+  round trips. It leaves the endpoint ACTIVE and merely invisible, so
+  `state` cannot answer "is this on?" and `is_hidden()` is a separate
+  question. `IPolicyConfig` needs the full `{0.0.0.00000000}.{guid}` id; the
+  registry enumerates by the trailing guid alone.
+- **A profile's identity is the EDID, never `\\.\DISPLAYn`** — that is a
+  position in a list, and the CCD target id and the device-path UID are both
+  the adapter output, not the panel. The manufacturer id at EDID bytes 8-9 is
+  **big**-endian and the product code at 10-11 is **little**-endian.
+- **EDID descriptor strings are not always newline-terminated.** The
+  Gigabyte here fills all 13 bytes and ends with `\x00`, where the spec says
+  0x0A padded with 0x20. `str.strip()` does not remove NUL, so the serial
+  carried one into the identity key, into profile JSON and into every
+  comparison. Terminate on both, and drop control characters.
+- **A refused read is never an answer.** `MonitorIdentity.identified` False,
+  `DdcCapability.responded` False, `audio_hidden` None and
+  `WriteResult.verified` None all mean "we could not find out", and none of
+  them is collapsed into a value. `can_apply` refuses **by name**.
+
+Harnesses, all read-only unless told otherwise: `tools/monitor_control_check.py`
+(what the hardware says) and `tools/monitor_revert_check.py` (the countdown
+against a real display).
+
 ### Group Policy Module (`src/modules/gpresult/`)
 
 One sidebar pane (`ModuleGroup.MANAGE`, `requires_admin = False`) over ten

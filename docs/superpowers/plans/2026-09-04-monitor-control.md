@@ -116,6 +116,31 @@ Four things the plan did not say, all of them measured rather than reasoned:
 Proven against the hardware: brightness 46 → 36, `verified=True`, the panel
 actually moved, restored to 46.
 
+**Added after 1.3, at the user's request** — per-monitor refresh-rate
+buttons (one per rate offered *at the resolution in use*, the current one
+checked and disabled) and a per-monitor audio on/off. The audio button
+forced the supervised round trip the interlock was waiting for, and it
+overturned a reading: `SetEndpointVisibility` never touches the documented
+nibble, it flips `0x10000000`, so that bit is `DEVICE_STATE_HIDDEN` and an
+endpoint is routinely ACTIVE *and* invisible. The old machine had those
+endpoints hidden; its driver was not different.
+
+**Stage 2 — display profiles.** Done. A Profiles row above the arrangement
+canvas: a list, Apply, Save current…, Delete. Apply goes through the guard
+like everything else. `can_apply`'s refusal is shown verbatim because it
+names the monitor, which is the entire point of it, and saving warns at once
+about any monitor whose EDID could not be read — that is what will make the
+profile refuse later, so it is said while the person is still there.
+
+One real defect came out of wiring it: **an EDID descriptor is not always
+newline-terminated.** The Gigabyte fills all 13 bytes and ends with `\x00`
+where the spec says 0x0A padded with 0x20, and `str.strip()` does not remove
+NUL — so the serial carried one into the identity key, into profile JSON,
+and into every comparison. The fixture had claimed to be "byte for byte what
+the registry holds" and used `\n`, which is why no test caught it. Fixed in
+`f44e0f8`; verified end to end against the hardware, including a refusal
+that correctly names an absent monitor.
+
 ## Remaining
 
 **Not to be wired without a supervised first run:** the *audio endpoint
@@ -127,17 +152,6 @@ reason. Before it is trusted it needs: disable -> re-read the state ->
 re-enable -> re-read, on an endpoint nobody is listening to, confirming the
 state actually moved and actually came back. Disabling the wrong one takes
 the sound off the machine.
-
-### Stage 2 — display profiles
-
-`profiles.py` is complete and unwired. Save "this is what my desk looks
-like", apply it later. Identity is the **EDID** (manufacturer, product code,
-serial), because `\\.\DISPLAY1` is a position in a list, and the CCD target
-id and the device-path UID are both the adapter output, not the panel.
-`can_apply` refuses by name when a monitor's EDID could not be read.
-
-UI: a profile list, Save current, Apply, Delete. Apply goes through the guard
-like everything else — it is the largest change the module can make.
 
 ### Stage 3 — window layout
 

@@ -470,6 +470,8 @@ class MonitorControlModule(BaseModule):
         bar.addWidget(self._status)
         layout.addLayout(bar)
 
+        layout.addLayout(self._build_profile_bar())
+
         self._canvas = ArrangementCanvas()
         layout.addWidget(self._canvas)
 
@@ -500,9 +502,170 @@ class MonitorControlModule(BaseModule):
         self._widget = outer
         return outer
 
+    # ── display profiles ──
+    #
+    # "This is what my desk looks like", saved and applied later. Identity is
+    # the EDID, never `\\.\DISPLAYn` — that is a position in a list and it
+    # renumbers when cables move. `profiles.py` carries the whole argument.
+
+    def _build_profile_bar(self):
+        row = QHBoxLayout()
+        label = QLabel("Profiles")
+        label.setObjectName("muted")
+        row.addWidget(label)
+
+        self._profile_combo = QComboBox()
+        self._profile_combo.setMinimumWidth(220)
+        self._profile_combo.setToolTip(
+            "Saved desktop layouts — every monitor's resolution, refresh "
+            "rate, position and which one is primary")
+        row.addWidget(self._profile_combo)
+
+        self._profile_apply = QPushButton("Apply")
+        self._profile_apply.setToolTip(
+            "Reconfigure the desktop to match this profile. Reverts itself "
+            "in 15 seconds unless you confirm.")
+        self._profile_apply.clicked.connect(self._do_apply_profile)
+        row.addWidget(self._profile_apply)
+
+        save = QPushButton("Save current…")
+        save.setToolTip("Save the current layout of all monitors as a profile")
+        save.clicked.connect(self._do_save_profile)
+        row.addWidget(save)
+
+        self._profile_delete = QPushButton("Delete")
+        self._profile_delete.clicked.connect(self._do_delete_profile)
+        row.addWidget(self._profile_delete)
+
+        row.addStretch(1)
+        self._profile_note = QLabel("")
+        self._profile_note.setObjectName("muted")
+        row.addWidget(self._profile_note)
+        return row
+
+    def _reload_profiles(self) -> None:
+        """Refill the list from disk. Cheap: reads sidecar summaries only."""
+        from modules.monitor_control import profiles as pf
+
+        self._profile_combo.clear()
+        try:
+            summaries = pf.list_profiles()
+        except Exception as exc:                         # noqa: BLE001
+            logger.warning("Could not list display profiles: %s", exc)
+            self._profile_note.setText(f"profiles unreadable: {exc}")
+            summaries = []
+        for summary in summaries:
+            self._profile_combo.addItem(
+                f"{summary.name}  ({summary.active_count} of "
+                f"{summary.monitor_count} on)", summary.name)
+        has_any = bool(summaries)
+        self._profile_apply.setEnabled(has_any)
+        self._profile_delete.setEnabled(has_any)
+        if not has_any:
+            self._profile_note.setText("no profiles saved yet")
+        elif not self._profile_note.text().startswith("profiles unreadable"):
+            self._profile_note.setText("")
+
+    def _do_save_profile(self) -> None:
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        from modules.monitor_control import profiles as pf
+
+        name, ok = QInputDialog.getText(self._widget, "Save display profile",
+                                        "Name for this layout:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        try:
+            profile = pf.capture_profile(name)
+            path = pf.save_profile(profile)
+        except Exception as exc:                         # noqa: BLE001
+            logger.warning("Could not save display profile %r: %s", name, exc)
+            QMessageBox.warning(self._widget, "Could not save",
+                                f"The profile was not saved:\n\n{exc}")
+            return
+
+        # A monitor whose EDID could not be read is saved -- the layout is
+        # still worth keeping -- but it is the thing that will make the
+        # profile refuse to apply later, so it is said now rather than at
+        # the moment someone needs it to work.
+        unidentified = [m.identity.label for m in profile.monitors
+                        if not m.identity.identified]
+        if unidentified:
+            QMessageBox.information(
+                self._widget, "Saved, with a caveat",
+                "Saved to:\n%s\n\nThese monitors could not be identified by "
+                "EDID, so this profile will refuse to apply while they are "
+                "attached:\n\n%s" % (path, "\n".join(unidentified)))
+        self._reload_profiles()
+        index = self._profile_combo.findData(name)
+        if index >= 0:
+            self._profile_combo.setCurrentIndex(index)
+        self._status.setText(f"Saved profile “{name}”")
+
+    def _do_delete_profile(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        from modules.monitor_control import profiles as pf
+
+        name = self._profile_combo.currentData()
+        if not name:
+            return
+        answer = QMessageBox.question(
+            self._widget, "Delete profile",
+            f"Delete the saved profile “{name}”?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer is not QMessageBox.StandardButton.Yes:
+            return
+        try:
+            removed = pf.delete_profile(name)
+        except Exception as exc:                         # noqa: BLE001
+            logger.warning("Could not delete profile %r: %s", name, exc)
+            self._status.setText(f"Could not delete “{name}”: {exc}")
+            return
+        self._status.setText(f"Deleted “{name}”" if removed
+                             else f"“{name}” was already gone")
+        self._reload_profiles()
+
+    def _do_apply_profile(self) -> None:
+        """Apply a saved layout, behind the countdown.
+
+        The largest change this module can make, so it is checked twice
+        before anything moves: `can_apply` decides whether every monitor the
+        profile turns on is actually present and unambiguous, and its
+        refusal is shown as-is — it names the monitor, which is the whole
+        point of it.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+        from modules.monitor_control import profiles as pf
+
+        name = self._profile_combo.currentData()
+        if not name:
+            return
+        try:
+            profile = pf.load_profile(name)
+            present = pf.live_identities()
+        except Exception as exc:                         # noqa: BLE001
+            logger.warning("Could not load profile %r: %s", name, exc)
+            QMessageBox.warning(self._widget, "Could not load",
+                                f"“{name}” could not be read:\n\n{exc}")
+            return
+
+        ok, reason = pf.can_apply(profile, present)
+        if not ok:
+            QMessageBox.warning(
+                self._widget, "This profile cannot be applied here", reason)
+            self._status.setText(f"“{name}” refused: {reason}")
+            return
+
+        def _apply():
+            pf.apply_profile(profile, present, confirm=True)
+
+        self._guarded(_apply, f"Display profile: {name}")
+
     # ── data ──
 
     def on_activate(self) -> None:
+        self._reload_profiles()
         self.refresh_data()
 
     def refresh_data(self) -> None:

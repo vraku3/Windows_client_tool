@@ -79,39 +79,44 @@ wired through the guard:
 
 Suite at the tip of the branch: `PYTEST_EXIT=0`, no failures.
 
+**Stage 1.3 — DDC controls and the audio a monitor carries.** Done as
+written, on the machine rebuilt after the reinstall. `build_views()` fills
+`audio_endpoint`, `audio_is_default` and `ddc`; the card grew a read-only
+audio row, brightness and contrast sliders and an input picker; brightness
+and contrast go without the countdown, input source with it.
+
+Four things the plan did not say, all of them measured rather than reasoned:
+
+* **The pairing was the missing piece.** A `MonitorView` knows
+  `\\.\DISPLAY2`; a `PhysicalMonitor` sits behind an HMONITOR, and nothing
+  joined them. `GetMonitorInfoW`'s `szDevice` does, exactly and one-to-one.
+  Matching on the description cannot work: Windows calls the Gigabyte
+  "Generic PnP Monitor" while its view is named "MO27Q28G", so
+  `find_monitor(monitors, view.name)` finds nothing at all. Hence
+  `PhysicalMonitor.device`, `find_monitor_for_device`, and the
+  `*_for_device` wrappers, which are the only form the UI uses.
+* **A capability must not carry its handle out of the block it was probed
+  in.** `probe_device` returns one with `monitor=None` on purpose — the
+  handle died in `open_monitors()`, and a tab that refreshes on a timer
+  would otherwise be calling into memory `DestroyPhysicalMonitors` has
+  already taken back. Every write re-finds its monitor.
+* **A write costs ~0.28s; a re-probe costs ~1.5s.** So writes run on a
+  worker, fire on `sliderReleased` rather than `valueChanged`, and the card
+  is never re-probed afterwards — `WriteResult` already carries the applied
+  value and whether the read-back agreed. `build_views()` itself is now
+  ~3.4s for three monitors, which is why it stays on a worker.
+* **The input-source confirm must AVOID its own screen.** After the switch
+  Qt still lists that screen (the GPU is still driving it) while the panel
+  shows another machine, so `choose_confirm_screen`'s "prefer the affected
+  screen" rule points at the one display that cannot show the dialog.
+  `choose_confirm_screen_avoiding` is the opposite rule, for exactly this.
+  Note Qt names screens by MODEL (`S2719DGF`), not by device path, so the
+  view→QScreen match goes by name and falls back to geometry.
+
+Proven against the hardware: brightness 46 → 36, `verified=True`, the panel
+actually moved, restored to 46.
+
 ## Remaining
-
-### Stage 1.3 — DDC controls and the audio a monitor carries
-
-`MonitorView` already has the three fields for this and nothing populates
-them: `audio_endpoint`, `audio_is_default`, `ddc`. That is the seam.
-
-1. `view_model.build_views()` fills them, each call guarded the way the
-   existing engine calls are — one unreadable field must not cost the list.
-   Note `ddc.open_monitors()` is a context manager because physical monitor
-   handles leak; do not hold a handle across a refresh.
-2. The monitor card grows:
-   * **Audio, read-only.** Which endpoint this monitor carries and whether it
-     is the current default output. `endpoint_for_monitor` returns None when
-     two live endpoints answer to the same name — show "could not tell them
-     apart", never a coin flip.
-   * **Brightness / contrast**, only when `DdcCapability.responded` and the
-     corresponding `supports_*` is true. Never assume a 0..100 range; the
-     monitor's own `maximum` is authoritative, and a maximum of 0 means the
-     reply was junk, not a control with no range.
-   * **Input source**, only when `input_sources_known` — the capabilities
-     string is the only honest list, and `set_input_source` already refuses
-     to guess.
-3. **Which of these needs the countdown.** Brightness and contrast do not:
-   the control that undoes them is the same slider, on the same screen, still
-   reachable. Input source does — switching the panel to another input takes
-   the app off the screen, and "doing nothing reverts" is exactly right
-   there. Its snapshot/restore is the old VCP value, not the topology arrays,
-   so `_guarded()` needs a snapshot/restore pair passed in rather than the
-   hardcoded `dc.raw_topology_arrays()` it uses today.
-4. Report `WriteResult.verified` honestly. `False` means the monitor took the
-   call and ignored it — common, and the user should be told rather than
-   shown a slider that silently snaps back.
 
 **Not to be wired without a supervised first run:** the *audio endpoint
 enable/disable* writes in `display_audio.py`. They drive

@@ -790,6 +790,17 @@ Rules here, each one measured:
   0x0A padded with 0x20. `str.strip()` does not remove NUL, so the serial
   carried one into the identity key, into profile JSON and into every
   comparison. Terminate on both, and drop control characters.
+- **Window layout replays `SetWindowPlacement`, never `MoveWindow`.** A
+  maximised window has two rectangles — the screen one and the one it
+  returns to — and only `WINDOWPLACEMENT` carries both plus `showCmd`.
+  `MoveWindow` takes one rect and no state, so there is no rect that makes
+  it correct. Snapped windows are the same problem: Windows records no
+  "snapped" flag, and the only signal is `rcNormalPosition` disagreeing with
+  the on-screen rect.
+- **A capture costs ~4ms, but a capture taken AFTER a topology change is
+  worthless** — Windows has already piled the windows onto the surviving
+  display. `monitor_module._topology_changed` is what keeps the screen
+  signals' refresh from overwriting the only good record.
 - **A refused read is never an answer.** `MonitorIdentity.identified` False,
   `DdcCapability.responded` False, `audio_hidden` None and
   `WriteResult.verified` None all mean "we could not find out", and none of

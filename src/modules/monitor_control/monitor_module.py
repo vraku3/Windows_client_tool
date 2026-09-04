@@ -421,6 +421,16 @@ class MonitorControlModule(BaseModule):
         self._views: List = []
         self._workers: list = []
         self._identify = IdentifyOverlays()
+        #: The most recent capture taken while the desktop was NOT mid-change.
+        #: This is the "before" a restore replays, so it must never be
+        #: overwritten by a capture taken after monitors moved — by then
+        #: Windows has already piled everything onto the survivor.
+        self._auto_layout = None
+        #: A layout the user asked to keep, kept for the session.
+        self._saved_layout = None
+        #: Set by the screen signals so the refresh they trigger knows not to
+        #: treat what it finds as a good layout.
+        self._topology_changed = False
 
     # ── UI ──
 
@@ -495,9 +505,10 @@ class MonitorControlModule(BaseModule):
         # times while the module was being written.
         app = QGuiApplication.instance()
         if app is not None:
-            app.screenAdded.connect(lambda _s: self.refresh_data())
-            app.screenRemoved.connect(lambda _s: self.refresh_data())
-            app.primaryScreenChanged.connect(lambda _s: self.refresh_data())
+            app.screenAdded.connect(lambda _s: self._on_screens_changed())
+            app.screenRemoved.connect(lambda _s: self._on_screens_changed())
+            app.primaryScreenChanged.connect(
+                lambda _s: self._on_screens_changed())
 
         self._widget = outer
         return outer
@@ -536,6 +547,27 @@ class MonitorControlModule(BaseModule):
         self._profile_delete = QPushButton("Delete")
         self._profile_delete.clicked.connect(self._do_delete_profile)
         row.addWidget(self._profile_delete)
+
+        row.addSpacing(16)
+        windows_label = QLabel("Windows")
+        windows_label.setObjectName("muted")
+        row.addWidget(windows_label)
+
+        keep = QPushButton("Remember positions")
+        keep.setToolTip(
+            "Remember where every window is right now, for this session. "
+            "Restore puts them back.")
+        keep.clicked.connect(self._do_save_windows)
+        row.addWidget(keep)
+
+        self._windows_restore = QPushButton("Put windows back")
+        self._windows_restore.setToolTip(
+            "Move every window back to the monitor and position it was "
+            "remembered on. A window whose monitor is not connected is left "
+            "alone and named.")
+        self._windows_restore.clicked.connect(self._do_restore_windows)
+        self._windows_restore.setEnabled(False)
+        row.addWidget(self._windows_restore)
 
         row.addStretch(1)
         self._profile_note = QLabel("")
@@ -662,6 +694,161 @@ class MonitorControlModule(BaseModule):
 
         self._guarded(_apply, f"Display profile: {name}")
 
+    # ── window layout ──
+    #
+    # The point of this is the twenty seconds after a monitor comes back:
+    # Windows has already piled every window onto whatever display survived,
+    # and dragging thirty of them back is the real cost of unplugging one.
+    #
+    # A capture costs ~4ms, so one is taken after every ordinary refresh. The
+    # thing that makes it work is knowing which refreshes are ORDINARY: a
+    # refresh triggered by the topology changing must not capture, because by
+    # then the windows have already moved and that capture would overwrite
+    # the only record of where they belong.
+
+    def _on_screens_changed(self) -> None:
+        self._topology_changed = True
+        self.refresh_data()
+
+    def _capture_windows(self):
+        from modules.monitor_control import window_layout as wl
+
+        try:
+            return wl.capture()
+        except Exception:                                # noqa: BLE001
+            logger.debug("Could not capture the window layout", exc_info=True)
+            return None
+
+    def _remember_layout(self) -> None:
+        """Keep this as the good layout, after an ordinary refresh."""
+        layout = self._capture_windows()
+        if layout is not None and layout.windows:
+            self._auto_layout = layout
+            if self._saved_layout is None:
+                self._windows_restore.setEnabled(True)
+
+    def _do_save_windows(self) -> None:
+        layout = self._capture_windows()
+        if layout is None or not layout.windows:
+            self._status.setText("No windows to remember")
+            return
+        self._saved_layout = layout
+        self._windows_restore.setEnabled(True)
+        counts = layout.counts()
+        where = ", ".join(
+            f"{n} on {self._monitor_name_for_key(key)}"
+            for key, n in counts.items())
+        self._status.setText(
+            f"Remembered {len(layout.windows)} window(s) — {where}")
+
+    def _monitor_name_for_key(self, key: str) -> str:
+        """A monitor's friendly name for a message, falling back to the key.
+
+        The EDID key is correct but unreadable; "MO27Q28G" is what someone
+        recognises. The key is what everything MATCHES on — this is only for
+        the sentence.
+        """
+        for view in self._views:
+            identity = getattr(view, "edid_key", None)
+            if identity == key:
+                return view.name
+        from modules.monitor_control import profiles as pf
+
+        try:
+            for identity in pf.live_identities():
+                if identity.key == key:
+                    return identity.friendly_name or key
+        except Exception:                                # noqa: BLE001
+            logger.debug("Could not name monitor %s", key, exc_info=True)
+        return key
+
+    def _do_restore_windows(self) -> None:
+        layout = self._saved_layout or self._auto_layout
+        if layout is None:
+            return
+        self._apply_window_layout(layout)
+
+    def _apply_window_layout(self, layout) -> None:
+        """Put the windows back and say exactly what happened.
+
+        Not behind the revert countdown: moving a window strands nobody —
+        the screen stays readable and the user can drag it back — and the
+        guard's revert replays display topology, which is not what changed.
+        """
+        from modules.monitor_control import window_layout as wl
+
+        try:
+            plan = wl.restore(layout, apply=True)
+        except Exception as exc:                         # noqa: BLE001
+            logger.warning("Restoring the window layout failed: %s", exc)
+            self._status.setText(f"Could not put the windows back: {exc}")
+            return
+
+        moved = len(plan.actions) - len(plan.failures)
+        parts = [f"Put {moved} window(s) back"]
+        if plan.refusals:
+            # Named, never a count on its own: "3 windows were left alone"
+            # sends someone hunting for which three.
+            names = ", ".join(sorted({r.title or "(untitled)"
+                                      for r in plan.refusals})[:3])
+            parts.append(f"{len(plan.refusals)} left alone ({names}"
+                         f"{'…' if len(plan.refusals) > 3 else ''}) — their "
+                         f"monitor is not connected")
+        if plan.failures:
+            parts.append(f"{len(plan.failures)} would not move")
+            for failure in plan.failures:
+                logger.info("Window %r would not move: %s",
+                            failure.title, failure.reason)
+        self._status.setText(" · ".join(parts))
+
+    def _offer_window_restore(self) -> None:
+        """After a topology change: did windows actually move, and shall we?
+
+        Only offers when every monitor in the remembered layout is back AND
+        at least one window is somewhere it was not. Offering on a monitor
+        being REMOVED would be noise — there is nowhere for those windows to
+        go — and offering when nothing moved would be worse than noise.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+        from modules.monitor_control import window_layout as wl
+
+        layout = self._auto_layout
+        if layout is None or not layout.windows:
+            return
+        try:
+            present = wl.current_monitors()
+        except Exception:                                # noqa: BLE001
+            logger.debug("Could not read the current monitors", exc_info=True)
+            return
+        if not all(key in present for key in layout.monitors):
+            return
+
+        now = self._capture_windows()
+        if now is None:
+            return
+        where_now = {w.hwnd: w.monitor_key for w in now.windows}
+        moved = [w for w in layout.windows
+                 if w.hwnd in where_now
+                 and where_now[w.hwnd] != w.monitor_key]
+        if not moved:
+            # Nothing shifted, so this IS the good layout now.
+            self._auto_layout = now
+            return
+
+        answer = QMessageBox.question(
+            self._widget, "Put your windows back?",
+            f"{len(moved)} window(s) moved when the displays changed.\n\n"
+            f"Put them back where they were?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes)
+        if answer is QMessageBox.StandardButton.Yes:
+            self._apply_window_layout(layout)
+        else:
+            # They chose to keep the new arrangement, so it becomes the one
+            # worth remembering — otherwise the same prompt returns on every
+            # subsequent screen change.
+            self._auto_layout = now
+
     # ── data ──
 
     def on_activate(self) -> None:
@@ -682,6 +869,14 @@ class MonitorControlModule(BaseModule):
                 return
             self._views = views
             self._render()
+            # A refresh the topology triggered must NOT capture: by the time
+            # it runs, Windows has already moved the windows, and capturing
+            # would overwrite the only record of where they belong.
+            if self._topology_changed:
+                self._topology_changed = False
+                self._offer_window_restore()
+            else:
+                self._remember_layout()
 
         def _error(message: str):
             if not widget_is_valid(self._widget):

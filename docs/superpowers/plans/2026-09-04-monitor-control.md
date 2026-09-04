@@ -153,12 +153,36 @@ re-enable -> re-read, on an endpoint nobody is listening to, confirming the
 state actually moved and actually came back. Disabling the wrong one takes
 the sound off the machine.
 
-### Stage 3 — window layout
+**Stage 3 — window layout.** Done. A "Windows" pair next to the profiles:
+Remember positions / Put windows back, plus the automatic path the plan
+described.
 
-`window_layout.py` + `window_census.py`, also complete and unwired. Capture
-where every window is and put them back after the monitors change. The
-natural trigger is the `screenAdded` / `screenRemoved` signals the module
-already listens to.
+The automatic path turns on one distinction. A capture costs **~4ms**, so
+one is taken after every refresh — but a refresh *triggered by the topology
+changing* must not capture, because by then Windows has already piled the
+windows onto the surviving display and that capture would overwrite the only
+record of where they belong. `_topology_changed` is set by the screen
+signals so the refresh they cause knows which kind it is.
+
+It then offers rather than acts, and only when it has something to say:
+every monitor in the remembered layout must be back, *and* at least one
+window must actually be somewhere it was not. Declining adopts the new
+arrangement, or the same prompt returns on every subsequent screen change.
+
+Not behind the revert countdown, deliberately: moving a window strands
+nobody, and the guard's revert replays display topology, which is not what
+changed.
+
+Proven on a window the harness owned rather than the user's:
+
+* shoved 400,300 away, restored to exactly `(192, 200, 728, 579)`;
+* **maximised, un-maximised, restored → `show_cmd` back to 3 with the
+  restored-rect intact.** That second case is the whole reason the module
+  uses `SetWindowPlacement`: `MoveWindow` carries one rect and no state, so
+  there is no rect that makes it correct here.
+
+Read against the real desktop: 15 qualifying windows out of 374 enumerated,
+attributed by EDID key, and simulating an unplug refuses 11 of them by name.
 
 ## Where to pick it up
 

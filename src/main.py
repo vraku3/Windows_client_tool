@@ -99,6 +99,7 @@ def register_all_modules(app) -> None:
     from modules.dashboard.dashboard_module import DashboardModule
     from modules.tweaks.tweaks_module import TweaksModule
     from modules.cleanup.cleanup_module import CleanupModule
+    from modules.monitor_control.monitor_module import MonitorControlModule
     from modules.cleanup.quick_cleanup_module import QuickCleanupModule
     from modules.debloat.debloat_module import DebloatModule
     from modules.treesize.treesize_module import TreeSizeModule
@@ -147,6 +148,7 @@ def register_all_modules(app) -> None:
     app.module_registry.register(QuickFixModule())
     app.module_registry.register(UpdatesModule())
     app.module_registry.register(HardwareModule())
+    app.module_registry.register(MonitorControlModule())
     app.module_registry.register(NetworkDiagnosticsModule())
     app.module_registry.register(SecurityDashboardModule())
     app.module_registry.register(DriverModule())

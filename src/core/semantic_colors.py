@@ -45,6 +45,48 @@ SEMANTIC_PALETTES: Dict[str, Dict[str, str]] = {
     },
 }
 
+#: Chrome for widgets that PAINT themselves, where a stylesheet cannot reach:
+#: a QPainter canvas has no QSS rule to consult, and hardcoding a dark-theme
+#: grey in the widget freezes it for the light theme too.
+#:
+#: Deliberately separate from SEMANTIC_PALETTES. These are surfaces and
+#: outlines, not text on a pane, so the 4.5:1 rule that governs the palette
+#: above does not apply and `test_semantic_colors.py` does not walk them --
+#: holding a panel fill to a text contrast ratio would be meaningless. The
+#: two text roles here ARE held to it, by the test that covers this dict.
+CHROME_PALETTES: Dict[str, Dict[str, str]] = {
+    "dark": {
+        "surface": "#2b2b2b",
+        "surface_selected": "#2f3b33",
+        "surface_inactive": "#262626",
+        "outline": "#5a5a5a",
+        "text": "#e0e0e0",
+        # Lighter than QLabel#muted's #858585, and deliberately: that value
+        # is chosen against the PANE (#1e1e1e), where it reads 4.70:1. On a
+        # card surface (#2b2b2b) the same grey is 3.84:1 and fails. Measured,
+        # not guessed — the chrome test computes the ratio.
+        "text_muted": "#949494",
+        # The identify/countdown overlay is a HUD drawn over whatever is on
+        # screen, so it stays dark in both themes on purpose.
+        "overlay_surface": "#141414",
+        "overlay_text": "#f0f0f0",
+        "overlay_text_muted": "#b0b0b0",
+        "notice_border": "#4a4335",
+    },
+    "light": {
+        "surface": "#ffffff",
+        "surface_selected": "#e3f2e6",
+        "surface_inactive": "#ededed",
+        "outline": "#9e9e9e",
+        "text": "#202020",
+        "text_muted": "#5f5f5f",
+        "overlay_surface": "#141414",
+        "overlay_text": "#f0f0f0",
+        "overlay_text_muted": "#b0b0b0",
+        "notice_border": "#c8b96a",
+    },
+}
+
 _current_theme = "dark"
 
 
@@ -68,3 +110,13 @@ def semantic(meaning: str) -> str:
     to stop.
     """
     return SEMANTIC_PALETTES[_current_theme][meaning]
+
+
+def chrome(role: str) -> str:
+    """A surface, outline or text colour for a widget that paints itself.
+
+    Same contract as `semantic`, including raising on an unknown role: a
+    typo returning nothing paints an invisible panel, and finding that by
+    looking at it is exactly what this module exists to avoid.
+    """
+    return CHROME_PALETTES[_current_theme][role]

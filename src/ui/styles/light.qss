@@ -495,3 +495,17 @@ QLabel#statusInfo    { color: #00639c; }
 QLabel#heading       { font-size: 16px; font-weight: bold; }
 QLabel#metric        { font-size: 18px; font-weight: bold; }
 QLabel#link          { color: #00639c; }
+
+/* ---- Monitor Control ---------------------------------------------------
+   A notice the pane shows only when it has something to report, and the
+   per-monitor active/inactive markers. Roles rather than inline sheets: an
+   inline sheet beats this one and never changes again, so a dark-theme
+   colour written into the widget survives a switch to the light theme. */
+QLabel#noticeBanner {
+    color: #8a5300;
+    border: 1px solid #c8b96a;
+    border-radius: 4px;
+    padding: 6px 10px;
+}
+QLabel#monitorActive   { color: #00695c; }
+QLabel#monitorInactive { color: #5f5f5f; }

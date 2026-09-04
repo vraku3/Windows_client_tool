@@ -166,13 +166,15 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_32_entries(registered):
-    """32, not 34: Process Explorer stopped being its own sidebar entry when
+def test_the_sidebar_is_33_entries(registered):
+    """33 since Monitor Control was added.
+
+    32, not 34: Process Explorer stopped being its own sidebar entry when
     the Dashboard absorbed it, and PerfMon became a Dashboard tab too. Two
     doors to the same room is two places to kill a process from. Absorbed
     modules are still reachable -- as Dashboard tabs, which
     `_all_composite_children` covers."""
-    assert len(registered) == 32
+    assert len(registered) == 33
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

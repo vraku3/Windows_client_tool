@@ -458,6 +458,13 @@ class MainWindow(QMainWindow):
             self._toggle_always_on_top)
         view_menu.addAction(self._always_on_top_action)
 
+        # Force shutdown / restart / restart-to-Safe-Mode: three pictogram
+        # buttons on the menu bar's own corner, visually right next to
+        # File / Tools / View — the fastest place to reach them.
+        from ui.power_actions import PowerActionsWidget
+
+        menu_bar.setCornerWidget(PowerActionsWidget(self))
+
     def _setup_shortcuts(self) -> None:
         QShortcut(QKeySequence("F5"), self).activated.connect(self._refresh_current)
         QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(

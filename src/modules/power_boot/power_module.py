@@ -141,8 +141,13 @@ def set_boot_timeout(seconds: int):
 
 
 def enable_safe_mode():
+    """Set the Safe Mode boot flag. Returns the `bcdedit` CompletedProcess
+    so a caller that needs to know whether it actually took — restarting
+    into Safe Mode on an unset flag would silently boot normally — can
+    check `returncode` rather than assume success. `_safe_set` (the button
+    in this module) does not need it and keeps ignoring it."""
     _bcd_backup()
-    _run(["bcdedit", "/set", "{current}", "safeboot", "minimal"])
+    return _run(["bcdedit", "/set", "{current}", "safeboot", "minimal"])
 
 
 def disable_safe_mode():

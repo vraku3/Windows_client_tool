@@ -106,6 +106,13 @@ HIDDEN_IMPORTS = [
     # toolbar handler so the pane does not drag the performance and GPU
     # engines in at startup. Frozen without it, the button raises.
     "ui.system_information",
+    # The menu bar's force-shutdown/restart/Safe-Mode buttons, imported
+    # inside MainWindow._setup_menus() — every startup, not a lazy handler,
+    # but still a function-scoped import this project's PyInstaller analysis
+    # does not follow. Frozen without it, the app fails at MainWindow
+    # construction, not quietly: this one is worth catching in review, not
+    # discovering after a build.
+    "ui.power_actions",
     # Composite children. A CompositeModule imports its children inside
     # __init__ so a host module's import does not drag four panes' worth of
     # Qt in at startup. main.py therefore names only the hosts, and these are

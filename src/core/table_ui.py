@@ -26,6 +26,35 @@ class _SortableItem(QTableWidgetItem):
         return self.text().lower() < other.text().lower()
 
 
+#: Where a NumericSortItem's real value lives. Past UserRole+1..9, which
+#: several modules already use for their own per-cell payload (e.g. a
+#: package name or tweak id) — +10 is unclaimed.
+_NUMERIC_SORT_ROLE = int(Qt.ItemDataRole.UserRole) + 10
+
+
+class NumericSortItem(QTableWidgetItem):
+    """A cell that DISPLAYS formatted text but SORTS on a real number.
+
+    Every "Size" or "Version" column that formats bytes/versions into text
+    before display has this bug latently: a plain QTableWidgetItem sorts
+    that text alphabetically, so "10 GB" lands before "9 GB". Store the
+    real value once, here, and every such column gets a correct sort for
+    the cost of one extra constructor argument.
+    """
+
+    def __init__(self, text: str, value: float):
+        super().__init__(text)
+        self.setData(_NUMERIC_SORT_ROLE, float(value))
+
+    def __lt__(self, other) -> bool:
+        mine = self.data(_NUMERIC_SORT_ROLE)
+        theirs = other.data(_NUMERIC_SORT_ROLE) \
+            if isinstance(other, QTableWidgetItem) else None
+        if mine is not None and theirs is not None:
+            return mine < theirs
+        return self.text().lower() < other.text().lower()
+
+
 def centered_item(text: str = "", sortable: bool = False) -> QTableWidgetItem:
     """A table item whose text is centred (optionally sortable A-Z)."""
     item = _SortableItem(text) if sortable else QTableWidgetItem(text)

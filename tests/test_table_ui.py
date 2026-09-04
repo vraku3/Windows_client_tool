@@ -1,7 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
-from core.table_ui import center_header, centered_item, fit_last, fit_table
+from core.table_ui import center_header, centered_item, fit_last, fit_table, NumericSortItem
 
 
 def test_centered_item_is_centered_and_compatible():
@@ -46,3 +46,25 @@ def test_fit_last_stretches_only_the_last_column(qapp):
     assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.ResizeToContents
     assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch
     assert header.defaultAlignment() == Qt.AlignmentFlag.AlignCenter
+
+
+def test_numeric_sort_orders_by_value_not_text(qapp):
+    table = QTableWidget(3, 1)
+    # Text order would put "10 GB" before "9 GB". Value order must not.
+    table.setItem(0, 0, NumericSortItem("500 MB", 500_000_000))
+    table.setItem(1, 0, NumericSortItem("9 GB", 9_000_000_000))
+    table.setItem(2, 0, NumericSortItem("10 GB", 10_000_000_000))
+    table.setSortingEnabled(True)
+    table.sortItems(0, Qt.SortOrder.AscendingOrder)
+    assert [table.item(r, 0).text() for r in range(3)] == \
+        ["500 MB", "9 GB", "10 GB"]
+
+
+def test_numeric_sort_degrades_to_text_against_a_plain_item(qapp):
+    """A column mixing NumericSortItem with a bare QTableWidgetItem (e.g. a
+    row whose size could not be measured) must not raise."""
+    table = QTableWidget(2, 1)
+    table.setItem(0, 0, NumericSortItem("12 MB", 12_000_000))
+    table.setItem(1, 0, QTableWidgetItem("n/a"))
+    table.setSortingEnabled(True)
+    table.sortItems(0, Qt.SortOrder.AscendingOrder)  # must not raise

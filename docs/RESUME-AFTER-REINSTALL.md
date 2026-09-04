@@ -20,28 +20,42 @@ Python **3.12** (3.12.10 was in use here). `CLAUDE.md` has the full command
 reference — running, building both exe flavours, and the PyInstaller cache
 trap where a stale `PKG-00.toc` silently ships old code.
 
-### What the rebuilt machine actually needed (2026-09-04, after the wipe)
+### The trap this machine hit, and the fix (2026-09-04, after the wipe)
 
-`py -3.12` above assumes an installer ran. On this machine it could not:
+`py -3.12` above assumes an installer can run. On the rebuilt machine none
+could, and the reason was nowhere near Python:
 
-* **`C:\Windows\Temp` does not exist**, and MSI's SYSTEM-side process needs
-  it. Every MSI install dies with **error 2503 / 2502** ("Called
-  InstallFinalize when no install in progress"), which reads like a broken
-  package and is not — `winget install Python.Python.3.12` fails with 1603
-  in under a second. **This breaks every MSI installer on the machine, not
-  just Python.** Recreating the directory with its default ACLs is the fix
-  and needs elevation.
-* The way round it, needing no installer and no elevation, is the PSF's own
-  **NuGet CPython build** — a real, complete 3.12.10, just packaged as a zip:
+**`C:\Windows\Temp` did not exist.** MSI's SYSTEM-side process needs it, so
+every MSI install died with **error 2503 / 2502** ("Called InstallFinalize
+when no install in progress") — `winget install Python.Python.3.12` failed
+with 1603 in under a second. It reads like a broken package and is not, and
+it breaks **every** MSI installer on the machine, not just Python.
 
-  ```
-  Invoke-WebRequest https://www.nuget.org/api/v2/package/python/3.12.10 -OutFile py.zip
-  Expand-Archive py.zip "$env:LOCALAPPDATA\Programs\Python\Python312-nuget"
-  & "$env:LOCALAPPDATA\Programs\Python\Python312-nuget\tools\python.exe" -m venv .venv
-  ```
+Recreating the directory with its default ACLs fixes it, elevated:
 
-  The venv it makes is ordinary; `requirements.txt` installs clean into it,
-  pywin32 and PyQt6 included.
+```
+mkdir C:\Windows\Temp
+icacls C:\Windows\Temp /inheritance:r ^
+  /grant "*S-1-5-18:(OI)(CI)(F)" ^
+  /grant "*S-1-5-32-544:(OI)(CI)(F)" ^
+  /grant "*S-1-3-0:(OI)(CI)(IO)(F)" ^
+  /grant "*S-1-5-32-545:(CI)(S,WD,AD,X)"
+```
+
+Done here on 2026-09-04. The identical installer that had exited `0x643`
+then exited `0x0`, and `py -3.12` has worked since. Note a normal user
+cannot `Get-Acl` that folder afterwards — Users get write and traverse, not
+read-control — so an "unauthorized" there is correct, not a botched repair.
+
+If it ever needs working around again without elevation, the PSF's own
+**NuGet CPython** is a complete 3.12.10 packaged as a zip, and the venv it
+makes is ordinary:
+
+```
+Invoke-WebRequest https://www.nuget.org/api/v2/package/python/3.12.10 -OutFile py.zip
+Expand-Archive py.zip "$env:LOCALAPPDATA\Programs\Python\Python312-nuget"
+& "$env:LOCALAPPDATA\Programs\Python\Python312-nuget\tools\python.exe" -m venv .venv
+```
 
 **Two tests fail on a rebuilt machine and neither is a code defect** — both
 asserted facts about the OLD install. Fixed on `feat/monitor-control` by

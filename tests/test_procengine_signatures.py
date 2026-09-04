@@ -126,18 +126,45 @@ def test_a_file_with_no_signature_is_not_signed():
     assert facts.reason is None
 
 
+def _find_expired_signature():
+    """A file on this machine that WAS signed by a certificate that lapsed.
+
+    Hunted rather than hardcoded, for the same reason `_find_unsigned_exe`
+    is: which file qualifies is a property of what happens to be installed,
+    and it changes underneath the test. `Git\\usr\\bin\\bash.exe` was the
+    case this was written against -- its certificate lapsed in May 2026 --
+    and after a reinstall the newer Git ships that same path UNSIGNED, so
+    the hardcoded assertion failed while the code was behaving correctly.
+    """
+    candidates = (
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\sh.exe",
+        r"C:\Program Files\Git\usr\bin\perl.exe",
+        r"C:\Program Files\Git\mingw64\bin\openssl.exe",
+    )
+    for path in candidates:
+        if os.path.isfile(path):
+            facts = verify_signature(path)
+            if facts.status == INVALID and "expired" in (facts.reason or ""):
+                return path, facts
+    return None, None
+
+
 def test_an_expired_signature_is_invalid_not_a_refusal():
-    """Git for Windows' signing certificate lapsed in May 2026. An expired
-    signature is a VERDICT -- the file was signed, and the signature no
-    longer holds -- so it must read `invalid`, never "could not verify",
-    which would hide that the signature lapsed."""
-    path = os.path.join(os.environ["ProgramFiles"], "Git", "usr", "bin",
-                        "bash.exe")
-    if not os.path.isfile(path):
+    """An expired signature is a VERDICT -- the file was signed, and the
+    signature no longer holds -- so it must read `invalid`, never "could not
+    verify", which would hide that the signature lapsed.
+
+    Skips when nothing installed here has one. That is not the same as the
+    distinction going untested: `test_a_file_with_no_signature_is_not_signed`
+    holds the `not_signed` end and the malformed-PE test holds the refusal
+    end; this one only has no specimen to work from.
+    """
+    path, facts = _find_expired_signature()
+    if path is None:
         import pytest
 
-        pytest.skip("Git for Windows is not installed")
-    facts = verify_signature(path)
+        pytest.skip("no file with an expired signature on this machine")
     assert facts.status == INVALID
     assert facts.reason and "expired" in facts.reason
 

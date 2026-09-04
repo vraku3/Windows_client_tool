@@ -162,9 +162,13 @@ def decode_state(raw: Optional[int]) -> EndpointState:
 def undocumented_state_bits(raw: Optional[int]) -> int:
     """Whatever `DeviceState` carried above the documented nibble.
 
-    `0x10000000` on every live display endpoint of the reference machine.
-    Reported so a future change in Windows is visible rather than silently
-    masked away.
+    Reported so a change in Windows is visible rather than silently masked
+    away. What rides up there is a driver quirk and NOT something to depend
+    on in either direction: the machine this was written on set `0x10000000`
+    on every live display endpoint, and the machine it was rebuilt on — same
+    three monitors, after an OS reinstall — sets nothing at all, reporting a
+    bare `0x1`. So an empty result here is a normal reading, not a sign the
+    read failed.
     """
     if raw is None:
         return 0

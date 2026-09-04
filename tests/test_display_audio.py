@@ -355,19 +355,29 @@ def test_live_the_display_endpoints_are_named_per_monitor(live_display_endpoints
         assert endpoint.monitor_name
 
 
-def test_live_an_active_display_endpoint_carries_the_undocumented_bit(
+def test_live_undocumented_state_bits_never_change_the_decoded_state(
         live_display_endpoints):
-    """Not a requirement of Windows — a record of what this machine does.
+    """The masking is the invariant; the extra bits are not.
 
-    Skips rather than fails if no display endpoint is active, since that is
-    a legitimate state (every monitor asleep).
+    This asserted that every active display endpoint carries `0x10000000`,
+    which was true of the machine the module was written on and is NOT true
+    of the one it was rebuilt on: after an OS reinstall the same three
+    monitors report a bare `0x1` / `0x8`, with nothing above the documented
+    nibble at all. Both are legitimate — the bit is undocumented, so a
+    driver setting it is a quirk and a driver not setting it is a quirk.
+
+    What must hold either way is that whatever rides above the documented
+    nibble is masked off and does not move the verdict, which is what
+    `decode_state` promises and what this now checks.
     """
-    active = [e for e in live_display_endpoints
-              if e.state is da.EndpointState.ACTIVE]
-    if not active:
-        pytest.skip("no display-audio endpoint is currently active")
-    assert any(da.undocumented_state_bits(e.raw_state) for e in active), \
-        "the 0x10000000 bit is gone; the mask is still right, update this note"
+    for endpoint in live_display_endpoints:
+        raw = endpoint.raw_state
+        extra = da.undocumented_state_bits(raw)
+        assert extra & da.DEVICE_STATE_MASK == 0, \
+            f"{endpoint.friendly_name}: 0x{extra:08X} is not above the mask"
+        if raw is not None:
+            assert da.decode_state(raw) is da.decode_state(raw & ~extra), \
+                f"{endpoint.friendly_name}: 0x{extra:08X} changed the verdict"
 
 
 def test_live_the_default_endpoint_is_one_of_the_enumerated_ones(live_endpoints):

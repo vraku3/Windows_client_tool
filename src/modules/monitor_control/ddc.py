@@ -45,7 +45,7 @@ import logging
 import time
 from contextlib import contextmanager
 from ctypes import wintypes
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
@@ -121,11 +121,19 @@ class PhysicalMonitor:
 
     `_owner` is the allocation the handle came out of, so the handle can be
     given back. It takes no part in equality or repr.
+
+    `device` is the GDI device this HMONITOR draws to (`\\\\.\\DISPLAY2`), or
+    None when Windows would not say. It is the ONLY reliable way to tie a
+    monitor here to one in `view_model` -- `description` is not an identity.
+    Measured on this machine: the Gigabyte's description is "Generic PnP
+    Monitor" while its view is named "MO27Q28G", so no amount of string
+    matching between the two ever succeeds.
     """
 
     handle: int
     description: str
     hmonitor: int
+    device: Optional[str] = None
     _owner: Any = field(default=None, compare=False, repr=False)
 
 
@@ -410,6 +418,16 @@ _MONITORENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HANDLE,
                                       wintypes.LPARAM)
 
 
+class _MONITORINFOEXW(ctypes.Structure):
+    """`szDevice` is what this is for -- the rest is the price of asking."""
+
+    _fields_ = [("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD),
+                ("szDevice", wintypes.WCHAR * 32)]
+
+
 def _last_error_text(call: str) -> str:
     """The driver's own reason, named and numbered.
 
@@ -444,6 +462,9 @@ class Dxva2Api:
         self._user32.EnumDisplayMonitors.restype = wintypes.BOOL
         self._user32.EnumDisplayMonitors.argtypes = [
             wintypes.HDC, ctypes.c_void_p, _MONITORENUMPROC, wintypes.LPARAM]
+        self._user32.GetMonitorInfoW.restype = wintypes.BOOL
+        self._user32.GetMonitorInfoW.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(_MONITORINFOEXW)]
 
         dxva2 = self._dxva2
         dxva2.GetNumberOfPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
@@ -489,6 +510,20 @@ class Dxva2Api:
         if not self._user32.EnumDisplayMonitors(None, None, _collect, 0):
             raise DdcError(_last_error_text("EnumDisplayMonitors"))
         return found
+
+    def monitor_device_name(self, hmonitor: int) -> str:
+        r"""The GDI device this HMONITOR draws to (`\\.\DISPLAY2`).
+
+        Raises `DdcError` rather than returning "" -- an unnamed monitor and
+        one whose name was refused are different, and only the caller can
+        decide what to do about the second.
+        """
+        info = _MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(_MONITORINFOEXW)
+        ctypes.set_last_error(0)
+        if not self._user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
+            raise DdcError(_last_error_text("GetMonitorInfoW"))
+        return info.szDevice
 
     def open_physical_monitors(self, hmonitor: int) -> MonitorArray:
         count = wintypes.DWORD()
@@ -600,10 +635,20 @@ def list_physical_monitors(api: Optional[Any] = None) -> List[PhysicalMonitor]:
             logger.warning("could not open physical monitors for HMONITOR "
                            "0x%X: %s", hmonitor, exc)
             continue
+        # A name we could not read is None, never "": one monitor Windows
+        # will not name must not cost the others, and must not silently
+        # match a view that also has no device name.
+        device: Optional[str] = None
+        try:
+            device = api.monitor_device_name(hmonitor) or None
+        except DdcError as exc:
+            logger.warning("no GDI device name for HMONITOR 0x%X: %s",
+                           hmonitor, exc)
         for handle, description in array.handles:
             monitors.append(PhysicalMonitor(handle=handle,
                                             description=description,
                                             hmonitor=hmonitor,
+                                            device=device,
                                             _owner=array))
     return monitors
 
@@ -650,6 +695,28 @@ def find_monitor(monitors: Sequence[PhysicalMonitor],
     lowered = (needle or "").lower()
     for monitor in monitors:
         if lowered in (monitor.description or "").lower():
+            return monitor
+    return None
+
+
+def find_monitor_for_device(monitors: Sequence[PhysicalMonitor],
+                            device_name: Optional[str]
+                            ) -> Optional[PhysicalMonitor]:
+    r"""The monitor drawing to `device_name` (`\\.\DISPLAY2`), or None.
+
+    This is the pairing `view_model` needs, and it is exact: both sides get
+    the string from Windows, so there is nothing to normalise. Matching on
+    `description` instead does not work at all -- the Gigabyte on this
+    machine is "Generic PnP Monitor" to DDC and "MO27Q28G" to the view.
+
+    An empty or missing `device_name` matches nothing rather than the first
+    monitor: an inactive panel has no GDI device, and quietly handing back
+    somebody else's would point every control at the wrong screen.
+    """
+    if not device_name:
+        return None
+    for monitor in monitors:
+        if monitor.device and monitor.device == device_name:
             return monitor
     return None
 
@@ -933,3 +1000,92 @@ def set_input_source(monitor: PhysicalMonitor, value: int,
     # switch it actually made.
     return _write_and_verify(api, monitor, VCP_INPUT_SOURCE, value, value,
                              settle, compare_mask=0xFF)
+
+
+# -- by GDI device: the form the UI uses ------------------------------------
+#
+# The tab holds a `MonitorView`, which knows `\\.\DISPLAY2` and nothing about
+# HMONITORs. Everything below opens the monitors, does one thing, and gives
+# the handles straight back.
+#
+# That is not politeness, it is the only correct shape: a `PhysicalMonitor`
+# handle is owned by the `open_monitors()` block it came out of, so a UI that
+# kept one from the last refresh would be calling into a handle
+# `DestroyPhysicalMonitors` has already taken back. Re-finding the monitor per
+# operation costs one enumeration and removes that whole class of bug.
+
+def _no_such_device(code: int, requested: int,
+                    device_name: Optional[str]) -> WriteResult:
+    """The refusal used when nothing on the desktop draws to that device."""
+    return WriteResult(
+        ok=False, code=code, requested=requested, applied=None,
+        verified=None,
+        reason=("no monitor on the desktop draws to %s, so nothing was "
+                "written" % (device_name or "(no device name)")))
+
+
+def probe_device(device_name: Optional[str],
+                 api: Optional[Any] = None) -> DdcCapability:
+    r"""Probe the monitor drawing to `device_name`. Read-only.
+
+    The returned capability carries **no handle** (`monitor` is None): the
+    one it was probed through died with the `open_monitors()` block, and
+    handing a dangling handle to a UI that refreshes on a timer is precisely
+    the bug this shape avoids. Use the `*_for_device` writers instead.
+
+    A device nothing draws to answers `responded=False` with a reason that
+    says so -- which is "not present", a different thing from the
+    `responded=False` of a monitor that is there and will not talk.
+    """
+    with open_monitors(api=api) as monitors:
+        monitor = find_monitor_for_device(monitors, device_name)
+        if monitor is None:
+            return DdcCapability(
+                monitor=None, responded=False,
+                reason=("no monitor on the desktop draws to %s, so there is "
+                        "nothing to ask" % (device_name or "(no device name)")))
+        return replace(probe(monitor, api=api), monitor=None)
+
+
+def set_brightness_for_device(device_name: Optional[str], value: int,
+                              api: Optional[Any] = None,
+                              settle: float = WRITE_SETTLE_SECONDS
+                              ) -> WriteResult:
+    """Set brightness on the monitor drawing to `device_name`."""
+    with open_monitors(api=api) as monitors:
+        monitor = find_monitor_for_device(monitors, device_name)
+        if monitor is None:
+            return _no_such_device(VCP_BRIGHTNESS, value, device_name)
+        return set_brightness(monitor, value, api=api, settle=settle)
+
+
+def set_contrast_for_device(device_name: Optional[str], value: int,
+                            api: Optional[Any] = None,
+                            settle: float = WRITE_SETTLE_SECONDS
+                            ) -> WriteResult:
+    """Set contrast on the monitor drawing to `device_name`."""
+    with open_monitors(api=api) as monitors:
+        monitor = find_monitor_for_device(monitors, device_name)
+        if monitor is None:
+            return _no_such_device(VCP_CONTRAST, value, device_name)
+        return set_contrast(monitor, value, api=api, settle=settle)
+
+
+def set_input_source_for_device(device_name: Optional[str], value: int,
+                                api: Optional[Any] = None,
+                                allowed: Optional[Sequence[int]] = None,
+                                settle: float = WRITE_SETTLE_SECONDS
+                                ) -> WriteResult:
+    """Switch input on the monitor drawing to `device_name`.
+
+    `allowed` still means what it does on `set_input_source`: pass the list
+    the caller already probed to skip a second capabilities read. Without
+    it the value is validated against a fresh probe, and an unclaimed value
+    is refused rather than guessed at.
+    """
+    with open_monitors(api=api) as monitors:
+        monitor = find_monitor_for_device(monitors, device_name)
+        if monitor is None:
+            return _no_such_device(VCP_INPUT_SOURCE, value, device_name)
+        return set_input_source(monitor, value, api=api, allowed=allowed,
+                                settle=settle)

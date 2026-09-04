@@ -30,7 +30,8 @@ def _view(name="Panel", active=True, resolution=(2560, 1440), refresh=60.0,
         active=active, resolution=resolution, position=(0, 0),
         refresh_hz=refresh, rates_at_resolution=tuple(rates),
         native_resolution=native, device_name=r"\\.\DISPLAY1",
-        audio_endpoint=None, audio_is_default=False, ddc=None)
+        audio_endpoint=None, audio_is_default=False, audio_note="",
+        ddc=None)
 
 
 # ── running below the panel's best ─────────────────────────────────────
@@ -159,3 +160,203 @@ def test_running_at_native_is_not_called_downsampled():
 
 def test_an_unknown_native_resolution_makes_no_claim():
     assert vm.is_downsampled(_view(native=None)) is False
+
+
+# ── the hardware fields: audio and DDC ─────────────────────────────────
+#
+# `build_views` joins five engines now. The rule that governs all of it is
+# the one the module already lives by: ONE unreadable field must not cost
+# the list. A machine with no DDC at all, or an unreadable audio registry,
+# still has to produce a full set of monitors.
+
+class _FakeEndpoint:
+    def __init__(self, endpoint_id, name):
+        self.endpoint_id = endpoint_id
+        self.friendly_name = name
+        self.label = name
+
+
+class _FakeCap:
+    def __init__(self, responded=True, reason="DDC/CI responding"):
+        self.responded = responded
+        self.reason = reason
+
+
+def _two_monitors(monkeypatch, *, audio=None, ddc_by_device=None,
+                  default_id=None, audio_raises=None, ddc_raises=None,
+                  ambiguous=None):
+    """Stand `build_views` up over fakes for every engine it calls."""
+    from modules.monitor_control import display_audio as da
+    from modules.monitor_control import ddc as ddc_mod
+    from modules.monitor_control import display_config as dc
+    from modules.monitor_control import display_modes as dm
+    from modules.monitor_control import monitor_identity as mi
+
+    class _Mon:
+        def __init__(self, target_id, active, device):
+            self.target_id = target_id
+            self.adapter = ("LUID", 1)
+            self.connector = "HDMI"
+            self.active = active
+            self.resolution = (2560, 1440) if active else None
+            self.position = (0, 0)
+            self.refresh_hz = 144.0 if active else 0.0
+            self.device = device
+
+    class _Topology:
+        def monitors(self):
+            return [_Mon(520, True, r"\\.\DISPLAY2"),
+                    _Mon(521, False, None)]
+
+        def active_paths(self):
+            return []
+
+    names = {520: "MO27Q28G", 521: "LG ULTRAWIDE"}
+
+    class _Record:
+        def __init__(self, target_id):
+            self.friendly_name = names[target_id]
+            self.device_path = None
+
+    monkeypatch.setattr(dc, "query", lambda: _Topology())
+    monkeypatch.setattr(mi, "target_name",
+                        lambda adapter, target_id: _Record(target_id))
+    monkeypatch.setattr(mi, "source_gdi_name",
+                        lambda adapter, source_id: r"\\.\DISPLAY2")
+    monkeypatch.setattr(mi, "adapter_name", lambda adapter: "GPU")
+    monkeypatch.setattr(dm, "refresh_rates_for",
+                        lambda device, w, h: (60.0, 144.0))
+
+    # The GDI device name is what pairs a view to a physical monitor, and
+    # `build_views` gets it from the topology's active paths — which the
+    # fake leaves empty, so set it directly on the monitors instead.
+    monkeypatch.setattr(
+        vm, "_gdi_names_by_target",
+        lambda topology: {520: r"\\.\DISPLAY2"})
+
+    def _list_endpoints():
+        if audio_raises:
+            raise audio_raises
+        return list(audio or [])
+
+    def _endpoint_for(endpoints, monitor_name):
+        if (ambiguous or {}).get(monitor_name):
+            return None
+        for endpoint in endpoints:
+            if endpoint.friendly_name.endswith(monitor_name):
+                return endpoint
+        return None
+
+    monkeypatch.setattr(da, "list_render_endpoints", _list_endpoints)
+    monkeypatch.setattr(da, "endpoint_for_monitor", _endpoint_for)
+    monkeypatch.setattr(
+        da, "ambiguous_matches",
+        lambda endpoints, monitor_name: (ambiguous or {}).get(monitor_name, []))
+    monkeypatch.setattr(da, "endpoint_guid",
+                        lambda value: value.rsplit(".", 1)[-1])
+    monkeypatch.setattr(
+        da, "default_render_endpoint_detail",
+        lambda: type("R", (), {"endpoint_id": default_id,
+                               "determined": default_id is not None,
+                               "reason": "fake"})())
+
+    def _probe_device(device_name, api=None):
+        if ddc_raises:
+            raise ddc_raises
+        return (ddc_by_device or {}).get(device_name)
+
+    monkeypatch.setattr(ddc_mod, "probe_device", _probe_device)
+
+
+def test_build_views_fills_the_audio_endpoint_for_the_monitor_it_belongs_to(
+        monkeypatch):
+    endpoint = _FakeEndpoint("{guid-a}", "2 - MO27Q28G")
+    _two_monitors(monkeypatch, audio=[endpoint])
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_endpoint is endpoint
+    assert views[521].audio_endpoint is None
+
+
+def test_the_default_output_is_matched_on_the_trailing_guid(monkeypatch):
+    """The registry key is the bare guid; `IMMDevice::GetId` returns the
+    full `{0.0.0.00000000}.{guid}` form. Comparing them whole never
+    matches, and every monitor would read as "not the default"."""
+    endpoint = _FakeEndpoint("{guid-a}", "2 - MO27Q28G")
+    _two_monitors(monkeypatch, audio=[endpoint],
+                  default_id="{0.0.0.00000000}.{guid-a}")
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_is_default is True
+
+
+def test_a_monitor_that_is_not_the_default_output_says_so(monkeypatch):
+    endpoint = _FakeEndpoint("{guid-a}", "2 - MO27Q28G")
+    _two_monitors(monkeypatch, audio=[endpoint],
+                  default_id="{0.0.0.00000000}.{guid-b}")
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_is_default is False
+
+
+def test_an_unreadable_audio_registry_costs_no_monitors(monkeypatch):
+    _two_monitors(monkeypatch,
+                  audio_raises=OSError("access denied reading MMDevices"))
+    views = vm.build_views()
+    assert len(views) == 2
+    assert all(v.audio_endpoint is None for v in views)
+
+
+def test_build_views_probes_ddc_for_the_device_the_monitor_draws_to(
+        monkeypatch):
+    cap = _FakeCap()
+    _two_monitors(monkeypatch, ddc_by_device={r"\\.\DISPLAY2": cap})
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].ddc is cap
+
+
+def test_a_monitor_with_no_gdi_device_is_never_probed(monkeypatch):
+    """The LG here is connected and switched off: no device, no HMONITOR,
+    nothing to talk DDC/CI to. Probing anyway would pair it with whichever
+    monitor answered first."""
+    cap = _FakeCap()
+    _two_monitors(monkeypatch, ddc_by_device={r"\\.\DISPLAY2": cap})
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[521].ddc is None
+
+
+def test_a_machine_with_no_ddc_at_all_still_lists_its_monitors(monkeypatch):
+    _two_monitors(monkeypatch, ddc_raises=OSError("Dxva2.dll is not here"))
+    views = vm.build_views()
+    assert len(views) == 2
+    assert all(v.ddc is None for v in views)
+
+
+# ── "we could not tell" is not "there is none" ─────────────────────────
+
+def test_two_endpoints_answering_to_one_name_say_so_rather_than_guessing(
+        monkeypatch):
+    """Two identical monitors produce two identically-named live endpoints
+    and nothing in the registry separates them. Picking one would be a coin
+    flip shown as a fact."""
+    rivals = [_FakeEndpoint("{guid-a}", "2 - MO27Q28G"),
+              _FakeEndpoint("{guid-b}", "2 - MO27Q28G")]
+    _two_monitors(monkeypatch, audio=rivals, ambiguous={"MO27Q28G": rivals})
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_endpoint is None
+    assert "2 audio endpoints" in views[520].audio_note
+
+
+def test_a_monitor_that_simply_carries_no_audio_makes_no_excuse(monkeypatch):
+    """Absence with nothing to explain gets no note — a card that apologises
+    for every monitor without speakers is noise."""
+    _two_monitors(monkeypatch, audio=[])
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].audio_endpoint is None
+    assert views[520].audio_note == ""
+
+
+def test_an_unreadable_endpoint_list_is_a_note_not_a_silent_absence(
+        monkeypatch):
+    _two_monitors(monkeypatch,
+                  audio_raises=OSError("access denied reading MMDevices"))
+    for view in vm.build_views():
+        assert view.audio_endpoint is None
+        assert "could not be read" in view.audio_note

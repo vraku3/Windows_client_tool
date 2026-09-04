@@ -30,11 +30,15 @@ class FakeApi:
     """Stands in for `ddc.Dxva2Api`, recording what was asked of it."""
 
     def __init__(self, screens=None, caps=None, vcp=None,
-                 read_error=None, caps_error=None, write_error=None):
+                 read_error=None, caps_error=None, write_error=None,
+                 devices=None, device_error=None):
         # screens: {hmonitor: [(handle, description), ...]}
         self.screens = screens if screens is not None else {
             1001: [(0xAA, "Generic PnP Monitor")],
         }
+        # devices: {hmonitor: r"\\.\DISPLAY1"} -- what GetMonitorInfoW says.
+        self.devices = devices if devices is not None else {}
+        self.device_error = device_error
         self.caps = caps or {}
         self.vcp = vcp or {}
         self.read_error = read_error
@@ -50,6 +54,15 @@ class FakeApi:
     def open_physical_monitors(self, hmonitor):
         return ddc.MonitorArray(handles=list(self.screens[hmonitor]),
                                 payload=("array", hmonitor))
+
+    def monitor_device_name(self, hmonitor):
+        if self.device_error:
+            raise ddc.DdcError(self.device_error)
+        try:
+            return self.devices[hmonitor]
+        except KeyError:
+            raise ddc.DdcError("GetMonitorInfoW failed: "
+                               "ERROR_INVALID_MONITOR_HANDLE")
 
     def destroy(self, array):
         self.destroyed.append(array.payload)
@@ -610,3 +623,130 @@ def test_an_input_switch_is_verified_against_the_low_byte_too():
     result = ddc.set_input_source(_monitor(), 0x11, api=api, settle=0.0)
     assert api.writes == [(0xAA, 0x60, 0x11)]
     assert result.verified is True
+
+
+# -- tying a physical monitor to a GDI device ---------------------------
+#
+# This is the seam the tab needs: a `MonitorView` knows `\\.\DISPLAY2`, and
+# a `PhysicalMonitor` is behind an HMONITOR. `GetMonitorInfoW` joins them,
+# and it is the ONLY thing that does -- measured on the real machine, where
+# the Gigabyte's DDC description is "Generic PnP Monitor" and its view's
+# name is "MO27Q28G", so nothing about the two strings matches.
+
+def _paired_api():
+    """Two monitors, named as this machine really names them."""
+    return FakeApi(
+        screens={1: [(0xA1, "Dell S2719DGF(Displayport)")],
+                 2: [(0xB1, "Generic PnP Monitor")]},
+        devices={1: r"\\.\DISPLAY1", 2: r"\\.\DISPLAY2"},
+        caps={0xA1: DELL_REAL_CAPS, 0xB1: GIGABYTE_REAL_CAPS},
+        vcp={0xA1: {0x10: (1, 79, 100), 0x12: (1, 75, 100),
+                    0x60: (1, 0x0F, 0x1212)},
+             0xB1: {0x10: (1, 46, 100), 0x12: (1, 60, 100),
+                    0x60: (1, 0x11, 3)}})
+
+
+def test_a_physical_monitor_carries_the_gdi_device_it_draws_to():
+    monitors = ddc.list_physical_monitors(api=_paired_api())
+    assert [m.device for m in monitors] == [r"\\.\DISPLAY1", r"\\.\DISPLAY2"]
+
+
+def test_a_device_name_windows_will_not_give_is_none_not_a_guess():
+    """One unreadable name must not cost the other monitors."""
+    api = FakeApi(screens={1: [(0xA1, "A")], 2: [(0xB1, "B")]},
+                  devices={1: r"\\.\DISPLAY1"})
+    monitors = ddc.list_physical_monitors(api=api)
+    assert [m.device for m in monitors] == [r"\\.\DISPLAY1", None]
+    assert len(monitors) == 2
+
+
+def test_the_monitor_for_a_device_is_found_by_that_device():
+    monitors = ddc.list_physical_monitors(api=_paired_api())
+    found = ddc.find_monitor_for_device(monitors, r"\\.\DISPLAY2")
+    assert found is not None and found.handle == 0xB1
+
+
+def test_a_device_nothing_draws_to_is_none_not_the_first_monitor():
+    """The LG here is connected and switched off: no HMONITOR at all."""
+    monitors = ddc.list_physical_monitors(api=_paired_api())
+    assert ddc.find_monitor_for_device(monitors, r"\\.\DISPLAY3") is None
+    assert ddc.find_monitor_for_device(monitors, None) is None
+    assert ddc.find_monitor_for_device(monitors, "") is None
+
+
+def test_the_device_match_is_never_a_description_match():
+    """`find_monitor` on the name would miss the Gigabyte entirely, which is
+    exactly why the pairing goes through the device name."""
+    monitors = ddc.list_physical_monitors(api=_paired_api())
+    assert ddc.find_monitor(monitors, "MO27Q28G") is None
+    assert ddc.find_monitor_for_device(
+        monitors, r"\\.\DISPLAY2").description == "Generic PnP Monitor"
+
+
+# -- probing by device: the handle never outlives the call --------------
+
+def test_probing_by_device_answers_and_gives_the_handle_back():
+    api = _paired_api()
+    cap = ddc.probe_device(r"\\.\DISPLAY1", api=api)
+    assert cap.responded is True
+    assert cap.supports_brightness and cap.supports_input_source
+    assert cap.brightness.current == 79
+    assert api.destroyed == [("array", 1), ("array", 2)]
+
+
+def test_a_probed_capability_carries_no_handle_to_use_later():
+    """`open_monitors` destroyed it on the way out, so keeping it would hand
+    the UI a dangling handle to call across the next refresh."""
+    cap = ddc.probe_device(r"\\.\DISPLAY1", api=_paired_api())
+    assert cap.monitor is None
+
+
+def test_probing_a_device_that_is_not_on_the_desktop_says_so():
+    cap = ddc.probe_device(r"\\.\DISPLAY9", api=_paired_api())
+    assert cap.responded is False
+    assert cap.reason
+    assert r"\\.\DISPLAY9" in cap.reason
+    assert cap.supports_brightness is False
+
+
+# -- writing by device --------------------------------------------------
+
+def test_setting_brightness_by_device_reaches_that_monitor_only():
+    api = _paired_api()
+    result = ddc.set_brightness_for_device(r"\\.\DISPLAY2", 70, api=api,
+                                           settle=0.0)
+    assert result.ok is True and result.verified is True
+    assert api.writes == [(0xB1, 0x10, 70)]
+
+
+def test_setting_contrast_by_device_reaches_that_monitor_only():
+    api = _paired_api()
+    result = ddc.set_contrast_for_device(r"\\.\DISPLAY1", 50, api=api,
+                                         settle=0.0)
+    assert result.ok is True
+    assert api.writes == [(0xA1, 0x12, 50)]
+
+
+def test_switching_input_by_device_still_validates_the_claimed_list():
+    api = _paired_api()
+    result = ddc.set_input_source_for_device(r"\\.\DISPLAY1", 0x99, api=api,
+                                             settle=0.0)
+    assert result.ok is False
+    assert api.writes == []
+    assert "does not claim" in result.reason
+
+
+def test_a_write_to_a_device_that_is_not_there_writes_nothing():
+    api = _paired_api()
+    result = ddc.set_brightness_for_device(r"\\.\DISPLAY9", 70, api=api,
+                                           settle=0.0)
+    assert result.ok is False
+    assert result.verified is None
+    assert api.writes == []
+    assert r"\\.\DISPLAY9" in result.reason
+
+
+def test_a_write_by_device_gives_its_handles_back_too():
+    api = _paired_api()
+    ddc.set_brightness_for_device(r"\\.\DISPLAY1", 70, api=api, settle=0.0)
+    assert api.destroyed == [("array", 1), ("array", 2)]

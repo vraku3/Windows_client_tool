@@ -64,6 +64,37 @@ def test_no_screens_at_all_is_none_not_a_crash():
     assert guard.choose_confirm_screen(affected=None, present=[]) is None
 
 
+# ── the screen to AVOID, which is the input-source case ────────────────
+#
+# An input switch leaves the screen present as far as Qt is concerned — the
+# GPU is still driving it — while the panel shows another machine entirely.
+# Preferring the affected screen, which is right for a mode change, puts the
+# dialog on the one display that cannot show it.
+
+def test_the_confirm_avoids_the_screen_that_is_being_switched_away(screens):
+    chosen = guard.choose_confirm_screen_avoiding(
+        avoid=screens["right"], present=[screens["left"], screens["right"]])
+    assert chosen is screens["left"]
+
+
+def test_avoiding_falls_back_to_the_only_screen_there_is(screens):
+    """A countdown nobody can see is still safe: doing nothing reverts."""
+    chosen = guard.choose_confirm_screen_avoiding(
+        avoid=screens["right"], present=[screens["right"]])
+    assert chosen is screens["right"]
+
+
+def test_avoiding_an_unknown_screen_still_lands_somewhere(screens):
+    chosen = guard.choose_confirm_screen_avoiding(
+        avoid=None, present=[screens["left"], screens["right"]])
+    assert chosen is screens["left"]
+
+
+def test_avoiding_with_no_screens_at_all_is_none(screens):
+    assert guard.choose_confirm_screen_avoiding(
+        avoid=screens["right"], present=[]) is None
+
+
 # ── the revert decision ────────────────────────────────────────────────
 
 def test_a_timeout_reverts_to_the_snapshot():

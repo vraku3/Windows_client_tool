@@ -59,6 +59,29 @@ def choose_confirm_screen(affected: Any,
     return present[0]
 
 
+def choose_confirm_screen_avoiding(avoid: Any,
+                                   present: Sequence[Any]) -> Optional[Any]:
+    """Where to put the confirm when `avoid` is the screen going dark.
+
+    `choose_confirm_screen` prefers the affected screen, because for a mode
+    or arrangement change that is where the user is looking and the screen
+    either survives or disappears from `present` entirely. **Switching a
+    monitor's input source breaks that assumption**: the GPU is still
+    driving the panel, so Qt still lists the screen, but the panel is
+    showing another machine. It is the one screen guaranteed not to display
+    the dialog, so it is the one to avoid.
+
+    Falls back to `avoid` when there is nothing else — a countdown nobody
+    can see is still safe, because doing nothing is what reverts.
+    """
+    if not present:
+        return None
+    others = [screen for screen in present if screen is not avoid]
+    if others:
+        return others[0]
+    return avoid if avoid in present else present[0]
+
+
 def resolve(confirmed: bool, snapshot: Any,
             restore: Callable[[Any], None]) -> Outcome:
     """Keep the change, or put the old configuration back.

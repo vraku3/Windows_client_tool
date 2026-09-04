@@ -1,10 +1,8 @@
 """debloat_scanner — detects installed bloatware apps and tweak states."""
 import logging
-import subprocess
 from typing import Dict
 
 from core.appx_service import installed_names
-from core.windows_utils import ps_quote
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +66,15 @@ KNOWN_PACKAGES = {
     "DellInc.DellSupportAssistforPCs",
     # Lenovo OEM
     "E046963F.LenovoCompanion", "LenovoCompanyLimited.LenovoVantageService",
+    # Windows 11 24H2/25H2 AI & shell features (added 2026-09; these are
+    # exactly the packages a debloat catalog exists to remove, and were
+    # silently undetectable — debloat.json listed them, this set did not)
+    "Microsoft.AI.Landscape", "Microsoft.Windows.Copilot",
+    "Microsoft.Windows.Recall", "Microsoft.Windows.Wcr",
+    "Microsoft.SecHealthUI", "Microsoft.Windows.WebExperience",
+    "Microsoft.Windows.DeskApp", "Microsoft.Photos.Import",
+    "Microsoft.ScreenCapture", "Microsoft.Windows.Paint.Cocreator",
+    "Microsoft.Windows.Podcasts", "Microsoft.Windows.StudioDesign",
 }
 
 
@@ -82,17 +89,6 @@ def get_installed_packages() -> Dict[str, str]:
         if name in KNOWN_PACKAGES:
             installed[name] = name
     return installed
-
-
-def check_app_installed(package_name: str) -> bool:
-    """Return True if the given Appx package is installed."""
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command",
-         f"Get-AppxPackage '{ps_quote(package_name)}' -ErrorAction SilentlyContinue | Select-Object -First 1 Name"],
-        capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
-        timeout=120,
-    )
-    return bool(result.stdout.strip())
 
 
 PROTECTED_APPS = {

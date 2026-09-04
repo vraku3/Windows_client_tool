@@ -996,17 +996,41 @@ class MonitorControlModule(BaseModule):
         self._guarded(_apply, f"Display arrangement: {label}")
 
     def _do_toggle_monitor(self, target_id: int, activate: bool) -> None:
-        view = next((v for v in self._views if v.target_id == target_id), None)
+        """Connect or disconnect one monitor — immediately, no countdown.
+
+        Deliberately NOT behind `_guarded`. The countdown exists for a
+        change that can leave someone looking at a screen with no way back,
+        and neither direction of this can do that:
+
+        * Connecting only adds a display. Nothing already visible changes.
+        * Disconnecting is refused by `can_set_target_active` (inside
+          `set_target_active`) the one time it would be unsafe — turning
+          off the LAST active display — so a disconnect that reaches this
+          call always leaves at least one other monitor active. If that one
+          was primary, Windows reassigns primary to the survivor on its own
+          (measured, 2026-09-04): the screen the guard exists to protect
+          never goes dark.
+
+        Same reasoning already applied to brightness and contrast: the
+        failure the guard is FOR cannot happen here, so asking someone to
+        confirm within 15 seconds is friction with nothing behind it.
+        """
+        view = self._view_for(target_id)
         name = view.name if view else f"target {target_id}"
+        verb = "connected" if activate else "disconnected"
 
-        def _apply():
-            ok, reason = dw.set_target_active(target_id, activate)
-            if not ok:
-                raise OSError(reason)
-
-        self._guarded(
-            _apply,
-            f"{name}: {'connected' if activate else 'disconnected'}")
+        ok, reason = dw.set_target_active(target_id, activate)
+        if not ok:
+            # Nothing changed, so nothing needs re-reading — and calling
+            # `refresh_data()` here would overwrite this message with
+            # "Reading displays…" before anyone read it. Matches the
+            # outright-refusal branch of `_guarded`.
+            self._status.setText(f"{name}: could not be {verb} — {reason}")
+            logger.info("Toggle refused for %s (target %s): %s",
+                       name, target_id, reason)
+            return
+        self._status.setText(f"{name}: {verb}")
+        self.refresh_data()
 
     def _do_set_refresh_rate(self, target_id: int, hz: float) -> None:
         """Move ONE monitor to one rate, at the resolution it already has.

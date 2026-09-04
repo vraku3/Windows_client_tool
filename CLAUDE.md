@@ -801,6 +801,34 @@ Rules here, each one measured:
   worthless** — Windows has already piled the windows onto the surviving
   display. `monitor_module._topology_changed` is what keeps the screen
   signals' refresh from overwriting the only good record.
+- **Connect/disconnect skip the revert countdown entirely.** `_do_toggle_monitor`
+  calls `dw.set_target_active` directly, not through `_guarded`. Both directions
+  are safe without one: connecting only adds a display, and
+  `can_set_target_active` already refuses the one unsafe disconnect (turning
+  off the last active display) before the write runs — Windows reassigns
+  primary to the survivor on its own when the one turned off was primary
+  (measured). The countdown is friction with nothing behind it for a change
+  that can never leave a screen with no way back — same reasoning as
+  brightness/contrast.
+- **`SetDisplayConfig(0, NULL, ..., SDC_TOPOLOGY_EXTEND)` can get stuck
+  refusing ERROR_INVALID_PARAMETER, and `DisplaySwitch.exe` — what Win+P
+  itself invokes — refuses identically.** Measured 2026-09-04: heavy CCD
+  churn (repeated mode/topology changes, DDC probes) left one target cloned
+  onto the same VidPn source as another rather than extended, and neither
+  the auto-topology flag nor the OS's own Win+P recovery could resolve it.
+  `set_target_active`'s `active=True` path is partly why — it flips
+  `PATH_ACTIVE` on the FIRST matching path entry for a target id, which can
+  be the same source another target already occupies, silently re-cloning
+  rather than extending. GDI (`EnumDisplayMonitors`) is the ground truth for
+  what is actually on screen when CCD's story stops matching it — a target
+  CCD reports `active=True` can still be invisible. No further blind CCD
+  writes fixed it once wedged; it needed the hardware itself power-cycled.
+  Worth remembering before trusting `active: True` from `dc.query()` alone.
+- **A monitor's CCD target id is not stable across the session.** The
+  Gigabyte here has been seen as `520` and later `67109384` (`0x04000208`)
+  for the same physical panel, with no user action beyond ordinary topology
+  changes. Never cache a target id across a refresh; `view_model.build_views()`
+  already re-reads it every time for exactly this reason.
 - **A refused read is never an answer.** `MonitorIdentity.identified` False,
   `DdcCapability.responded` False, `audio_hidden` None and
   `WriteResult.verified` None all mean "we could not find out", and none of

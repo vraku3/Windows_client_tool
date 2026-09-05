@@ -23,9 +23,24 @@ from modules.debloat.debloat_scanner import (
 )
 from modules.debloat.debloat_search_provider import DebloatSearchProvider
 from modules.tweaks.tweak_engine import TweakEngine
+from modules.tweaks import tweak_engine as te
 from core.semantic_colors import semantic
 
 logger = logging.getLogger(__name__)
+
+#: One glyph and one semantic color per TweakEngine status. Five entries
+#: for five real values -- `.get(..., status_map["unknown"])` (the old
+#: code) is exactly how `partial` and `not_applicable` both silently
+#: rendered as "Unknown" (see the audit's V04).
+_STATUS_GLYPH = {
+    te.APPLIED: "●", te.NOT_APPLIED: "○", te.PARTIAL: "◑",
+    te.NOT_APPLICABLE: "–", te.UNKNOWN: "❓",
+}
+_STATUS_COLOR = {
+    te.APPLIED: semantic("success"), te.NOT_APPLIED: "#e0e0e0",
+    te.PARTIAL: semantic("warning"), te.NOT_APPLICABLE: "#888888",
+    te.UNKNOWN: semantic("error"),
+}
 
 
 class _SortableItem(QTableWidgetItem):
@@ -164,6 +179,17 @@ class DebloatToolsModule(BaseModule):
         preset_layout.addWidget(privacy_btn, 0, 2)
         preset_layout.addWidget(custom_btn, 0, 3)
         layout.addLayout(preset_layout)
+
+        legend = QLabel(
+            "● Applied &nbsp;&nbsp; ○ Not Applied &nbsp;&nbsp; "
+            "◑ Partially Applied &nbsp;&nbsp; – Not Applicable "
+            "&nbsp;&nbsp; ❓ Unknown — hover a row for why")
+        # setObjectName("muted"), not an inline setStyleSheet: an inline
+        # sheet beats the app stylesheet and never changes again, so it
+        # would survive a theme switch unchanged (see the "muted" role in
+        # dark.qss / light.qss and tests/test_no_inline_stylesheets.py).
+        legend.setObjectName("muted")
+        layout.addWidget(legend)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -467,17 +493,15 @@ class DebloatToolsModule(BaseModule):
             risk_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 3, risk_item)
 
-            status = engine.detect_status(tweak)
-            status_map = {
-                "applied": ("\u25cf Applied", QColor(semantic("success"))),
-                "not_applied": ("\u25cb Not Applied", QColor("#e0e0e0")),
-                "unknown": ("\u25cb Unknown", QColor("#888888")),
-            }
-            status_text, status_color = status_map.get(status, status_map["unknown"])
-            si = QTableWidgetItem(status_text)
+            result = engine.detect(tweak)
+            si = QTableWidgetItem(_STATUS_GLYPH[result.status]
+                                  + " " + te.STATUS_LABELS[result.status])
             si.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            si.setForeground(status_color)
+            si.setForeground(QColor(_STATUS_COLOR[result.status]))
             si.setData(Qt.ItemDataRole.UserRole, tweak.get("id", ""))
+            # Never blank: a status with nothing behind it is the bug this
+            # design exists to prevent (CLAUDE.md, TweakEngine.detect).
+            si.setToolTip(result.reason or te.STATUS_LABELS[result.status])
             table.setItem(row, 4, si)
 
         table.setSortingEnabled(True)

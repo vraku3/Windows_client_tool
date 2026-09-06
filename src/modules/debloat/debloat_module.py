@@ -7,12 +7,12 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QProgressBar, QPushButton, QScrollArea,
+    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget, QMessageBox,
 )
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 
 from core.appx_service import dir_size, fetch_packages
 from core.base_module import BaseModule
@@ -73,6 +73,7 @@ class DebloatToolsModule(BaseModule):
         self._engine: Optional[TweakEngine] = None
         self._tab_widget: Optional[QTabWidget] = None
         self._apps_table: Optional[QTableWidget] = None
+        self._apply_worker: Optional[Worker] = None
         self._tweaks_table: Optional[QTableWidget] = None
         self._ai_table: Optional[QTableWidget] = None
         self._installed_apps: List[str] = []
@@ -123,9 +124,16 @@ class DebloatToolsModule(BaseModule):
         self._apply_all_btn = QPushButton("Apply All Safe")
         self._apply_all_btn.clicked.connect(self._on_apply_all_safe)
         self._apply_all_btn.setEnabled(False)
+        self._cancel_apply_btn = QPushButton("✕ Cancel")
+        self._cancel_apply_btn.setVisible(False)
+        self._cancel_apply_btn.clicked.connect(self._on_cancel_apply)
+        export_btn = QPushButton("Export")
+        export_btn.clicked.connect(self._on_export_apps)
         btn_layout.addWidget(self._scan_btn, 0, 0)
         btn_layout.addWidget(self._apply_selected_btn, 0, 1)
         btn_layout.addWidget(self._apply_all_btn, 0, 2)
+        btn_layout.addWidget(self._cancel_apply_btn, 0, 3)
+        btn_layout.addWidget(export_btn, 0, 4)
         layout.addLayout(btn_layout)
 
         filter_row = QHBoxLayout()
@@ -187,10 +195,20 @@ class DebloatToolsModule(BaseModule):
         self._apps_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._apps_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._apps_table.itemChanged.connect(self._on_item_changed)
+        self._apps_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._apps_table.customContextMenuRequested.connect(self._on_apps_context_menu)
         table_layout.addWidget(self._apps_table)
 
         scroll.setWidget(table_container)
         layout.addWidget(scroll)
+
+        for seq, slot in (("Ctrl+F", self._apps_search.setFocus),
+                          ("Ctrl+A", self._on_apps_select_all),
+                          ("Ctrl+E", self._on_export_apps)):
+            sc = QShortcut(QKeySequence(seq), widget)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
+
         return widget
 
     def _build_tweaks_tab(self, tab_type: str) -> QWidget:
@@ -479,6 +497,8 @@ class DebloatToolsModule(BaseModule):
         self._apps_progress.setVisible(True)
         self._apps_progress.setRange(0, len(entry_ids))
         self._apps_progress.setValue(0)
+        self._cancel_apply_btn.setVisible(True)
+        self._cancel_apply_btn.setEnabled(True)
 
         def work(w: Worker):
             backup = self.app.backup
@@ -506,10 +526,17 @@ class DebloatToolsModule(BaseModule):
         w.signals.result.connect(self._on_apps_applied)
         w.signals.error.connect(self._on_apply_error)
         self._workers.append(w)
+        self._apply_worker = w
         self.app.thread_pool.start(w)
+
+    def _on_cancel_apply(self) -> None:
+        if self._apply_worker is not None:
+            self._apply_worker.cancel()
+        self._cancel_apply_btn.setEnabled(False)
 
     def _on_apps_applied(self, result: Dict) -> None:
         self._apps_progress.setVisible(False)
+        self._cancel_apply_btn.setVisible(False)
         self._apply_selected_btn.setEnabled(True)
         self._apply_all_btn.setEnabled(True)
         logger.info(
@@ -529,6 +556,7 @@ class DebloatToolsModule(BaseModule):
 
     def _on_apply_error(self, err: str) -> None:
         self._apps_progress.setVisible(False)
+        self._cancel_apply_btn.setVisible(False)
         self._apply_selected_btn.setEnabled(True)
         self._apply_all_btn.setEnabled(True)
         logger.error("Debloat apply error: %s", err)
@@ -537,6 +565,34 @@ class DebloatToolsModule(BaseModule):
         entries = self._load_debloat_entries()
         entry = entries.get(entry_id, {})
         return entry.get("package", "")
+
+    def _on_apps_context_menu(self, pos) -> None:
+        index = self._apps_table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+        pkg = self._find_package(
+            self._apps_table.item(row, 0).data(Qt.ItemDataRole.UserRole))
+        menu = QMenu(self._apps_table)
+        act_copy = menu.addAction("Copy package name")
+        act_copy.triggered.connect(lambda: QApplication.clipboard().setText(pkg))
+        menu.exec(self._apps_table.viewport().mapToGlobal(pos))
+
+    def _on_export_apps(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self._widget, "Export Apps", "debloat_apps.csv", "CSV (*.csv)")
+        if not path:
+            return
+        import csv
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Name", "Package", "Category"])
+            entries = self._load_debloat_entries()
+            for r in range(self._apps_table.rowCount()):
+                entry_id = self._apps_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                entry = entries.get(entry_id, {})
+                writer.writerow([entry.get("name", ""), entry.get("package", ""),
+                                entry.get("category", "")])
 
     def _on_apps_preset(self, preset_name: str) -> None:
         if preset_name == "custom":

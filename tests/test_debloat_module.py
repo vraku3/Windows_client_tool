@@ -271,3 +271,23 @@ def test_status_line_breaks_down_by_category(monkeypatch):
     mod._on_scanned({"installed": ["Pkg.A", "Pkg.B", "Pkg.C"]})
     text = mod._apps_status.text()
     assert "Gaming: 2" in text and "Bing Apps: 1" in text
+
+
+def test_cancel_button_cancels_the_apply_worker(monkeypatch):
+    mod = _module()
+    mod._apply_worker = type("W", (), {"cancelled": False,
+                                       "cancel": lambda self: setattr(self, "cancelled", True)})()
+    mod._on_cancel_apply()
+    assert mod._apply_worker.cancelled is True
+
+
+def test_export_writes_every_catalogued_and_installed_app(tmp_path, monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.A", "name": "A", "category": "X"}})
+    mod._populate_apps_table(["Pkg.A"])
+    out = tmp_path / "apps.csv"
+    monkeypatch.setattr(dm.QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(out), ""))
+    mod._on_export_apps()
+    assert "Pkg.A" in out.read_text(encoding="utf-8")

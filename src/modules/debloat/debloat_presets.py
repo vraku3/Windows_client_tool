@@ -25,7 +25,7 @@ import logging
 import os
 from typing import Dict, Iterable, List, Set
 
-from modules.tweaks.tweaks_module import _CATEGORY_FILES
+from modules.tweaks.tweak_categories import CATEGORY_FILES as _CATEGORY_FILES
 
 _logger = logging.getLogger(__name__)
 
@@ -95,16 +95,22 @@ def resolve_app_entry_ids(preset: dict,
            if pkg in pkg_to_id}
 
 
-def _load_all_tweaks() -> Dict[str, str]:
+def _load_all_tweaks(definitions_dir: str = "") -> Dict[str, str]:
     """Load all tweaks and return {id: category} mapping.
 
     Reads only the 20 authoritative tweak category files from
     _CATEGORY_FILES, excluding non-tweak files like debloat.json and
     app_catalog.json.
+
+    Args:
+        definitions_dir: directory containing tweak definition JSON files.
+            If empty, uses the default location in src/modules/tweaks/definitions.
     """
+    if not definitions_dir:
+        definitions_dir = os.path.join(os.path.dirname(__file__), "..", "tweaks",
+                                       "definitions")
+
     id_to_category = {}
-    definitions_dir = os.path.join(os.path.dirname(__file__), "..", "tweaks",
-                                   "definitions")
 
     # Only load the authoritative tweak category files, not app catalogs or
     # other non-tweak JSON files

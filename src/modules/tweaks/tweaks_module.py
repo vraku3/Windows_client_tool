@@ -20,6 +20,7 @@ from modules.tweaks.tweak_engine import (
 from modules.tweaks.os_context import get_os_context
 from modules.tweaks.app_catalog import AppCatalog, PROTECTED_APPS_DEFAULT
 from modules.tweaks.preset_manager import PresetManager
+from modules.tweaks.tweak_categories import CATEGORY_FILES
 from core.semantic_colors import semantic
 
 logger = logging.getLogger(__name__)
@@ -32,28 +33,7 @@ def _escape(text: str) -> str:
 
 
 _DEFS_DIR = os.path.join(os.path.dirname(__file__), "definitions")
-_CATEGORY_FILES = {
-    "Privacy":       "privacy.json",
-    "Performance":   "performance.json",
-    "Telemetry":     "telemetry.json",
-    "UI Tweaks":     "ui_tweaks.json",
-    "Services":      "services.json",
-    "Gaming":        "gaming.json",
-    "Security":      "security.json",
-    "Network":        "network.json",
-    "AI Features":   "ai_features.json",
-    "Navigation Pane": "navigation.json",
-    "Explorer":      "explorer.json",
-    "Taskbar & Start": "taskbar_start.json",
-    "Power":         "power.json",
-    "Input":         "input.json",
-    "Windows Update": "updates.json",
-    "Defender & Firewall": "defender.json",
-    "Browsers":      "browser.json",
-    "Storage":       "storage.json",
-    "Multimedia":    "multimedia.json",
-    "Remote Access": "remote.json",
-}
+_CATEGORY_FILES = CATEGORY_FILES
 
 #: How each verdict reads in the Status column, and which semantic colour it
 #: takes. "Not Applicable" is deliberately grey rather than red — it is not a

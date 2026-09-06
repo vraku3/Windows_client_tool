@@ -133,37 +133,20 @@ def test_load_all_tweaks_uses_only_authoritative_files(tmp_path, monkeypatch):
         '[{"id": "remove_bing_weather", "category": "Bing Apps", "steps": []}]'
     )
 
-    # Patch _CATEGORY_FILES to include only privacy.json (not debloat.json)
-    fake_category_files = {"Privacy": "privacy.json"}
+    # Patch _CATEGORY_FILES in debloat_presets to include only privacy.json
+    # (not debloat.json), proving that the real function uses _CATEGORY_FILES,
+    # not filesystem scanning
+    monkeypatch.setattr(dp, "_CATEGORY_FILES", {"Privacy": "privacy.json"})
 
-    # Mock the definitions_dir path construction in _load_all_tweaks
-    def fake_load_all_tweaks():
-        id_to_category = {}
-        definitions_dir = str(defs_dir)
-        for category, filename in fake_category_files.items():
-            filepath = defs_dir / filename
-            try:
-                with open(filepath, encoding="utf-8") as f:
-                    data = dp.json.load(f)
-                    tweaks = data if isinstance(data, list) else data.get("tweaks", [])
-                    for tweak in tweaks:
-                        if isinstance(tweak, dict):
-                            tweak_id = tweak.get("id")
-                            tweak_category = tweak.get("category")
-                            if tweak_id and tweak_category:
-                                id_to_category[tweak_id] = tweak_category
-            except (dp.json.JSONDecodeError, IOError):
-                pass
-        return id_to_category
+    # Call the real _load_all_tweaks() with the temp directory
+    result = dp._load_all_tweaks(definitions_dir=str(defs_dir))
 
-    monkeypatch.setattr(dp, "_load_all_tweaks", fake_load_all_tweaks)
-
-    result = dp._load_all_tweaks()
     # Should only have tweaks from privacy.json, not debloat.json
     assert "disable_cortana" in result
     assert "disable_tracking" in result
     assert result["disable_cortana"] == "Privacy"
     # Most importantly, debloat.json's entries should NOT be in the result
+    # even though it exists in the directory — because it's not in _CATEGORY_FILES
     assert "remove_bing_weather" not in result
 
 
@@ -176,43 +159,26 @@ def test_load_all_tweaks_handles_io_error(tmp_path, monkeypatch, caplog):
     privacy_file = defs_dir / "privacy.json"
     privacy_file.write_text('[{"id": "disable_cortana", "category": "Privacy"}]')
 
-    # Create a directory with the name of a missing file to cause IOError
-    # (trying to open a directory will raise IOError/IsADirectoryError)
+    # Create a directory with the name of a file that should be a JSON
+    # (trying to open a directory will raise IsADirectoryError/IOError)
     (defs_dir / "missing.json").mkdir()
 
-    # Mock _CATEGORY_FILES with both files
-    fake_category_files = {
-        "Privacy": "privacy.json",
-        "Telemetry": "missing.json",
-    }
+    # Patch _CATEGORY_FILES in debloat_presets to include both a valid file
+    # and one that will error, so we don't have to supply all 20 files
+    monkeypatch.setattr(
+        dp,
+        "_CATEGORY_FILES",
+        {"Privacy": "privacy.json", "Telemetry": "missing.json"}
+    )
 
-    # Define a minimal version that uses our temp directory
-    def fake_load_all_tweaks():
-        id_to_category = {}
-        for category, filename in fake_category_files.items():
-            filepath = defs_dir / filename
-            try:
-                with open(filepath, encoding="utf-8") as f:
-                    data = dp.json.load(f)
-                    tweaks = data if isinstance(data, list) else data.get("tweaks", [])
-                    for tweak in tweaks:
-                        if isinstance(tweak, dict):
-                            tweak_id = tweak.get("id")
-                            tweak_category = tweak.get("category")
-                            if tweak_id and tweak_category:
-                                id_to_category[tweak_id] = tweak_category
-            except (dp.json.JSONDecodeError, IOError, OSError) as e:
-                dp._logger.warning(f"Could not load tweaks from {filename}: {e}")
-        return id_to_category
-
-    monkeypatch.setattr(dp, "_load_all_tweaks", fake_load_all_tweaks)
-
+    # Call the real _load_all_tweaks() with the temp directory
     # Should not raise, but should log a warning
     import logging
     with caplog.at_level(logging.WARNING):
-        result = dp._load_all_tweaks()
+        result = dp._load_all_tweaks(definitions_dir=str(defs_dir))
 
     # Should have successfully loaded privacy.json
     assert "disable_cortana" in result
-    # Should have logged a warning about missing.json
+    assert result["disable_cortana"] == "Privacy"
+    # Should have logged a warning about missing.json (the directory)
     assert "Could not load tweaks from missing.json" in caplog.text

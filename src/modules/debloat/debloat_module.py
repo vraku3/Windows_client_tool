@@ -7,7 +7,8 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QGridLayout, QHeaderView, QLabel, QProgressBar, QPushButton, QScrollArea,
+    QComboBox, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QProgressBar, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget, QMessageBox,
 )
@@ -123,6 +124,25 @@ class DebloatToolsModule(BaseModule):
         btn_layout.addWidget(self._apply_selected_btn, 0, 1)
         btn_layout.addWidget(self._apply_all_btn, 0, 2)
         layout.addLayout(btn_layout)
+
+        filter_row = QHBoxLayout()
+        self._apps_search = QLineEdit()
+        self._apps_search.setPlaceholderText("Search apps…")
+        self._apps_search.textChanged.connect(self._apply_apps_filter)
+        filter_row.addWidget(self._apps_search, 1)
+        self._apps_category_combo = QComboBox()
+        self._apps_category_combo.addItem("All Categories")
+        self._apps_category_combo.currentIndexChanged.connect(self._apply_apps_filter)
+        filter_row.addWidget(self._apps_category_combo)
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(self._on_apps_select_all)
+        filter_row.addWidget(select_all_btn)
+        select_none_btn = QPushButton("Select None")
+        select_none_btn.clicked.connect(self._on_apps_select_none)
+        filter_row.addWidget(select_none_btn)
+        self._apps_selected_lbl = QLabel("0 selected")
+        filter_row.addWidget(self._apps_selected_lbl)
+        layout.addLayout(filter_row)
 
         apps_preset_layout = QGridLayout()
         for col, (key, label) in enumerate((
@@ -336,6 +356,36 @@ class DebloatToolsModule(BaseModule):
 
         self._apps_table.setSortingEnabled(True)
         self._apps_table.sortItems(1, Qt.SortOrder.AscendingOrder)
+        self._apps_table.setAlternatingRowColors(True)
+        categories = sorted({self._apps_table.item(r, 2).text()
+                            for r in range(self._apps_table.rowCount())})
+        current = self._apps_category_combo.currentText()
+        self._apps_category_combo.blockSignals(True)
+        self._apps_category_combo.clear()
+        self._apps_category_combo.addItem("All Categories")
+        self._apps_category_combo.addItems(categories)
+        idx = self._apps_category_combo.findText(current)
+        self._apps_category_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self._apps_category_combo.blockSignals(False)
+
+    def _apply_apps_filter(self) -> None:
+        query = self._apps_search.text().strip().lower()
+        category = self._apps_category_combo.currentText()
+        for r in range(self._apps_table.rowCount()):
+            name = self._apps_table.item(r, 1).text().lower()
+            row_category = self._apps_table.item(r, 2).text()
+            visible = (not query or query in name) and \
+                (category == "All Categories" or category == row_category)
+            self._apps_table.setRowHidden(r, not visible)
+
+    def _on_apps_select_all(self) -> None:
+        for r in range(self._apps_table.rowCount()):
+            if not self._apps_table.isRowHidden(r):
+                self._apps_table.item(r, 0).setCheckState(Qt.CheckState.Checked)
+
+    def _on_apps_select_none(self) -> None:
+        for r in range(self._apps_table.rowCount()):
+            self._apps_table.item(r, 0).setCheckState(Qt.CheckState.Unchecked)
 
     def _on_item_changed(self, item: QTableWidgetItem) -> None:
         if item.column() == 0:
@@ -344,6 +394,7 @@ class DebloatToolsModule(BaseModule):
                 if self._apps_table.item(r, 0).checkState() == Qt.CheckState.Checked
             )
             self._apply_selected_btn.setEnabled(checked > 0)
+            self._apps_selected_lbl.setText(f"{checked} selected")
 
     def _on_apply_selected(self) -> None:
         if not self.require_admin():

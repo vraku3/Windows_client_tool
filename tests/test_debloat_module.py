@@ -209,3 +209,44 @@ def test_multiple_protected_apps_get_one_dialog_not_several(monkeypatch):
     monkeypatch.setattr(mod, "_do_apply_apps", lambda ids: None)
     mod._on_apply_selected()
     assert len(calls) == 1
+
+
+def test_search_hides_non_matching_rows(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Microsoft.BingWeather",
+              "name": "Bing Weather", "category": "Bing Apps"},
+        "e2": {"id": "e2", "package": "Microsoft.XboxApp",
+              "name": "Xbox", "category": "Gaming"}})
+    mod._populate_apps_table(["Microsoft.BingWeather", "Microsoft.XboxApp"])
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    mod._apps_search.setText("xbox")
+    mod._apply_apps_filter()
+    visible = [r for r in range(table.rowCount()) if not table.isRowHidden(r)]
+    assert len(visible) == 1
+    assert "Xbox" in table.item(visible[0], 1).text()
+
+
+def test_select_all_checks_every_visible_row(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.A", "name": "A", "category": "X"},
+        "e2": {"id": "e2", "package": "Pkg.B", "name": "B", "category": "X"}})
+    mod._populate_apps_table(["Pkg.A", "Pkg.B"])
+    mod._on_apps_select_all()
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    assert all(table.item(r, 0).checkState() == Qt.CheckState.Checked
+              for r in range(table.rowCount()))
+
+
+def test_selected_count_label_tracks_checked_rows(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.A", "name": "A", "category": "X"}})
+    mod._populate_apps_table(["Pkg.A"])
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+    assert "1 selected" in mod._apps_selected_lbl.text()

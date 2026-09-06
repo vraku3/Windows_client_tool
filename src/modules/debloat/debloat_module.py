@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget, QMessageBox,
@@ -73,6 +73,7 @@ class DebloatToolsModule(BaseModule):
         self._engine: Optional[TweakEngine] = None
         self._tab_widget: Optional[QTabWidget] = None
         self._apps_table: Optional[QTableWidget] = None
+        self._show_all_checkbox: Optional[QCheckBox] = None
         self._apply_worker: Optional[Worker] = None
         self._tweaks_table: Optional[QTableWidget] = None
         self._ai_table: Optional[QTableWidget] = None
@@ -153,6 +154,10 @@ class DebloatToolsModule(BaseModule):
         filter_row.addWidget(select_none_btn)
         self._apps_selected_lbl = QLabel("0 selected")
         filter_row.addWidget(self._apps_selected_lbl)
+        self._show_all_checkbox = QCheckBox("Show all catalogued apps")
+        self._show_all_checkbox.toggled.connect(
+            lambda _c: self._populate_apps_table(self._installed_apps))
+        filter_row.addWidget(self._show_all_checkbox)
         layout.addLayout(filter_row)
 
         apps_preset_layout = QGridLayout()
@@ -381,7 +386,8 @@ class DebloatToolsModule(BaseModule):
 
         for entry in sorted(entries.values(), key=lambda e: e.get("name", "").lower()):
             pkg = entry.get("package", "")
-            if pkg not in installed:
+            present = pkg in installed
+            if not present and not self._show_all_checkbox.isChecked():
                 continue
             row = self._apps_table.rowCount()
             self._apps_table.insertRow(row)
@@ -392,12 +398,17 @@ class DebloatToolsModule(BaseModule):
             self._apps_table.setItem(row, 0, chk)
             name_item = _SortableItem(entry.get("name", pkg))
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if pkg in PROTECTED_APPS:
+                name_item.setToolTip(PROTECTED_REASONS.get(pkg, ""))
             self._apps_table.setItem(row, 1, name_item)
             cat_item = QTableWidgetItem(entry.get("category", ""))
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._apps_table.setItem(row, 2, cat_item)
-            size_bytes = dir_size(locations.get(pkg, ""))
-            status_item = QTableWidgetItem(human_size(size_bytes))
+            if present:
+                size_bytes = dir_size(locations.get(pkg, ""))
+                status_item = QTableWidgetItem(human_size(size_bytes))
+            else:
+                status_item = QTableWidgetItem("Not installed")
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             status_item.setData(Qt.ItemDataRole.UserRole, entry["id"])
             if pkg in PROTECTED_APPS:
@@ -446,9 +457,16 @@ class DebloatToolsModule(BaseModule):
             self._apply_selected_btn.setEnabled(checked > 0)
             self._apps_selected_lbl.setText(f"{checked} selected")
 
+    def _preview(self, names: List[str], limit: int = 15) -> str:
+        shown = names[:limit]
+        text = "\n".join(f"  • {n}" for n in shown)
+        extra = len(names) - len(shown)
+        return text + (f"\n  …and {extra} more" if extra > 0 else "")
+
     def _on_apply_selected(self) -> None:
         if not self.require_admin():
             return
+        entries = self._load_debloat_entries()
         selected_ids, protected = [], []
         for r in range(self._apps_table.rowCount()):
             if self._apps_table.item(r, 0).checkState() != Qt.CheckState.Checked:
@@ -460,14 +478,16 @@ class DebloatToolsModule(BaseModule):
             else:
                 selected_ids.append(entry_id)
         if protected:
-            names = "\n".join(
+            reasons = "\n".join(
                 f"• {pkg} — {PROTECTED_REASONS.get(pkg, 'This app may be required.')}"
                 for _, pkg in protected)
+            all_ids = selected_ids + [eid for eid, _ in protected]
+            all_names = [entries.get(eid, {}).get("name", eid) for eid in all_ids]
             if confirm_destructive(
                     self._widget, "Protected Apps Selected",
                     f"{len(protected)} of your selected app(s) are "
                     f"protected. Remove them anyway?",
-                    detail=names):
+                    detail=reasons + "\n\n" + self._preview(all_names)):
                 selected_ids.extend(eid for eid, _ in protected)
         if selected_ids:
             self._do_apply_apps(selected_ids)
@@ -475,6 +495,7 @@ class DebloatToolsModule(BaseModule):
     def _on_apply_all_safe(self) -> None:
         if not self.require_admin():
             return
+        entries = self._load_debloat_entries()
         selected_ids = []
         for r in range(self._apps_table.rowCount()):
             entry_id = self._apps_table.item(r, 3).data(Qt.ItemDataRole.UserRole)
@@ -483,11 +504,11 @@ class DebloatToolsModule(BaseModule):
                 selected_ids.append(entry_id)
         if not selected_ids:
             return
+        names = [entries.get(eid, {}).get("name", eid) for eid in selected_ids]
         if not confirm_destructive(
                 self._widget, "Remove Bloatware",
                 f"Remove {len(selected_ids)} app(s)?",
-                detail="Every non-protected app currently detected as "
-                      "installed will be removed."):
+                detail=self._preview(names)):
             return
         self._do_apply_apps(selected_ids)
 

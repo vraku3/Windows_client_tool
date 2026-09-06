@@ -98,6 +98,7 @@ PROTECTED_APPS = {
     "Microsoft.WindowsAlarms",
     "Microsoft.WindowsCalculator",
     "Microsoft.WindowsNotepad",
+    "Microsoft.ScreenSketch",
 }
 
 PROTECTED_REASONS = {
@@ -107,4 +108,6 @@ PROTECTED_REASONS = {
     "Microsoft.WindowsAlarms": "System clock and alarms",
     "Microsoft.WindowsCalculator": "System calculator",
     "Microsoft.WindowsNotepad": "System text editor",
+    "Microsoft.ScreenSketch": "Windows' screenshot/annotation tool — "
+        "several other apps (Teams, OneNote) shell out to it",
 }

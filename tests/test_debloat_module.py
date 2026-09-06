@@ -228,6 +228,24 @@ def test_search_hides_non_matching_rows(monkeypatch):
     assert "Xbox" in table.item(visible[0], 1).text()
 
 
+def test_screen_sketch_is_now_protected():
+    from modules.debloat import debloat_scanner as ds
+    assert "Microsoft.ScreenSketch" in ds.PROTECTED_APPS
+    assert ds.PROTECTED_REASONS["Microsoft.ScreenSketch"]
+
+
+def test_show_all_reveals_uninstalled_catalog_entries(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.NotHere", "name": "Ghost", "category": "X"}})
+    mod._show_all_checkbox.setChecked(True)
+    mod._populate_apps_table([])  # nothing installed
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    assert table.rowCount() == 1
+    assert "Not installed" in table.item(0, 3).text()
+
+
 def test_select_all_checks_every_visible_row(monkeypatch):
     mod = _module()
     monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {

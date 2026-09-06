@@ -18,6 +18,7 @@ from core.composite_module import CompositeModule
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.worker import Worker
+from modules.debloat import debloat_presets as dp
 from modules.debloat.debloat_scanner import (
     get_installed_packages, PROTECTED_APPS, PROTECTED_REASONS,
 )
@@ -122,6 +123,18 @@ class DebloatToolsModule(BaseModule):
         btn_layout.addWidget(self._apply_all_btn, 0, 2)
         layout.addLayout(btn_layout)
 
+        apps_preset_layout = QGridLayout()
+        for col, (key, label) in enumerate((
+                ("light", "Light Debloat"), ("full", "Full Debloat"),
+                ("privacy", "Privacy-Focused"), ("custom", "Custom"))):
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked=False, k=key: self._on_apps_preset(k))
+            apps_preset_layout.addWidget(btn, 0, col)
+        save_custom_btn = QPushButton("Save Selection as Custom")
+        save_custom_btn.clicked.connect(self._on_save_apps_as_custom)
+        apps_preset_layout.addWidget(save_custom_btn, 0, 4)
+        layout.addLayout(apps_preset_layout)
+
         self._apps_progress = QProgressBar()
         self._apps_progress.setVisible(False)
         layout.addWidget(self._apps_progress)
@@ -224,6 +237,11 @@ class DebloatToolsModule(BaseModule):
         apply_btn = QPushButton("Apply Selected Tweaks")
         apply_btn.clicked.connect(lambda: self._on_apply_tweaks(tab_type))
         layout.addWidget(apply_btn)
+
+        save_custom_btn = QPushButton("Save as Custom")
+        save_custom_btn.clicked.connect(
+            lambda _checked=False, tt=tab_type: self._on_save_tweaks_as_custom(tt))
+        layout.addWidget(save_custom_btn)
 
         return widget
 
@@ -425,6 +443,47 @@ class DebloatToolsModule(BaseModule):
         entry = entries.get(entry_id, {})
         return entry.get("package", "")
 
+    def _on_apps_preset(self, preset_name: str) -> None:
+        if preset_name == "custom":
+            self._load_custom_apps_preset()
+            return
+        preset = dp.load_preset(preset_name)
+        catalog = self._load_debloat_entries()
+        selected_ids = dp.resolve_app_entry_ids(preset, catalog)
+        for r in range(self._apps_table.rowCount()):
+            item_id = self._apps_table.item(r, 3).data(Qt.ItemDataRole.UserRole)
+            self._apps_table.item(r, 0).setCheckState(
+                Qt.CheckState.Checked if item_id in selected_ids
+                else Qt.CheckState.Unchecked)
+
+    def _load_custom_apps_preset(self) -> None:
+        try:
+            preset = dp.load_preset("custom")
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not load the Custom preset: %s", exc)
+            QMessageBox.information(
+                self._widget, "No Custom preset saved yet",
+                "Check the apps you want removed, then use “Save as "
+                "Custom” first.")
+            return
+        catalog = self._load_debloat_entries()
+        selected_ids = dp.resolve_app_entry_ids(preset, catalog)
+        for r in range(self._apps_table.rowCount()):
+            item_id = self._apps_table.item(r, 3).data(Qt.ItemDataRole.UserRole)
+            self._apps_table.item(r, 0).setCheckState(
+                Qt.CheckState.Checked if item_id in selected_ids
+                else Qt.CheckState.Unchecked)
+
+    def _on_save_apps_as_custom(self) -> None:
+        checked_ids = [
+            self._apps_table.item(r, 3).data(Qt.ItemDataRole.UserRole)
+            for r in range(self._apps_table.rowCount())
+            if self._apps_table.item(r, 0).checkState() == Qt.CheckState.Checked
+        ]
+        dp.save_custom_apps(checked_ids, self._load_debloat_entries())
+        self._apps_status.setText(
+            f"Saved {len(checked_ids)} app(s) to the Custom preset")
+
     # ------------------------------------------------------------------
     # Tab lazy-loading
     # ------------------------------------------------------------------
@@ -510,42 +569,81 @@ class DebloatToolsModule(BaseModule):
         if status_lbl:
             status_lbl.setText(f"{len(tweaks)} tweak(s) loaded")
 
-    def _on_preset(self, preset: str, tab_type: str) -> None:
+    def _on_preset(self, preset_name: str, tab_type: str) -> None:
+        """Check every row this preset's JSON file selects. Replaces the
+        old hardcoded category sets (audit V03) — `debloat_presets` reads
+        the same curated files the Light/Full/Privacy names promise."""
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
         if not table:
             return
+        tweaks = self._all_tweaks if tab_type == "tweak" else self._ai_tweaks
 
-        if tab_type == "tweak":
-            tweaks = self._all_tweaks
-        else:
-            tweaks = self._ai_tweaks
-
-        if preset == "light":
-            target_categories = {"Bing Apps", "Gaming", "Media"}
-        elif preset == "full":
-            target_categories = None  # all
-        elif preset == "privacy":
-            target_categories = {
-                "Privacy", "Telemetry", "Services", "AI Features", "Navigation Pane",
-                "Network", "Security",
-            }
-        else:  # custom - do nothing
+        if preset_name == "custom":
+            self._load_custom_preset_into(table, tweaks)
             return
 
+        preset = dp.load_preset(preset_name)
+        selected_ids = dp.resolve_tweak_ids(preset, tweaks)
         for r in range(table.rowCount()):
             item_id = table.item(r, 0).data(Qt.ItemDataRole.UserRole)
-            tweak = next((t for t in tweaks if t.get("id") == item_id), None)
-            if not tweak:
-                continue
-            category = tweak.get("category", "")
-            check = False
-            if target_categories is None:
-                check = True
-            elif category in target_categories:
-                check = True
             table.item(r, 0).setCheckState(
-                Qt.CheckState.Checked if check else Qt.CheckState.Unchecked
-            )
+                Qt.CheckState.Checked if item_id in selected_ids
+                else Qt.CheckState.Unchecked)
+
+    def _load_custom_preset_into(self, table: QTableWidget,
+                                 tweaks: List[dict]) -> None:
+        try:
+            preset = dp.load_preset("custom")
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not load the Custom preset: %s", exc)
+            QMessageBox.information(
+                self._widget, "No Custom preset saved yet",
+                "Check the tweaks you want, then use “Save as "
+                "Custom” before Custom has anything to load.")
+            return
+        selected_ids = dp.resolve_tweak_ids(preset, tweaks)
+        for r in range(table.rowCount()):
+            item_id = table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+            table.item(r, 0).setCheckState(
+                Qt.CheckState.Checked if item_id in selected_ids
+                else Qt.CheckState.Unchecked)
+
+    def _on_save_tweaks_as_custom(self, tab_type: str) -> None:
+        """P03: Custom was a silent no-op. Save the checked rows as the
+        Custom preset, grouped by each tweak's own category so
+        resolve_tweak_ids can find them again."""
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        if not table:
+            return
+        tweaks = self._all_tweaks if tab_type == "tweak" else self._ai_tweaks
+        by_id = {t.get("id", ""): t for t in tweaks}
+        checked_ids = [
+            table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+            for r in range(table.rowCount())
+            if table.item(r, 0).checkState() == Qt.CheckState.Checked
+        ]
+        by_category: Dict[str, List[str]] = {}
+        for tid in checked_ids:
+            category = by_id.get(tid, {}).get("category", "")
+            by_category.setdefault(category, []).append(tid)
+
+        existing = {}
+        try:
+            existing = dp.load_preset("custom")
+        except (OSError, ValueError):
+            logger.debug("No existing Custom preset to merge with", exc_info=True)
+        merged_tweaks = dict(existing.get("tweaks", {}))
+        merged_tweaks.update(by_category)
+
+        dp.save_custom_tweaks_and_apps(
+            merged_tweaks, existing.get("apps", {"remove": []}))
+        status_lbl = self._status_lbl_for(tab_type)
+        if status_lbl:
+            status_lbl.setText(
+                f"Saved {len(checked_ids)} tweak(s) to the Custom preset")
+
+    def _status_lbl_for(self, tab_type: str) -> Optional[QLabel]:
+        return self._widget.findChild(QLabel, f"_status_{tab_type}")
 
     def _on_apply_tweaks(self, tab_type: str) -> None:
         if not self.require_admin():

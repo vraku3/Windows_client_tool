@@ -1,3 +1,5 @@
+import json
+
 from modules.debloat import debloat_presets as dp
 
 _CATALOG = {
@@ -62,55 +64,31 @@ def test_an_empty_apps_block_selects_nothing():
 def test_save_custom_round_trips(tmp_path, monkeypatch):
     path = tmp_path / "debloat_custom.json"
     monkeypatch.setattr(dp, "_custom_path", lambda: str(path))
-    dp.save_custom(["disable_cortana"], ["remove_bing_weather"], _CATALOG)
+    dp.save_custom_tweaks_and_apps({"Privacy": ["disable_cortana"]},
+                                   {"remove": ["Microsoft.BingWeather"]})
     loaded = dp.load_preset("custom", path=str(path))
     assert loaded["tweaks"] == {"Privacy": ["disable_cortana"]}
     assert loaded["apps"] == {"remove": ["Microsoft.BingWeather"]}
 
 
-def test_save_custom_groups_multiple_tweaks_by_category(tmp_path, monkeypatch):
-    """Test that multiple tweaks across multiple categories are grouped correctly."""
+def test_save_custom_apps_merges_with_the_existing_tweaks_selection(
+        tmp_path, monkeypatch):
+    """save_custom_apps only ever changes the apps half -- whatever tweaks
+    selection is already on disk must survive the round trip. `load_preset`
+    resolves "custom" via its own default path rather than `_custom_path()`,
+    so both are redirected at the tmp file for this test."""
     path = tmp_path / "debloat_custom.json"
+    path.write_text(json.dumps(
+        {"tweaks": {"Privacy": ["disable_cortana"]}, "apps": {"remove": []}}))
     monkeypatch.setattr(dp, "_custom_path", lambda: str(path))
-    # Mock _load_all_tweaks to return a controlled mapping
-    def fake_load_tweaks():
-        return {
-            "disable_cortana": "Privacy",
-            "disable_location": "Privacy",
-            "disable_telemetry": "Telemetry",
-        }
-    monkeypatch.setattr(dp, "_load_all_tweaks", fake_load_tweaks)
+    monkeypatch.setattr(dp, "load_preset",
+                        lambda name: json.loads(path.read_text()))
 
-    # Save tweaks from two categories
-    dp.save_custom(
-        ["disable_cortana", "disable_location", "disable_telemetry"],
-        [],
-        _CATALOG
-    )
-    loaded = dp.load_preset("custom", path=str(path))
-    # Should be grouped by their categories
-    assert sorted(loaded["tweaks"]["Privacy"]) == ["disable_cortana", "disable_location"]
-    assert loaded["tweaks"]["Telemetry"] == ["disable_telemetry"]
-    assert loaded["apps"] == {"remove": []}
+    dp.save_custom_apps(["remove_bing_weather"], _CATALOG)
 
-
-def test_save_custom_fallback_unknown_tweak_to_custom_bucket(
-    tmp_path, monkeypatch
-):
-    """Test that unknown tweak ids fall back to 'Custom' category."""
-    path = tmp_path / "debloat_custom.json"
-    monkeypatch.setattr(dp, "_custom_path", lambda: str(path))
-    # Mock _load_all_tweaks to return a minimal mapping that doesn't include
-    # "unknown_tweak"
-    def fake_load_tweaks():
-        return {"disable_cortana": "Privacy"}
-    monkeypatch.setattr(dp, "_load_all_tweaks", fake_load_tweaks)
-
-    dp.save_custom(["unknown_tweak", "disable_cortana"], [], _CATALOG)
-    loaded = dp.load_preset("custom", path=str(path))
-    # unknown_tweak should fall back to "Custom"
-    assert loaded["tweaks"]["Custom"] == ["unknown_tweak"]
-    assert loaded["tweaks"]["Privacy"] == ["disable_cortana"]
+    saved = json.loads(path.read_text())
+    assert saved["tweaks"] == {"Privacy": ["disable_cortana"]}
+    assert saved["apps"] == {"remove": ["Microsoft.BingWeather"]}
 
 
 def test_load_all_tweaks_uses_only_authoritative_files(tmp_path, monkeypatch):

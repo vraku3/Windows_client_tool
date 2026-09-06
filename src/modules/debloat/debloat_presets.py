@@ -133,35 +133,35 @@ def _load_all_tweaks(definitions_dir: str = "") -> Dict[str, str]:
     return id_to_category
 
 
-def save_custom(tweak_ids: Iterable[str], app_entry_ids: Iterable[str],
-                catalog: Dict[str, dict]) -> None:
-    """Persist the Custom preset from a live selection.
-
-    Tweak ids are grouped back into `{category: [id, ...]}` the same shape
-    every other preset uses — `resolve_tweak_ids` needs a category to look
-    a tweak up under, and the id alone doesn't carry one.
-    """
-    id_to_pkg = {entry_id: entry["package"]
-                for entry_id, entry in catalog.items() if entry.get("package")}
+def save_custom_tweaks_and_apps(tweaks_by_category: Dict[str, List[str]],
+                                apps: dict) -> None:
+    """Persist the Custom preset. `tweaks_by_category` is already grouped
+    the way every other preset file groups its tweaks — the caller (the
+    tab populating it) has each tweak's real category on hand; this
+    function no longer needs to invent one."""
     data = {
         "name": "Custom Debloat", "version": 1, "builtin": True,
         "description": "User-configurable — select individual apps and "
                        "tweaks manually.",
-        "tweaks": {},
-        "apps": {"remove": sorted(id_to_pkg[i] for i in app_entry_ids
-                                  if i in id_to_pkg)},
+        "tweaks": tweaks_by_category,
+        "apps": apps,
     }
-    # Load tweaks to map ids to categories
-    id_to_category = _load_all_tweaks()
-
-    # Group tweak ids by their category
-    tweaks_by_category: Dict[str, List[str]] = {}
-    for tweak_id in tweak_ids:
-        category = id_to_category.get(tweak_id, "Custom")
-        tweaks_by_category.setdefault(category, []).append(tweak_id)
-
-    # Sort each category's tweaks and the final dict
-    data["tweaks"] = {cat: sorted(ids) for cat, ids in tweaks_by_category.items()}
-
     with open(_custom_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+
+def save_custom_apps(app_entry_ids: Iterable[str],
+                     catalog: Dict[str, dict]) -> None:
+    """The Apps-tab half of saving Custom — merges into whatever tweaks
+    selection is already saved, mirroring save_custom_tweaks_and_apps."""
+    id_to_pkg = {entry_id: entry["package"]
+                for entry_id, entry in catalog.items() if entry.get("package")}
+    existing = {}
+    try:
+        existing = load_preset("custom")
+    except (OSError, ValueError):
+        _logger.debug("No existing Custom preset to merge with", exc_info=True)
+    save_custom_tweaks_and_apps(
+        existing.get("tweaks", {}),
+        {"remove": sorted(id_to_pkg[i] for i in app_entry_ids
+                          if i in id_to_pkg)})

@@ -379,6 +379,12 @@ class DebloatToolsModule(BaseModule):
                for p in fetch_packages(use_cache=True)}
 
     def _populate_apps_table(self, installed: List[str]) -> None:
+        # Keep in sync with what's actually on screen -- the Apply methods
+        # read self._installed_apps to tell an installed row from a
+        # catalogued-but-not-installed one (Show All can put both in the
+        # table), and a caller populating directly (a test, or the Show All
+        # toggle re-populating with the same list) must not leave it stale.
+        self._installed_apps = installed
         self._apps_table.setSortingEnabled(False)
         self._apps_table.setRowCount(0)
         entries = self._load_debloat_entries()
@@ -473,6 +479,8 @@ class DebloatToolsModule(BaseModule):
                 continue
             entry_id = self._apps_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
             pkg = self._find_package(entry_id)
+            if pkg not in self._installed_apps:
+                continue
             if pkg in PROTECTED_APPS:
                 protected.append((entry_id, pkg))
             else:
@@ -500,7 +508,7 @@ class DebloatToolsModule(BaseModule):
         for r in range(self._apps_table.rowCount()):
             entry_id = self._apps_table.item(r, 3).data(Qt.ItemDataRole.UserRole)
             pkg = self._find_package(entry_id)
-            if pkg not in PROTECTED_APPS:
+            if pkg in self._installed_apps and pkg not in PROTECTED_APPS:
                 selected_ids.append(entry_id)
         if not selected_ids:
             return

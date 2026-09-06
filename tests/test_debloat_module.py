@@ -189,6 +189,30 @@ def test_apply_all_safe_asks_first(monkeypatch):
     assert asked and applied == []
 
 
+def test_apply_all_safe_excludes_not_installed_rows_when_show_all_is_on(
+        monkeypatch):
+    """Show All puts catalogued-but-uninstalled rows into the table.
+    'Apply All Safe' has no per-row checkbox gate at all, so without an
+    explicit installed-check it would attempt to remove every non-protected
+    app in the WHOLE CATALOG, not every non-protected installed app."""
+    mod = _module()
+    monkeypatch.setattr(mod, "require_admin", lambda: True)
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.A", "name": "A", "category": "X"},
+        "e2": {"id": "e2", "package": "Pkg.Ghost", "name": "Ghost",
+              "category": "X"}})
+    mod._show_all_checkbox.setChecked(True)
+    mod._populate_apps_table(["Pkg.A"])  # only Pkg.A is actually installed
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    assert table.rowCount() == 2  # both rows visible with Show All on
+    monkeypatch.setattr(dm, "confirm_destructive", lambda *a, **k: True)
+    applied = []
+    monkeypatch.setattr(mod, "_do_apply_apps", lambda ids: applied.append(ids))
+    mod._on_apply_all_safe()
+    assert applied == [["e1"]]
+
+
 def test_multiple_protected_apps_get_one_dialog_not_several(monkeypatch):
     mod = _module()
     monkeypatch.setattr(mod, "require_admin", lambda: True)

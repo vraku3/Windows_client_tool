@@ -10,6 +10,7 @@ PowerShell process.
 """
 import json
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -102,6 +103,32 @@ def dedupe_by_name(packages: List[dict]) -> List[dict]:
 def installed_names() -> List[str]:
     """Just the deduped package names (what Debloat's bloatware scan needs)."""
     return [a.get("Name", "") for a in dedupe_by_name(fetch_packages())]
+
+
+def dir_size(path: str, max_entries: int = 30000) -> int:
+    """An AppX package's on-disk size, or -1 when it is too large to scan
+    within `max_entries` files. Shared by Store Apps and Debloat so both
+    report the same number for the same package instead of each walking
+    `InstallLocation` on their own."""
+    if not path or not os.path.isdir(path):
+        return 0
+    total = 0
+    count = 0
+    try:
+        for root, _, files in os.walk(path):
+            for f in files:
+                count += 1
+                if count > max_entries:
+                    return -1
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    logger.debug("dir_size: giving up on this read", exc_info=True)
+                    pass
+    except OSError:
+        logger.debug("dir_size: giving up on this read", exc_info=True)
+        pass
+    return total
 
 
 def invalidate_cache() -> None:

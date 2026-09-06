@@ -14,9 +14,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor
 
+from core.appx_service import dir_size, fetch_packages
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
 from core.confirm import confirm_destructive
+from core.formatting import human_size
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.worker import Worker
@@ -74,6 +76,7 @@ class DebloatToolsModule(BaseModule):
         self._tweaks_table: Optional[QTableWidget] = None
         self._ai_table: Optional[QTableWidget] = None
         self._installed_apps: List[str] = []
+        self._auto_scanned: bool = False
         self._debloat_entries: Dict[str, dict] = {}
         self._all_tweaks: List[dict] = []
         self._ai_tweaks: List[dict] = []
@@ -271,7 +274,22 @@ class DebloatToolsModule(BaseModule):
         self._engine = TweakEngine(app.backup)
 
     def on_activate(self) -> None:
-        pass
+        # First-load guard (CLAUDE.md pattern): trigger the scan once, on
+        # the first activation, not on every navigation back to this tab.
+        # Gated on a dedicated flag rather than `self._installed_apps` --
+        # an empty scan result (a clean machine) is a legitimate outcome
+        # and must not be indistinguishable from "never scanned".
+        #
+        # `self._widget is None` guards a composite-hosted child whose tab
+        # was never opened: CompositeModule.on_stop and the refresh timer
+        # can both reach a child before create_widget() ever ran, so
+        # `_scan_btn` and friends don't exist yet (see
+        # test_every_composite_child_survives_a_tick_it_was_not_built_for).
+        if self._widget is None:
+            return
+        if not self._auto_scanned:
+            self._auto_scanned = True
+            self._on_scan()
 
     def on_deactivate(self) -> None:
         self.cancel_all_workers()
@@ -318,17 +336,30 @@ class DebloatToolsModule(BaseModule):
         installed: List[str] = result.get("installed", [])
         self._installed_apps = installed
         logger.info("Debloat scan complete \u2014 %d bloatware app(s) detected", len(installed))
+        entries = self._load_debloat_entries()
+        by_category: Dict[str, int] = {}
+        for entry in entries.values():
+            if entry.get("package") in installed:
+                by_category[entry.get("category", "")] = \
+                    by_category.get(entry.get("category", ""), 0) + 1
+        breakdown = ", ".join(f"{c}: {n}" for c, n in sorted(by_category.items()))
         self._apps_status.setText(
             f"Scan complete \u2014 {len(installed)} bloatware app(s) detected"
+            + (f" ({breakdown})" if breakdown else "")
         )
         self._populate_apps_table(installed)
         self._apply_selected_btn.setEnabled(len(installed) > 0)
         self._apply_all_btn.setEnabled(len(installed) > 0)
 
+    def _install_location_by_package(self) -> Dict[str, str]:
+        return {p.get("Name", ""): p.get("InstallLocation", "")
+               for p in fetch_packages(use_cache=True)}
+
     def _populate_apps_table(self, installed: List[str]) -> None:
         self._apps_table.setSortingEnabled(False)
         self._apps_table.setRowCount(0)
         entries = self._load_debloat_entries()
+        locations = self._install_location_by_package()
 
         for entry in sorted(entries.values(), key=lambda e: e.get("name", "").lower()):
             pkg = entry.get("package", "")
@@ -347,7 +378,8 @@ class DebloatToolsModule(BaseModule):
             cat_item = QTableWidgetItem(entry.get("category", ""))
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._apps_table.setItem(row, 2, cat_item)
-            status_item = QTableWidgetItem("\u25cf Present")
+            size_bytes = dir_size(locations.get(pkg, ""))
+            status_item = QTableWidgetItem(human_size(size_bytes))
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             status_item.setData(Qt.ItemDataRole.UserRole, entry["id"])
             if pkg in PROTECTED_APPS:

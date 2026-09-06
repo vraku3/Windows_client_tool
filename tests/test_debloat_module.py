@@ -250,3 +250,24 @@ def test_selected_count_label_tracks_checked_rows(monkeypatch):
     table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
     table.item(0, 0).setCheckState(Qt.CheckState.Checked)
     assert "1 selected" in mod._apps_selected_lbl.text()
+
+
+def test_first_activation_triggers_a_scan(monkeypatch):
+    mod = _module()
+    scanned = []
+    monkeypatch.setattr(mod, "_on_scan", lambda: scanned.append(1))
+    mod.on_activate()
+    assert scanned == [1]
+    mod.on_activate()  # second time must NOT scan again
+    assert scanned == [1]
+
+
+def test_status_line_breaks_down_by_category(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.A", "name": "A", "category": "Gaming"},
+        "e2": {"id": "e2", "package": "Pkg.B", "name": "B", "category": "Gaming"},
+        "e3": {"id": "e3", "package": "Pkg.C", "name": "C", "category": "Bing Apps"}})
+    mod._on_scanned({"installed": ["Pkg.A", "Pkg.B", "Pkg.C"]})
+    text = mod._apps_status.text()
+    assert "Gaming: 2" in text and "Bing Apps: 1" in text

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.formatting import human_size
-from core.appx_service import dedupe_by_name, fetch_packages
+from core.appx_service import dedupe_by_name, dir_size, fetch_packages
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
@@ -712,32 +712,10 @@ class StoreAppsModule(BaseModule):
         def scan():
             for app in self._apps:
                 loc = app.get("InstallLocation", "")
-                size = self._dir_size(loc)
+                size = dir_size(loc)
                 self._size_signals.size_ready.emit(app.get("Name", ""), size)
         self._size_thread = threading.Thread(target=scan, daemon=True)
         self._size_thread.start()
-
-    @staticmethod
-    def _dir_size(path: str, max_entries: int = 30000) -> int:
-        if not path or not os.path.isdir(path):
-            return 0
-        total = 0
-        count = 0
-        try:
-            for root, _, files in os.walk(path):
-                for f in files:
-                    count += 1
-                    if count > max_entries:
-                        return -1
-                    try:
-                        total += os.path.getsize(os.path.join(root, f))
-                    except OSError:
-                        logger.debug("_dir_size: giving up on this read", exc_info=True)
-                        pass
-        except OSError:
-            logger.debug("_dir_size: giving up on this read", exc_info=True)
-            pass
-        return total
 
     def _on_size_ready(self, name: str, size: int) -> None:
         if not self._widget_valid(self._table):

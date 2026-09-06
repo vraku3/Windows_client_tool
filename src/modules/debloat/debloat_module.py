@@ -15,6 +15,7 @@ from PyQt6.QtGui import QColor
 
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
+from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.worker import Worker
@@ -347,22 +348,26 @@ class DebloatToolsModule(BaseModule):
     def _on_apply_selected(self) -> None:
         if not self.require_admin():
             return
-        selected_ids = []
+        selected_ids, protected = [], []
         for r in range(self._apps_table.rowCount()):
             if self._apps_table.item(r, 0).checkState() != Qt.CheckState.Checked:
                 continue
             entry_id = self._apps_table.item(r, 0).data(Qt.ItemDataRole.UserRole)
             pkg = self._find_package(entry_id)
             if pkg in PROTECTED_APPS:
-                reason = PROTECTED_REASONS.get(pkg, "This app may be required.")
-                reply = QMessageBox.warning(
-                    self._widget, "Protected App",
-                    f"{pkg}\n\n{reason}\n\nRemove anyway?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
-                    continue
-            selected_ids.append(entry_id)
+                protected.append((entry_id, pkg))
+            else:
+                selected_ids.append(entry_id)
+        if protected:
+            names = "\n".join(
+                f"• {pkg} — {PROTECTED_REASONS.get(pkg, 'This app may be required.')}"
+                for _, pkg in protected)
+            if confirm_destructive(
+                    self._widget, "Protected Apps Selected",
+                    f"{len(protected)} of your selected app(s) are "
+                    f"protected. Remove them anyway?",
+                    detail=names):
+                selected_ids.extend(eid for eid, _ in protected)
         if selected_ids:
             self._do_apply_apps(selected_ids)
 
@@ -375,8 +380,15 @@ class DebloatToolsModule(BaseModule):
             pkg = self._find_package(entry_id)
             if pkg not in PROTECTED_APPS:
                 selected_ids.append(entry_id)
-        if selected_ids:
-            self._do_apply_apps(selected_ids)
+        if not selected_ids:
+            return
+        if not confirm_destructive(
+                self._widget, "Remove Bloatware",
+                f"Remove {len(selected_ids)} app(s)?",
+                detail="Every non-protected app currently detected as "
+                      "installed will be removed."):
+            return
+        self._do_apply_apps(selected_ids)
 
     def _do_apply_apps(self, entry_ids: List[str]) -> None:
         self._apply_selected_btn.setEnabled(False)

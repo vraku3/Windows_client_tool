@@ -171,3 +171,41 @@ def test_custom_preset_saves_the_live_selection_and_reloads_it(
     mod._on_save_tweaks_as_custom("tweak")
 
     assert saved["tweaks"] == {"Privacy": ["disable_cortana"]}
+
+
+def test_apply_all_safe_asks_first(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "require_admin", lambda: True)
+    monkeypatch.setattr(mod, "_load_debloat_entries",
+                        lambda: {"e1": {"id": "e1", "package": "Pkg.A",
+                                        "name": "A", "category": "X"}})
+    mod._populate_apps_table(["Pkg.A"])
+    asked = []
+    monkeypatch.setattr(dm, "confirm_destructive",
+                        lambda *a, **k: asked.append(1) or False)
+    applied = []
+    monkeypatch.setattr(mod, "_do_apply_apps", lambda ids: applied.append(ids))
+    mod._on_apply_all_safe()
+    assert asked and applied == []
+
+
+def test_multiple_protected_apps_get_one_dialog_not_several(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(mod, "require_admin", lambda: True)
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Microsoft.WindowsStore",
+              "name": "Store", "category": "X"},
+        "e2": {"id": "e2", "package": "Microsoft.WindowsTerminal",
+              "name": "Terminal", "category": "X"}})
+    mod._populate_apps_table(
+        ["Microsoft.WindowsStore", "Microsoft.WindowsTerminal"])
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    for r in range(table.rowCount()):
+        table.item(r, 0).setCheckState(Qt.CheckState.Checked)
+    calls = []
+    monkeypatch.setattr(dm, "confirm_destructive",
+                        lambda *a, **k: calls.append(1) or True)
+    monkeypatch.setattr(mod, "_do_apply_apps", lambda ids: None)
+    mod._on_apply_selected()
+    assert len(calls) == 1

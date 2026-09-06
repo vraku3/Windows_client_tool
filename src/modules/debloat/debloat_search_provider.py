@@ -10,11 +10,14 @@ they've even opened the tab.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime
-from typing import Dict, List
+from typing import List
 
 from core.search_provider import FilterField, SearchProvider, SearchQuery, SearchResult
+
+logger = logging.getLogger(__name__)
 
 _DEFS_DIR = os.path.join(os.path.dirname(__file__), "..", "tweaks", "definitions")
 _TWEAK_FILES = ("privacy.json", "telemetry.json", "services.json",
@@ -25,7 +28,8 @@ def _load_json(path: str) -> list:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not load %s: %s", path, exc)
         return []
 
 

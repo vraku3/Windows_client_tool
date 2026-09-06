@@ -25,6 +25,8 @@ import logging
 import os
 from typing import Dict, Iterable, List, Set
 
+from modules.tweaks.tweaks_module import _CATEGORY_FILES
+
 _logger = logging.getLogger(__name__)
 
 _NAMES = ("light", "full", "privacy", "custom")
@@ -94,27 +96,33 @@ def resolve_app_entry_ids(preset: dict,
 
 
 def _load_all_tweaks() -> Dict[str, str]:
-    """Load all tweaks and return {id: category} mapping."""
+    """Load all tweaks and return {id: category} mapping.
+
+    Reads only the 20 authoritative tweak category files from
+    _CATEGORY_FILES, excluding non-tweak files like debloat.json and
+    app_catalog.json.
+    """
     id_to_category = {}
     definitions_dir = os.path.join(os.path.dirname(__file__), "..", "tweaks",
                                    "definitions")
 
-    for filename in os.listdir(definitions_dir):
-        if filename.endswith(".json") and not filename.startswith("app_"):
-            filepath = os.path.join(definitions_dir, filename)
-            try:
-                with open(filepath, encoding="utf-8") as f:
-                    data = json.load(f)
-                    # Handle both list and dict formats
-                    tweaks = data if isinstance(data, list) else data.get("tweaks", [])
-                    for tweak in tweaks:
-                        if isinstance(tweak, dict):
-                            tweak_id = tweak.get("id")
-                            category = tweak.get("category")
-                            if tweak_id and category:
-                                id_to_category[tweak_id] = category
-            except (json.JSONDecodeError, IOError) as e:
-                _logger.warning(f"Could not load tweaks from {filename}: {e}")
+    # Only load the authoritative tweak category files, not app catalogs or
+    # other non-tweak JSON files
+    for category, filename in _CATEGORY_FILES.items():
+        filepath = os.path.join(definitions_dir, filename)
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                data = json.load(f)
+                # Handle both list and dict formats
+                tweaks = data if isinstance(data, list) else data.get("tweaks", [])
+                for tweak in tweaks:
+                    if isinstance(tweak, dict):
+                        tweak_id = tweak.get("id")
+                        tweak_category = tweak.get("category")
+                        if tweak_id and tweak_category:
+                            id_to_category[tweak_id] = tweak_category
+        except (json.JSONDecodeError, IOError) as e:
+            _logger.warning(f"Could not load tweaks from {filename}: {e}")
 
     return id_to_category
 

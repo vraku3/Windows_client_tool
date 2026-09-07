@@ -12,7 +12,7 @@ from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QFileDialog, QHBoxLayout,
-    QHeaderView, QLineEdit, QMenu, QMessageBox,
+    QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox,
     QProgressBar, QPushButton, QStackedWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -243,6 +243,8 @@ class StoreAppsModule(BaseModule):
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self._load_apps)
         toolbar.addWidget(refresh_btn)
+        self._last_refreshed_lbl = QLabel("")
+        toolbar.addWidget(self._last_refreshed_lbl)
         self._progress = QProgressBar()
         self._progress.setMaximumWidth(200)
         self._progress.setVisible(False)
@@ -290,6 +292,10 @@ class StoreAppsModule(BaseModule):
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
         self._table.setSortingEnabled(True)
+        saved_col = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0)
+        saved_order = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_order",
+                                              Qt.SortOrder.AscendingOrder.value))
+        header.setSortIndicator(saved_col, Qt.SortOrder(saved_order))
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -506,6 +512,7 @@ class StoreAppsModule(BaseModule):
         self._restore_state(state)
         self._apply_filter()
         self._start_size_scan()
+        self._last_refreshed_lbl.setText(f"Refreshed {datetime.datetime.now():%H:%M}")
 
     def _on_load_error(self, err: str) -> None:
         self._progress.setVisible(False)
@@ -649,9 +656,15 @@ class StoreAppsModule(BaseModule):
         rows = sorted({idx.row() for idx in self._table.selectedIndexes()})
         targets, skipped_names = [], []
         for r in rows:
-            display = self._table.item(r, 0).text()
-            name = self._table.item(r, 0).data(Qt.ItemDataRole.UserRole) or display
-            removable = self._table.item(r, 4).text()
+            name_cell = self._table.item(r, 0)
+            if name_cell is None:
+                continue
+            display = name_cell.text()
+            name = name_cell.data(Qt.ItemDataRole.UserRole) or display
+            removable_cell = self._table.item(r, 4)
+            if removable_cell is None:
+                continue
+            removable = removable_cell.text()
             if "System" in removable:
                 skipped_names.append(display)
                 continue
@@ -833,6 +846,8 @@ class StoreAppsModule(BaseModule):
             return
         row = self._row_of(name)
         if row < 0:
+            logger.debug("Size for %s arrived but it is no longer in the table "
+                        "(removed or refreshed away)", name)
             return
         approximate = size < 0
         real_size = -size - 1 if approximate else size
@@ -888,7 +903,7 @@ class StoreAppsModule(BaseModule):
         self.app.config.set(f"{self._CONFIG_PREFIX}.sort_column",
                             int(header.sortIndicatorSection()))
         self.app.config.set(f"{self._CONFIG_PREFIX}.sort_order",
-                            int(header.sortIndicatorOrder()))
+                            int(header.sortIndicatorOrder().value))
 
     def _row_of(self, package_name: str) -> int:
         cached = self._row_index.get(package_name, -1)

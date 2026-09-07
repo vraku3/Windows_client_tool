@@ -1,6 +1,6 @@
 import os
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
 
 from core.appx_service import _version_key
 from modules.store_apps import store_apps_module as sam
@@ -519,3 +519,31 @@ def test_status_line_shows_selection_and_size_while_active(monkeypatch):
     mod._table.selectRow(0)
     text = mod.get_status_info()
     assert "selected" in text
+
+
+def test_sort_column_is_actually_restored_after_a_restart(monkeypatch):
+    import tempfile
+    mod = sam.StoreAppsModule()
+    app = _make_fake_app(tempfile.mkdtemp())
+    mod.on_start(app)
+    mod.app.config.set("modules.store_apps.sort_column", 2)
+    mod.app.config.set("modules.store_apps.sort_order", Qt.SortOrder.DescendingOrder.value)
+    mod.create_widget()  # NOW create_widget() reads the already-set config
+    load_two_apps(mod)
+    header = mod._table.horizontalHeader()
+    assert header.sortIndicatorSection() == 2
+
+
+def test_last_refreshed_label_updates_after_a_load(monkeypatch):
+    mod = store_module()
+    load_two_apps(mod)
+    assert mod._last_refreshed_lbl.text() != ""
+
+
+def test_a_row_vanishing_mid_size_scan_is_logged(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.DEBUG)
+    mod = store_module()
+    load_two_apps(mod)
+    mod._on_size_ready("Pkg.DoesNotExistAnymore", 100)
+    assert "no longer in the table" in caplog.text.lower()

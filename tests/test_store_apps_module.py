@@ -1,3 +1,5 @@
+from PyQt6.QtCore import QPoint
+
 from core.appx_service import _version_key
 from modules.store_apps import store_apps_module as sam
 from modules.store_apps.store_apps_module import (
@@ -306,3 +308,133 @@ def test_skipped_system_apps_are_named():
     text = mod._uninstall_confirmation_text(
         names=["A"], skipped_names=["Microsoft.Windows"], total_bytes=0)
     assert "Microsoft.Windows" in text
+
+
+def _open_context_menu(mod, name, monkeypatch, captured):
+    """Trigger _on_context_menu for the row holding `name`, bypassing pixel
+    math -- indexAt is stubbed to return that row directly, and QMenu.exec
+    is stubbed to capture the built menu instead of blocking on a real
+    (headless) event loop."""
+    row = mod._row_of(name)
+    assert row >= 0, f"{name} not found in table"
+    monkeypatch.setattr(mod._table, "indexAt", lambda pos: mod._table.model().index(row, 0))
+    monkeypatch.setattr(sam.QMenu, "exec", lambda self, *a, **k: captured.append(self))
+    captured.clear()
+    mod._on_context_menu(QPoint(0, 0))
+    return {a.text(): a for a in captured[0].actions()}
+
+
+def test_context_menu_copy_pfn_and_location_actions(monkeypatch):
+    mod = store_module()
+    apps = [
+        {"Name": "Pkg.WithBoth",
+         "InstallLocation": r"C:\Program Files\WindowsApps\Pkg.WithBoth_1.0_x64__abc",
+         "Publisher": "Pub", "Version": "1.0", "PackageFamilyName": "Pkg.WithBoth_abc"},
+        {"Name": "Pkg.Bare", "InstallLocation": "", "Publisher": "", "Version": "",
+         "PackageFamilyName": ""},
+    ]
+    mod._apps = apps
+    monkeypatch.setattr(mod, "_start_size_scan", lambda: None)  # no background thread to race teardown
+    mod._on_apps_loaded(apps, None)
+
+    captured = []
+    actions_with = _open_context_menu(mod, "Pkg.WithBoth", monkeypatch, captured)
+    assert "Copy Package Family Name" in actions_with
+    assert "Copy install location" in actions_with
+    assert actions_with["Copy Package Family Name"].isEnabled()
+    assert actions_with["Copy install location"].isEnabled()
+
+    actions_bare = _open_context_menu(mod, "Pkg.Bare", monkeypatch, captured)
+    assert not actions_bare["Copy Package Family Name"].isEnabled()
+    assert not actions_bare["Copy install location"].isEnabled()
+
+
+def test_open_folder_guard_reports_missing_location_without_calling_startfile(
+        monkeypatch, tmp_path):
+    mod = store_module()
+    missing = str(tmp_path / "does_not_exist_anymore")
+    apps = [
+        {"Name": "Pkg.Gone", "InstallLocation": missing,
+         "Publisher": "", "Version": "", "PackageFamilyName": "Pkg.Gone_abc"},
+    ]
+    mod._apps = apps
+    monkeypatch.setattr(mod, "_start_size_scan", lambda: None)  # no background thread to race teardown
+    mod._on_apps_loaded(apps, None)
+
+    def boom(path):
+        raise AssertionError(f"os.startfile must not be called for a missing path: {path}")
+    monkeypatch.setattr(sam.os, "startfile", boom)
+
+    info_calls = []
+    monkeypatch.setattr(sam.QMessageBox, "information",
+                        lambda *a, **k: info_calls.append(a))
+
+    captured = []
+    actions = _open_context_menu(mod, "Pkg.Gone", monkeypatch, captured)
+    actions["Open install folder"].trigger()
+
+    assert len(info_calls) == 1
+    assert "no longer exists" in info_calls[0][-1]
+    assert missing in info_calls[0][-1]
+
+
+def test_csv_export_writes_all_six_columns(monkeypatch, tmp_path):
+    mod = store_module()
+    apps = [
+        {"Name": "Pkg.Exportable",
+         "InstallLocation": r"C:\Program Files\WindowsApps\Pkg.Exportable_1.2.3_x64__abc",
+         "Publisher": "CN=Vendor Inc, O=Vendor Inc, L=City, S=ST, C=US",
+         "Version": "1.2.3", "PackageFamilyName": "Pkg.Exportable_abc",
+         "Architecture": "X64"},
+    ]
+    mod._apps = apps
+    monkeypatch.setattr(mod, "_start_size_scan", lambda: None)  # no background thread to race teardown
+    mod._on_apps_loaded(apps, None)
+
+    csv_path = tmp_path / "export.csv"
+    monkeypatch.setattr(sam.QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(csv_path), "CSV file (*.csv)"))
+    monkeypatch.setattr(sam.QMessageBox, "information", lambda *a, **k: None)
+
+    mod._export()
+
+    assert csv_path.exists()
+    with open(csv_path, encoding="utf-8-sig", newline="") as f:
+        rows = list(sam.csv.reader(f))
+    assert rows[0] == ["Package Name", "Display Name", "Publisher",
+                       "Version", "Size", "Architecture"]
+    assert len(rows) == 2
+    data = rows[1]
+    assert len(data) == 6
+    assert data[0] == "Pkg.Exportable"
+    assert data[1] == "Exportable"
+    assert data[2] == "Vendor Inc"
+    assert data[3] == "1.2.3"
+    assert data[5] == "X64"
+
+
+def test_system_tooltip_distinguishes_exact_match_from_path_based(monkeypatch):
+    mod = store_module()
+    apps = [
+        {"Name": "Microsoft.WindowsStore",  # exact match in SYSTEM_PACKAGES
+         "InstallLocation": r"C:\Program Files\WindowsApps\Microsoft.WindowsStore_x64__8wekyb3d8bbwe",
+         "Publisher": "", "Version": ""},
+        {"Name": "Microsoft.Windows.StartMenuExperienceHost",  # path-based only
+         "InstallLocation": r"C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy",
+         "Publisher": "", "Version": ""},
+    ]
+    mod._apps = apps
+    monkeypatch.setattr(mod, "_start_size_scan", lambda: None)  # no background thread to race teardown
+    mod._on_apps_loaded(apps, None)
+
+    exact_row = mod._row_of("Microsoft.WindowsStore")
+    path_row = mod._row_of("Microsoft.Windows.StartMenuExperienceHost")
+    exact_tip = mod._table.item(exact_row, 4).toolTip()
+    path_tip = mod._table.item(path_row, 4).toolTip()
+
+    assert exact_tip != path_tip
+    assert "exact-match core Windows package" in exact_tip
+    assert f"installed under {sam.system_root()}\\SystemApps" in path_tip
+    assert "exact-match" not in path_tip
+    assert "Removes for every user on this machine." in exact_tip
+    assert "Removes for every user on this machine." in path_tip

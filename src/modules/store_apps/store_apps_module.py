@@ -26,7 +26,7 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import NumericSortItem
 from core.worker import Worker
-from core.windows_utils import ps_quote
+from core.windows_utils import ps_quote, system_root
 from ui.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
@@ -315,10 +315,11 @@ class StoreAppsModule(BaseModule):
 
         # Bottom toolbar
         bottom = QHBoxLayout()
-        uninstall_btn = QPushButton("🗑️ Uninstall Selected")
-        uninstall_btn.setStyleSheet("color: #f48771; font-weight: bold;")
-        uninstall_btn.clicked.connect(self._uninstall)
-        bottom.addWidget(uninstall_btn)
+        self._uninstall_btn = QPushButton("🗑️ Uninstall Selected")
+        self._uninstall_btn.setStyleSheet("color: #f48771; font-weight: bold;")
+        self._uninstall_btn.setToolTip("Removes for every user on this machine.")
+        self._uninstall_btn.clicked.connect(self._uninstall)
+        bottom.addWidget(self._uninstall_btn)
         select_btn = QPushButton("☑ Select Non-System")
         select_btn.clicked.connect(self._select_non_system)
         bottom.addWidget(select_btn)
@@ -474,9 +475,12 @@ class StoreAppsModule(BaseModule):
                 rem_item.setForeground(QColor(semantic("warning")))
             else:
                 rem_item.setForeground(QColor(semantic("success")))
+            reason = ("an exact-match core Windows package"
+                     if name in SYSTEM_PACKAGES else
+                     f"installed under {system_root()}\\SystemApps")
             rem_item.setToolTip(
-                "System packages cannot be uninstalled without breaking Windows"
-            )
+                f"System packages cannot be uninstalled without breaking "
+                f"Windows ({reason}). Removes for every user on this machine.")
             self._table.setItem(row, 4, rem_item)
 
             pfn_item = QTableWidgetItem(app.get("PackageFamilyName", ""))
@@ -583,14 +587,29 @@ class StoreAppsModule(BaseModule):
         act_copy_cmd.triggered.connect(
             lambda: QApplication.clipboard().setText(
                 f"Get-AppxPackage -Name '{ps_quote(package_name)}' | Remove-AppxPackage -AllUsers"))
-        menu.addSeparator()
         location = (app or {}).get("InstallLocation", "")
+        pfn = (app or {}).get("PackageFamilyName", "")
+        act_copy_pfn = menu.addAction("Copy Package Family Name")
+        act_copy_pfn.setEnabled(bool(pfn))
+        act_copy_pfn.triggered.connect(lambda: QApplication.clipboard().setText(pfn))
+        act_copy_loc = menu.addAction("Copy install location")
+        act_copy_loc.setEnabled(bool(location))
+        act_copy_loc.triggered.connect(lambda: QApplication.clipboard().setText(location))
+        menu.addSeparator()
+
+        def _open_folder():
+            if not location or not os.path.isdir(location):
+                QMessageBox.information(
+                    self._table, "Folder not found",
+                    f"{location or '(no location recorded)'} no longer exists.")
+                return
+            os.startfile(location)
         act_open_folder = menu.addAction("Open install folder")
         act_open_folder.setEnabled(bool(location))
-        act_open_folder.triggered.connect(lambda: os.startfile(location))
-        pfn = (app or {}).get("PackageFamilyName", "")
+        act_open_folder.triggered.connect(_open_folder)
         act_store = menu.addAction("Open in Microsoft Store")
         act_store.setEnabled(bool(pfn))
+        act_store.setToolTip("This package has no Package Family Name" if not pfn else "")
         act_store.triggered.connect(
             lambda: os.startfile(f"ms-windows-store://pdp/?PFN={pfn}"))
         menu.exec(self._table.viewport().mapToGlobal(pos))
@@ -879,8 +898,20 @@ class StoreAppsModule(BaseModule):
             if path.lower().endswith(".csv"):
                 with open(path, "w", newline="", encoding="utf-8-sig") as f:
                     writer = csv.writer(f)
-                    writer.writerow(["Package Name", "Display Name", "Publisher"])
-                    writer.writerows(targets)
+                    writer.writerow(["Package Name", "Display Name", "Publisher",
+                                    "Version", "Size", "Architecture"])
+                    for r in rows:
+                        if "System" in self._table.item(r, 4).text():
+                            continue
+                        writer.writerow([
+                            self._table.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                            or self._table.item(r, 0).text(),
+                            self._table.item(r, 0).text(),
+                            self._table.item(r, 1).text(),
+                            self._table.item(r, 2).text(),
+                            self._table.item(r, 3).text(),
+                            self._table.item(r, 6).text(),
+                        ])
             else:
                 lines = [
                     "# Generated by Windows Client Tool",
@@ -897,8 +928,9 @@ class StoreAppsModule(BaseModule):
 
         QMessageBox.information(
             self._widget, "Exported",
-            f"Exported {len(targets)} app(s) to:\n{path}",
-        )
+            f"Exported {len(targets)} app(s) to:\n{path}\n\n"
+            f"To remove them now instead of running the script later, "
+            f"select the same apps here and use “Uninstall Selected.”")
 
     # ------------------------------------------------------------------
     # Shortcuts / helpers

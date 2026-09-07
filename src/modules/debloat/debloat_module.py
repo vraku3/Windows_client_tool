@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QCoreApplication, QEvent, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
@@ -56,6 +56,14 @@ class _SortableItem(QTableWidgetItem):
         return self.text().lower() < other.text().lower()
 
 
+class _Signals(QObject):
+    """Cross-thread bridge for TweakEngine.detect_many()'s per-result
+    callback -- see CLAUDE.md's "Cross-thread widget access" rule.
+    on_result runs on detect_many's internal worker threads; a pyqtSignal
+    is the one thread-safe way to get that back to the widgets."""
+    tweak_detected = pyqtSignal(str, str, str, str)  # tab_type, tweak_id, status, reason
+
+
 class DebloatToolsModule(BaseModule):
     """Debloat's own three tabs. A child of `DebloatModule` below."""
 
@@ -83,6 +91,8 @@ class DebloatToolsModule(BaseModule):
         self._debloat_entries: Dict[str, dict] = {}
         self._all_tweaks: List[dict] = []
         self._ai_tweaks: List[dict] = []
+        self._tweak_defs_cache: Dict[tuple, tuple] = {}
+        self._signals = _Signals()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -105,6 +115,7 @@ class DebloatToolsModule(BaseModule):
         self._tab_widget.addTab(self._build_tweaks_tab("tweak"), "Privacy & Telemetry")
         self._tab_widget.addTab(self._build_tweaks_tab("ai"), "AI & Navigation")
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
+        self._signals.tweak_detected.connect(self._on_tweak_detected)
 
         layout.addWidget(self._tab_widget)
         return self._widget
@@ -724,18 +735,23 @@ class DebloatToolsModule(BaseModule):
     # ------------------------------------------------------------------
 
     def _load_tweak_definitions(self, tab_type: str) -> List[dict]:
-        if tab_type == "tweak":
-            files = ["privacy.json", "telemetry.json", "services.json", "network.json"]
-        else:
-            files = ["ai_features.json", "navigation.json"]
+        files = (["privacy.json", "telemetry.json", "services.json", "network.json"]
+                 if tab_type == "tweak" else ["ai_features.json", "navigation.json"])
+        base = os.path.join(os.path.dirname(__file__), "..", "tweaks", "definitions")
+        cache_key = tuple(files)
+        cached = self._tweak_defs_cache.get(cache_key)
+        mtimes = tuple(os.path.getmtime(os.path.join(base, f))
+                      for f in files if os.path.exists(os.path.join(base, f)))
+        if cached is not None and cached[0] == mtimes:
+            return cached[1]
 
         all_tweaks = []
-        base = os.path.join(os.path.dirname(__file__), "..", "tweaks", "definitions")
         for fname in files:
             path = os.path.join(base, fname)
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:
                     all_tweaks.extend(json.load(f))
+        self._tweak_defs_cache[cache_key] = (mtimes, all_tweaks)
         return all_tweaks
 
     def _populate_tweaks_table(self, tab_type: str) -> None:
@@ -752,9 +768,6 @@ class DebloatToolsModule(BaseModule):
 
         table.setRowCount(0)
         table.setSortingEnabled(False)
-        if not self._engine:
-            self._engine = TweakEngine(self.app.backup)
-        engine = self._engine
 
         for tweak in sorted(tweaks, key=lambda t: t.get("name", "").lower()):
             row = table.rowCount()
@@ -774,15 +787,12 @@ class DebloatToolsModule(BaseModule):
             risk_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 3, risk_item)
 
-            result = engine.detect(tweak)
-            si = QTableWidgetItem(_STATUS_GLYPH[result.status]
-                                  + " " + te.STATUS_LABELS[result.status])
+            # Placeholder -- detect_many fills this in via _on_tweak_detected
+            # as results arrive (or, in this synchronous call, all at once
+            # by the time this method returns).
+            si = QTableWidgetItem("… Checking")
             si.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            si.setForeground(QColor(_STATUS_COLOR[result.status]))
             si.setData(Qt.ItemDataRole.UserRole, tweak.get("id", ""))
-            # Never blank: a status with nothing behind it is the bug this
-            # design exists to prevent (CLAUDE.md, TweakEngine.detect).
-            si.setToolTip(result.reason or te.STATUS_LABELS[result.status])
             table.setItem(row, 4, si)
 
         table.setSortingEnabled(True)
@@ -790,6 +800,54 @@ class DebloatToolsModule(BaseModule):
 
         if status_lbl:
             status_lbl.setText(f"{len(tweaks)} tweak(s) loaded")
+
+        if not self._engine:
+            self._engine = TweakEngine(self.app.backup)
+        engine = self._engine
+
+        def on_result(tweak: dict, result) -> None:
+            # Runs on detect_many's internal worker threads -- touch
+            # NOTHING here but the signal emit (see CLAUDE.md's
+            # "Cross-thread widget access" rule and _Signals' docstring).
+            self._signals.tweak_detected.emit(
+                tab_type, tweak.get("id", ""), result.status, result.reason or "")
+
+        engine.detect_many(tweaks, on_result)
+        # detect_many() blocks until every probe has landed, but each
+        # on_result() call above ran on a worker thread, so its signal
+        # emission was only ever POSTED to this (the UI) thread's event
+        # queue -- it is not delivered until that queue is pumped. This
+        # thread is blocked inside detect_many() the whole time (not
+        # spinning the Qt event loop), so nothing would drain that queue
+        # on its own until some later event-loop tick.
+        #
+        # A blanket QApplication.processEvents() here would also work, but
+        # was measured to crash (Windows fatal exception 0x80010108) when
+        # this method has run many times earlier in the same process: it
+        # drains EVERY pending event for EVERY object, including stale
+        # paint/deferred-delete events queued against widgets from earlier,
+        # already-torn-down `_populate_tweaks_table` calls elsewhere in a
+        # long-lived test run. sendPostedEvents(None, MetaCall) delivers
+        # only queued signal/slot invocations -- the one thing this method
+        # actually posted -- leaving that unrelated backlog alone.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall.value)
+
+    def _on_tweak_detected(self, tab_type: str, tweak_id: str, status: str, reason: str) -> None:
+        """The only place that touches a status cell -- always reached via
+        the `tweak_detected` signal, never called directly from `on_result`
+        above (which runs on a worker thread)."""
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        if not table:
+            return
+        for r in range(table.rowCount()):
+            item = table.item(r, 4)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == tweak_id:
+                item.setText(_STATUS_GLYPH[status] + " " + te.STATUS_LABELS[status])
+                item.setForeground(QColor(_STATUS_COLOR[status]))
+                # Never blank: a status with nothing behind it is the bug
+                # this design exists to prevent (CLAUDE.md, TweakEngine.detect).
+                item.setToolTip(reason or te.STATUS_LABELS[status])
+                break
 
     def _apply_tweaks_filter(self, tab_type: str) -> None:
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")

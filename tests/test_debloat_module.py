@@ -417,3 +417,34 @@ def test_context_menu_offers_the_registry_path_of_a_later_step_too(monkeypatch):
     assert "Copy command" not in actions
     actions["Copy registry path"].trigger()
     assert QApplication.clipboard().text() == r"HKLM\SOFTWARE\Policies\X\Y"
+
+
+def test_populate_uses_detect_many_not_one_call_per_tweak(monkeypatch):
+    mod = _module()
+    tweaks = [{"id": "a", "name": "A", "category": "X", "risk": "Low"},
+             {"id": "b", "name": "B", "category": "X", "risk": "Low"}]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    calls = []
+    def fake_detect_many(self, tweaks, on_result, is_cancelled=None, workers=8):
+        calls.append(len(tweaks))
+        for t in tweaks:
+            on_result(t, te.DetectionResult(te.NOT_APPLIED))
+    monkeypatch.setattr(te.TweakEngine, "detect_many", fake_detect_many)
+    mod._populate_tweaks_table("tweak")
+    assert calls == [2]  # one batched call, not two individual ones
+
+
+def test_definitions_are_not_reparsed_when_the_file_has_not_changed(
+        monkeypatch, tmp_path):
+    mod = _module()
+    calls = []
+    real_open = open
+    def counting_open(path, *a, **k):
+        if str(path).endswith(".json"):
+            calls.append(path)
+        return real_open(path, *a, **k)
+    monkeypatch.setattr("builtins.open", counting_open)
+    mod._load_tweak_definitions("tweak")
+    mod._load_tweak_definitions("tweak")
+    # second call must reuse the cache: no more file opens than the first
+    assert len(calls) == len(set(calls))

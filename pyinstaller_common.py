@@ -120,6 +120,11 @@ HIDDEN_IMPORTS = [
     # for the same reason as the TreeSize block above: if PyInstaller misses
     # one, the frozen build still runs and the tab is simply not there.
     "modules.store_apps.store_apps_module",
+    # Debloat module's lazily-imported tabs and helpers, hidden from static
+    # analysis by function-scoped imports like the children listed above.
+    "modules.debloat.run_all_tab",
+    "modules.debloat.debloat_presets",
+    "modules.debloat.debloat_history",
     "modules.boot_analyzer.boot_analyzer_module",
     "modules.power_boot.power_module",
     "modules.wifi_analyzer.wifi_module",

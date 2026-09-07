@@ -535,3 +535,17 @@ def test_wrap_adds_a_removed_this_session_banner():
     wrapped = mod.wrap(tabs)
     banner = wrapped.findChild(QLabel, "_removed_this_session_banner")
     assert banner is not None
+
+
+def test_protected_apps_dialog_lists_every_protected_app(monkeypatch):
+    mod = _module()
+    shown = []
+    class FakeDialog:
+        def __init__(self, *a, **k): pass
+        def setWindowTitle(self, *a, **k): pass
+        def setLayout(self, *a, **k): pass
+        def resize(self, *a, **k): pass
+        def exec(self): shown.append(1)
+    monkeypatch.setattr(dm, "QDialog", FakeDialog)
+    mod._on_show_protected_apps()
+    assert shown == [1]

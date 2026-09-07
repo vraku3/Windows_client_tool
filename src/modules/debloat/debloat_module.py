@@ -174,12 +174,15 @@ class DebloatToolsModule(BaseModule):
         export_btn.clicked.connect(self._on_export_apps)
         history_btn = QPushButton("View History")
         history_btn.clicked.connect(self._on_view_history)
+        protected_apps_btn = QPushButton("Protected Apps…")
+        protected_apps_btn.clicked.connect(self._on_show_protected_apps)
         btn_layout.addWidget(self._scan_btn, 0, 0)
         btn_layout.addWidget(self._apply_selected_btn, 0, 1)
         btn_layout.addWidget(self._apply_all_btn, 0, 2)
         btn_layout.addWidget(self._cancel_apply_btn, 0, 3)
         btn_layout.addWidget(export_btn, 0, 4)
         btn_layout.addWidget(history_btn, 0, 5)
+        btn_layout.addWidget(protected_apps_btn, 0, 6)
         layout.addLayout(btn_layout)
 
         filter_row = QHBoxLayout()
@@ -702,6 +705,18 @@ class DebloatToolsModule(BaseModule):
 
     def _on_view_history(self) -> None:
         DebloatHistoryDialog(self._widget).exec()
+
+    def _on_show_protected_apps(self) -> None:
+        dlg = QDialog(self._widget)
+        dlg.setWindowTitle("Protected Apps")
+        layout = QVBoxLayout()
+        listw = QListWidget()
+        for pkg, reason in sorted(PROTECTED_REASONS.items()):
+            listw.addItem(f"{pkg} — {reason}")
+        layout.addWidget(listw)
+        dlg.setLayout(layout)
+        dlg.resize(480, 300)
+        dlg.exec()
 
     def _on_scan_error(self, err: str) -> None:
         self._scan_btn.setEnabled(True)

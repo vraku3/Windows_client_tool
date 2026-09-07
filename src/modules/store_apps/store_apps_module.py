@@ -379,6 +379,12 @@ class StoreAppsModule(BaseModule):
         self.cancel_all_workers()
 
     def get_status_info(self) -> str:
+        rows = sorted({idx.row() for idx in self._table.selectedIndexes()})
+        if rows:
+            total = sum(NumericSortItem.value(self._table.item(r, 3)) or 0
+                       for r in rows)
+            return (f"Store Apps — {len(rows)} selected, "
+                    f"~{human_size(int(total))}")
         return f"Store Apps — {len(self._apps)} installed"
 
     # ------------------------------------------------------------------
@@ -522,7 +528,10 @@ class StoreAppsModule(BaseModule):
     # ------------------------------------------------------------------
 
     def _apply_filter(self):
-        query = self._search.text().lower()
+        raw = self._search.text().strip()
+        field, _, value = raw.partition(":")
+        scoped = field.lower() in ("publisher", "name") and bool(value)
+        query = (value if scoped else raw).lower()
         mode = self._filter_combo.currentIndex()
         for row in range(self._table.rowCount()):
             name_item = self._table.item(row, 0)
@@ -541,7 +550,12 @@ class StoreAppsModule(BaseModule):
             elif mode == 2 and not is_system:
                 visible = False
             if query:
-                haystack = " ".join([display, real, publisher]).lower()
+                if scoped and field.lower() == "publisher":
+                    haystack = publisher.lower()
+                elif scoped:
+                    haystack = " ".join([display, real]).lower()
+                else:
+                    haystack = " ".join([display, real, publisher]).lower()
                 if query not in haystack:
                     visible = False
             self._table.setRowHidden(row, not visible)
@@ -554,6 +568,8 @@ class StoreAppsModule(BaseModule):
         self._table.clearSelection()
         selection = self._table.selectionModel()
         for row in range(self._table.rowCount()):
+            if self._table.isRowHidden(row):
+                continue
             item = self._table.item(row, 4)
             if item and "System" not in item.text():
                 selection.select(

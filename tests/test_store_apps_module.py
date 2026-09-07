@@ -158,6 +158,25 @@ def store_module():
     return mod
 
 
+def load_two_apps(mod):
+    """Populate mod's table with two rows via the real load path: one
+    Microsoft-published, one not (matching field-scoped search tests)."""
+    apps = [
+        {"Name": "Microsoft.WindowsCalculator",
+         "Publisher": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US",
+         "Version": "1.0.0.0", "InstallLocation": "",
+         "PackageFamilyName": "Microsoft.WindowsCalculator_8wekyb3d8bbwe",
+         "Architecture": "X64"},
+        {"Name": "SpotifyAB.SpotifyMusic",
+         "Publisher": "CN=Spotify AB, O=Spotify AB, L=Stockholm, C=SE",
+         "Version": "1.0.0.0", "InstallLocation": "",
+         "PackageFamilyName": "SpotifyAB.SpotifyMusic_zpdnekdrzrea0",
+         "Architecture": "X64"},
+    ]
+    mod._on_apps_loaded(apps, None)
+    return apps
+
+
 def test_module_creates_widget_and_sorts(qapp, tmp_path):
     from modules.store_apps.store_apps_module import StoreAppsModule
 
@@ -474,3 +493,29 @@ def test_system_tooltip_distinguishes_exact_match_from_path_based(monkeypatch):
     assert "exact-match" not in path_tip
     assert "Removes for every user on this machine." in exact_tip
     assert "Removes for every user on this machine." in path_tip
+
+
+def test_field_scoped_search_matches_publisher_only(monkeypatch):
+    mod = store_module()
+    load_two_apps(mod)  # existing test helper; one Microsoft-published, one not
+    mod._search.setText("publisher:microsoft")
+    mod._apply_filter()
+    visible = [r for r in range(mod._table.rowCount()) if not mod._table.isRowHidden(r)]
+    assert len(visible) == 1
+
+
+def test_select_non_system_only_selects_currently_visible_rows(monkeypatch):
+    mod = store_module()
+    load_two_apps(mod)
+    mod._search.setText("nonexistent-app-name")
+    mod._apply_filter()
+    mod._select_non_system()
+    assert mod._table.selectionModel().selectedRows() == []
+
+
+def test_status_line_shows_selection_and_size_while_active(monkeypatch):
+    mod = store_module()
+    load_two_apps(mod)
+    mod._table.selectRow(0)
+    text = mod.get_status_info()
+    assert "selected" in text

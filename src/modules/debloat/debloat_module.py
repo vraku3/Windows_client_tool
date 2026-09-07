@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import Qt, QCoreApplication, QEvent, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
@@ -805,37 +805,57 @@ class DebloatToolsModule(BaseModule):
             self._engine = TweakEngine(self.app.backup)
         engine = self._engine
 
+        # Collected thread-safely -- list.append() is a single, GIL-atomic
+        # bytecode op, safe to call concurrently from detect_many's worker
+        # threads with no lock needed -- so the table can be filled in
+        # directly, back on this (the UI) thread, once detect_many() has
+        # returned. This deliberately does NOT lean on Qt's cross-thread
+        # signal-queue delivery to get the results back synchronously (see
+        # `on_result` below for why): a bare `QApplication.processEvents()`
+        # measured a reproducible native crash (0x80010108) in this test
+        # file after ~8 real detect_many() calls in one process, from
+        # draining unrelated stale widget events that had built up; the
+        # obvious narrower fix, `QCoreApplication.sendPostedEvents(self._signals,
+        # MetaCall)`, was measured to silently deliver NOTHING instead
+        # (confirmed with a QObject receiver too, not just a plain one) --
+        # PyQt6 does not expose the actual internal receiver object a
+        # signal-to-plain-method connection posts its QMetaCallEvent to,
+        # so only `sendPostedEvents(None, ...)` (process-wide) works, and
+        # that is exactly the reentrancy risk this design avoids: forcing
+        # a process-wide flush mid-call could run another module's queued
+        # Worker callback (e.g. a 60s auto-refresh result) synchronously,
+        # ahead of when the running event loop would have gotten to it.
+        results: List[tuple] = []
+
         def on_result(tweak: dict, result) -> None:
             # Runs on detect_many's internal worker threads -- touch
-            # NOTHING here but the signal emit (see CLAUDE.md's
-            # "Cross-thread widget access" rule and _Signals' docstring).
-            self._signals.tweak_detected.emit(
-                tab_type, tweak.get("id", ""), result.status, result.reason or "")
+            # NOTHING here but this thread-safe append and the signal
+            # emit below (see CLAUDE.md's "Cross-thread widget access"
+            # rule and _Signals' docstring) -- never a widget. The emit
+            # keeps this callback correct on its own terms if detect_many
+            # is ever driven from a real background Worker instead of
+            # called synchronously as it is here; this method's own use
+            # of the results does not depend on that delivery happening.
+            payload = (tab_type, tweak.get("id", ""), result.status, result.reason or "")
+            results.append(payload)
+            self._signals.tweak_detected.emit(*payload)
 
         engine.detect_many(tweaks, on_result)
-        # detect_many() blocks until every probe has landed, but each
-        # on_result() call above ran on a worker thread, so its signal
-        # emission was only ever POSTED to this (the UI) thread's event
-        # queue -- it is not delivered until that queue is pumped. This
-        # thread is blocked inside detect_many() the whole time (not
-        # spinning the Qt event loop), so nothing would drain that queue
-        # on its own until some later event-loop tick.
-        #
-        # A blanket QApplication.processEvents() here would also work, but
-        # was measured to crash (Windows fatal exception 0x80010108) when
-        # this method has run many times earlier in the same process: it
-        # drains EVERY pending event for EVERY object, including stale
-        # paint/deferred-delete events queued against widgets from earlier,
-        # already-torn-down `_populate_tweaks_table` calls elsewhere in a
-        # long-lived test run. sendPostedEvents(None, MetaCall) delivers
-        # only queued signal/slot invocations -- the one thing this method
-        # actually posted -- leaving that unrelated backlog alone.
-        QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall.value)
+        # detect_many() blocks until every probe has landed, so `results`
+        # is already complete and we are back on this (the UI) thread --
+        # apply them directly, the same update `_on_tweak_detected` makes
+        # when reached through the signal, with no event-queue involved.
+        for payload in results:
+            self._on_tweak_detected(*payload)
 
     def _on_tweak_detected(self, tab_type: str, tweak_id: str, status: str, reason: str) -> None:
-        """The only place that touches a status cell -- always reached via
-        the `tweak_detected` signal, never called directly from `on_result`
-        above (which runs on a worker thread)."""
+        """The only place that touches a status cell. Reached two ways,
+        both safe: via the `tweak_detected` signal (thread-safe delivery,
+        for a hypothetical future caller that drives detect_many from a
+        background Worker), or via the direct call in
+        `_populate_tweaks_table` above -- which only ever happens back on
+        this (the UI) thread, after detect_many() has already returned.
+        Never called from `on_result`, which runs on a worker thread."""
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
         if not table:
             return

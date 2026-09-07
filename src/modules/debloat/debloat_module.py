@@ -251,6 +251,32 @@ class DebloatToolsModule(BaseModule):
 
         return widget
 
+    def _build_tweaks_table_widget(self, tab_type: str) -> QTableWidget:
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(["☐", "Tweak", "Category", "Risk", "Status"])
+        header = table.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(1, Qt.SortOrder.AscendingOrder)
+        # Tweak and Category share the width; the rest size to content.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        table.setSortingEnabled(True)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
+        table.setObjectName(f"_table_{tab_type}")
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda pos, tt=tab_type: self._on_tweaks_context_menu(pos, tt))
+        table.itemChanged.connect(
+            lambda item, tt=tab_type: self._on_tweaks_item_changed(item, tt))
+        return table
+
     def _build_tweaks_tab(self, tab_type: str) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -321,31 +347,7 @@ class DebloatToolsModule(BaseModule):
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
         table_layout.setContentsMargins(0, 0, 0, 0)
-
-        table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(["\u2610", "Tweak", "Category", "Risk", "Status"])
-        header = table.horizontalHeader()
-        header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        header.setSortIndicatorShown(True)
-        header.setSortIndicator(1, Qt.SortOrder.AscendingOrder)
-        # Tweak and Category share the width; the rest size to content.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        table.setSortingEnabled(True)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setAlternatingRowColors(True)
-        table.setObjectName(f"_table_{tab_type}")
-        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        table.customContextMenuRequested.connect(
-            lambda pos, tt=tab_type: self._on_tweaks_context_menu(pos, tt))
-        table.itemChanged.connect(
-            lambda item, tt=tab_type: self._on_tweaks_item_changed(item, tt))
-        table_layout.addWidget(table)
+        table_layout.addWidget(self._build_tweaks_table_widget(tab_type))
 
         scroll.setWidget(table_container)
         layout.addWidget(scroll)
@@ -370,6 +372,10 @@ class DebloatToolsModule(BaseModule):
         save_custom_btn.clicked.connect(
             lambda _checked=False, tt=tab_type: self._on_save_tweaks_as_custom(tt))
         layout.addWidget(save_custom_btn)
+
+        revert_btn = QPushButton("Revert Applied…")
+        revert_btn.clicked.connect(self._on_revert_tweaks)
+        layout.addWidget(revert_btn)
 
         return widget
 
@@ -396,6 +402,7 @@ class DebloatToolsModule(BaseModule):
             self._on_scan()
 
     def on_deactivate(self) -> None:
+        self._persist_sort()
         self.cancel_all_workers()
 
     def on_stop(self) -> None:
@@ -508,7 +515,12 @@ class DebloatToolsModule(BaseModule):
             self._apps_table.setItem(row, 3, status_item)
 
         self._apps_table.setSortingEnabled(True)
-        self._apps_table.sortItems(1, Qt.SortOrder.AscendingOrder)
+        # T23: restore the last sort column/order this session saved in
+        # on_deactivate, rather than always resetting to name-ascending.
+        sort_col = int(self.app.config.get(f"{self._CONFIG_PREFIX}.apps.sort_column", 1) or 1)
+        sort_order = Qt.SortOrder(int(self.app.config.get(
+            f"{self._CONFIG_PREFIX}.apps.sort_order", int(Qt.SortOrder.AscendingOrder.value)) or 0))
+        self._apps_table.sortItems(sort_col, sort_order)
         self._apps_table.setAlternatingRowColors(True)
         categories = sorted({self._apps_table.item(r, 2).text()
                             for r in range(self._apps_table.rowCount())})
@@ -768,13 +780,35 @@ class DebloatToolsModule(BaseModule):
     # ------------------------------------------------------------------
 
     _TAB_TYPES = ["apps", "tweak", "ai"]
+    #: T23 sort-column persistence key prefix. Mirrors StoreAppsModule's
+    #: `_CONFIG_PREFIX` -- see `_persist_sort` below. Applies only to
+    #: `_apps_table`: the tweak tables keep sorting permanently off (see
+    #: `_populate_tweaks_table`'s comment on the source-file grouping), so
+    #: there is no sort state to persist for them.
+    _CONFIG_PREFIX = "debloat"
 
     def _on_tab_changed(self, index: int) -> None:
         tab_type = self._TAB_TYPES[index] if index < len(self._TAB_TYPES) else None
-        if tab_type and tab_type != "apps":
-            table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
-            if table and table.rowCount() == 0:
-                self._populate_tweaks_table(tab_type)
+        if not tab_type or tab_type == "apps":
+            return
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        if table and table.rowCount() == 0:
+            self._populate_tweaks_table(tab_type)
+        elif table:
+            self._redetect_tweaks_table(tab_type)
+
+    def _persist_sort(self) -> None:
+        """T23: mirrors StoreAppsModule._persist_sort exactly. Applies only
+        to the Apps tab's table -- the tweak tables have sorting
+        permanently disabled (see _populate_tweaks_table), so there is no
+        sort indicator on them worth saving."""
+        if self._apps_table is None:
+            return
+        header = self._apps_table.horizontalHeader()
+        self.app.config.set(f"{self._CONFIG_PREFIX}.apps.sort_column",
+                            int(header.sortIndicatorSection()))
+        self.app.config.set(f"{self._CONFIG_PREFIX}.apps.sort_order",
+                            int(header.sortIndicatorOrder()))
 
     # ------------------------------------------------------------------
     # Tweaks tabs
@@ -815,30 +849,16 @@ class DebloatToolsModule(BaseModule):
         newest = datetime.datetime.fromtimestamp(max(mtimes))
         return f"Catalog: {newest.strftime('%Y-%m-%d')}"
 
-    def _populate_tweaks_table(self, tab_type: str) -> None:
-        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
-        status_lbl: QLabel = self._widget.findChild(QLabel, f"_status_{tab_type}")
-        if not table:
-            return
-
-        tweaks = self._load_tweak_definitions(tab_type)
-        if tab_type == "tweak":
-            self._all_tweaks = tweaks
-        else:
-            self._ai_tweaks = tweaks
-
-        table.setRowCount(0)
-        table.setSortingEnabled(False)
-
-        # T07/T08: grouped by source file rather than a flat alpha sort --
-        # a QTableWidget doesn't support nested rows cleanly, so a
-        # non-selectable, styled full-width divider row per group is the
-        # established lightweight pattern here. Sorting stays OFF for the
-        # life of this table (see below): re-enabling it and calling
-        # sortItems() would re-sort every row, including header rows,
-        # purely on column 1's text -- scattering "Privacy (privacy.json)"
-        # wherever it falls alphabetically among the tweak names and
-        # destroying the grouping this loop just built.
+    def _insert_tweak_rows(self, table: QTableWidget, tweaks: List[dict]) -> None:
+        """T07/T08: grouped by source file rather than a flat alpha sort --
+        a QTableWidget doesn't support nested rows cleanly, so a
+        non-selectable, styled full-width divider row per group is the
+        established lightweight pattern here. Sorting stays OFF for the
+        life of this table (see `_populate_tweaks_table`): re-enabling it
+        and calling sortItems() would re-sort every row, including header
+        rows, purely on column 1's text -- scattering "Privacy
+        (privacy.json)" wherever it falls alphabetically among the tweak
+        names and destroying the grouping this loop just built."""
         last_source = None
         for tweak in sorted(tweaks, key=lambda t: (t.get("_source", ""), t.get("name", "").lower())):
             if tweak.get("_source") != last_source:
@@ -883,8 +903,21 @@ class DebloatToolsModule(BaseModule):
             si.setData(Qt.ItemDataRole.UserRole, tweak.get("id", ""))
             table.setItem(row, 4, si)
 
-        if status_lbl:
-            status_lbl.setText(f"{len(tweaks)} tweak(s) loaded")
+    def _populate_tweaks_table(self, tab_type: str) -> None:
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        status_lbl: QLabel = self._widget.findChild(QLabel, f"_status_{tab_type}")
+        if not table:
+            return
+
+        tweaks = self._load_tweak_definitions(tab_type)
+        if tab_type == "tweak":
+            self._all_tweaks = tweaks
+        else:
+            self._ai_tweaks = tweaks
+
+        table.setRowCount(0)
+        table.setSortingEnabled(False)
+        self._insert_tweak_rows(table, tweaks)
 
         catalog_lbl: QLabel = self._widget.findChild(QLabel, f"_catalog_{tab_type}")
         if catalog_lbl:
@@ -934,8 +967,68 @@ class DebloatToolsModule(BaseModule):
         # is already complete and we are back on this (the UI) thread --
         # apply them directly, the same update `_on_tweak_detected` makes
         # when reached through the signal, with no event-queue involved.
+        counts: Dict[str, int] = {}
         for payload in results:
+            counts[payload[2]] = counts.get(payload[2], 0) + 1
             self._on_tweak_detected(*payload)
+
+        # T19: the label reflects real detected statuses, not just the
+        # count loaded -- set after detection completes (detect_many above
+        # blocks until it has), not before.
+        if status_lbl:
+            status_lbl.setText(self._format_status_breakdown(counts, len(results)))
+
+    def _format_status_breakdown(self, counts: Dict[str, int], total: int) -> str:
+        """T19: a live "N tweak(s) -- Applied: x, Not Applied: y, ..."
+        label, shared by _populate_tweaks_table and _redetect_tweaks_table."""
+        if not counts:
+            return f"{total} tweak(s) loaded"
+        parts = ", ".join(f"{te.STATUS_LABELS[s]}: {n}" for s, n in sorted(counts.items()))
+        return f"{total} tweak(s) — {parts}"
+
+    def _redetect_tweaks_table(self, tab_type: str) -> None:
+        """T24: re-run detection over already-built rows when returning to
+        a tab, instead of a full _populate_tweaks_table rebuild.
+
+        `on_result` here touches NOTHING but the thread-safe list append --
+        it runs on detect_many's internal worker threads (see
+        `TweakEngine.detect_many`), and calling a Qt widget method from
+        there is exactly the "Cross-thread widget access" bug CLAUDE.md
+        documents and an earlier task on this branch already fixed once in
+        `_populate_tweaks_table` above. Row updates happen only after
+        detect_many() has returned (it blocks until every probe lands), by
+        calling `_on_tweak_detected` -- the SAME method
+        `_populate_tweaks_table` uses -- rather than duplicating its
+        row-writing logic here."""
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        status_lbl: QLabel = self._widget.findChild(QLabel, f"_status_{tab_type}")
+        if not table:
+            return
+        tweaks = self._all_tweaks if tab_type == "tweak" else self._ai_tweaks
+        by_id = {t.get("id", ""): t for t in tweaks}
+
+        if not self._engine:
+            self._engine = TweakEngine(self.app.backup)
+        engine = self._engine
+
+        results: List[tuple] = []
+
+        def on_result(tweak, result) -> None:
+            # Runs on detect_many's internal worker threads -- touch
+            # NOTHING here but this thread-safe append (same pattern as
+            # _populate_tweaks_table above).
+            results.append((tweak.get("id", ""), result.status, result.reason or ""))
+
+        engine.detect_many(list(by_id.values()), on_result)
+        # detect_many() blocks until every probe has landed -- results is
+        # complete and we are back on the UI thread.
+        counts: Dict[str, int] = {}
+        for tweak_id, status, reason in results:
+            counts[status] = counts.get(status, 0) + 1
+            self._on_tweak_detected(tab_type, tweak_id, status, reason)
+
+        if status_lbl:
+            status_lbl.setText(self._format_status_breakdown(counts, len(results)))
 
     def _on_tweak_detected(self, tab_type: str, tweak_id: str, status: str, reason: str) -> None:
         """The only place that touches a status cell. Reached two ways,
@@ -1116,6 +1209,13 @@ class DebloatToolsModule(BaseModule):
         if status_lbl:
             status_lbl.setText(
                 f"Saved {len(checked_ids)} tweak(s) to the Custom preset")
+
+    def _on_revert_tweaks(self) -> None:
+        """T20: same RestoreManagerDialog Task 13 wired for the Apps tab's
+        post-apply dialog (see _on_apps_applied above) -- constructed with
+        (self.app, self._widget), never self.app.backup."""
+        from ui.restore_manager import RestoreManagerDialog
+        RestoreManagerDialog(self.app, self._widget).exec()
 
     def _status_lbl_for(self, tab_type: str) -> Optional[QLabel]:
         return self._widget.findChild(QLabel, f"_status_{tab_type}")

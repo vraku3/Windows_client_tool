@@ -20,10 +20,26 @@ class _FakeBackup:
         pass
 
 
+class _FakeConfig:
+    """Same lightweight get/set stand-in tests/test_blocklist.py uses --
+    T23's sort persistence needs a real .get/.set, not just an attribute
+    that raises AttributeError the moment _populate_apps_table reads it."""
+
+    def __init__(self, data=None):
+        self._data = data or {}
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        self._data[key] = value
+
+
 class _FakeApp:
     def __init__(self):
         self.backup = _FakeBackup()
         self.thread_pool = None
+        self.config = _FakeConfig()
 
 
 def _module():
@@ -488,3 +504,24 @@ def test_completion_dialog_names_which_tweaks_failed(monkeypatch):
                         lambda *a, **k: shown.setdefault("text", a[2] if len(a) > 2 else ""))
     mod._on_tweaks_applied(result)
     assert "Disable Cortana" in shown["text"]
+
+
+def test_returning_to_a_tab_redetects_status_without_rebuilding_rows(
+        monkeypatch):
+    mod = _module()
+    tweaks = [{"id": "a", "name": "A", "category": "X", "risk": "Low"}]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    monkeypatch.setattr(te.TweakEngine, "detect_many",
+                        lambda self, tweaks, on_result, **k:
+                            [on_result(t, te.DetectionResult(te.NOT_APPLIED)) for t in tweaks])
+    mod._populate_tweaks_table("tweak")
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    row_count_before = table.rowCount()
+    monkeypatch.setattr(te.TweakEngine, "detect_many",
+                        lambda self, tweaks, on_result, **k:
+                            [on_result(t, te.DetectionResult(te.APPLIED)) for t in tweaks])
+    mod._on_tab_changed(1)  # "tweak" tab index, per _TAB_TYPES
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    assert table.rowCount() == row_count_before
+    assert "Applied" in table.item(0, 4).text()

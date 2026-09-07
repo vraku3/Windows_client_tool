@@ -285,3 +285,24 @@ def test_size_column_is_a_numeric_sort_item(monkeypatch):
         {"Name": "Pkg.A", "InstallLocation": "", "Publisher": "", "Version": ""}])
     mod._on_apps_loaded(sam.dedupe_by_name(sam.fetch_packages()), None)
     assert isinstance(mod._table.item(0, 3), sam.NumericSortItem)
+
+
+def test_uninstall_confirmation_names_apps_even_when_few():
+    mod = store_module()
+    text = mod._uninstall_confirmation_text(
+        names=["Calculator"], skipped_names=[], total_bytes=0)
+    assert "Calculator" in text
+
+
+def test_confirmation_shows_aggregate_size():
+    mod = store_module()
+    text = mod._uninstall_confirmation_text(
+        names=["A", "B"], skipped_names=[], total_bytes=2_500_000_000)
+    assert "2." in text and "GB" in text
+
+
+def test_skipped_system_apps_are_named():
+    mod = store_module()
+    text = mod._uninstall_confirmation_text(
+        names=["A"], skipped_names=["Microsoft.Windows"], total_bytes=0)
+    assert "Microsoft.Windows" in text

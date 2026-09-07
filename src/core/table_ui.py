@@ -58,6 +58,10 @@ class NumericSortItem(QTableWidgetItem):
             return mine < theirs
         return self.text().lower() < other.text().lower()
 
+    @staticmethod
+    def value(item) -> Any:
+        return item.data(_NUMERIC_SORT_ROLE) if isinstance(item, QTableWidgetItem) else None
+
 
 def centered_item(text: str = "", sortable: bool = False) -> QTableWidgetItem:
     """A table item whose text is centred (optionally sortable A-Z)."""

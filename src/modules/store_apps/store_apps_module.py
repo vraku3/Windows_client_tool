@@ -605,37 +605,54 @@ class StoreAppsModule(BaseModule):
     # Uninstall
     # ------------------------------------------------------------------
 
-    def _selected_targets(self) -> Tuple[List[Tuple[str, str, str]], int]:
+    def _selected_targets(self) -> Tuple[List[Tuple[str, str, str]], List[str]]:
         rows = sorted({idx.row() for idx in self._table.selectedIndexes()})
-        targets = []
-        skipped = 0
+        targets, skipped_names = [], []
         for r in rows:
             display = self._table.item(r, 0).text()
             name = self._table.item(r, 0).data(Qt.ItemDataRole.UserRole) or display
             removable = self._table.item(r, 4).text()
             if "System" in removable:
-                skipped += 1
+                skipped_names.append(display)
                 continue
             pfn_item = self._table.item(r, 5)
             pfn = pfn_item.text() if pfn_item else ""
             targets.append((name, display, pfn))
-        return targets, skipped
+        return targets, skipped_names
+
+    def _row_size_bytes(self, package_name: str) -> int:
+        row = self._row_of(package_name)
+        if row < 0:
+            return 0
+        item = self._table.item(row, 3)
+        value = NumericSortItem.value(item) if item else None
+        return int(value) if value else 0
+
+    def _uninstall_confirmation_text(self, names: List[str],
+                                     skipped_names: List[str],
+                                     total_bytes: int) -> str:
+        message = f"Uninstall {len(names)} app(s)?\n\n{self._preview(names)}"
+        if total_bytes > 0:
+            message += f"\n\nThis will free approximately {human_size(total_bytes)}."
+        if skipped_names:
+            message += ("\n\nSkipped (system apps): "
+                       + ", ".join(skipped_names[:10])
+                       + ("…" if len(skipped_names) > 10 else ""))
+        message += "\n\nThis cannot be undone."
+        return message
 
     def _uninstall(self):
         if not self.require_admin():
             return
-        targets, skipped = self._selected_targets()
+        targets, skipped_names = self._selected_targets()
         if not targets:
             QMessageBox.warning(self._widget, "No Selection",
                                 "Select app(s) to uninstall.")
             return
 
         names = [d for _, d, _ in targets]
-        message = f"Uninstall {len(names)} app(s)?\n\nThis cannot be undone."
-        if len(names) > 10:
-            message += f"\n\n{self._preview(names)}"
-        if skipped:
-            message += f"\n\n{skipped} system app(s) skipped."
+        total_bytes = sum(self._row_size_bytes(name) for name, _, _ in targets)
+        message = self._uninstall_confirmation_text(names, skipped_names, total_bytes)
         reply = QMessageBox.warning(
             self._widget, "Uninstall Apps", message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,

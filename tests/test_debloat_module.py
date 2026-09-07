@@ -434,6 +434,25 @@ def test_populate_uses_detect_many_not_one_call_per_tweak(monkeypatch):
     assert calls == [2]  # one batched call, not two individual ones
 
 
+def test_privacy_and_telemetry_shows_source_file_headers(monkeypatch):
+    mod = _module()
+    tweaks = [
+        {"id": "a", "name": "A", "category": "Privacy", "risk": "Low", "_source": "privacy.json"},
+        {"id": "b", "name": "B", "category": "Network", "risk": "Low", "_source": "network.json"},
+    ]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    monkeypatch.setattr(te.TweakEngine, "detect_many",
+                        lambda self, tweaks, on_result, **k:
+                            [on_result(t, te.DetectionResult(te.NOT_APPLIED)) for t in tweaks])
+    mod._populate_tweaks_table("tweak")
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    headers = [table.item(r, 1).text() for r in range(table.rowCount())
+              if table.item(r, 0) is None]
+    assert "Privacy (privacy.json)" in headers
+    assert "Network (network.json)" in headers
+
+
 def test_definitions_are_not_reparsed_when_the_file_has_not_changed(
         monkeypatch, tmp_path):
     mod = _module()

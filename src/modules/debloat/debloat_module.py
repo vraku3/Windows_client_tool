@@ -30,7 +30,7 @@ from modules.debloat.debloat_scanner import (
 from modules.debloat.debloat_search_provider import DebloatSearchProvider
 from modules.tweaks.tweak_engine import TweakEngine
 from modules.tweaks import tweak_engine as te
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +48,34 @@ _STATUS_COLOR = {
     te.UNKNOWN: semantic("error"),
 }
 
+#: T01's color coding extended to Risk. Every risk field across all six
+#: tweak-definition files this module loads (privacy/telemetry/services/
+#: network/ai_features/navigation.json) is lowercase with no exceptions --
+#: capitalized keys here would never match and every cell would silently
+#: stay the default gray forever.
+_RISK_COLOR = {
+    "low": semantic("success"), "medium": semantic("warning"), "high": semantic("error"),
+}
+
 
 class _SortableItem(QTableWidgetItem):
     """QTableWidgetItem that compares case-insensitively for alpha sorting."""
 
     def __lt__(self, other) -> bool:
         return self.text().lower() < other.text().lower()
+
+
+def _step_type_badge(tweak: dict) -> str:
+    """T03: flag tweaks whose steps are opaque (command/script) rather
+    than the common, safely-reversible registry/service/scheduled_task
+    kinds -- a `command`/`script` step is only reversible if the tweak
+    itself declares a revert_command."""
+    types = {s.get("type", "") for s in tweak.get("steps", [])}
+    if types <= {"registry", "registry_delete", "service", "scheduled_task"}:
+        return ""  # the common, safely-reversible case: no badge needed
+    if "command" in types or "script" in types:
+        return "⚠ "  # opaque, reversible only if the tweak declares revert_command
+    return ""
 
 
 class _Signals(QObject):
@@ -236,7 +258,18 @@ class DebloatToolsModule(BaseModule):
         status_lbl = QLabel("Loading...")
         status_lbl.setStyleSheet("font-size: 13px; padding: 4px;")
         status_lbl.setObjectName(f"_status_{tab_type}")
-        layout.addWidget(status_lbl)
+        status_row = QHBoxLayout()
+        status_row.addWidget(status_lbl)
+        # No setStyleSheet() here on purpose: the objectName is claimed for
+        # findChild lookup by _populate_tweaks_table, and a new inline sheet
+        # would trip tests/test_no_inline_stylesheets.py's ratchet (every
+        # existing call, including status_lbl's identical one two lines up,
+        # already counts against that falling-only budget).
+        catalog_lbl = QLabel("")
+        catalog_lbl.setObjectName(f"_catalog_{tab_type}")
+        status_row.addWidget(catalog_lbl)
+        status_row.addStretch(1)
+        layout.addLayout(status_row)
 
         preset_layout = QGridLayout()
         light_btn = QPushButton("Light Debloat")
@@ -763,9 +796,24 @@ class DebloatToolsModule(BaseModule):
             path = os.path.join(base, fname)
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:
-                    all_tweaks.extend(json.load(f))
+                    for tweak in json.load(f):
+                        tweak["_source"] = fname
+                        all_tweaks.append(tweak)
         self._tweak_defs_cache[cache_key] = (mtimes, all_tweaks)
         return all_tweaks
+
+    def _catalog_freshness(self, tab_type: str) -> str:
+        """T10: a "Catalog: <date>" label next to the tab's status label,
+        so a stale bundled tweak catalog is visible rather than silent."""
+        files = (["privacy.json", "telemetry.json", "services.json", "network.json"]
+                 if tab_type == "tweak" else ["ai_features.json", "navigation.json"])
+        base = os.path.join(os.path.dirname(__file__), "..", "tweaks", "definitions")
+        mtimes = [os.path.getmtime(os.path.join(base, f))
+                 for f in files if os.path.exists(os.path.join(base, f))]
+        if not mtimes:
+            return ""
+        newest = datetime.datetime.fromtimestamp(max(mtimes))
+        return f"Catalog: {newest.strftime('%Y-%m-%d')}"
 
     def _populate_tweaks_table(self, tab_type: str) -> None:
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
@@ -782,7 +830,33 @@ class DebloatToolsModule(BaseModule):
         table.setRowCount(0)
         table.setSortingEnabled(False)
 
-        for tweak in sorted(tweaks, key=lambda t: t.get("name", "").lower()):
+        # T07/T08: grouped by source file rather than a flat alpha sort --
+        # a QTableWidget doesn't support nested rows cleanly, so a
+        # non-selectable, styled full-width divider row per group is the
+        # established lightweight pattern here. Sorting stays OFF for the
+        # life of this table (see below): re-enabling it and calling
+        # sortItems() would re-sort every row, including header rows,
+        # purely on column 1's text -- scattering "Privacy (privacy.json)"
+        # wherever it falls alphabetically among the tweak names and
+        # destroying the grouping this loop just built.
+        last_source = None
+        for tweak in sorted(tweaks, key=lambda t: (t.get("_source", ""), t.get("name", "").lower())):
+            if tweak.get("_source") != last_source:
+                last_source = tweak.get("_source")
+                header_row = table.rowCount()
+                table.insertRow(header_row)
+                label = f"{tweak.get('category', '')} ({last_source})"
+                header_item = QTableWidgetItem(label)
+                header_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                # chrome("surface_inactive"), not a literal hex: this file's
+                # frozen-colour budget (tests/test_no_frozen_colours.py) is a
+                # ratchet that only ever falls, and the theme-aware helper is
+                # also just correct here -- a hardcoded dark-theme grey would
+                # freeze the divider for the light theme too.
+                header_item.setBackground(QColor(chrome("surface_inactive")))
+                table.setItem(header_row, 1, header_item)
+                table.setSpan(header_row, 1, 1, 4)
+
             row = table.rowCount()
             table.insertRow(row)
             chk = QTableWidgetItem()
@@ -790,7 +864,7 @@ class DebloatToolsModule(BaseModule):
             chk.setData(Qt.ItemDataRole.UserRole, tweak.get("id", ""))
             chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 0, chk)
-            name_item = _SortableItem(tweak.get("name", ""))
+            name_item = _SortableItem(_step_type_badge(tweak) + tweak.get("name", ""))
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 1, name_item)
             cat_item = QTableWidgetItem(tweak.get("category", ""))
@@ -798,6 +872,7 @@ class DebloatToolsModule(BaseModule):
             table.setItem(row, 2, cat_item)
             risk_item = QTableWidgetItem(tweak.get("risk", ""))
             risk_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            risk_item.setForeground(QColor(_RISK_COLOR.get(tweak.get("risk", ""), chrome("text"))))
             table.setItem(row, 3, risk_item)
 
             # Placeholder -- detect_many fills this in via _on_tweak_detected
@@ -808,11 +883,12 @@ class DebloatToolsModule(BaseModule):
             si.setData(Qt.ItemDataRole.UserRole, tweak.get("id", ""))
             table.setItem(row, 4, si)
 
-        table.setSortingEnabled(True)
-        table.sortItems(1, Qt.SortOrder.AscendingOrder)
-
         if status_lbl:
             status_lbl.setText(f"{len(tweaks)} tweak(s) loaded")
+
+        catalog_lbl: QLabel = self._widget.findChild(QLabel, f"_catalog_{tab_type}")
+        if catalog_lbl:
+            catalog_lbl.setText(self._catalog_freshness(tab_type))
 
         if not self._engine:
             self._engine = TweakEngine(self.app.backup)
@@ -897,15 +973,20 @@ class DebloatToolsModule(BaseModule):
         if not table:
             return
         for r in range(table.rowCount()):
-            if not table.isRowHidden(r):
-                table.item(r, 0).setCheckState(Qt.CheckState.Checked)
+            item = table.item(r, 0)
+            if item is None or table.isRowHidden(r):
+                continue
+            item.setCheckState(Qt.CheckState.Checked)
 
     def _on_tweaks_select_none(self, tab_type: str) -> None:
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
         if not table:
             return
         for r in range(table.rowCount()):
-            table.item(r, 0).setCheckState(Qt.CheckState.Unchecked)
+            item = table.item(r, 0)
+            if item is None:
+                continue
+            item.setCheckState(Qt.CheckState.Unchecked)
 
     def _on_tweaks_item_changed(self, item: QTableWidgetItem, tab_type: str) -> None:
         if item.column() != 0:
@@ -916,7 +997,8 @@ class DebloatToolsModule(BaseModule):
             return
         checked = sum(
             1 for r in range(table.rowCount())
-            if table.item(r, 0).checkState() == Qt.CheckState.Checked
+            if table.item(r, 0) is not None
+            and table.item(r, 0).checkState() == Qt.CheckState.Checked
         )
         lbl.setText(f"{checked} selected")
 
@@ -935,7 +1017,10 @@ class DebloatToolsModule(BaseModule):
         if not index.isValid():
             return
         row = index.row()
-        tweak_id = table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        id_item = table.item(row, 0)
+        if id_item is None:
+            return
+        tweak_id = id_item.data(Qt.ItemDataRole.UserRole)
         tweaks = self._all_tweaks if tab_type == "tweak" else self._ai_tweaks
         tweak = next((t for t in tweaks if t.get("id") == tweak_id), None)
         if not tweak:
@@ -968,8 +1053,11 @@ class DebloatToolsModule(BaseModule):
         preset = dp.load_preset(preset_name)
         selected_ids = dp.resolve_tweak_ids(preset, tweaks)
         for r in range(table.rowCount()):
-            item_id = table.item(r, 0).data(Qt.ItemDataRole.UserRole)
-            table.item(r, 0).setCheckState(
+            item = table.item(r, 0)
+            if item is None:
+                continue
+            item_id = item.data(Qt.ItemDataRole.UserRole)
+            item.setCheckState(
                 Qt.CheckState.Checked if item_id in selected_ids
                 else Qt.CheckState.Unchecked)
 
@@ -986,8 +1074,11 @@ class DebloatToolsModule(BaseModule):
             return
         selected_ids = dp.resolve_tweak_ids(preset, tweaks)
         for r in range(table.rowCount()):
-            item_id = table.item(r, 0).data(Qt.ItemDataRole.UserRole)
-            table.item(r, 0).setCheckState(
+            item = table.item(r, 0)
+            if item is None:
+                continue
+            item_id = item.data(Qt.ItemDataRole.UserRole)
+            item.setCheckState(
                 Qt.CheckState.Checked if item_id in selected_ids
                 else Qt.CheckState.Unchecked)
 
@@ -1003,7 +1094,8 @@ class DebloatToolsModule(BaseModule):
         checked_ids = [
             table.item(r, 0).data(Qt.ItemDataRole.UserRole)
             for r in range(table.rowCount())
-            if table.item(r, 0).checkState() == Qt.CheckState.Checked
+            if table.item(r, 0) is not None
+            and table.item(r, 0).checkState() == Qt.CheckState.Checked
         ]
         by_category: Dict[str, List[str]] = {}
         for tid in checked_ids:
@@ -1045,8 +1137,9 @@ class DebloatToolsModule(BaseModule):
 
         selected_ids = []
         for r in range(table.rowCount()):
-            if table.item(r, 0).checkState() == Qt.CheckState.Checked:
-                selected_ids.append(table.item(r, 0).data(Qt.ItemDataRole.UserRole))
+            item = table.item(r, 0)
+            if item is not None and item.checkState() == Qt.CheckState.Checked:
+                selected_ids.append(item.data(Qt.ItemDataRole.UserRole))
 
         if not selected_ids:
             return

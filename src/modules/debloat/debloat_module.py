@@ -30,6 +30,7 @@ from modules.debloat.debloat_scanner import (
     get_installed_packages, PROTECTED_APPS, PROTECTED_REASONS,
 )
 from modules.debloat.debloat_search_provider import DebloatSearchProvider
+from modules.debloat.run_all_tab import RunAllTab, apply_app_entries
 from modules.tweaks.tweak_engine import TweakEngine
 from modules.tweaks import tweak_engine as te
 from core.semantic_colors import chrome, semantic
@@ -118,6 +119,7 @@ class DebloatToolsModule(BaseModule):
         self._ai_tweaks: List[dict] = []
         self._tweak_defs_cache: Dict[tuple, tuple] = {}
         self._signals = _Signals()
+        self._run_all_tab: Optional[RunAllTab] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -139,6 +141,8 @@ class DebloatToolsModule(BaseModule):
         self._tab_widget.addTab(self._build_apps_tab(), "Apps")
         self._tab_widget.addTab(self._build_tweaks_tab("tweak"), "Privacy & Telemetry")
         self._tab_widget.addTab(self._build_tweaks_tab("ai"), "AI & Navigation")
+        self._run_all_tab = RunAllTab(self)
+        self._tab_widget.addTab(self._run_all_tab, "Run All")
         self._tab_widget.currentChanged.connect(self._on_tab_changed)
         self._signals.tweak_detected.connect(self._on_tweak_detected)
 
@@ -409,9 +413,13 @@ class DebloatToolsModule(BaseModule):
     def on_deactivate(self) -> None:
         self._persist_sort()
         self.cancel_all_workers()
+        if self._run_all_tab is not None:
+            self._run_all_tab._cancel_all()
 
     def on_stop(self) -> None:
         self.cancel_all_workers()
+        if self._run_all_tab is not None:
+            self._run_all_tab._cancel_all()
 
     def get_refresh_interval(self) -> Optional[int]:
         return None
@@ -637,19 +645,11 @@ class DebloatToolsModule(BaseModule):
             engine = TweakEngine(backup)
             rp_id = self._session.restore_point_id("Apps")
             entries = self._load_debloat_entries()
-            success, targeted = 0, []
             logger.info("Debloat: removing %d app(s)", len(entry_ids))
-            for i, eid in enumerate(entry_ids):
-                if w.is_cancelled:
-                    break
-                entry = entries.get(eid)
-                if entry:
-                    pkg = entry.get("package", eid)
-                    targeted.append(pkg)
-                    logger.info("Debloat: removing %s", pkg)
-                    if engine.apply_tweak(entry, rp_id):
-                        success += 1
-                w.signals.progress.emit(i + 1)
+            success, targeted = apply_app_entries(
+                entry_ids, rp_id, entries, engine,
+                is_cancelled=lambda: w.is_cancelled,
+                on_progress=lambda done: w.signals.progress.emit(done))
             logger.info("Debloat: removed %d/%d app(s)", success, len(entry_ids))
             return {"success": success, "total": len(entry_ids), "targeted": targeted}
 

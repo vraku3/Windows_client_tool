@@ -382,3 +382,38 @@ def test_context_menu_copies_the_registry_path_when_the_tweak_has_one(
     mod._populate_tweaks_table("tweak")
     path = mod._registry_path_for_tweak(tweak)
     assert path == r"HKLM\SOFTWARE\Policies\X\Y"
+
+
+def test_context_menu_offers_the_registry_path_of_a_later_step_too(monkeypatch):
+    # Real shape, e.g. services.json's disable_windows_update_au_svc /
+    # privacy.json's disable_windows_insider: a `service` step FIRST, a
+    # `registry` step SECOND. The menu must not fall back to "Copy command"
+    # (and an empty clipboard) just because steps[0] isn't a registry step.
+    mod = _module()
+    tweak = {"id": "a", "name": "X", "category": "Privacy", "risk": "Low",
+            "steps": [{"type": "service", "name": "wuauserv", "start_type": "manual"},
+                      {"type": "registry",
+                       "key": r"HKLM\SOFTWARE\Policies\X", "value": "Y"}]}
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: [tweak])
+    monkeypatch.setattr(te.TweakEngine, "detect",
+                        lambda self, t: te.DetectionResult(te.NOT_APPLIED))
+    mod._populate_tweaks_table("tweak")
+
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QApplication, QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    # Sidestep pixel-accurate hit testing: point indexAt at row 0 directly.
+    monkeypatch.setattr(table, "indexAt", lambda pos: table.model().index(0, 0))
+    # QMenu.exec() blocks for a real click; capture the menu instead of
+    # popping it up, the same way the test would trigger a real user click.
+    captured = []
+    monkeypatch.setattr(dm.QMenu, "exec", lambda self, *a, **k: captured.append(self))
+
+    mod._on_tweaks_context_menu(QPoint(0, 0), "tweak")
+
+    menu = captured[0]
+    actions = {a.text(): a for a in menu.actions()}
+    assert "Copy registry path" in actions
+    assert "Copy command" not in actions
+    actions["Copy registry path"].trigger()
+    assert QApplication.clipboard().text() == r"HKLM\SOFTWARE\Policies\X\Y"

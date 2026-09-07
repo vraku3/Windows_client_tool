@@ -849,14 +849,13 @@ class DebloatToolsModule(BaseModule):
         tweak = next((t for t in tweaks if t.get("id") == tweak_id), None)
         if not tweak:
             return
-        steps = tweak.get("steps", [])
-        step_type = steps[0].get("type") if steps else None
         menu = QMenu(table)
-        if step_type in ("registry", "registry_delete"):
-            path = self._registry_path_for_tweak(tweak)
+        reg_path = self._registry_path_for_tweak(tweak)
+        if reg_path:
             act = menu.addAction("Copy registry path")
-            act.triggered.connect(lambda: QApplication.clipboard().setText(path))
+            act.triggered.connect(lambda: QApplication.clipboard().setText(reg_path))
         else:
+            steps = tweak.get("steps", [])
             cmd = (steps[0].get("cmd") or steps[0].get("command", "")) if steps else ""
             act = menu.addAction("Copy command")
             act.triggered.connect(lambda: QApplication.clipboard().setText(cmd))

@@ -24,6 +24,7 @@ from core.search_provider import SearchProvider
 from core.worker import Worker
 from modules.debloat import debloat_presets as dp
 from modules.debloat import debloat_scanner
+from modules.debloat.debloat_session import DebloatSession
 from modules.debloat.debloat_scanner import (
     get_installed_packages, PROTECTED_APPS, PROTECTED_REASONS,
 )
@@ -382,6 +383,9 @@ class DebloatToolsModule(BaseModule):
     def on_start(self, app) -> None:
         self.app = app
         self._engine = TweakEngine(app.backup)
+        self._session = DebloatSession(create_rp=lambda label:
+            self.app.backup.create_restore_point(f"Debloat {label} "
+            f"{datetime.datetime.now():%Y%m%d_%H%M%S}", "Debloat"))
 
     def on_activate(self) -> None:
         # First-load guard (CLAUDE.md pattern): trigger the scan once, on
@@ -630,8 +634,7 @@ class DebloatToolsModule(BaseModule):
         def work(w: Worker):
             backup = self.app.backup
             engine = TweakEngine(backup)
-            rp_id = backup.create_restore_point(
-                f"Debloat apps {datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}", "Debloat")
+            rp_id = self._session.restore_point_id("Apps")
             entries = self._load_debloat_entries()
             success, targeted = 0, []
             logger.info("Debloat: removing %d app(s)", len(entry_ids))
@@ -1269,8 +1272,7 @@ class DebloatToolsModule(BaseModule):
         def work(w: Worker):
             backup = self.app.backup
             engine = TweakEngine(backup)
-            rp_id = backup.create_restore_point(
-                f"Debloat tweaks {datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}", "Debloat")
+            rp_id = self._session.restore_point_id("Tweaks" if tab_type == "tweak" else "AI")
             success, failures = 0, []
             logger.info("Debloat tweaks: applying %d tweak(s) [%s tab]", len(selected_ids), tab_type)
             for i, eid in enumerate(selected_ids):

@@ -448,3 +448,24 @@ def test_definitions_are_not_reparsed_when_the_file_has_not_changed(
     mod._load_tweak_definitions("tweak")
     # second call must reuse the cache: no more file opens than the first
     assert len(calls) == len(set(calls))
+
+
+def test_apply_tweaks_shows_a_progress_bar(monkeypatch):
+    mod = _module()
+    bar = mod._widget.findChild(type(mod._apps_progress).__class__) \
+        if False else None
+    # progress bar exists per tab, named like the table/status labels
+    from PyQt6.QtWidgets import QProgressBar
+    bar = mod._widget.findChild(QProgressBar, "_progress_tweak")
+    assert bar is not None
+
+
+def test_completion_dialog_names_which_tweaks_failed(monkeypatch):
+    mod = _module()
+    result = {"success": 1, "total": 2,
+             "failures": [("Disable Cortana", "access denied")]}
+    shown = {}
+    monkeypatch.setattr(dm.QMessageBox, "information",
+                        lambda *a, **k: shown.setdefault("text", a[2] if len(a) > 2 else ""))
+    mod._on_tweaks_applied(result)
+    assert "Disable Cortana" in shown["text"]

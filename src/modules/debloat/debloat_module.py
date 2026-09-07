@@ -84,6 +84,7 @@ class DebloatToolsModule(BaseModule):
         self._apps_table: Optional[QTableWidget] = None
         self._show_all_checkbox: Optional[QCheckBox] = None
         self._apply_worker: Optional[Worker] = None
+        self._apply_tweaks_workers: Dict[str, Worker] = {}
         self._tweaks_table: Optional[QTableWidget] = None
         self._ai_table: Optional[QTableWidget] = None
         self._installed_apps: List[str] = []
@@ -316,9 +317,21 @@ class DebloatToolsModule(BaseModule):
         scroll.setWidget(table_container)
         layout.addWidget(scroll)
 
+        progress = QProgressBar()
+        progress.setObjectName(f"_progress_{tab_type}")
+        progress.setVisible(False)
+        layout.addWidget(progress)
+
+        apply_row = QHBoxLayout()
         apply_btn = QPushButton("Apply Selected Tweaks")
         apply_btn.clicked.connect(lambda: self._on_apply_tweaks(tab_type))
-        layout.addWidget(apply_btn)
+        apply_row.addWidget(apply_btn)
+        cancel_btn = QPushButton("✕ Cancel")
+        cancel_btn.setObjectName(f"_cancel_apply_{tab_type}")
+        cancel_btn.setVisible(False)
+        cancel_btn.clicked.connect(lambda _c=False, tt=tab_type: self._on_cancel_tweaks_apply(tt))
+        apply_row.addWidget(cancel_btn)
+        layout.addLayout(apply_row)
 
         save_custom_btn = QPushButton("Save as Custom")
         save_custom_btn.clicked.connect(
@@ -1015,6 +1028,14 @@ class DebloatToolsModule(BaseModule):
     def _status_lbl_for(self, tab_type: str) -> Optional[QLabel]:
         return self._widget.findChild(QLabel, f"_status_{tab_type}")
 
+    def _on_cancel_tweaks_apply(self, tab_type: str) -> None:
+        worker = self._apply_tweaks_workers.get(tab_type)
+        if worker is not None:
+            worker.cancel()
+        btn: QPushButton = self._widget.findChild(QPushButton, f"_cancel_apply_{tab_type}")
+        if btn:
+            btn.setEnabled(False)
+
     def _on_apply_tweaks(self, tab_type: str) -> None:
         if not self.require_admin():
             return
@@ -1035,42 +1056,79 @@ class DebloatToolsModule(BaseModule):
         else:
             tweaks = self._ai_tweaks
 
+        names = [next((t.get("name", eid) for t in tweaks if t.get("id") == eid), eid)
+                for eid in selected_ids]
+        if not confirm_destructive(
+                self._widget, "Apply Tweaks",
+                f"Apply {len(names)} tweak(s)?", detail=self._preview(names)):
+            return
+
+        progress: QProgressBar = self._widget.findChild(QProgressBar, f"_progress_{tab_type}")
+        cancel_btn: QPushButton = self._widget.findChild(QPushButton, f"_cancel_apply_{tab_type}")
+        if progress:
+            progress.setVisible(True)
+            progress.setRange(0, len(selected_ids))
+            progress.setValue(0)
+        if cancel_btn:
+            cancel_btn.setVisible(True)
+            cancel_btn.setEnabled(True)
+
         def work(w: Worker):
             backup = self.app.backup
             engine = TweakEngine(backup)
             rp_id = backup.create_restore_point(
                 f"Debloat tweaks {datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}", "Debloat")
-            success = 0
+            success, failures = 0, []
             logger.info("Debloat tweaks: applying %d tweak(s) [%s tab]", len(selected_ids), tab_type)
-            for eid in selected_ids:
+            for i, eid in enumerate(selected_ids):
                 if w.is_cancelled:
                     break
                 tweak = next((t for t in tweaks if t.get("id") == eid), None)
                 if tweak:
                     logger.info("Applying tweak: %s", tweak.get("name", eid))
-                    engine.apply_tweak(tweak, rp_id)
-                    success += 1
+                    if engine.apply_tweak(tweak, rp_id):
+                        success += 1
+                    else:
+                        failures.append((tweak.get("name", eid), "apply_tweak returned False"))
+                w.signals.progress.emit(i + 1)
             logger.info("Debloat tweaks: applied %d/%d", success, len(selected_ids))
-            return {"success": success, "total": len(selected_ids)}
+            return {"success": success, "total": len(selected_ids), "failures": failures}
 
         w = Worker(work)
-        w.signals.result.connect(self._on_tweaks_applied)
-        w.signals.error.connect(self._on_apply_error)
+        if progress:
+            w.signals.progress.connect(progress.setValue)
+        w.signals.result.connect(lambda result, tt=tab_type: self._on_tweaks_applied(result, tt))
+        w.signals.error.connect(lambda err, tt=tab_type: self._on_tweaks_apply_error(err, tt))
         self._workers.append(w)
+        self._apply_tweaks_workers[tab_type] = w
         self.app.thread_pool.start(w)
 
-    def _on_tweaks_applied(self, result: Dict) -> None:
+    def _on_tweaks_applied(self, result: Dict, tab_type: str = "tweak") -> None:
+        progress: QProgressBar = self._widget.findChild(QProgressBar, f"_progress_{tab_type}")
+        cancel_btn: QPushButton = self._widget.findChild(QPushButton, f"_cancel_apply_{tab_type}")
+        if progress:
+            progress.setVisible(False)
+        if cancel_btn:
+            cancel_btn.setVisible(False)
         logger.info(
             "Debloat tweaks complete: applied %d/%d tweak(s)", result["success"], result["total"]
         )
-        QMessageBox.information(
-            self._widget, "Tweaks Applied",
-            f"Applied {result['success']} of {result['total']} tweak(s).\n"
-            f"A restore point has been created.",
-        )
-        # Refresh tables
+        text = f"Applied {result['success']} of {result['total']} tweak(s)."
+        if result.get("failures"):
+            text += "\n\nDid not apply:\n" + "\n".join(
+                f"• {name} — {reason}" for name, reason in result["failures"][:10])
+        QMessageBox.information(self._widget, "Tweaks Applied", text)
         self._populate_tweaks_table("tweak")
         self._populate_tweaks_table("ai")
+
+    def _on_tweaks_apply_error(self, err: str, tab_type: str) -> None:
+        progress: QProgressBar = self._widget.findChild(QProgressBar, f"_progress_{tab_type}")
+        cancel_btn: QPushButton = self._widget.findChild(QPushButton, f"_cancel_apply_{tab_type}")
+        if progress:
+            progress.setVisible(False)
+        if cancel_btn:
+            cancel_btn.setVisible(False)
+        logger.error("Debloat tweaks apply error [%s tab]: %s", tab_type, err)
 
 
 class DebloatModule(CompositeModule):

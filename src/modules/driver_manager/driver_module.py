@@ -15,7 +15,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
 from core.worker import COMWorker, Worker
-from modules.driver_manager.driver_reader import DriverInfo, fetch_drivers
+from modules.driver_manager.driver_reader import DriverInfo, classify_provider, fetch_drivers
 
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
 
@@ -137,11 +137,7 @@ class DriverModule(BaseModule):
         ]
         self._table.setRowCount(len(visible))
         for r, d in enumerate(visible):
-            provider = (
-                "Microsoft"
-                if "microsoft" in d.publisher.lower()
-                else "Third-Party"
-            )
+            provider = classify_provider(d.publisher)
             items = [
                 d.device_name, d.driver_class, d.version, d.date,
                 d.publisher, provider, "✓" if d.signed else "✗", d.flags,
@@ -208,11 +204,7 @@ class DriverModule(BaseModule):
             writer = csv.writer(f)
             writer.writerow(COLUMNS)
             for d in self._drivers_ref[0]:
-                prov = (
-                    "Microsoft"
-                    if "microsoft" in d.publisher.lower()
-                    else "Third-Party"
-                )
+                prov = classify_provider(d.publisher)
                 writer.writerow([
                     d.device_name, d.driver_class, d.version, d.date,
                     d.publisher, prov, d.signed, d.flags,

@@ -252,6 +252,23 @@ class DebloatToolsModule(BaseModule):
         legend.setObjectName("muted")
         layout.addWidget(legend)
 
+        filter_row = QHBoxLayout()
+        search = QLineEdit()
+        search.setObjectName(f"_search_{tab_type}")
+        search.setPlaceholderText("Search tweaks…")
+        search.textChanged.connect(lambda _t, tt=tab_type: self._apply_tweaks_filter(tt))
+        filter_row.addWidget(search, 1)
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(lambda _c=False, tt=tab_type: self._on_tweaks_select_all(tt))
+        filter_row.addWidget(select_all_btn)
+        select_none_btn = QPushButton("Select None")
+        select_none_btn.clicked.connect(lambda _c=False, tt=tab_type: self._on_tweaks_select_none(tt))
+        filter_row.addWidget(select_none_btn)
+        selected_lbl = QLabel("0 selected")
+        selected_lbl.setObjectName(f"_selected_{tab_type}")
+        filter_row.addWidget(selected_lbl)
+        layout.addLayout(filter_row)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
@@ -276,7 +293,13 @@ class DebloatToolsModule(BaseModule):
         table.setSortingEnabled(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        table.setAlternatingRowColors(True)
         table.setObjectName(f"_table_{tab_type}")
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda pos, tt=tab_type: self._on_tweaks_context_menu(pos, tt))
+        table.itemChanged.connect(
+            lambda item, tt=tab_type: self._on_tweaks_item_changed(item, tt))
         table_layout.addWidget(table)
 
         scroll.setWidget(table_container)
@@ -767,6 +790,77 @@ class DebloatToolsModule(BaseModule):
 
         if status_lbl:
             status_lbl.setText(f"{len(tweaks)} tweak(s) loaded")
+
+    def _apply_tweaks_filter(self, tab_type: str) -> None:
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        search: QLineEdit = self._widget.findChild(QLineEdit, f"_search_{tab_type}")
+        if not table or not search:
+            return
+        query = search.text().strip().lower()
+        for r in range(table.rowCount()):
+            name = table.item(r, 1).text().lower()
+            table.setRowHidden(r, bool(query) and query not in name)
+
+    def _on_tweaks_select_all(self, tab_type: str) -> None:
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        if not table:
+            return
+        for r in range(table.rowCount()):
+            if not table.isRowHidden(r):
+                table.item(r, 0).setCheckState(Qt.CheckState.Checked)
+
+    def _on_tweaks_select_none(self, tab_type: str) -> None:
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        if not table:
+            return
+        for r in range(table.rowCount()):
+            table.item(r, 0).setCheckState(Qt.CheckState.Unchecked)
+
+    def _on_tweaks_item_changed(self, item: QTableWidgetItem, tab_type: str) -> None:
+        if item.column() != 0:
+            return
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        lbl: QLabel = self._widget.findChild(QLabel, f"_selected_{tab_type}")
+        if not table or not lbl:
+            return
+        checked = sum(
+            1 for r in range(table.rowCount())
+            if table.item(r, 0).checkState() == Qt.CheckState.Checked
+        )
+        lbl.setText(f"{checked} selected")
+
+    def _registry_path_for_tweak(self, tweak: dict) -> str:
+        for step in tweak.get("steps", []):
+            if step.get("type") in ("registry", "registry_delete"):
+                key, value = step.get("key", ""), step.get("value", "")
+                return f"{key}\\{value}" if value else key
+        return ""
+
+    def _on_tweaks_context_menu(self, pos, tab_type: str) -> None:
+        table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+        if not table:
+            return
+        index = table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+        tweak_id = table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        tweaks = self._all_tweaks if tab_type == "tweak" else self._ai_tweaks
+        tweak = next((t for t in tweaks if t.get("id") == tweak_id), None)
+        if not tweak:
+            return
+        steps = tweak.get("steps", [])
+        step_type = steps[0].get("type") if steps else None
+        menu = QMenu(table)
+        if step_type in ("registry", "registry_delete"):
+            path = self._registry_path_for_tweak(tweak)
+            act = menu.addAction("Copy registry path")
+            act.triggered.connect(lambda: QApplication.clipboard().setText(path))
+        else:
+            cmd = (steps[0].get("cmd") or steps[0].get("command", "")) if steps else ""
+            act = menu.addAction("Copy command")
+            act.triggered.connect(lambda: QApplication.clipboard().setText(cmd))
+        menu.exec(table.viewport().mapToGlobal(pos))
 
     def _on_preset(self, preset_name: str, tab_type: str) -> None:
         """Check every row this preset's JSON file selects. Replaces the

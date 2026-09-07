@@ -5,7 +5,7 @@ real machine -- TweakEngine.detect is monkeypatched throughout.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QLineEdit, QMessageBox
 
 from modules.debloat import debloat_module as dm
 from modules.debloat import debloat_presets as dp
@@ -351,3 +351,34 @@ def test_export_writes_every_catalogued_and_installed_app(tmp_path, monkeypatch)
                         lambda *a, **k: (str(out), ""))
     mod._on_export_apps()
     assert "Pkg.A" in out.read_text(encoding="utf-8")
+
+
+def test_tweaks_search_filters_by_name(monkeypatch):
+    mod = _module()
+    tweaks = [{"id": "a", "name": "Disable Cortana", "category": "Privacy", "risk": "Low"},
+             {"id": "b", "name": "Disable Telemetry", "category": "Telemetry", "risk": "Low"}]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    monkeypatch.setattr(te.TweakEngine, "detect",
+                        lambda self, t: te.DetectionResult(te.NOT_APPLIED))
+    mod._populate_tweaks_table("tweak")
+    search = mod._widget.findChild(QLineEdit, "_search_tweak")
+    search.setText("cortana")
+    mod._apply_tweaks_filter("tweak")
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    visible = [r for r in range(table.rowCount()) if not table.isRowHidden(r)]
+    assert len(visible) == 1
+
+
+def test_context_menu_copies_the_registry_path_when_the_tweak_has_one(
+        monkeypatch):
+    mod = _module()
+    tweak = {"id": "a", "name": "X", "category": "Privacy", "risk": "Low",
+            "steps": [{"type": "registry",
+                      "key": r"HKLM\SOFTWARE\Policies\X", "value": "Y"}]}
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: [tweak])
+    monkeypatch.setattr(te.TweakEngine, "detect",
+                        lambda self, t: te.DetectionResult(te.NOT_APPLIED))
+    mod._populate_tweaks_table("tweak")
+    path = mod._registry_path_for_tweak(tweak)
+    assert path == r"HKLM\SOFTWARE\Policies\X\Y"

@@ -183,6 +183,15 @@ QLabel#muted {
     color: #5a5a5a;
 }
 
+/* DebloatModule's cross-tab "Removed this session" banner (P06). Same
+   muted grey as QLabel#muted above -- kept as its own selector because the
+   objectName also doubles as this widget's findChild lookup key in
+   tests/test_debloat_module.py. */
+QLabel#_removed_this_session_banner {
+    color: #5a5a5a;
+    padding: 4px 8px;
+}
+
 /* ============================================================
    Parity block — the 61 selectors dark.qss styled and this sheet
    did not.

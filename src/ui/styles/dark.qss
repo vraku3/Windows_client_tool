@@ -415,6 +415,15 @@ QLabel#muted {
     color: #858585;
 }
 
+/* DebloatModule's cross-tab "Removed this session" banner (P06). Same
+   muted grey as QLabel#muted above -- kept as its own selector because the
+   objectName also doubles as this widget's findChild lookup key in
+   tests/test_debloat_module.py. */
+QLabel#_removed_this_session_banner {
+    color: #858585;
+    padding: 4px 8px;
+}
+
 /* ---- Semantic label roles ----------------------------------------------
    Set with `label.setObjectName("statusError")` rather than an inline
    stylesheet. An inline sheet beats this one and never changes again, so a

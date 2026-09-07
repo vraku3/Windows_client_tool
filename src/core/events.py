@@ -10,6 +10,7 @@ CONFIG_CHANGED = "config.changed"
 MODULE_ERROR = "module.error"
 NOTIFY_BALLOON = "notify.balloon"
 NAV_REQUEST_MODULE = "nav.request_module"
+DEBLOAT_ITEMS_REMOVED = "debloat.items_removed"
 
 # Typed payloads
 

@@ -1,4 +1,5 @@
 from core.appx_service import _version_key
+from modules.store_apps import store_apps_module as sam
 from modules.store_apps.store_apps_module import (
     failure_hint,
     friendly_name_from_location,
@@ -128,6 +129,7 @@ def _make_fake_app(tmp_path):
 
     from core.backup_service import BackupService
     from core.config_manager import ConfigManager
+    from core.event_bus import EventBus
 
     class FakeApp:
         pass
@@ -136,7 +138,20 @@ def _make_fake_app(tmp_path):
     FakeApp.config = ConfigManager(str(tmp_path), {"version": 1})
     FakeApp.config.load()
     FakeApp.thread_pool = QThreadPool.globalInstance()
+    FakeApp.event_bus = EventBus()
     return FakeApp
+
+
+def store_module():
+    """A StoreAppsModule with a real widget, for tests that don't need a
+    tmp_path fixture -- P08's badge test just needs on_start/create_widget
+    to have run so _debloat_packages and _table exist."""
+    import tempfile
+
+    mod = sam.StoreAppsModule()
+    mod.on_start(_make_fake_app(tempfile.mkdtemp()))
+    mod.create_widget()
+    return mod
 
 
 def test_module_creates_widget_and_sorts(qapp, tmp_path):
@@ -223,3 +238,13 @@ def test_module_filter_and_select(qapp, tmp_path):
     mod._select_non_system()
     sel = sorted({i.row() for i in mod._table.selectedIndexes()})
     assert len(sel) == 2
+
+
+def test_a_catalogued_package_gets_the_bloatware_badge(monkeypatch):
+    mod = store_module()
+    monkeypatch.setattr(sam, "_debloat_catalog_packages",
+                        lambda: {"Microsoft.BingWeather"})
+    mod._apps = [{"Name": "Microsoft.BingWeather", "InstallLocation": "",
+                 "Publisher": "", "Version": ""}]
+    mod._on_apps_loaded(mod._apps, None)
+    assert mod._table.item(0, 0).toolTip().startswith("Known bloatware")

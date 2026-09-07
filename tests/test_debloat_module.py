@@ -5,8 +5,9 @@ real machine -- TweakEngine.detect is monkeypatched throughout.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLineEdit, QMessageBox
+from PyQt6.QtWidgets import QLabel, QLineEdit, QMessageBox, QTabWidget
 
+from core.event_bus import EventBus
 from modules.debloat import debloat_module as dm
 from modules.debloat import debloat_presets as dp
 from modules.tweaks import tweak_engine as te
@@ -40,6 +41,7 @@ class _FakeApp:
         self.backup = _FakeBackup()
         self.thread_pool = None
         self.config = _FakeConfig()
+        self.event_bus = EventBus()
 
 
 def _module():
@@ -525,3 +527,11 @@ def test_returning_to_a_tab_redetects_status_without_rebuilding_rows(
     table = mod._widget.findChild(QTableWidget, "_table_tweak")
     assert table.rowCount() == row_count_before
     assert "Applied" in table.item(0, 4).text()
+
+
+def test_wrap_adds_a_removed_this_session_banner():
+    mod = dm.DebloatModule()
+    tabs = QTabWidget()
+    wrapped = mod.wrap(tabs)
+    banner = wrapped.findChild(QLabel, "_removed_this_session_banner")
+    assert banner is not None

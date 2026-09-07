@@ -6,7 +6,7 @@ import os
 import re
 import subprocess
 import threading
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
@@ -21,6 +21,7 @@ from core.formatting import human_size
 from core.appx_service import dedupe_by_name, dir_size, fetch_packages
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
+from core.events import DEBLOAT_ITEMS_REMOVED
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.worker import Worker
@@ -153,6 +154,20 @@ def failure_hint(output: str) -> str:
     return ""
 
 
+def _debloat_catalog_packages() -> Set[str]:
+    """P08/S30: the package set Debloat's own catalog (`debloat.json`)
+    names, read once and cheaply (126 entries) so Store Apps can flag a
+    row as "also in the Debloat catalog" without importing DebloatModule."""
+    import json
+    path = os.path.join(os.path.dirname(__file__), "..", "tweaks",
+                        "definitions", "debloat.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return {e["package"] for e in json.load(f) if e.get("package")}
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
 class _SortableItem(QTableWidgetItem):
     """QTableWidgetItem that compares case-insensitively for alpha sorting."""
 
@@ -192,6 +207,7 @@ class StoreAppsModule(BaseModule):
         self._show_arch = False
         self._size_signals = _SizeSignals()
         self._size_signals.size_ready.connect(self._on_size_ready)
+        self._debloat_packages: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -327,6 +343,7 @@ class StoreAppsModule(BaseModule):
 
     def on_start(self, app) -> None:
         self.app = app
+        self._debloat_packages = _debloat_catalog_packages()
 
     def get_refresh_interval(self) -> Optional[int]:
         return 120_000
@@ -416,6 +433,9 @@ class StoreAppsModule(BaseModule):
                 tip.append(f"Package: {name}")
             if tip:
                 name_item.setToolTip("\n".join(tip))
+            if name in self._debloat_packages:
+                name_item.setToolTip("Known bloatware — also in the Debloat catalog\n"
+                                     + (name_item.toolTip() or ""))
             self._table.setItem(row, 0, name_item)
 
             pub_item = QTableWidgetItem(short_publisher(publisher))
@@ -665,6 +685,10 @@ class StoreAppsModule(BaseModule):
 
         failed = [(display, output) for _, display, ok, output in results if not ok]
         ok_count = len(results) - len(failed)
+
+        succeeded = [display for _, display, ok, _ in results if ok]
+        if succeeded:
+            self.app.event_bus.publish(DEBLOAT_ITEMS_REMOVED, succeeded)
 
         if failed:
             lines = []

@@ -101,7 +101,14 @@ def dedupe_by_name(packages: List[dict]) -> List[dict]:
 
 
 def installed_names() -> List[str]:
-    """Just the deduped package names (what Debloat's bloatware scan needs)."""
+    """Just the deduped package names (what Debloat's bloatware scan needs).
+
+    Deliberately leaves `fetch_packages()`'s `use_cache=True` default in
+    place (S29): Debloat's "what's roughly installed" catalog check can
+    tolerate a brief cache hit, unlike Store Apps' `_load_apps`, which
+    forces `use_cache=False` because it needs current truth right before an
+    uninstall decision.
+    """
     return [a.get("Name", "") for a in dedupe_by_name(fetch_packages())]
 
 

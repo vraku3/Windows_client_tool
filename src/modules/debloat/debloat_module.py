@@ -18,6 +18,7 @@ from core.appx_service import dir_size, fetch_packages
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
 from core.confirm import confirm_destructive
+from core.events import DEBLOAT_ITEMS_REMOVED
 from core.formatting import human_size
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
@@ -690,6 +691,8 @@ class DebloatToolsModule(BaseModule):
             RestoreManagerDialog(self.app, self._widget).exec()
         self._apps_status.setText(
             f"{actually_gone} of {result['total']} app(s) confirmed removed")
+        if result.get("targeted"):
+            self.app.event_bus.publish(DEBLOAT_ITEMS_REMOVED, result["targeted"])
         self._on_scan()
 
     def _on_scan_error(self, err: str) -> None:
@@ -1344,3 +1347,49 @@ class DebloatModule(CompositeModule):
         from modules.store_apps.store_apps_module import StoreAppsModule
 
         self.children = [DebloatToolsModule(), StoreAppsModule()]
+        self._removed_banner: Optional[QLabel] = None
+
+    def on_start(self, app) -> None:
+        # CompositeModule.on_start sets self.app and starts every child --
+        # do that first, then subscribe. on_start runs exactly once per
+        # module per app lifecycle (module_registry.start_all()), unlike
+        # wrap() which is only called once too but needs self.app already
+        # set (wrap() itself is exercised directly by tests with no app at
+        # all, so it must stay app-free) -- so this is the one place that
+        # is both guaranteed to run once and guaranteed to have self.app.
+        super().on_start(app)
+        self.app.event_bus.subscribe(DEBLOAT_ITEMS_REMOVED, self._on_items_removed)
+
+    def _on_items_removed(self, names) -> None:
+        self.note_removed(list(names))
+
+    def wrap(self, tabs: QTabWidget) -> QWidget:
+        """P06: one banner, shared by every child tab, naming what got
+        removed this session -- so removing something in one tab is
+        visible from the others without a manual cross-tab refresh."""
+        outer = QWidget()
+        layout = QVBoxLayout(outer)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._removed_banner = QLabel("")
+        # objectName doubles as this widget's test-lookup key (see
+        # test_wrap_adds_a_removed_this_session_banner) and its QSS
+        # selector -- see the "#_removed_this_session_banner" rule in both
+        # dark.qss and light.qss. NOT an inline setStyleSheet(): that beats
+        # the app stylesheet and is never revisited, so it would keep a
+        # dark-theme grey after a switch to the light theme (this file's
+        # frozen-colour budget in tests/test_no_inline_stylesheets.py is a
+        # ratchet that only ever falls).
+        self._removed_banner.setObjectName("_removed_this_session_banner")
+        self._removed_banner.hide()
+        layout.addWidget(self._removed_banner)
+        layout.addWidget(tabs)
+        return outer
+
+    def note_removed(self, names: List[str]) -> None:
+        """Called (via the DEBLOAT_ITEMS_REMOVED event) whenever either
+        child removes something, so the other can show it happened without
+        a manual cross-tab refresh."""
+        self._session_removed = getattr(self, "_session_removed", []) + names
+        self._removed_banner.setText(
+            "Removed this session: " + ", ".join(self._session_removed))
+        self._removed_banner.setVisible(True)

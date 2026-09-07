@@ -18,12 +18,13 @@ from PyQt6.QtWidgets import (
 )
 
 from core.formatting import human_size
-from core.appx_service import dedupe_by_name, dir_size, fetch_packages
+from core.appx_service import _version_key, dedupe_by_name, dir_size, fetch_packages
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
 from core.events import DEBLOAT_ITEMS_REMOVED
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
+from core.table_ui import NumericSortItem
 from core.worker import Worker
 from core.windows_utils import ps_quote
 from ui.empty_state import EmptyState
@@ -79,7 +80,9 @@ def resolve_sid_to_name(sid_str: str) -> str:
         sid = win32security.ConvertStringSidToSid(sid_str)
         name, domain, _ = win32security.LookupAccountSid(None, sid)
         return f"{domain}\\{name}" if domain else name
-    except Exception:
+    except Exception as exc:                             # noqa: BLE001
+        logger.warning("Could not resolve SID %s to an account name: %s",
+                       sid_str, exc)
         return ""
 
 
@@ -152,6 +155,17 @@ def failure_hint(output: str) -> str:
     if any(marker in low for marker in _IN_USE_MARKERS):
         return "The app may be running. Close it and try again."
     return ""
+
+
+def verify_uninstalled(name: str) -> Tuple[bool, str]:
+    """Positive evidence, not an assumed exit code -- Remove-AppxPackage
+    exits 0 while removing nothing (documented for the Tweaks Apps tab;
+    Store Apps never had the same check). Re-reads the live package list
+    rather than trusting the removal command's own return code."""
+    still_there = any(p.get("Name") == name for p in fetch_packages(use_cache=False))
+    if still_there:
+        return False, f"{name} is still installed after the removal call"
+    return True, ""
 
 
 def _debloat_catalog_packages() -> Set[str]:
@@ -443,11 +457,12 @@ class StoreAppsModule(BaseModule):
             pub_item.setToolTip(publisher)
             self._table.setItem(row, 1, pub_item)
 
-            ver_item = QTableWidgetItem(version[:20] if version else "")
+            ver_text = version[:20] if version else ""
+            ver_item = NumericSortItem(ver_text, _version_key(version) or (0,))
             ver_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 2, ver_item)
 
-            size_item = QTableWidgetItem("…")
+            size_item = NumericSortItem("…", 0)
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             size_item.setData(Qt.ItemDataRole.UserRole, name)
             self._table.setItem(row, 3, size_item)
@@ -656,8 +671,12 @@ class StoreAppsModule(BaseModule):
                 # point opens the app's Store page when winget cannot find it.
                 steps.append(StepRecord("appx", name, name, None,
                                         revert_command=store_link))
-                results.append((display, name, result.returncode == 0,
-                                result.stdout + result.stderr))
+                verified_ok, verify_reason = verify_uninstalled(name)
+                ok = result.returncode == 0 and verified_ok
+                output = result.stdout + result.stderr
+                if result.returncode == 0 and not verified_ok:
+                    output += f"\n{verify_reason}"
+                results.append((display, name, ok, output))
                 worker.signals.progress.emit(i + 1)
             if steps:
                 try:
@@ -747,9 +766,7 @@ class StoreAppsModule(BaseModule):
         row = self._row_of(name)
         if row < 0:
             return
-        item = self._table.item(row, 3)
-        if item is not None:
-            item.setText(human_size(size))
+        self._table.setItem(row, 3, NumericSortItem(human_size(size), max(size, 0)))
 
     # ------------------------------------------------------------------
     # State preservation (selection / sort / scroll / filter)

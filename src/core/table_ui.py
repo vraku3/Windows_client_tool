@@ -13,7 +13,7 @@ off. These helpers encode the choices a data table keeps repeating:
 The ``firewall`` pane keeps its own deliberate fit/zoom machinery and the log
 viewer keeps its lines left-aligned; everything else can call these.
 """
-from typing import Iterable
+from typing import Any, Iterable
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
@@ -39,12 +39,16 @@ class NumericSortItem(QTableWidgetItem):
     before display has this bug latently: a plain QTableWidgetItem sorts
     that text alphabetically, so "10 GB" lands before "9 GB". Store the
     real value once, here, and every such column gets a correct sort for
-    the cost of one extra constructor argument.
+    the cost of one extra constructor argument. `value` is stored as-is
+    (not coerced to float) so a tuple sort key -- e.g. appx_service's
+    _version_key(), used for the Version column -- compares correctly via
+    Python's native tuple ordering; Size columns keep passing a float/int
+    exactly as before, unaffected by dropping the coercion.
     """
 
-    def __init__(self, text: str, value: float):
+    def __init__(self, text: str, value: Any):
         super().__init__(text)
-        self.setData(_NUMERIC_SORT_ROLE, float(value))
+        self.setData(_NUMERIC_SORT_ROLE, value)
 
     def __lt__(self, other) -> bool:
         mine = self.data(_NUMERIC_SORT_ROLE)

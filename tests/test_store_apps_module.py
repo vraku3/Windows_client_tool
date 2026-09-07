@@ -248,3 +248,40 @@ def test_a_catalogued_package_gets_the_bloatware_badge(monkeypatch):
                  "Publisher": "", "Version": ""}]
     mod._on_apps_loaded(mod._apps, None)
     assert mod._table.item(0, 0).toolTip().startswith("Known bloatware")
+
+
+def test_resolve_sid_to_name_logs_on_failure(monkeypatch, caplog):
+    import logging
+    caplog.set_level(logging.WARNING)
+    def boom(*a, **k):
+        raise OSError("no such account")
+    monkeypatch.setattr("win32security.ConvertStringSidToSid", boom)
+    result = sam.resolve_sid_to_name("S-1-5-21-1-2-3-1001")
+    assert result == ""
+    assert "no such account" in caplog.text
+
+
+def test_uninstall_result_is_verified_against_a_fresh_appx_list(monkeypatch):
+    """returncode==0 alone must not be believed -- Remove-AppxPackage exits
+    0 while removing nothing, the same failure V07 documents for the Tweaks
+    Apps tab."""
+    calls = []
+    def fake_run(cmd, **k):
+        calls.append(cmd)
+        class R: returncode = 0; stdout = ""; stderr = ""
+        return R()
+    monkeypatch.setattr(sam.subprocess, "run", fake_run)
+    # still "installed" after the removal call -- Windows lied about success
+    monkeypatch.setattr(sam, "fetch_packages",
+                        lambda use_cache=False: [{"Name": "Pkg.Ghost"}])
+    ok, reason = sam.verify_uninstalled("Pkg.Ghost")
+    assert ok is False
+    assert "still installed" in reason.lower()
+
+
+def test_size_column_is_a_numeric_sort_item(monkeypatch):
+    mod = store_module()
+    monkeypatch.setattr(sam, "fetch_packages", lambda **k: [
+        {"Name": "Pkg.A", "InstallLocation": "", "Publisher": "", "Version": ""}])
+    mod._on_apps_loaded(sam.dedupe_by_name(sam.fetch_packages()), None)
+    assert isinstance(mod._table.item(0, 3), sam.NumericSortItem)

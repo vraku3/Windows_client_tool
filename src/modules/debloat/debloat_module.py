@@ -23,6 +23,7 @@ from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.worker import Worker
 from modules.debloat import debloat_presets as dp
+from modules.debloat import debloat_scanner
 from modules.debloat.debloat_scanner import (
     get_installed_packages, PROTECTED_APPS, PROTECTED_REASONS,
 )
@@ -404,8 +405,13 @@ class DebloatToolsModule(BaseModule):
             self._apps_table.setItem(row, 0, chk)
             name_item = _SortableItem(entry.get("name", pkg))
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            tooltip_lines = []
             if pkg in PROTECTED_APPS:
-                name_item.setToolTip(PROTECTED_REASONS.get(pkg, ""))
+                reason = PROTECTED_REASONS.get(pkg, "")
+                if reason:
+                    tooltip_lines.append(reason)
+            tooltip_lines.append("Removed for all users on this machine")
+            name_item.setToolTip("\n".join(tooltip_lines))
             self._apps_table.setItem(row, 1, name_item)
             cat_item = QTableWidgetItem(entry.get("category", ""))
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -535,7 +541,7 @@ class DebloatToolsModule(BaseModule):
             rp_id = backup.create_restore_point(
                 f"Debloat apps {datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}", "Debloat")
             entries = self._load_debloat_entries()
-            success = 0
+            success, targeted = 0, []
             logger.info("Debloat: removing %d app(s)", len(entry_ids))
             for i, eid in enumerate(entry_ids):
                 if w.is_cancelled:
@@ -543,12 +549,13 @@ class DebloatToolsModule(BaseModule):
                 entry = entries.get(eid)
                 if entry:
                     pkg = entry.get("package", eid)
+                    targeted.append(pkg)
                     logger.info("Debloat: removing %s", pkg)
                     if engine.apply_tweak(entry, rp_id):
                         success += 1
                 w.signals.progress.emit(i + 1)
             logger.info("Debloat: removed %d/%d app(s)", success, len(entry_ids))
-            return {"success": success, "total": len(entry_ids)}
+            return {"success": success, "total": len(entry_ids), "targeted": targeted}
 
         w = Worker(work)
         w.signals.progress.connect(self._apps_progress.setValue)
@@ -568,14 +575,26 @@ class DebloatToolsModule(BaseModule):
         self._cancel_apply_btn.setVisible(False)
         self._apply_selected_btn.setEnabled(True)
         self._apply_all_btn.setEnabled(True)
+        now_installed = set(debloat_scanner.get_installed_packages())
+        actually_gone = sum(1 for pkg in result.get("targeted", [])
+                            if pkg not in now_installed)
         logger.info(
-            "Debloat complete: removed %d/%d app(s)", result["success"], result["total"]
+            "Debloat complete: confirmed %d/%d app(s) removed",
+            actually_gone, result["total"],
         )
-        QMessageBox.information(
-            self._widget, "Debloat Complete",
-            f"Removed {result['success']} of {result['total']} app(s).\n"
-            f"A restore point has been created.",
-        )
+        box = QMessageBox(self._widget)
+        box.setWindowTitle("Debloat Complete")
+        box.setText(f"{actually_gone} of {result['total']} app(s) confirmed "
+                    f"removed.\nA restore point has been created.")
+        restore_btn = box.addButton("Open Restore Manager…",
+                                    QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Ok)
+        box.exec()
+        if box.clickedButton() is restore_btn:
+            from ui.restore_manager import RestoreManagerDialog
+            RestoreManagerDialog(self.app, self._widget).exec()
+        self._apps_status.setText(
+            f"{actually_gone} of {result['total']} app(s) confirmed removed")
         self._on_scan()
 
     def _on_scan_error(self, err: str) -> None:

@@ -5,6 +5,7 @@ real machine -- TweakEngine.detect is monkeypatched throughout.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QMessageBox
 
 from modules.debloat import debloat_module as dm
 from modules.debloat import debloat_presets as dp
@@ -256,6 +257,23 @@ def test_screen_sketch_is_now_protected():
     from modules.debloat import debloat_scanner as ds
     assert "Microsoft.ScreenSketch" in ds.PROTECTED_APPS
     assert ds.PROTECTED_REASONS["Microsoft.ScreenSketch"]
+
+
+def test_apps_applied_reports_what_actually_left(monkeypatch):
+    mod = _module()
+    mod._installed_apps = ["Pkg.A", "Pkg.B"]
+    monkeypatch.setattr(mod, "_on_scan", lambda: None)
+    monkeypatch.setattr(
+        dm.debloat_scanner, "get_installed_packages",
+        lambda: {"Pkg.B": "Pkg.B"})  # Pkg.A genuinely left; Pkg.B did not
+    # The completion dialog is a real QMessageBox with a custom "Open
+    # Restore Manager..." action button (A22) -- exec() would otherwise
+    # block waiting for a click that never comes in a headless test.
+    monkeypatch.setattr(QMessageBox, "exec",
+                        lambda self: QMessageBox.StandardButton.Ok)
+    result = {"success": 1, "total": 1, "targeted": ["Pkg.A"]}
+    mod._on_apps_applied(result)
+    assert "1 of 1" in mod._apps_status.text()
 
 
 def test_show_all_reveals_uninstalled_catalog_entries(monkeypatch):

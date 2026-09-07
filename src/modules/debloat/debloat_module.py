@@ -7,8 +7,8 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QListWidget, QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget, QMessageBox,
 )
@@ -23,6 +23,7 @@ from core.formatting import human_size
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.worker import Worker
+from modules.debloat import debloat_history
 from modules.debloat import debloat_presets as dp
 from modules.debloat import debloat_scanner
 from modules.debloat.debloat_session import DebloatSession
@@ -171,11 +172,14 @@ class DebloatToolsModule(BaseModule):
         self._cancel_apply_btn.clicked.connect(self._on_cancel_apply)
         export_btn = QPushButton("Export")
         export_btn.clicked.connect(self._on_export_apps)
+        history_btn = QPushButton("View History")
+        history_btn.clicked.connect(self._on_view_history)
         btn_layout.addWidget(self._scan_btn, 0, 0)
         btn_layout.addWidget(self._apply_selected_btn, 0, 1)
         btn_layout.addWidget(self._apply_all_btn, 0, 2)
         btn_layout.addWidget(self._cancel_apply_btn, 0, 3)
         btn_layout.addWidget(export_btn, 0, 4)
+        btn_layout.addWidget(history_btn, 0, 5)
         layout.addLayout(btn_layout)
 
         filter_row = QHBoxLayout()
@@ -691,9 +695,13 @@ class DebloatToolsModule(BaseModule):
             RestoreManagerDialog(self.app, self._widget).exec()
         self._apps_status.setText(
             f"{actually_gone} of {result['total']} app(s) confirmed removed")
+        debloat_history.record("Apps", success=actually_gone, total=result["total"])
         if result.get("targeted"):
             self.app.event_bus.publish(DEBLOAT_ITEMS_REMOVED, result["targeted"])
         self._on_scan()
+
+    def _on_view_history(self) -> None:
+        DebloatHistoryDialog(self._widget).exec()
 
     def _on_scan_error(self, err: str) -> None:
         self._scan_btn.setEnabled(True)
@@ -1316,6 +1324,8 @@ class DebloatToolsModule(BaseModule):
             text += "\n\nDid not apply:\n" + "\n".join(
                 f"• {name} — {reason}" for name, reason in result["failures"][:10])
         QMessageBox.information(self._widget, "Tweaks Applied", text)
+        kind = "Tweaks" if tab_type == "tweak" else "AI"
+        debloat_history.record(kind, success=result["success"], total=result["total"])
         self._populate_tweaks_table("tweak")
         self._populate_tweaks_table("ai")
 
@@ -1327,6 +1337,33 @@ class DebloatToolsModule(BaseModule):
         if cancel_btn:
             cancel_btn.setVisible(False)
         logger.error("Debloat tweaks apply error [%s tab]: %s", tab_type, err)
+
+
+class DebloatHistoryDialog(QDialog):
+    """Read-only browser over the local Debloat apply history."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Debloat History")
+        self.resize(520, 420)
+        root = QVBoxLayout(self)
+
+        self._list = QListWidget()
+        entries = debloat_history.recent(limit=20)
+        if entries:
+            for entry in entries:
+                self._list.addItem(
+                    f"{entry['at']} — {entry['kind']}: {entry['success']}/{entry['total']}")
+        else:
+            self._list.addItem("No apply actions recorded yet.")
+        root.addWidget(self._list)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
 
 
 class DebloatModule(CompositeModule):

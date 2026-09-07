@@ -1,3 +1,5 @@
+import os
+
 from PyQt6.QtCore import QPoint
 
 from core.appx_service import _version_key
@@ -287,6 +289,40 @@ def test_size_column_is_a_numeric_sort_item(monkeypatch):
         {"Name": "Pkg.A", "InstallLocation": "", "Publisher": "", "Version": ""}])
     mod._on_apps_loaded(sam.dedupe_by_name(sam.fetch_packages()), None)
     assert isinstance(mod._table.item(0, 3), sam.NumericSortItem)
+
+
+def test_size_scan_uses_a_thread_pool_not_one_daemon_thread(monkeypatch):
+    mod = store_module()
+    mod._apps = [{"Name": f"Pkg.{i}", "InstallLocation": ""} for i in range(20)]
+    submitted = []
+
+    class FakePool:
+        def submit(self, fn, *a):
+            submitted.append(a)
+            fn(*a)
+
+    monkeypatch.setattr(mod, "_size_pool", FakePool())
+    mod._start_size_scan()
+    assert len(submitted) == 20
+
+
+def test_row_index_avoids_a_linear_scan(monkeypatch):
+    mod = store_module()
+    mod._apps = [{"Name": "Pkg.A"}]
+    mod._on_apps_loaded(mod._apps, None)
+    assert mod._row_index.get("Pkg.A") == 0
+    assert mod._row_of("Pkg.A") == 0  # now O(1) via the index
+
+
+def test_a_partial_size_read_is_marked_approximate(monkeypatch):
+    mod = store_module()
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "walk", lambda p: iter(
+        [("root", [], ["a"])]))
+    monkeypatch.setattr(os.path, "getsize",
+                        lambda p: (_ for _ in ()).throw(OSError("denied")))
+    size, approximate = mod._dir_size_detailed("C:\\fake")
+    assert approximate is True
 
 
 def test_uninstall_confirmation_names_apps_even_when_few():

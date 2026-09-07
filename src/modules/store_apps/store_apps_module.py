@@ -5,8 +5,8 @@ import logging
 import os
 import re
 import subprocess
-import threading
-from typing import List, Optional, Set, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QItemSelectionModel, QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
@@ -18,7 +18,9 @@ from PyQt6.QtWidgets import (
 )
 
 from core.formatting import human_size
-from core.appx_service import _version_key, dedupe_by_name, dir_size, fetch_packages
+from core.appx_service import (
+    _version_key, dedupe_by_name, dir_size_detailed, fetch_packages,
+)
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
 from core.events import DEBLOAT_ITEMS_REMOVED
@@ -214,7 +216,7 @@ class StoreAppsModule(BaseModule):
         self._apps: List[dict] = []
         self._worker: Optional[Worker] = None
         self._uninstall_worker: Optional[Worker] = None
-        self._size_thread: Optional[threading.Thread] = None
+        self._size_pool: Optional[ThreadPoolExecutor] = None
         self._busy = False
         self._load_error = ""
         self._show_pfn = False
@@ -222,6 +224,7 @@ class StoreAppsModule(BaseModule):
         self._size_signals = _SizeSignals()
         self._size_signals.size_ready.connect(self._on_size_ready)
         self._debloat_packages: Set[str] = set()
+        self._row_index: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -371,8 +374,8 @@ class StoreAppsModule(BaseModule):
         self.cancel_all_workers()
 
     def on_stop(self) -> None:
-        if self._size_thread is not None:
-            self._size_thread = None
+        if self._size_pool is not None:
+            self._size_pool.shutdown(wait=False)
         self.cancel_all_workers()
 
     def get_status_info(self) -> str:
@@ -423,6 +426,7 @@ class StoreAppsModule(BaseModule):
         self._table_stack.setCurrentIndex(0)
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
+        self._row_index = {}
 
         for app in sorted(apps, key=lambda a: a.get("Name", "").lower()):
             name = app.get("Name", "")
@@ -437,6 +441,7 @@ class StoreAppsModule(BaseModule):
 
             row = self._table.rowCount()
             self._table.insertRow(row)
+            self._row_index[name] = row
 
             name_item = _SortableItem(display_name)
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -786,15 +791,26 @@ class StoreAppsModule(BaseModule):
     # ------------------------------------------------------------------
 
     def _start_size_scan(self):
-        if self._size_thread is not None and self._size_thread.is_alive():
-            return
-        def scan():
-            for app in self._apps:
-                loc = app.get("InstallLocation", "")
-                size = dir_size(loc)
-                self._size_signals.size_ready.emit(app.get("Name", ""), size)
-        self._size_thread = threading.Thread(target=scan, daemon=True)
-        self._size_thread.start()
+        # Lazily create the pool once, but ALWAYS resubmit fresh scan tasks
+        # for the current self._apps on every call -- this runs at the end
+        # of every _on_apps_loaded (initial load AND every manual Refresh),
+        # so refusing to run once the pool exists would silently stop size
+        # scanning forever after the first successful call.
+        if self._size_pool is None:
+            self._size_pool = ThreadPoolExecutor(
+                max_workers=8, thread_name_prefix="appx-size")
+        for app in self._apps:
+            self._size_pool.submit(self._scan_one_size, app.get("Name", ""),
+                                   app.get("InstallLocation", ""))
+
+    def _scan_one_size(self, name: str, location: str) -> None:
+        size, approximate = self._dir_size_detailed(location)
+        self._size_signals.size_ready.emit(
+            name, size if not approximate else -abs(size) - 1)
+
+    @staticmethod
+    def _dir_size_detailed(path: str, max_entries: int = 30000) -> Tuple[int, bool]:
+        return dir_size_detailed(path, max_entries)
 
     def _on_size_ready(self, name: str, size: int) -> None:
         if not self._widget_valid(self._table):
@@ -802,7 +818,10 @@ class StoreAppsModule(BaseModule):
         row = self._row_of(name)
         if row < 0:
             return
-        self._table.setItem(row, 3, NumericSortItem(human_size(size), max(size, 0)))
+        approximate = size < 0
+        real_size = -size - 1 if approximate else size
+        text = ("~" + human_size(real_size)) if approximate else human_size(real_size)
+        self._table.setItem(row, 3, NumericSortItem(text, max(real_size, 0)))
 
     # ------------------------------------------------------------------
     # State preservation (selection / sort / scroll / filter)
@@ -856,9 +875,15 @@ class StoreAppsModule(BaseModule):
                             int(header.sortIndicatorOrder()))
 
     def _row_of(self, package_name: str) -> int:
-        for r in range(self._table.rowCount()):
+        cached = self._row_index.get(package_name, -1)
+        if cached >= 0 and cached < self._table.rowCount() and \
+                self._table.item(cached, 0) and \
+                self._table.item(cached, 0).data(Qt.ItemDataRole.UserRole) == package_name:
+            return cached
+        for r in range(self._table.rowCount()):  # fallback: index stale/missing
             it = self._table.item(r, 0)
             if it and it.data(Qt.ItemDataRole.UserRole) == package_name:
+                self._row_index[package_name] = r
                 return r
         return -1
 

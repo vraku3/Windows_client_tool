@@ -138,6 +138,35 @@ def dir_size(path: str, max_entries: int = 30000) -> int:
     return total
 
 
+def dir_size_detailed(path: str, max_entries: int = 30000) -> Tuple[int, bool]:
+    """An AppX package's on-disk size, plus whether the count is only a
+    partial/approximate read (too many entries, or some files could not be
+    stat'd). Sibling to `dir_size()` above -- that function keeps its own
+    `-1`-means-"too large" contract for its existing caller in
+    `debloat_module.py`; this one is for callers (Store Apps' size scan)
+    that want the partial total AND an explicit flag rather than a sentinel."""
+    if not path or not os.path.isdir(path):
+        return 0, False
+    total, count, approximate = 0, 0, False
+    try:
+        for root, _, files in os.walk(path):
+            for f in files:
+                count += 1
+                if count > max_entries:
+                    return total, True  # stopped counting -- what we
+                                        # have so far, marked partial
+                try:
+                    total += os.path.getsize(os.path.join(root, f))
+                except OSError:
+                    approximate = True
+                    logger.debug("dir_size_detailed: could not stat one file",
+                                exc_info=True)
+    except OSError:
+        approximate = True
+        logger.debug("dir_size_detailed: giving up on this read", exc_info=True)
+    return total, approximate
+
+
 def invalidate_cache() -> None:
     """Drop the cached list so the next call re-queries the system."""
     global _cache

@@ -58,9 +58,23 @@ def test_text_filter_and_pseudo_filter_combine():
 # require_admin/confirm_destructive are monkeypatched throughout.
 # ----------------------------------------------------------------------
 
+class _FakeConfig:
+    def __init__(self, data=None):
+        self._data = data or {}
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value):
+        self._data[key] = value
+
+
 class _FakeApp:
     thread_pool = None
     backup = None
+
+    def __init__(self):
+        self.config = _FakeConfig()
 
 
 _created_modules = []
@@ -223,3 +237,42 @@ def test_cancelling_mid_backup_still_recovers_the_ui(monkeypatch):
     assert mod._cancel_backup_btn.isVisible() is False
     assert mod._backup_worker is None
     assert mod._status_lbl.text() == "Driver backup cancelled."
+
+
+# ----------------------------------------------------------------------
+# Task 35: flag filter combo, bulk-select flagged rows, numeric date sort,
+# sort persistence, empty state.
+# ----------------------------------------------------------------------
+
+
+def test_signed_only_filter_hides_unsigned_rows(monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("A", "Net", "1.0", "", "V", True, 0, ""),
+        DriverInfo("B", "Net", "1.0", "", "V", False, 0, "🔴 Unsigned"),
+    ]
+    mod._flag_filter_combo.setCurrentText("Unsigned only")
+    mod._populate(mod._drivers_ref[0], "")
+    assert mod._table.rowCount() == 1
+    assert mod._table.item(0, 0).text() == "B"
+
+
+def test_select_all_flagged_checks_every_red_row(monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("A", "Net", "1.0", "", "V", True, 0, ""),
+        DriverInfo("B", "Net", "1.0", "", "V", False, 22, "🔴 Unsigned 🔴 Error(22)"),
+    ]
+    mod._populate(mod._drivers_ref[0], "")
+    mod._select_all_flagged()
+    assert len(mod._table.selectionModel().selectedRows()) == 1
+
+
+def test_date_and_size_style_columns_use_numeric_sort():
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("A", "Net", "1.0", "2020-01-01", "V", True, 0, ""),
+        DriverInfo("B", "Net", "1.0", "2026-01-01", "V", True, 0, ""),
+    ]
+    mod._populate(mod._drivers_ref[0], "")
+    assert isinstance(mod._table.item(0, 3), dmod.NumericSortItem)

@@ -1,4 +1,5 @@
 import csv
+import datetime
 import os
 import subprocess
 from typing import List, Optional
@@ -7,23 +8,36 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QHeaderView, QLineEdit, QLabel,
     QProgressBar, QFileDialog, QCheckBox, QApplication, QMenu,
+    QStackedWidget, QComboBox,
 )
-from PyQt6.QtCore import Qt, QThreadPool
+from PyQt6.QtCore import Qt, QThreadPool, QItemSelectionModel
 from PyQt6.QtGui import QColor
 
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, NumericSortItem
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
 from modules.driver_manager.driver_reader import (
     DriverInfo, classify_provider, fetch_drivers, published_name_for,
     _PSEUDO_CLASSES,
 )
+from ui.empty_state import EmptyState
 
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
+
+FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "Old"]
+
+
+def _date_sort_value(date_str: str) -> float:
+    if not date_str:
+        return 0.0
+    try:
+        return datetime.datetime.strptime(date_str, "%Y-%m-%d").timestamp()
+    except ValueError:
+        return 0.0
 
 
 class DriverModule(BaseModule):
@@ -33,13 +47,21 @@ class DriverModule(BaseModule):
     requires_admin = False
     group = ModuleGroup.SYSTEM
 
+    #: D23 sort-column persistence key prefix. Mirrors DebloatModule's
+    #: `_CONFIG_PREFIX` pattern (src/modules/debloat/debloat_module.py).
+    _CONFIG_PREFIX = "modules.driver_manager"
+
     def __init__(self):
         super().__init__()
         self._widget: Optional[QWidget] = None
         self._table: Optional[QTableWidget] = None
+        self._table_stack: Optional[QStackedWidget] = None
+        self._empty: Optional[EmptyState] = None
         self._progress: Optional[QProgressBar] = None
         self._status_lbl: Optional[QLabel] = None
         self._filter_edit: Optional[QLineEdit] = None
+        self._flag_filter_combo: Optional[QComboBox] = None
+        self._select_flagged_btn: Optional[QPushButton] = None
         self._hide_pseudo_cb: Optional[QCheckBox] = None
         self._refresh_btn: Optional[QPushButton] = None
         self._export_btn: Optional[QPushButton] = None
@@ -63,6 +85,9 @@ class DriverModule(BaseModule):
         self._cancel_backup_btn.setVisible(False)
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by name or class...")
+        self._flag_filter_combo = QComboBox()
+        self._flag_filter_combo.addItems(FLAG_FILTER_OPTIONS)
+        self._select_flagged_btn = QPushButton("Select flagged")
         self._hide_pseudo_cb = QCheckBox("Hide pseudo-devices")
         self._hide_pseudo_cb.setChecked(True)
         self._status_lbl = QLabel("Click Refresh to load drivers.")
@@ -73,6 +98,9 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._cancel_backup_btn)
         toolbar.addWidget(QLabel("Filter:"))
         toolbar.addWidget(self._filter_edit, 1)
+        toolbar.addWidget(QLabel("Flag:"))
+        toolbar.addWidget(self._flag_filter_combo)
+        toolbar.addWidget(self._select_flagged_btn)
         toolbar.addWidget(self._hide_pseudo_cb)
         toolbar.addWidget(self._status_lbl)
         layout.addLayout(toolbar)
@@ -96,20 +124,32 @@ class DriverModule(BaseModule):
         self._table.horizontalHeader().sectionClicked.connect(self._on_header_click)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
-        layout.addWidget(self._table, 1)
+
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self._table)
+        self._empty = EmptyState(
+            "🖨️", "No drivers loaded", "Click Refresh to scan.", "Refresh")
+        self._empty.action_triggered.connect(self._do_refresh)
+        self._table_stack.addWidget(self._empty)
+        layout.addWidget(self._table_stack, 1)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._export_btn.clicked.connect(self._do_export)
         devmgr_btn.clicked.connect(self._open_devmgr)
         self._backup_btn.clicked.connect(self._backup_drivers)
         self._cancel_backup_btn.clicked.connect(self._on_cancel_backup)
+        self._select_flagged_btn.clicked.connect(self._select_all_flagged)
         self._filter_edit.textChanged.connect(
             lambda txt: self._populate(self._drivers_ref[0], txt)
         )
         self._hide_pseudo_cb.stateChanged.connect(
             lambda _state: self._populate(self._drivers_ref[0], self._filter_edit.text())
         )
+        self._flag_filter_combo.currentTextChanged.connect(
+            lambda _txt: self._populate(self._drivers_ref[0], self._filter_edit.text())
+        )
         self._drivers_ref = [[]]
+        self._table_stack.setCurrentIndex(1)
 
         return self._widget
 
@@ -127,6 +167,12 @@ class DriverModule(BaseModule):
         self._do_refresh()
 
     def on_deactivate(self) -> None:
+        header = self._table.horizontalHeader() if self._table else None
+        if header is not None and self.app and getattr(self.app, "config", None):
+            self.app.config.set(f"{self._CONFIG_PREFIX}.sort_column",
+                                int(header.sortIndicatorSection()))
+            self.app.config.set(f"{self._CONFIG_PREFIX}.sort_order",
+                                int(header.sortIndicatorOrder()))
         self.cancel_all_workers()
 
     def on_stop(self) -> None:
@@ -154,26 +200,58 @@ class DriverModule(BaseModule):
             return
         ft = filter_text.lower()
         hide_pseudo = self._hide_pseudo_cb.isChecked() if self._hide_pseudo_cb else True
+        flag = self._flag_filter_combo.currentText() if hasattr(self, "_flag_filter_combo") else "All"
         visible = [
             d for d in drivers
             if (not ft or ft in d.device_name.lower() or ft in d.driver_class.lower())
             and not (hide_pseudo and d.driver_class in _PSEUDO_CLASSES)
+            and (flag == "All"
+                 or (flag == "Signed only" and d.signed)
+                 or (flag == "Unsigned only" and not d.signed)
+                 or (flag == "Has error" and d.error_code != 0)
+                 or (flag == "Old" and "Old" in d.flags))
         ]
         self._table.setRowCount(len(visible))
         for r, d in enumerate(visible):
             provider = classify_provider(d.publisher)
-            items = [
+            values = [
                 d.device_name, d.driver_class, d.version, d.date,
                 d.publisher, provider, "✓" if d.signed else "✗", d.flags,
             ]
-            for c, val in enumerate(items):
-                item = centered_item(str(val), sortable=(c == 0))
+            for c, val in enumerate(values):
+                if c == 3:
+                    item = NumericSortItem(str(val), _date_sort_value(d.date))
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                else:
+                    item = centered_item(str(val), sortable=(c == 0))
                 self._table.setItem(r, c, item)
             if d.error_code != 0 or not d.signed:
                 for c in range(len(COLUMNS)):
                     cell = self._table.item(r, c)
                     if cell:
                         cell.setForeground(QColor("#CC2222"))
+
+        cfg = self.app.config if self.app else None
+        sort_col = int(cfg.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0) if cfg else 0
+        sort_order = (Qt.SortOrder(int(cfg.get(f"{self._CONFIG_PREFIX}.sort_order",
+                      int(Qt.SortOrder.AscendingOrder.value)) or 0)) if cfg
+                      else Qt.SortOrder.AscendingOrder)
+        self._table.sortItems(sort_col, sort_order)
+        self._sort_col = sort_col
+
+    def _select_all_flagged(self) -> None:
+        if self._table is None:
+            return
+        self._table.clearSelection()
+        selection = self._table.selectionModel()
+        if selection is None:
+            return
+        for r in range(self._table.rowCount()):
+            flags_item = self._table.item(r, 7)
+            if flags_item and flags_item.text().strip():
+                selection.select(self._table.model().index(r, 0),
+                                 QItemSelectionModel.SelectionFlag.Select
+                                 | QItemSelectionModel.SelectionFlag.Rows)
 
     def _do_refresh(self) -> None:
         if self._refresh_btn:
@@ -202,6 +280,8 @@ class DriverModule(BaseModule):
                 self._progress.hide()
             filter_text = self._filter_edit.text() if self._filter_edit else ""
             self._populate(data, filter_text)
+            if self._table_stack is not None:
+                self._table_stack.setCurrentIndex(0 if data else 1)
             if self._status_lbl:
                 issues = sum(1 for d in data if d.error_code != 0 or not d.signed)
                 self._status_lbl.setText(f"{len(data)} drivers, {issues} with issues.")

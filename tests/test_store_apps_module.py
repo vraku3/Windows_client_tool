@@ -1,6 +1,7 @@
 import os
 
 from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtWidgets import QPushButton
 
 from core.appx_service import _version_key
 from modules.store_apps import store_apps_module as sam
@@ -547,3 +548,15 @@ def test_a_row_vanishing_mid_size_scan_is_logged(monkeypatch, caplog):
     load_two_apps(mod)
     mod._on_size_ready("Pkg.DoesNotExistAnymore", 100)
     assert "no longer in the table" in caplog.text.lower()
+
+
+def test_uninstall_button_hints_the_delete_shortcut():
+    mod = store_module()
+    btn = mod._widget.findChild(QPushButton, "_uninstall_btn")
+    assert "Del" in btn.toolTip()
+
+
+def test_shortcuts_legend_is_reachable_from_the_toolbar():
+    mod = store_module()
+    legend_btn = mod._widget.findChild(QPushButton, "_shortcuts_btn")
+    assert legend_btn is not None

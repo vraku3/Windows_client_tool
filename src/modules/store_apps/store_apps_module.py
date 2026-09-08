@@ -268,6 +268,10 @@ class StoreAppsModule(BaseModule):
         export_btn = QPushButton("💾 Export")
         export_btn.clicked.connect(self._export)
         toolbar.addWidget(export_btn)
+        shortcuts_btn = QPushButton("⌨ Shortcuts")
+        shortcuts_btn.setObjectName("_shortcuts_btn")
+        shortcuts_btn.clicked.connect(self._show_shortcuts_legend)
+        toolbar.addWidget(shortcuts_btn)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
@@ -304,12 +308,6 @@ class StoreAppsModule(BaseModule):
         self._table.setColumnHidden(6, not self._show_arch)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
-        self._table.setStyleSheet("""
-            QTableWidget { background: #2d2d2d; border: 1px solid #3c3c3c; border-radius: 4px; }
-            QTableWidget::item { padding: 3px; }
-            QTableWidget::item:selected { background: #094771; }
-            QHeaderView::section { background: #3c3c3c; color: #b0b0b0; padding: 4px; border: none; }
-        """)
         self._table_stack.addWidget(self._table)
 
         self._empty = EmptyState(
@@ -325,8 +323,11 @@ class StoreAppsModule(BaseModule):
         # Bottom toolbar
         bottom = QHBoxLayout()
         self._uninstall_btn = QPushButton("🗑️ Uninstall Selected")
-        self._uninstall_btn.setStyleSheet("color: #f48771; font-weight: bold;")
-        self._uninstall_btn.setToolTip("Removes for every user on this machine.")
+        self._uninstall_btn.setObjectName("_uninstall_btn")
+        self._uninstall_btn.setStyleSheet(f"color: {semantic('error')}; font-weight: bold;")
+        self._uninstall_btn.setToolTip(
+            "Uninstall the selected app(s)  (Del)\n\n"
+            "Removes for every user on this machine.")
         self._uninstall_btn.clicked.connect(self._uninstall)
         bottom.addWidget(self._uninstall_btn)
         select_btn = QPushButton("☑ Select Non-System")
@@ -991,6 +992,15 @@ class StoreAppsModule(BaseModule):
     # ------------------------------------------------------------------
     # Shortcuts / helpers
     # ------------------------------------------------------------------
+
+    def _show_shortcuts_legend(self):
+        QMessageBox.information(
+            self._widget, "Keyboard Shortcuts",
+            "Ctrl+U / Delete — Uninstall selected app(s)\n"
+            "Ctrl+E — Export\n"
+            "Ctrl+F — Search\n"
+            "Escape — Clear selection / search",
+        )
 
     def _install_shortcuts(self):
         for seq, slot in (

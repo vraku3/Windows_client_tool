@@ -838,6 +838,71 @@ Harnesses, all read-only unless told otherwise: `tools/monitor_control_check.py`
 (what the hardware says) and `tools/monitor_revert_check.py` (the countdown
 against a real display).
 
+### Driver Manager (`src/modules/driver_manager/`)
+
+Read, export, and (as of this pass) per-package uninstall for installed
+drivers. `requires_admin = False` — reading and exporting need no
+elevation; only `pnputil /delete-driver` and a backup to a
+permission-restricted folder do.
+
+- **`Win32_PnPSignedDriver` only lists devices that HAVE a driver.** A
+  device Windows found none for at all — the yellow-bang case — needed a
+  second `Win32_PnPEntity` query merged in, or "Driver Manager" never
+  showed the machine's actual problem devices.
+- **Only an `oem##.inf`-published package can be `pnputil
+  /delete-driver`'d.** An inbox driver (`usb.inf`, `hidclass.inf`, ...) has
+  no OEM number and nothing to remove this way — offer the action only
+  when `published_name_for()` resolves one, never guess.
+- **Roll-back-to-previous-version is routed to Device Manager, not
+  implemented here.** It needs the previous driver package still cached,
+  which this app does not track; Windows itself can check.
+- **A driver's signed/unsigned flag is what Windows' own catalog metadata
+  claims, not an independent Authenticode check.** Driver signing is
+  catalog-based (`.cat` files against a whole package), which is a
+  different question than `core/procengine/signatures.py`'s
+  single-PE-file check answers — labeled "(as reported by Windows)"
+  rather than built as something it is not.
+- **One 90-second WMI call for every driver dies with zero partial
+  results on a timeout.** Chunked by device class instead, each with its
+  own shorter timeout, so a slow class costs that class, not the whole
+  refresh.
+- **Deduping the chunked merge by `device_name` alone silently collapsed
+  distinct devices sharing a generic name.** Windows commonly reports
+  several physical devices under an identical string (multiple "USB Root
+  Hub" entries, several "Generic PnP Monitor"s) — keys on `device_id` (the
+  PNP device instance id, a real per-device unique string) instead,
+  falling back to name only for the rare device that reports none.
+
+### Debloat (`src/modules/debloat/`)
+
+126 catalogued apps plus 219 tweaks across two tabs, and four builtin
+presets (`tweaks/definitions/builtins/debloat_*.json`) that name and
+curate exactly what "Light/Full/Privacy/Custom" mean.
+
+- **Two lists of "what apps exist" must be checked against each other,
+  or entries silently vanish.** `debloat_scanner.KNOWN_PACKAGES` (what
+  can be detected as installed) and `debloat.json` (the catalog with
+  names/categories/removal steps) drifted — 12 real packages including
+  Recall and Copilot were catalogued but undetectable.
+  `tests/test_debloat_definitions.py` checks this now; keep it green
+  after every catalog edit.
+- **A preset file with a real name is not the same as a preset that
+  runs.** Four fully-curated JSON files sat unreferenced by any Python
+  for long enough that the UI's own Light/Full/Privacy/Custom buttons
+  reimplemented a cruder version from scratch. If a preset needs
+  changing, edit the JSON — `debloat_presets.py` is the only thing that
+  should read it.
+- **`TweakEngine.detect_status()` is the three-value back-compatible
+  shim; `detect()` is the real five-value answer with a `reason`.**
+  Debloat's tables used the shim and folded two of the five values into
+  "Unknown" — exactly what the engine's own docstring says its design
+  exists to prevent.
+- **One restore point per apply-click, across three tabs used in one
+  sitting, risks the second and third being silent no-ops** against
+  Windows' own checkpoint frequency floor. `debloat_session.py` gives
+  one Debloat session one restore point, reused across Apps/Tweaks/AI
+  within a window, rather than creating a fresh one per click.
+
 ### Group Policy Module (`src/modules/gpresult/`)
 
 One sidebar pane (`ModuleGroup.MANAGE`, `requires_admin = False`) over ten

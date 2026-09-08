@@ -255,6 +255,7 @@ class StoreAppsModule(BaseModule):
         toolbar.addWidget(refresh_btn)
         self._last_refreshed_lbl = QLabel("")
         toolbar.addWidget(self._last_refreshed_lbl)
+        toolbar.addWidget(self._build_auto_refresh_label())
         self._progress = QProgressBar()
         self._progress.setMaximumWidth(200)
         self._progress.setVisible(False)
@@ -358,6 +359,12 @@ class StoreAppsModule(BaseModule):
 
         self._install_shortcuts()
         return self._widget
+
+    def _build_auto_refresh_label(self) -> QLabel:
+        interval = self.get_refresh_interval()
+        lbl = QLabel(f"Auto-refreshes every {interval // 1000}s")
+        lbl.setObjectName("muted")
+        return lbl
 
     def _build_columns_menu(self) -> QPushButton:
         btn = QPushButton("⛭ Columns")

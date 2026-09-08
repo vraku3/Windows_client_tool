@@ -445,6 +445,8 @@ class DebloatToolsModule(BaseModule):
             self._run_all_tab._cancel_all()
 
     def get_refresh_interval(self) -> Optional[int]:
+        """Never — an apply-driven tab re-reading itself on a timer while
+        someone has checkboxes half-set is worse than a stale scan."""
         return None
 
     def get_search_provider(self) -> Optional[SearchProvider]:

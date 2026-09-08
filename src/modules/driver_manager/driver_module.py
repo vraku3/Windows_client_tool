@@ -125,6 +125,9 @@ class DriverModule(BaseModule):
         self._hide_pseudo_cb = QCheckBox("Hide pseudo-devices")
         self._hide_pseudo_cb.setChecked(True)
         self._status_lbl = QLabel("Click Refresh to load drivers.")
+        interval = self.get_refresh_interval()
+        auto_refresh_lbl = QLabel(f"Auto-refreshes every {interval // 1000}s")
+        auto_refresh_lbl.setObjectName("muted")
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(self._export_btn)
         toolbar.addWidget(devmgr_btn)
@@ -138,6 +141,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._select_flagged_btn)
         toolbar.addWidget(self._hide_pseudo_cb)
         toolbar.addWidget(self._status_lbl)
+        toolbar.addWidget(auto_refresh_lbl)
         layout.addLayout(toolbar)
 
         self._progress = QProgressBar()

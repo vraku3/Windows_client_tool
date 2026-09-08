@@ -90,6 +90,10 @@ class DriverModule(BaseModule):
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
         devmgr_btn = QPushButton("Open Device Manager")
+        wu_btn = QPushButton("Check Windows Update")
+        wu_btn.setToolTip(
+            "Opens Windows Update settings — this app does not match a "
+            "specific device to a specific driver update.")
         self._backup_btn = QPushButton("Backup Drivers")
         self._cancel_backup_btn = QPushButton("Cancel (stops after current file)")
         self._cancel_backup_btn.setVisible(False)
@@ -104,6 +108,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(self._export_btn)
         toolbar.addWidget(devmgr_btn)
+        toolbar.addWidget(wu_btn)
         toolbar.addWidget(self._backup_btn)
         toolbar.addWidget(self._cancel_backup_btn)
         toolbar.addWidget(QLabel("Filter:"))
@@ -146,6 +151,7 @@ class DriverModule(BaseModule):
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._export_btn.clicked.connect(self._do_export)
         devmgr_btn.clicked.connect(self._open_devmgr)
+        wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
         self._cancel_backup_btn.clicked.connect(self._on_cancel_backup)
         self._select_flagged_btn.clicked.connect(self._select_all_flagged)
@@ -340,10 +346,15 @@ class DriverModule(BaseModule):
         )
         if not path:
             return
+        visible_names = {self._table.item(r, 0).text()
+                        for r in range(self._table.rowCount())
+                        if not self._table.isRowHidden(r)}
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(COLUMNS)
             for d in self._drivers_ref[0]:
+                if d.device_name not in visible_names:
+                    continue
                 prov = classify_provider(d.publisher)
                 writer.writerow([
                     d.device_name, d.driver_class, d.version, d.date,
@@ -351,6 +362,21 @@ class DriverModule(BaseModule):
                 ])
         if self._status_lbl:
             self._status_lbl.setText(f"Exported to {os.path.basename(path)}")
+
+    def _export_one_driver(self, published: str) -> None:
+        folder = QFileDialog.getExistingDirectory(self._widget, "Export Driver")
+        if not folder:
+            return
+        result = subprocess.run(
+            ["pnputil", "/export-driver", published, folder],
+            capture_output=True, text=True, timeout=30,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        self._status_lbl.setText(
+            f"Exported {published}" if result.returncode == 0
+            else f"Could not export {published}: {result.stdout + result.stderr}")
+
+    def _open_windows_update_settings(self) -> None:
+        os.startfile("ms-settings:windowsupdate")
 
     def _open_devmgr(self) -> None:
         subprocess.Popen(["mmc", "devmgmt.msc"])
@@ -378,6 +404,10 @@ class DriverModule(BaseModule):
             "OEM package — remove it from Device Manager instead.")
         act_uninstall.triggered.connect(
             lambda: self._do_uninstall_driver(published, device_name))
+        act_export_one = menu.addAction("Export this driver…")
+        act_export_one.setEnabled(bool(published))
+        act_export_one.triggered.connect(
+            lambda: self._export_one_driver(published))
         act_rollback = menu.addAction("Roll back to previous version…")
         act_rollback.setToolTip(
             "Needs the previous driver still cached, which this app does "

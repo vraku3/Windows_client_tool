@@ -179,16 +179,20 @@ def _merge_driverless_devices(drivers: List[DriverInfo],
     return drivers + extra
 
 
-def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
+def _fetch_drivers_for_class(cls: Optional[str], old_threshold_days: int) -> List[DriverInfo]:
+    ps_cmd = _PS_CMD
+    if cls is not None:
+        ps_cmd = _PS_CMD.replace(
+            "Win32_PnPSignedDriver |",
+            f"Win32_PnPSignedDriver -Filter \"DeviceClass='{cls}'\" |")
     proc = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD],
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
         capture_output=True, text=True, errors="replace",
-        creationflags=CREATE_NO_WINDOW, timeout=90,
+        creationflags=CREATE_NO_WINDOW, timeout=30,
     )
     raw = proc.stdout.strip()
     if not raw:
         return []
-
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -197,19 +201,42 @@ def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
         ) from exc
     if isinstance(data, dict):
         data = [data]
-
-    drivers: List[DriverInfo] = []
-
+    result = []
     for d in data:
         name = d.get("Name") or ""
         if not name:
             continue
-        drivers.append(_build_driver_info(d, old_threshold_days))
+        result.append(_build_driver_info(d, old_threshold_days))
+    return result
+
+
+_DRIVER_CLASSES_TO_QUERY = ("Net", "Display", "HDC", "USB", "Media",
+                            "System", "Monitor", "Keyboard", "Mouse")
+
+
+def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
+    drivers: List[DriverInfo] = []
+    seen_names = set()
+    for cls in _DRIVER_CLASSES_TO_QUERY:
+        for d in _fetch_drivers_for_class(cls, old_threshold_days):
+            if d.device_name not in seen_names:
+                seen_names.add(d.device_name)
+                drivers.append(d)
+    # Anything outside the enumerated classes still gets one final,
+    # unfiltered pass so nothing is silently dropped -- the class list
+    # above is an optimization (query the common ones fast, in smaller
+    # chunks so one slow/hung query loses at most one chunk's worth
+    # rather than the whole refresh), not a filter on what counts as
+    # a driver.
+    for d in _fetch_drivers_for_class(None, old_threshold_days):
+        if d.device_name not in seen_names:
+            seen_names.add(d.device_name)
+            drivers.append(d)
 
     driverless_proc = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD_DRIVERLESS],
         capture_output=True, text=True, errors="replace",
-        creationflags=CREATE_NO_WINDOW, timeout=90,
+        creationflags=CREATE_NO_WINDOW, timeout=30,
     )
     drivers = _merge_driverless_devices(drivers, driverless_proc.stdout.strip())
 

@@ -95,3 +95,18 @@ def test_old_threshold_days_is_configurable():
 
 def test_pseudo_classes_constant_covers_known_non_hardware_classes():
     assert dr._PSEUDO_CLASSES == {"SoftwareComponent", "SoftwareDevice", "PrintQueue"}
+
+
+def test_fetch_drivers_chunks_the_wmi_query(monkeypatch):
+    """A single 90s call across every driver dies with zero partial
+    results if it times out. Chunking means a slow query loses at most
+    one chunk's worth, not the whole list."""
+    calls = []
+    def fake_run(cmd, **k):
+        calls.append(k.get("timeout"))
+        class R: stdout = "[]"; returncode = 0
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    dr.fetch_drivers()
+    assert all(t and t <= 30 for t in calls), \
+        "expected per-chunk timeouts well under the old flat 90s"

@@ -355,3 +355,24 @@ def test_empty_state_shown_before_first_load_and_hidden_once_drivers_arrive(monk
     monkeypatch.setattr(dmod, "fetch_drivers", lambda: [])
     mod._do_refresh()
     assert mod._table_stack.currentIndex() == 1
+
+
+# ----------------------------------------------------------------------
+# Task 36: export respects the filter, single-driver export.
+# ----------------------------------------------------------------------
+
+
+def test_export_writes_only_visible_rows(tmp_path, monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("A", "Net", "1.0", "", "V", True, 0, ""),
+        DriverInfo("B", "Net", "1.0", "", "V", True, 0, ""),
+    ]
+    mod._filter_edit.setText("a")
+    mod._populate(mod._drivers_ref[0], "a")
+    out = tmp_path / "drivers.csv"
+    monkeypatch.setattr(dmod.QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(out), ""))
+    mod._do_export()
+    text = out.read_text(encoding="utf-8")
+    assert "A" in text and "B" not in text

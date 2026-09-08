@@ -1,6 +1,7 @@
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
+from core import table_ui
 from core.table_ui import center_header, centered_item, fit_last, fit_table, NumericSortItem
 
 
@@ -68,3 +69,16 @@ def test_numeric_sort_degrades_to_text_against_a_plain_item(qapp):
     table.setItem(1, 0, QTableWidgetItem("n/a"))
     table.setSortingEnabled(True)
     table.sortItems(0, Qt.SortOrder.AscendingOrder)  # must not raise
+
+
+def test_save_and_restore_column_widths(qapp):
+    table = QTableWidget(1, 3)
+    table.setColumnWidth(0, 111)
+    table.setColumnWidth(1, 222)
+    saved = {}
+    table_ui.save_column_widths(table, lambda k, v: saved.__setitem__(k, v), "test.widths")
+    table2 = QTableWidget(1, 3)
+    table_ui.restore_column_widths(
+        table2, lambda k, default=None: saved.get(k, default), "test.widths")
+    assert table2.columnWidth(0) == 111
+    assert table2.columnWidth(1) == 222

@@ -27,7 +27,7 @@ from core.events import DEBLOAT_ITEMS_REMOVED
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.semantic_colors import semantic
-from core.table_ui import NumericSortItem
+from core.table_ui import NumericSortItem, restore_column_widths, save_column_widths
 from core.worker import Worker
 from core.windows_utils import ps_quote, system_root
 from modules.store_apps.store_apps_search_provider import StoreAppsSearchProvider
@@ -311,6 +311,8 @@ class StoreAppsModule(BaseModule):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setColumnHidden(5, not self._show_pfn)
         self._table.setColumnHidden(6, not self._show_arch)
+        # C07: restore any column widths saved from a previous session.
+        restore_column_widths(self._table, self.app.config.get, self._CONFIG_PREFIX)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
         self._table_stack.addWidget(self._table)
@@ -392,6 +394,8 @@ class StoreAppsModule(BaseModule):
 
     def on_deactivate(self) -> None:
         self._persist_sort()
+        if self._widget_valid(getattr(self, "_table", None)):
+            save_column_widths(self._table, self.app.config.set, self._CONFIG_PREFIX)
         self.cancel_all_workers()
 
     def on_stop(self) -> None:

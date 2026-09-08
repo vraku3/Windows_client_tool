@@ -20,7 +20,10 @@ from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.semantic_colors import semantic
-from core.table_ui import centered_item, center_header, NumericSortItem
+from core.table_ui import (
+    centered_item, center_header, NumericSortItem,
+    restore_column_widths, save_column_widths,
+)
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
 from modules.driver_manager.driver_reader import (
@@ -200,6 +203,10 @@ class DriverModule(BaseModule):
         self._table.horizontalHeader().setSortIndicator(sort_col, sort_order)
         self._sort_col = sort_col
 
+        # C07: restore any column widths saved from a previous session.
+        if cfg is not None:
+            restore_column_widths(self._table, cfg.get, self._CONFIG_PREFIX)
+
         return self._widget
 
     def on_start(self, app) -> None:
@@ -235,6 +242,8 @@ class DriverModule(BaseModule):
                                 int(header.sortIndicatorSection()))
             self.app.config.set(f"{self._CONFIG_PREFIX}.sort_order",
                                 int(header.sortIndicatorOrder().value))
+        if self._table is not None and self.app and getattr(self.app, "config", None):
+            save_column_widths(self._table, self.app.config.set, self._CONFIG_PREFIX)
         self.cancel_all_workers()
 
     def on_stop(self) -> None:

@@ -22,6 +22,7 @@ from core.events import DEBLOAT_ITEMS_REMOVED
 from core.formatting import human_size
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
+from core.table_ui import restore_column_widths, save_column_widths
 from core.worker import Worker
 from modules.debloat import debloat_history
 from modules.debloat import debloat_presets as dp
@@ -250,6 +251,9 @@ class DebloatToolsModule(BaseModule):
         self._apps_table.itemChanged.connect(self._on_item_changed)
         self._apps_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._apps_table.customContextMenuRequested.connect(self._on_apps_context_menu)
+        # C07: restore any column widths saved from a previous session.
+        restore_column_widths(self._apps_table, self.app.config.get,
+                              f"{self._CONFIG_PREFIX}.apps")
         table_layout.addWidget(self._apps_table)
 
         scroll.setWidget(table_container)
@@ -288,6 +292,9 @@ class DebloatToolsModule(BaseModule):
             lambda pos, tt=tab_type: self._on_tweaks_context_menu(pos, tt))
         table.itemChanged.connect(
             lambda item, tt=tab_type: self._on_tweaks_item_changed(item, tt))
+        # C07: restore any column widths saved from a previous session.
+        restore_column_widths(table, self.app.config.get,
+                              f"{self._CONFIG_PREFIX}.{tab_type}")
         return table
 
     def _build_tweaks_tab(self, tab_type: str) -> QWidget:
@@ -419,6 +426,7 @@ class DebloatToolsModule(BaseModule):
 
     def on_deactivate(self) -> None:
         self._persist_sort()
+        self._persist_column_widths()
         self.cancel_all_workers()
         if self._run_all_tab is not None:
             self._run_all_tab._cancel_all()
@@ -838,6 +846,25 @@ class DebloatToolsModule(BaseModule):
                             int(header.sortIndicatorSection()))
         self.app.config.set(f"{self._CONFIG_PREFIX}.apps.sort_order",
                             int(header.sortIndicatorOrder()))
+
+    def _persist_column_widths(self) -> None:
+        """C07: save each tab's column widths, keyed the same way sort
+        state is (`_persist_sort` above). The Apps tab's table is a named
+        attribute; the tweak tabs' tables are found via the same
+        `findChild(QTableWidget, f"_table_{tab_type}")` idiom used
+        throughout this file (e.g. `_on_tab_changed`) -- a tab never opened
+        this session has no widget built yet, so each lookup is
+        None-guarded."""
+        if self._apps_table is not None:
+            save_column_widths(self._apps_table, self.app.config.set,
+                               f"{self._CONFIG_PREFIX}.apps")
+        for tab_type in self._TAB_TYPES:
+            if tab_type == "apps" or self._widget is None:
+                continue
+            table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")
+            if table is not None:
+                save_column_widths(table, self.app.config.set,
+                                   f"{self._CONFIG_PREFIX}.{tab_type}")
 
     # ------------------------------------------------------------------
     # Tweaks tabs

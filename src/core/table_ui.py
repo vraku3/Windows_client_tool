@@ -157,3 +157,21 @@ def fit_last(table: QTableWidget) -> None:
     for col in range(count - 1):
         header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
     header.setSectionResizeMode(count - 1, QHeaderView.ResizeMode.Stretch)
+
+
+def save_column_widths(table: QTableWidget, config_set, key_prefix: str) -> None:
+    """`config_set(key, value)` matches `AppConfig.set`'s signature -- every
+    module already has `self.app.config.set`, this just standardizes what
+    key each column's width is saved under so three modules don't each
+    invent their own."""
+    widths = [table.columnWidth(c) for c in range(table.columnCount())]
+    config_set(f"{key_prefix}.column_widths", widths)
+
+
+def restore_column_widths(table: QTableWidget, config_get, key_prefix: str) -> None:
+    widths = config_get(f"{key_prefix}.column_widths", None)
+    if not widths:
+        return
+    for c, w in enumerate(widths):
+        if c < table.columnCount() and isinstance(w, int) and w > 0:
+            table.setColumnWidth(c, w)

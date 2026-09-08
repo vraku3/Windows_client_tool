@@ -276,3 +276,74 @@ def test_date_and_size_style_columns_use_numeric_sort():
     ]
     mod._populate(mod._drivers_ref[0], "")
     assert isinstance(mod._table.item(0, 3), dmod.NumericSortItem)
+
+
+def test_an_out_of_range_date_does_not_crash_the_numeric_sort():
+    """Regression: datetime.timestamp() itself raises OSError on a validly
+    parsed but out-of-range date (e.g. 1601-01-01, the CIM_DATETIME/FILETIME
+    zero-epoch sentinel WMI can report for a device with no genuine driver
+    date) -- strptime succeeds, so a bare `except ValueError` around it
+    doesn't catch the crash. This used to blow up _populate() itself."""
+    assert dmod._date_sort_value("1601-01-01") == 0.0
+    assert dmod._date_sort_value("1969-12-31") == 0.0
+    assert dmod._date_sort_value("") == 0.0
+    assert dmod._date_sort_value("not-a-date") == 0.0
+
+
+def test_header_click_sort_survives_a_later_filter_change(monkeypatch):
+    """Regression: _populate() used to reload the last-PERSISTED sort from
+    config and force-reapply it on every call -- and _populate runs on
+    every filter keystroke, hide-pseudo toggle, and flag-combo change, not
+    just a real refresh -- so clicking a header to sort, then typing one
+    character into the filter box, silently reverted the sort back to
+    whatever was last saved in on_deactivate."""
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("Zeta", "Bcls", "1.0", "", "V", True, 0, ""),
+        DriverInfo("Alpha", "Acls", "1.0", "", "V", True, 0, ""),
+    ]
+    mod._populate(mod._drivers_ref[0], "")
+    mod._on_header_click(1)  # sort by the "Class" column, ascending
+    assert mod._table.item(0, 1).text() == "Acls"
+
+    mod._populate(mod._drivers_ref[0], "")  # e.g. a filter keystroke
+    assert mod._table.item(0, 1).text() == "Acls"
+
+
+def test_sort_persists_on_deactivate_and_restores_on_the_next_create_widget():
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("Zeta", "Bcls", "1.0", "", "V", True, 0, ""),
+        DriverInfo("Alpha", "Acls", "1.0", "", "V", True, 0, ""),
+    ]
+    mod._populate(mod._drivers_ref[0], "")
+    mod._on_header_click(1)
+    shared_config = mod.app.config
+    mod.on_deactivate()
+
+    mod2 = dmod.DriverModule()
+    mod2.on_start(_FakeApp())
+    mod2.app.config = shared_config  # same persisted store, fresh module
+    mod2.create_widget()
+    mod2._drivers_ref[0] = [
+        DriverInfo("Zeta", "Bcls", "1.0", "", "V", True, 0, ""),
+        DriverInfo("Alpha", "Acls", "1.0", "", "V", True, 0, ""),
+    ]
+    mod2._populate(mod2._drivers_ref[0], "")
+    assert mod2._table.item(0, 1).text() == "Acls"
+
+
+def test_empty_state_shown_before_first_load_and_hidden_once_drivers_arrive(monkeypatch):
+    mod = _module()
+    assert mod._table_stack.currentIndex() == 1  # empty state, nothing loaded
+
+    monkeypatch.setattr(dmod, "fetch_drivers",
+                        lambda: [DriverInfo("A", "Net", "1.0", "", "V", True, 0, "")])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    mod._do_refresh()  # runs the real COMWorker/on_result path synchronously
+    assert mod._table_stack.currentIndex() == 0
+
+    monkeypatch.setattr(dmod, "fetch_drivers", lambda: [])
+    mod._do_refresh()
+    assert mod._table_stack.currentIndex() == 1

@@ -38,6 +38,16 @@ def _date_sort_value(date_str: str) -> float:
         return datetime.datetime.strptime(date_str, "%Y-%m-%d").timestamp()
     except ValueError:
         return 0.0
+    except OSError:
+        # .timestamp() itself raises on a validly-parsed but out-of-range
+        # date -- e.g. 1601-01-01, the CIM_DATETIME/FILETIME zero-epoch
+        # sentinel WMI can report for a device with no genuine driver
+        # date. strptime succeeded; the crash is in the conversion after
+        # it, so a bare `except ValueError` around strptime doesn't catch
+        # it. Group it with the unparseable case rather than crashing
+        # _populate() (which runs on every refresh, filter keystroke,
+        # checkbox toggle and flag-combo change).
+        return 0.0
 
 
 class DriverModule(BaseModule):
@@ -151,6 +161,26 @@ class DriverModule(BaseModule):
         self._drivers_ref = [[]]
         self._table_stack.setCurrentIndex(1)
 
+        # D23: restore the last sort column/order this session saved in
+        # on_deactivate. Done ONCE here, via the header's indicator, rather
+        # than reloaded from config on every _populate() call -- _populate
+        # runs on every filter keystroke, hide-pseudo toggle and flag-combo
+        # change, and a per-call reload-and-reapply silently reverted an
+        # in-session header click back to the last-persisted order the
+        # moment any of those fired. setSortingEnabled(True) (above) makes
+        # the table re-sort itself on every future row rebuild using
+        # whatever the header's indicator currently says, so setting it
+        # once here is sufficient -- a later click updates it directly
+        # (see _on_header_click) and on_deactivate persists whatever it
+        # ends up at.
+        cfg = self.app.config if self.app else None
+        sort_col = int(cfg.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0) if cfg else 0
+        sort_order = (Qt.SortOrder(int(cfg.get(f"{self._CONFIG_PREFIX}.sort_order",
+                      int(Qt.SortOrder.AscendingOrder.value)) or 0)) if cfg
+                      else Qt.SortOrder.AscendingOrder)
+        self._table.horizontalHeader().setSortIndicator(sort_col, sort_order)
+        self._sort_col = sort_col
+
         return self._widget
 
     def on_start(self, app) -> None:
@@ -169,10 +199,15 @@ class DriverModule(BaseModule):
     def on_deactivate(self) -> None:
         header = self._table.horizontalHeader() if self._table else None
         if header is not None and self.app and getattr(self.app, "config", None):
+            # `Qt.SortOrder` is a plain `enum.Enum` in this PyQt6 build, not
+            # `IntEnum` -- `int(header.sortIndicatorOrder())` raises
+            # `TypeError: int() argument must be a string, a bytes-like
+            # object or a real number, not 'SortOrder'` (confirmed by a
+            # real test exercising this exact call). `.value` first.
             self.app.config.set(f"{self._CONFIG_PREFIX}.sort_column",
                                 int(header.sortIndicatorSection()))
             self.app.config.set(f"{self._CONFIG_PREFIX}.sort_order",
-                                int(header.sortIndicatorOrder()))
+                                int(header.sortIndicatorOrder().value))
         self.cancel_all_workers()
 
     def on_stop(self) -> None:
@@ -200,7 +235,7 @@ class DriverModule(BaseModule):
             return
         ft = filter_text.lower()
         hide_pseudo = self._hide_pseudo_cb.isChecked() if self._hide_pseudo_cb else True
-        flag = self._flag_filter_combo.currentText() if hasattr(self, "_flag_filter_combo") else "All"
+        flag = self._flag_filter_combo.currentText() if self._flag_filter_combo else "All"
         visible = [
             d for d in drivers
             if (not ft or ft in d.device_name.lower() or ft in d.driver_class.lower())
@@ -230,14 +265,6 @@ class DriverModule(BaseModule):
                     cell = self._table.item(r, c)
                     if cell:
                         cell.setForeground(QColor("#CC2222"))
-
-        cfg = self.app.config if self.app else None
-        sort_col = int(cfg.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0) if cfg else 0
-        sort_order = (Qt.SortOrder(int(cfg.get(f"{self._CONFIG_PREFIX}.sort_order",
-                      int(Qt.SortOrder.AscendingOrder.value)) or 0)) if cfg
-                      else Qt.SortOrder.AscendingOrder)
-        self._table.sortItems(sort_col, sort_order)
-        self._sort_col = sort_col
 
     def _select_all_flagged(self) -> None:
         if self._table is None:

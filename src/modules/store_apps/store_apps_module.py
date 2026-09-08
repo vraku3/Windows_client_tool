@@ -25,10 +25,12 @@ from core.backup_service import StepRecord
 from core.base_module import BaseModule
 from core.events import DEBLOAT_ITEMS_REMOVED
 from core.module_groups import ModuleGroup
+from core.search_provider import SearchProvider
 from core.semantic_colors import semantic
 from core.table_ui import NumericSortItem
 from core.worker import Worker
 from core.windows_utils import ps_quote, system_root
+from modules.store_apps.store_apps_search_provider import StoreAppsSearchProvider
 from ui.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
@@ -202,6 +204,9 @@ class StoreAppsModule(BaseModule):
     icon = "📦"
     description = "Manage Microsoft Store (AppX) applications"
     group = ModuleGroup.MANAGE
+    #: Reading and every non-destructive action needs no elevation; a
+    #: write is refused by require_admin() with a message pointing at the
+    #: "Restart as Admin" banner, not a silent failure.
     requires_admin = True
     #: Listing is safe to read unelevated; uninstall needs elevation and is
     #: gated via `require_admin()`.
@@ -375,6 +380,15 @@ class StoreAppsModule(BaseModule):
 
     def refresh_data(self) -> None:
         self._load_apps()
+
+    def get_search_provider(self) -> Optional[SearchProvider]:
+        # A fresh instance per call, same as DebloatSearchProvider -- but
+        # unlike that one, this needs a LIVE handle: there is no catalog
+        # file to fall back on, only whatever the last scan found. Passing
+        # the module itself means every instance, however many are built,
+        # reads self._apps fresh at search time rather than a snapshot
+        # taken here.
+        return StoreAppsSearchProvider(self)
 
     def on_deactivate(self) -> None:
         self._persist_sort()

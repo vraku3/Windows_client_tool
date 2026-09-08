@@ -1,5 +1,6 @@
 import csv
 import datetime
+import logging
 import os
 import subprocess
 from typing import List, Optional
@@ -17,6 +18,8 @@ from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.module_groups import ModuleGroup
+from core.search_provider import SearchProvider
+from core.semantic_colors import semantic
 from core.table_ui import centered_item, center_header, NumericSortItem
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
@@ -24,7 +27,10 @@ from modules.driver_manager.driver_reader import (
     DriverInfo, classify_provider, fetch_drivers, published_name_for,
     _PSEUDO_CLASSES,
 )
+from modules.driver_manager.driver_search_provider import DriverSearchProvider
 from ui.empty_state import EmptyState
+
+logger = logging.getLogger(__name__)
 
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
 
@@ -54,6 +60,10 @@ class DriverModule(BaseModule):
     name = "Driver Manager"
     icon = "🖨️"
     description = "View and manage installed drivers"
+    #: Reading and browsing is always available with no elevation; the one
+    #: destructive action (uninstalling a driver package) calls
+    #: require_admin() itself and is refused with a message pointing at the
+    #: "Restart as Admin" banner rather than failing silently.
     requires_admin = False
     group = ModuleGroup.SYSTEM
 
@@ -77,7 +87,11 @@ class DriverModule(BaseModule):
         self._export_btn: Optional[QPushButton] = None
         self._cancel_backup_btn: Optional[QPushButton] = None
         self._backup_worker: Optional[Worker] = None
-        self._drivers_ref = None  # [list of DriverInfo]
+        # [list of DriverInfo] -- a single-element cell, not reassigned after
+        # this, so DriverSearchProvider (built once in get_search_provider(),
+        # itself called from on_start() before create_widget() ever runs) can
+        # hold this same object and still see every future refresh's data.
+        self._drivers_ref = [[]]
         self._sort_col: int = -1
 
     def create_widget(self) -> QWidget:
@@ -164,7 +178,6 @@ class DriverModule(BaseModule):
         self._flag_filter_combo.currentTextChanged.connect(
             lambda _txt: self._populate(self._drivers_ref[0], self._filter_edit.text())
         )
-        self._drivers_ref = [[]]
         self._table_stack.setCurrentIndex(1)
 
         # D23: restore the last sort column/order this session saved in
@@ -201,6 +214,14 @@ class DriverModule(BaseModule):
 
     def refresh_data(self) -> None:
         self._do_refresh()
+
+    def get_search_provider(self) -> Optional[SearchProvider]:
+        # A fresh instance per call, same as DebloatSearchProvider -- but
+        # unlike that one, this needs a LIVE handle: there is no catalog file
+        # to re-read, only whatever the last refresh put in _drivers_ref.
+        # Passing the shared cell (never reassigned -- see __init__) means
+        # every instance, however many are built, sees the same live data.
+        return DriverSearchProvider(self._drivers_ref)
 
     def on_deactivate(self) -> None:
         header = self._table.horizontalHeader() if self._table else None
@@ -270,7 +291,7 @@ class DriverModule(BaseModule):
                 for c in range(len(COLUMNS)):
                     cell = self._table.item(r, c)
                     if cell:
-                        cell.setForeground(QColor("#CC2222"))
+                        cell.setForeground(QColor(semantic("error")))
 
     def _select_all_flagged(self) -> None:
         if self._table is None:
@@ -371,9 +392,12 @@ class DriverModule(BaseModule):
             ["pnputil", "/export-driver", published, folder],
             capture_output=True, text=True, timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW)
-        self._status_lbl.setText(
-            f"Exported {published}" if result.returncode == 0
-            else f"Could not export {published}: {result.stdout + result.stderr}")
+        if result.returncode == 0:
+            msg = f"Exported {published}"
+        else:
+            msg = f"Could not export {published}: {result.stdout + result.stderr}"
+        logger.info(msg)
+        self._status_lbl.setText(msg)
 
     def _open_windows_update_settings(self) -> None:
         os.startfile("ms-settings:windowsupdate")
@@ -433,10 +457,11 @@ class DriverModule(BaseModule):
             capture_output=True, text=True, timeout=60,
             creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode == 0:
-            self._status_lbl.setText(f"Removed driver package {published}")
+            msg = f"Removed driver package {published}"
         else:
-            self._status_lbl.setText(
-                f"Could not remove {published}: {result.stdout + result.stderr}")
+            msg = f"Could not remove {published}: {result.stdout + result.stderr}"
+        logger.info(msg)
+        self._status_lbl.setText(msg)
         self._do_refresh()
 
     def _open_cleanup_driver_panel(self) -> None:
@@ -543,18 +568,23 @@ class DriverModule(BaseModule):
             msg = "Driver backup complete — exported to selected folder."
         else:
             msg = f"Driver backup finished: {self._on_backup_error_line(output)}"
+        logger.info(msg)
         if self._status_lbl:
             self._status_lbl.setText(msg)
 
     def _on_backup_error(self, err_str: str) -> None:
         self._reset_backup_controls()
+        msg = f"Backup error: {err_str}"
+        logger.info(msg)
         if self._status_lbl:
-            self._status_lbl.setText(f"Backup error: {err_str}")
+            self._status_lbl.setText(msg)
 
     def _on_backup_cancelled(self) -> None:
         self._reset_backup_controls()
+        msg = "Driver backup cancelled."
+        logger.info(msg)
         if self._status_lbl:
-            self._status_lbl.setText("Driver backup cancelled.")
+            self._status_lbl.setText(msg)
 
     def _reset_backup_controls(self) -> None:
         self._backup_btn.setEnabled(True)

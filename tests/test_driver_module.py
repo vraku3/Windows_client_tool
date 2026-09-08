@@ -376,3 +376,47 @@ def test_export_writes_only_visible_rows(tmp_path, monkeypatch):
     mod._do_export()
     text = out.read_text(encoding="utf-8")
     assert "A" in text and "B" not in text
+
+
+# ----------------------------------------------------------------------
+# Task 38 (C01): get_search_provider() wires a live handle into
+# _drivers_ref, not a snapshot taken when the provider was built --
+# see tests/test_driver_search_provider.py for the provider's own
+# unit tests. These confirm DriverModule wires it correctly.
+# ----------------------------------------------------------------------
+
+
+def test_get_search_provider_returns_a_driver_search_provider():
+    mod = _module()
+    provider = mod.get_search_provider()
+    assert type(provider).__name__ == "DriverSearchProvider"
+    assert provider.module_name == "Driver Manager"
+
+
+def test_get_search_provider_sees_current_drivers_by_name_and_class():
+    from core.search_provider import SearchQuery
+
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("Realtek Ethernet Controller", "Net", "1.0", "2024-01-01",
+                   "Realtek", True, 0, ""),
+        DriverInfo("Generic USB Hub", "USB", "2.0", "2023-05-01",
+                   "Microsoft", True, 0, ""),
+    ]
+    provider = mod.get_search_provider()
+    by_name = provider.search(SearchQuery(text="realtek"))
+    assert any("Realtek Ethernet Controller" in r.summary for r in by_name)
+    by_class = provider.search(SearchQuery(text="usb"))
+    assert any("Generic USB Hub" in r.summary for r in by_class)
+
+
+def test_get_search_provider_called_before_a_refresh_finds_nothing_not_none():
+    # get_search_provider() is really called from on_start(), before
+    # create_widget() -- confirmed via ModuleRegistry.start_all(). Simulate
+    # that ordering directly: a fresh module with no refresh yet.
+    from core.search_provider import SearchQuery
+
+    mod = dmod.DriverModule()
+    mod.on_start(_FakeApp())
+    provider = mod.get_search_provider()
+    assert provider.search(SearchQuery(text="anything")) == []

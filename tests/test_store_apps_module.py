@@ -560,3 +560,38 @@ def test_shortcuts_legend_is_reachable_from_the_toolbar():
     mod = store_module()
     legend_btn = mod._widget.findChild(QPushButton, "_shortcuts_btn")
     assert legend_btn is not None
+
+
+# ----------------------------------------------------------------------
+# Task 38 (C01): get_search_provider() wires a live handle onto self._apps,
+# not a snapshot taken when the provider was built -- see
+# tests/test_store_apps_search_provider.py for the provider's own unit
+# tests. These confirm StoreAppsModule wires it correctly.
+# ----------------------------------------------------------------------
+
+
+def test_get_search_provider_returns_a_store_apps_search_provider():
+    mod = store_module()
+    provider = mod.get_search_provider()
+    assert type(provider).__name__ == "StoreAppsSearchProvider"
+    assert provider.module_name == "Store Apps"
+
+
+def test_get_search_provider_sees_current_apps_by_name_and_publisher():
+    from core.search_provider import SearchQuery
+
+    mod = store_module()
+    load_two_apps(mod)
+    provider = mod.get_search_provider()
+    by_name = provider.search(SearchQuery(text="calculator"))
+    assert any("Microsoft.WindowsCalculator" in r.summary for r in by_name)
+    by_publisher = provider.search(SearchQuery(text="microsoft corporation"))
+    assert any("Microsoft.WindowsCalculator" in r.summary for r in by_publisher)
+
+
+def test_get_search_provider_before_any_load_finds_nothing_not_none():
+    from core.search_provider import SearchQuery
+
+    mod = store_module()
+    provider = mod.get_search_provider()
+    assert provider.search(SearchQuery(text="anything")) == []

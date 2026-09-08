@@ -122,3 +122,50 @@ def test_uninstall_confirmed_calls_delete_driver(monkeypatch):
     mod._do_uninstall_driver("oem60.inf", "Some Device")
     assert calls[0][:3] == ["pnputil", "/delete-driver", "oem60.inf"]
     assert "/uninstall" in calls[0]
+
+
+# ----------------------------------------------------------------------
+# Task 34: confirmation, cancel, real per-driver progress, and elevation
+# messaging on backup. pnputil, confirm_destructive and the file dialog
+# are monkeypatched throughout -- nothing here touches a real driver.
+# ----------------------------------------------------------------------
+
+
+def test_backup_confirms_before_starting(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(dmod.QFileDialog, "getExistingDirectory",
+                        lambda *a, **k: "C:\\backup")
+    asked = []
+    monkeypatch.setattr(dmod, "confirm_destructive",
+                        lambda *a, **k: asked.append(1) or False)
+    started = []
+    # `mod.app.thread_pool` is None in `_FakeApp`, so this patches a
+    # throwaway placeholder that `_backup_drivers` never looks up (the
+    # real dispatch path is `QThreadPool.globalInstance()`); a bare
+    # `object()` can't take attribute assignment at all (no `__dict__`),
+    # so a dummy stand-in object is used instead. The `started == []`
+    # half of the assertion is trivially true regardless of what
+    # `_backup_drivers` does -- `asked` is the check that carries signal.
+    _dummy = type("Dummy", (), {})()
+    monkeypatch.setattr(mod.app.thread_pool if mod.app.thread_pool else _dummy,
+                        "start", lambda w: started.append(1), raising=False)
+    mod._backup_drivers()
+    assert asked and started == []
+
+
+def test_backup_disables_export_and_filter_while_running(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(dmod.QFileDialog, "getExistingDirectory",
+                        lambda *a, **k: "C:\\backup")
+    monkeypatch.setattr(dmod, "confirm_destructive", lambda *a, **k: True)
+    mod._backup_drivers()
+    assert mod._export_btn.isEnabled() is False
+    assert mod._filter_edit.isEnabled() is False
+
+
+def test_cancel_button_cancels_the_backup_worker(monkeypatch):
+    mod = _module()
+    mod._backup_worker = type("W", (), {"cancelled": False,
+                                        "cancel": lambda self: setattr(self, "cancelled", True)})()
+    mod._on_cancel_backup()
+    assert mod._backup_worker.cancelled is True

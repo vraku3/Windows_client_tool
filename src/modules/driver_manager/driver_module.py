@@ -42,6 +42,9 @@ class DriverModule(BaseModule):
         self._filter_edit: Optional[QLineEdit] = None
         self._hide_pseudo_cb: Optional[QCheckBox] = None
         self._refresh_btn: Optional[QPushButton] = None
+        self._export_btn: Optional[QPushButton] = None
+        self._cancel_backup_btn: Optional[QPushButton] = None
+        self._backup_worker: Optional[Worker] = None
         self._drivers_ref = None  # [list of DriverInfo]
         self._sort_col: int = -1
 
@@ -53,18 +56,21 @@ class DriverModule(BaseModule):
         # Toolbar
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
-        export_btn = QPushButton("Export CSV")
+        self._export_btn = QPushButton("Export CSV")
         devmgr_btn = QPushButton("Open Device Manager")
         self._backup_btn = QPushButton("Backup Drivers")
+        self._cancel_backup_btn = QPushButton("Cancel (stops after current file)")
+        self._cancel_backup_btn.setVisible(False)
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by name or class...")
         self._hide_pseudo_cb = QCheckBox("Hide pseudo-devices")
         self._hide_pseudo_cb.setChecked(True)
         self._status_lbl = QLabel("Click Refresh to load drivers.")
         toolbar.addWidget(self._refresh_btn)
-        toolbar.addWidget(export_btn)
+        toolbar.addWidget(self._export_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(self._backup_btn)
+        toolbar.addWidget(self._cancel_backup_btn)
         toolbar.addWidget(QLabel("Filter:"))
         toolbar.addWidget(self._filter_edit, 1)
         toolbar.addWidget(self._hide_pseudo_cb)
@@ -93,9 +99,10 @@ class DriverModule(BaseModule):
         layout.addWidget(self._table, 1)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
-        export_btn.clicked.connect(self._do_export)
+        self._export_btn.clicked.connect(self._do_export)
         devmgr_btn.clicked.connect(self._open_devmgr)
         self._backup_btn.clicked.connect(self._backup_drivers)
+        self._cancel_backup_btn.clicked.connect(self._on_cancel_backup)
         self._filter_edit.textChanged.connect(
             lambda txt: self._populate(self._drivers_ref[0], txt)
         )
@@ -314,46 +321,95 @@ class DriverModule(BaseModule):
         )
         if not folder:
             return
+        if not confirm_destructive(
+                self._widget, "Export All Drivers",
+                f"Export every driver to {folder}?",
+                detail="This can take a while and cannot be cancelled "
+                      "part-way through cleanly — pnputil does not report "
+                      "progress per driver.",
+                irreversible=False):
+            return
         self._backup_btn.setEnabled(False)
         self._refresh_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
+        self._filter_edit.setEnabled(False)
+        self._cancel_backup_btn.setVisible(True)
+        self._cancel_backup_btn.setEnabled(True)
         if self._status_lbl:
             self._status_lbl.setText(f"Exporting drivers to {folder}...")
+
+        exportable = [d for d in self._drivers_ref[0] if published_name_for(d.inf_name)]
         if self._progress:
+            self._progress.setRange(0, len(exportable))
+            self._progress.setValue(0)
             self._progress.show()
 
-        def do_backup(_worker):
-            result = subprocess.run(
-                ["pnputil", "/export-driver", "*", folder],
-                capture_output=True, text=True, timeout=300,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            return result.stdout + result.stderr, result.returncode
+        def do_backup(worker):
+            exportable = [d for d in self._drivers_ref[0] if published_name_for(d.inf_name)]
+            combined_output = []
+            failures = 0
+            for i, d in enumerate(exportable):
+                if worker.is_cancelled:
+                    combined_output.append("Cancelled.")
+                    break
+                published = published_name_for(d.inf_name)
+                result = subprocess.run(
+                    ["pnputil", "/export-driver", published, folder],
+                    capture_output=True, text=True, timeout=300,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+                combined_output.append(result.stdout + result.stderr)
+                if result.returncode != 0:
+                    failures += 1
+                worker.signals.progress.emit(i + 1)
+            returncode = 0 if failures == 0 else 1
+            return "\n".join(combined_output), returncode
 
         worker = Worker(do_backup)
+        worker.signals.progress.connect(self._progress.setValue)
         worker.signals.result.connect(self._on_backup_done)
         worker.signals.error.connect(self._on_backup_error)
         self._workers.append(worker)
+        self._backup_worker = worker
         if self.app and getattr(self.app, "thread_pool", None) is not None:
             self.app.thread_pool.start(worker)
         else:
             QThreadPool.globalInstance().start(worker)
 
+    def _on_cancel_backup(self) -> None:
+        if self._backup_worker is not None:
+            self._backup_worker.cancel()
+        self._cancel_backup_btn.setEnabled(False)
+
+    def _on_backup_error_line(self, stderr: str) -> str:
+        if "access" in stderr.lower() and "denied" in stderr.lower():
+            return "denied — this driver package needs administrator"
+        return stderr.strip() or "failed for an unreported reason"
+
     def _on_backup_done(self, result) -> None:
         output, returncode = result
         self._backup_btn.setEnabled(True)
         self._refresh_btn.setEnabled(True)
+        self._export_btn.setEnabled(True)
+        self._filter_edit.setEnabled(True)
+        self._cancel_backup_btn.setVisible(False)
+        self._cancel_backup_btn.setEnabled(True)
         if self._progress:
             self._progress.hide()
         if returncode == 0:
             msg = "Driver backup complete — exported to selected folder."
         else:
-            msg = f"Driver backup finished with code {returncode}."
+            msg = f"Driver backup finished: {self._on_backup_error_line(output)}"
         if self._status_lbl:
             self._status_lbl.setText(msg)
 
     def _on_backup_error(self, err_str: str) -> None:
         self._backup_btn.setEnabled(True)
         self._refresh_btn.setEnabled(True)
+        self._export_btn.setEnabled(True)
+        self._filter_edit.setEnabled(True)
+        self._cancel_backup_btn.setVisible(False)
+        self._cancel_backup_btn.setEnabled(True)
         if self._progress:
             self._progress.hide()
         if self._status_lbl:

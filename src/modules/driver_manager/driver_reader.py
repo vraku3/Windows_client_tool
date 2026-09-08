@@ -29,6 +29,13 @@ $result = foreach ($d in $drivers) {
 $result | ConvertTo-Json -Compress -Depth 2
 """
 
+_PS_CMD_DRIVERLESS = r"""
+$devices = Get-CimInstance -ClassName Win32_PnPEntity |
+    Where-Object { $_.ConfigManagerErrorCode -ne 0 -and $_.Name }
+$devices | Select-Object Name, ConfigManagerErrorCode, PNPClass |
+    ConvertTo-Json -Compress -Depth 2
+"""
+
 
 class DriverReadError(RuntimeError):
     """The PowerShell driver query returned something that could not be
@@ -66,6 +73,9 @@ _ERROR_CODE_MEANINGS = {
 }
 
 
+_PSEUDO_CLASSES = {"SoftwareComponent", "SoftwareDevice", "PrintQueue"}
+
+
 def decode_error_code(code: int) -> str:
     if not code:
         return ""
@@ -82,8 +92,8 @@ def classify_provider(publisher: str) -> str:
         else "Third-Party"
 
 
-def _build_driver_info(d: dict) -> DriverInfo:
-    two_years_ago = datetime.datetime.now() - datetime.timedelta(days=730)
+def _build_driver_info(d: dict, old_threshold_days: int = 730) -> DriverInfo:
+    two_years_ago = datetime.datetime.now() - datetime.timedelta(days=old_threshold_days)
 
     name = d.get("Name") or ""
     cls = d.get("Class") or ""
@@ -126,7 +136,36 @@ def _build_driver_info(d: dict) -> DriverInfo:
     )
 
 
-def fetch_drivers() -> List[DriverInfo]:
+def _merge_driverless_devices(drivers: List[DriverInfo],
+                              driverless_raw: str) -> List[DriverInfo]:
+    """Win32_PnPSignedDriver only lists devices that HAVE a driver. A
+    device Windows could not find one for at all -- the yellow-bang case
+    -- needs a second query, or this "driver manager" never shows the
+    machine's actual problem devices."""
+    have_names = {d.device_name for d in drivers}
+    if not driverless_raw.strip():
+        return drivers
+    try:
+        raw_devices = json.loads(driverless_raw)
+    except json.JSONDecodeError:
+        return drivers
+    if isinstance(raw_devices, dict):
+        raw_devices = [raw_devices]
+    extra = []
+    for dev in raw_devices:
+        name = dev.get("Name") or ""
+        if not name or name in have_names:
+            continue
+        code = int(dev.get("ConfigManagerErrorCode") or 0)
+        extra.append(DriverInfo(
+            device_name=name, driver_class=dev.get("PNPClass") or "",
+            version="", date="", publisher="", signed=False,
+            error_code=code,
+            flags=f"🔴 No driver installed: {decode_error_code(code)}"))
+    return drivers + extra
+
+
+def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
     proc = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD],
         capture_output=True, text=True, errors="replace",
@@ -151,7 +190,14 @@ def fetch_drivers() -> List[DriverInfo]:
         name = d.get("Name") or ""
         if not name:
             continue
-        drivers.append(_build_driver_info(d))
+        drivers.append(_build_driver_info(d, old_threshold_days))
+
+    driverless_proc = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD_DRIVERLESS],
+        capture_output=True, text=True, errors="replace",
+        creationflags=CREATE_NO_WINDOW, timeout=90,
+    )
+    drivers = _merge_driverless_devices(drivers, driverless_proc.stdout.strip())
 
     drivers.sort(key=lambda d: (d.error_code != 0, not d.signed, d.device_name))
     return drivers

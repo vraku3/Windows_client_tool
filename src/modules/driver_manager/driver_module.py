@@ -6,7 +6,7 @@ from typing import List, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QHeaderView, QLineEdit, QLabel,
-    QProgressBar, QFileDialog,
+    QProgressBar, QFileDialog, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor
@@ -15,7 +15,9 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
 from core.worker import COMWorker, Worker
-from modules.driver_manager.driver_reader import DriverInfo, classify_provider, fetch_drivers
+from modules.driver_manager.driver_reader import (
+    DriverInfo, classify_provider, fetch_drivers, _PSEUDO_CLASSES,
+)
 
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
 
@@ -34,6 +36,7 @@ class DriverModule(BaseModule):
         self._progress: Optional[QProgressBar] = None
         self._status_lbl: Optional[QLabel] = None
         self._filter_edit: Optional[QLineEdit] = None
+        self._hide_pseudo_cb: Optional[QCheckBox] = None
         self._refresh_btn: Optional[QPushButton] = None
         self._drivers_ref = None  # [list of DriverInfo]
         self._sort_col: int = -1
@@ -51,6 +54,8 @@ class DriverModule(BaseModule):
         self._backup_btn = QPushButton("Backup Drivers")
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by name or class...")
+        self._hide_pseudo_cb = QCheckBox("Hide pseudo-devices")
+        self._hide_pseudo_cb.setChecked(True)
         self._status_lbl = QLabel("Click Refresh to load drivers.")
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(export_btn)
@@ -58,6 +63,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._backup_btn)
         toolbar.addWidget(QLabel("Filter:"))
         toolbar.addWidget(self._filter_edit, 1)
+        toolbar.addWidget(self._hide_pseudo_cb)
         toolbar.addWidget(self._status_lbl)
         layout.addLayout(toolbar)
 
@@ -86,6 +92,9 @@ class DriverModule(BaseModule):
         self._backup_btn.clicked.connect(self._backup_drivers)
         self._filter_edit.textChanged.connect(
             lambda txt: self._populate(self._drivers_ref[0], txt)
+        )
+        self._hide_pseudo_cb.stateChanged.connect(
+            lambda _state: self._populate(self._drivers_ref[0], self._filter_edit.text())
         )
         self._drivers_ref = [[]]
 
@@ -131,9 +140,11 @@ class DriverModule(BaseModule):
         if self._table is None:
             return
         ft = filter_text.lower()
+        hide_pseudo = self._hide_pseudo_cb.isChecked() if self._hide_pseudo_cb else True
         visible = [
             d for d in drivers
-            if not ft or ft in d.device_name.lower() or ft in d.driver_class.lower()
+            if (not ft or ft in d.device_name.lower() or ft in d.driver_class.lower())
+            and not (hide_pseudo and d.driver_class in _PSEUDO_CLASSES)
         ]
         self._table.setRowCount(len(visible))
         for r, d in enumerate(visible):

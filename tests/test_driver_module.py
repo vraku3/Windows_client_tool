@@ -296,11 +296,19 @@ def test_header_click_sort_survives_a_later_filter_change(monkeypatch):
     every filter keystroke, hide-pseudo toggle, and flag-combo change, not
     just a real refresh -- so clicking a header to sort, then typing one
     character into the filter box, silently reverted the sort back to
-    whatever was last saved in on_deactivate."""
+    whatever was last saved in on_deactivate.
+
+    The fixture rows deliberately DISAGREE on order between column 0
+    (Device Name) and column 1 (Class): sorted by Device Name, "Alpha"
+    (Class "Bcls") comes first; sorted by Class, "Zeta" (Class "Acls")
+    comes first. A test whose two columns happen to agree on row order
+    can't tell a real column-1 sort from a silent revert to the default
+    column-0 sort -- confirmed by review: the original fixture did exactly
+    that and passed even against the unfixed, reverting code."""
     mod = _module()
     mod._drivers_ref[0] = [
-        DriverInfo("Zeta", "Bcls", "1.0", "", "V", True, 0, ""),
-        DriverInfo("Alpha", "Acls", "1.0", "", "V", True, 0, ""),
+        DriverInfo("Alpha", "Bcls", "1.0", "", "V", True, 0, ""),
+        DriverInfo("Zeta", "Acls", "1.0", "", "V", True, 0, ""),
     ]
     mod._populate(mod._drivers_ref[0], "")
     mod._on_header_click(1)  # sort by the "Class" column, ascending

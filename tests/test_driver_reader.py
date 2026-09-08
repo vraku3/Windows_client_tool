@@ -110,3 +110,43 @@ def test_fetch_drivers_chunks_the_wmi_query(monkeypatch):
     dr.fetch_drivers()
     assert all(t and t <= 30 for t in calls), \
         "expected per-chunk timeouts well under the old flat 90s"
+
+
+def test_same_name_devices_are_not_collapsed_but_true_duplicates_are(monkeypatch):
+    """Regression: device_name alone is not a safe dedup key for merging
+    the class chunks -- Windows commonly reports several distinct physical
+    devices under an identical generic name (multiple "USB Root Hub"
+    entries, several "Generic PnP Monitor"s). A name-only dedup silently
+    erased whichever one a later chunk/the final unfiltered pass happened
+    to encounter second -- exactly backwards for a tool whose job is
+    surfacing a problem device. device_id (the PNP device instance id) is
+    the real unique key; the final unfiltered pass genuinely re-returns
+    every device the class chunks already collected, so it still needs
+    SOME dedup or the list would double."""
+    usb_devices = [
+        {"Name": "USB Root Hub (USB 3.0)", "Class": "USB", "Version": "1.0",
+         "Date": "", "Publisher": "Microsoft", "IsSigned": True,
+         "ErrorCode": 0, "InfName": "usb.inf", "DeviceID": "USB\\ROOT_HUB30\\1"},
+        {"Name": "USB Root Hub (USB 3.0)", "Class": "USB", "Version": "1.0",
+         "Date": "", "Publisher": "Microsoft", "IsSigned": True,
+         "ErrorCode": 0, "InfName": "usb.inf", "DeviceID": "USB\\ROOT_HUB30\\2"},
+    ]
+
+    def fake_run(cmd, **k):
+        ps_cmd = cmd[-1]
+        class R:
+            returncode = 0
+            stdout = "[]"
+        if "DeviceClass='USB'" in ps_cmd:
+            R.stdout = json.dumps(usb_devices)
+        elif "-Filter" not in ps_cmd and "Win32_PnPSignedDriver" in ps_cmd:
+            # the final, unfiltered catch-all pass -- genuinely re-returns
+            # every device the class chunks already saw.
+            R.stdout = json.dumps(usb_devices)
+        return R()
+
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    drivers = dr.fetch_drivers()
+    hubs = [d for d in drivers if d.device_name == "USB Root Hub (USB 3.0)"]
+    assert len(hubs) == 2, "two DISTINCT devices sharing a name must both survive"
+    assert {d.device_id for d in hubs} == {"USB\\ROOT_HUB30\\1", "USB\\ROOT_HUB30\\2"}

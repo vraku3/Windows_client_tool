@@ -36,6 +36,7 @@ $result = foreach ($d in $drivers) {
         IsSigned   = [bool]$d.IsSigned
         ErrorCode  = [int]($d.ConfigManagerErrorCode -as [int])
         InfName    = [string]$d.InfName
+        DeviceID   = [string]$d.DeviceID
     }
 }
 $result | ConvertTo-Json -Compress -Depth 2
@@ -66,6 +67,8 @@ class DriverInfo:
     error_code: int    # 0 = OK
     flags: str         # status flags string
     inf_name: str = ""
+    device_id: str = ""  # PNP device instance id -- a real unique key,
+                          # unlike device_name (see fetch_drivers' dedup)
 
 
 _ERROR_CODE_MEANINGS = {
@@ -147,6 +150,7 @@ def _build_driver_info(d: dict, old_threshold_days: int = 730) -> DriverInfo:
         date=date_str, publisher=publisher, signed=signed,
         error_code=error_code, flags=" ".join(flags),
         inf_name=d.get("InfName") or "",
+        device_id=d.get("DeviceID") or "",
     )
 
 
@@ -214,23 +218,40 @@ _DRIVER_CLASSES_TO_QUERY = ("Net", "Display", "HDC", "USB", "Media",
                             "System", "Monitor", "Keyboard", "Mouse")
 
 
+def _dedup_key(d: DriverInfo) -> str:
+    """`device_name` alone is NOT a safe dedup key -- Windows commonly
+    reports several distinct physical devices under an identical generic
+    name ("USB Root Hub (USB 3.0)" x3, "Generic PnP Monitor" x2, repeated
+    "USB Mass Storage Device" entries). Deduping on name alone silently
+    erased whichever of those a later chunk/pass encountered second, which
+    is exactly backwards for a tool whose job is surfacing a problem
+    device. `device_id` (the PNP device instance id, e.g.
+    "USB\\VID_046D&PID_C52B\\5&1CB39CA&0&1") is the real unique key; fall
+    back to name only on the rare device that reports no id at all."""
+    return d.device_id or f"\x00name:{d.device_name}"
+
+
 def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
     drivers: List[DriverInfo] = []
-    seen_names = set()
+    seen_keys = set()
     for cls in _DRIVER_CLASSES_TO_QUERY:
         for d in _fetch_drivers_for_class(cls, old_threshold_days):
-            if d.device_name not in seen_names:
-                seen_names.add(d.device_name)
+            key = _dedup_key(d)
+            if key not in seen_keys:
+                seen_keys.add(key)
                 drivers.append(d)
     # Anything outside the enumerated classes still gets one final,
     # unfiltered pass so nothing is silently dropped -- the class list
     # above is an optimization (query the common ones fast, in smaller
     # chunks so one slow/hung query loses at most one chunk's worth
     # rather than the whole refresh), not a filter on what counts as
-    # a driver.
+    # a driver. Because it's unfiltered, it re-returns every device the
+    # class chunks above already collected -- that's what seen_keys is
+    # for, not a way to silently thin out distinct same-named devices.
     for d in _fetch_drivers_for_class(None, old_threshold_days):
-        if d.device_name not in seen_names:
-            seen_names.add(d.device_name)
+        key = _dedup_key(d)
+        if key not in seen_keys:
+            seen_keys.add(key)
             drivers.append(d)
 
     driverless_proc = subprocess.run(

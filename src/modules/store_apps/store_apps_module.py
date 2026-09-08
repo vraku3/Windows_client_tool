@@ -27,7 +27,9 @@ from core.events import DEBLOAT_ITEMS_REMOVED
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.semantic_colors import semantic
-from core.table_ui import NumericSortItem, restore_column_widths, save_column_widths
+from core.table_ui import (
+    fit_columns_once, NumericSortItem, restore_column_widths, save_column_widths,
+)
 from core.worker import Worker
 from core.windows_utils import ps_quote, system_root
 from modules.store_apps.store_apps_search_provider import StoreAppsSearchProvider
@@ -230,6 +232,9 @@ class StoreAppsModule(BaseModule):
         self._size_signals.size_ready.connect(self._on_size_ready)
         self._debloat_packages: Set[str] = set()
         self._row_index: Dict[str, int] = {}
+        #: C07 follow-up: has `_on_apps_loaded()` already run its one-time
+        #: resizeColumnsToContents() fit this session? See `_on_apps_loaded`.
+        self._columns_fitted_this_session = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -293,13 +298,18 @@ class StoreAppsModule(BaseModule):
         header.setSortIndicatorShown(True)
         header.setSortIndicator(0, Qt.SortOrder.AscendingOrder)
         # Name, Publisher and (when shown) Family share the free width.
+        # Version/Size/User-Removable/Architecture are Interactive, not
+        # ResizeToContents -- only Interactive can hold a manually-set or
+        # persisted width (core/table_ui.py). The one-time content fit on
+        # first real population (below, in _on_apps_loaded()) keeps a fresh
+        # install looking exactly as it did under ResizeToContents.
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         self._table.setSortingEnabled(True)
         saved_col = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0)
         saved_order = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_order",
@@ -528,6 +538,17 @@ class StoreAppsModule(BaseModule):
             self._table.setItem(row, 6, arch_item)
 
         self._table.setSortingEnabled(True)
+
+        # C07 follow-up: fit Interactive columns to content ONCE, on the
+        # first real population this session, when nothing was persisted
+        # for them -- never again after that. _on_apps_loaded runs on every
+        # manual Refresh and every 120s auto-refresh tick; doing this every
+        # time would silently undo an in-session column drag, the same
+        # class of bug Task 35 fixed for sort order reverting.
+        if not self._columns_fitted_this_session:
+            self._columns_fitted_this_session = True
+            fit_columns_once(self._table, self.app.config.get, self._CONFIG_PREFIX)
+
         self._restore_state(state)
         self._apply_filter()
         self._start_size_scan()

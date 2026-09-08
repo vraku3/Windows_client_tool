@@ -1,7 +1,7 @@
 import os
 
 from PyQt6.QtCore import QPoint, Qt
-from PyQt6.QtWidgets import QPushButton
+from PyQt6.QtWidgets import QHeaderView, QPushButton
 
 from core.appx_service import _version_key
 from modules.store_apps import store_apps_module as sam
@@ -533,6 +533,69 @@ def test_sort_column_is_actually_restored_after_a_restart(monkeypatch):
     load_two_apps(mod)
     header = mod._table.horizontalHeader()
     assert header.sortIndicatorSection() == 2
+
+
+# ----------------------------------------------------------------------
+# C07 follow-up: Task 39's save/restore machinery had zero real effect --
+# every column here was Stretch or ResizeToContents, both of which Qt
+# silently ignores setColumnWidth() on. Only Interactive columns can hold
+# a manually-set or persisted width.
+# ----------------------------------------------------------------------
+
+
+def test_content_hugging_columns_are_interactive():
+    mod = store_module()
+    header = mod._table.horizontalHeader()
+    # Name (0), Publisher (1) and Package Family (5) deliberately share the
+    # free width; Version/Size/User-Removable/Architecture must be
+    # Interactive so a drag-resize or a persisted width actually sticks.
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
+    assert header.sectionResizeMode(5) == QHeaderView.ResizeMode.Stretch
+    for i in (2, 3, 4, 6):
+        assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
+            f"column {i} is not Interactive"
+
+
+def test_first_load_fits_columns_when_nothing_was_persisted(monkeypatch):
+    mod = store_module()
+    calls = []
+    monkeypatch.setattr(mod._table, "resizeColumnsToContents", lambda: calls.append(1))
+    load_two_apps(mod)
+    assert calls == [1]
+    assert mod._columns_fitted_this_session is True
+
+
+def test_first_load_skips_the_fit_when_a_width_is_already_persisted():
+    import tempfile
+    mod = sam.StoreAppsModule()
+    app = _make_fake_app(tempfile.mkdtemp())
+    app.config.set("modules.store_apps.column_widths", [40, 40, 40, 150, 40, 40, 40])
+    mod.on_start(app)
+    mod.create_widget()  # restore_column_widths() applies the saved widths here
+
+    assert mod._table.columnWidth(3) == 150
+    load_two_apps(mod)
+    # The restored width must survive the first real load untouched.
+    assert mod._table.columnWidth(3) == 150
+
+
+def test_a_later_load_never_reverts_an_in_session_column_resize(monkeypatch):
+    """Same class of bug Task 35 fixed for sort order: _on_apps_loaded()
+    runs on every manual Refresh and every auto-refresh tick, not just the
+    first load -- so a fit-once step that fired again on a later call
+    would silently undo a column the user just dragged wider."""
+    mod = store_module()
+    load_two_apps(mod)  # first real load -- fits once
+
+    mod._table.setColumnWidth(3, 321)  # simulate a user drag-resize
+    calls = []
+    monkeypatch.setattr(mod._table, "resizeColumnsToContents", lambda: calls.append(1))
+
+    load_two_apps(mod)  # e.g. a Refresh or an auto-refresh tick
+
+    assert calls == []
+    assert mod._table.columnWidth(3) == 321
 
 
 def test_last_refreshed_label_updates_after_a_load(monkeypatch):

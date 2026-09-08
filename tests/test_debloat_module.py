@@ -5,7 +5,9 @@ real machine -- TweakEngine.detect is monkeypatched throughout.
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QLineEdit, QMessageBox, QTabWidget
+from PyQt6.QtWidgets import (
+    QHeaderView, QLabel, QLineEdit, QMessageBox, QTableWidget, QTabWidget,
+)
 
 from core.event_bus import EventBus
 from modules.debloat import debloat_module as dm
@@ -527,6 +529,114 @@ def test_returning_to_a_tab_redetects_status_without_rebuilding_rows(
     table = mod._widget.findChild(QTableWidget, "_table_tweak")
     assert table.rowCount() == row_count_before
     assert "Applied" in table.item(0, 4).text()
+
+
+# ----------------------------------------------------------------------
+# C07 follow-up: Task 39's save/restore machinery had zero real effect --
+# every column here was Stretch or ResizeToContents, both of which Qt
+# silently ignores setColumnWidth() on. Only Interactive columns can hold
+# a manually-set or persisted width.
+# ----------------------------------------------------------------------
+
+
+def test_apps_table_checkbox_and_status_columns_are_interactive():
+    mod = _module()
+    header = mod._apps_table.horizontalHeader()
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch  # App Name
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch  # Category
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive  # checkbox
+    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Interactive  # Status
+
+
+def test_tweaks_table_checkbox_risk_and_status_columns_are_interactive():
+    mod = _module()
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    header = table.horizontalHeader()
+    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch  # Tweak
+    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch  # Category
+    for i in (0, 3, 4):  # checkbox, Risk, Status
+        assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
+            f"column {i} is not Interactive"
+
+
+def test_first_apps_populate_fits_columns_when_nothing_was_persisted(monkeypatch):
+    mod = _module()
+    calls = []
+    monkeypatch.setattr(mod._apps_table, "resizeColumnsToContents", lambda: calls.append(1))
+    mod._populate_apps_table(["Microsoft.BingWeather"])
+    assert calls == [1]
+    assert mod._columns_fitted.get("apps") is True
+
+
+def test_a_later_apps_populate_never_reverts_an_in_session_column_resize(
+        monkeypatch):
+    """Same class of bug Task 35 fixed for sort order: _populate_apps_table
+    runs again on every Show All toggle and every completed Apply -- not
+    just the first scan -- so a fit-once step firing again would silently
+    undo a column the user just dragged wider."""
+    mod = _module()
+    mod._populate_apps_table(["Microsoft.BingWeather"])  # first real populate
+
+    mod._apps_table.setColumnWidth(3, 321)  # simulate a user drag-resize on Status (Interactive)
+    calls = []
+    monkeypatch.setattr(mod._apps_table, "resizeColumnsToContents", lambda: calls.append(1))
+
+    mod._populate_apps_table(["Microsoft.BingWeather"])  # e.g. Show All toggled
+
+    assert calls == []
+    assert mod._apps_table.columnWidth(3) == 321
+
+
+def test_first_tweaks_populate_fits_columns_when_nothing_was_persisted(
+        monkeypatch):
+    mod = _module()
+    tweaks = [{"id": "a", "name": "A", "category": "X", "risk": "Low"}]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    monkeypatch.setattr(te.TweakEngine, "detect_many",
+                        lambda self, tweaks, on_result, **k:
+                            [on_result(t, te.DetectionResult(te.NOT_APPLIED)) for t in tweaks])
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    calls = []
+    monkeypatch.setattr(table, "resizeColumnsToContents", lambda: calls.append(1))
+
+    mod._populate_tweaks_table("tweak")
+
+    assert calls == [1]
+    assert mod._columns_fitted.get("tweak") is True
+
+
+def test_a_later_tweaks_populate_never_reverts_an_in_session_column_resize(
+        monkeypatch):
+    mod = _module()
+    tweaks = [{"id": "a", "name": "A", "category": "X", "risk": "Low"}]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    monkeypatch.setattr(te.TweakEngine, "detect_many",
+                        lambda self, tweaks, on_result, **k:
+                            [on_result(t, te.DetectionResult(te.NOT_APPLIED)) for t in tweaks])
+    mod._populate_tweaks_table("tweak")  # first real populate -- fits once
+
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    table.setColumnWidth(3, 321)  # simulate a user drag-resize on Risk
+    calls = []
+    monkeypatch.setattr(table, "resizeColumnsToContents", lambda: calls.append(1))
+
+    mod._populate_tweaks_table("tweak")  # e.g. after an Apply completes
+
+    assert calls == []
+    assert table.columnWidth(3) == 321
+
+
+def test_apps_populate_skips_the_fit_when_a_width_is_already_persisted():
+    mod = dm.DebloatToolsModule()
+    app = _FakeApp()
+    app.config._data["debloat.apps.column_widths"] = [40, 200, 90, 160]
+    mod.on_start(app)
+    mod.create_widget()  # restore_column_widths() applies the saved widths here
+
+    assert mod._apps_table.columnWidth(3) == 160
+    mod._populate_apps_table(["Microsoft.BingWeather"])
+    # The restored width must survive the first real populate untouched.
+    assert mod._apps_table.columnWidth(3) == 160
 
 
 def test_wrap_adds_a_removed_this_session_banner():

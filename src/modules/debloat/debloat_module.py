@@ -22,7 +22,7 @@ from core.events import DEBLOAT_ITEMS_REMOVED
 from core.formatting import human_size
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
-from core.table_ui import restore_column_widths, save_column_widths
+from core.table_ui import fit_columns_once, restore_column_widths, save_column_widths
 from core.worker import Worker
 from modules.debloat import debloat_history
 from modules.debloat import debloat_presets as dp
@@ -122,6 +122,10 @@ class DebloatToolsModule(BaseModule):
         self._tweak_defs_cache: Dict[tuple, tuple] = {}
         self._signals = _Signals()
         self._run_all_tab: Optional[RunAllTab] = None
+        #: C07 follow-up: has each table (keyed "apps"/"tweak"/"ai", see
+        #: `_TAB_TYPES`) already run its one-time resizeColumnsToContents()
+        #: fit this session? See `_fit_columns_once`.
+        self._columns_fitted: Dict[str, bool] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -240,11 +244,13 @@ class DebloatToolsModule(BaseModule):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSortIndicatorShown(True)
         header.setSortIndicator(1, Qt.SortOrder.AscendingOrder)
-        # Checkbox and Status size to content; App Name and Category share the width.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # Checkbox and Status are Interactive (content-fitted once, see
+        # `_fit_columns_once`) so they can hold a manually-set or persisted
+        # width; App Name and Category share the free width.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
         self._apps_table.setSortingEnabled(True)
         self._apps_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._apps_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -276,12 +282,14 @@ class DebloatToolsModule(BaseModule):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSortIndicatorShown(True)
         header.setSortIndicator(1, Qt.SortOrder.AscendingOrder)
-        # Tweak and Category share the width; the rest size to content.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # Tweak and Category share the width; the rest are Interactive
+        # (content-fitted once, see `_fit_columns_once`) so they can hold a
+        # manually-set or persisted width.
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
         table.setSortingEnabled(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -550,6 +558,7 @@ class DebloatToolsModule(BaseModule):
             f"{self._CONFIG_PREFIX}.apps.sort_order", int(Qt.SortOrder.AscendingOrder.value)) or 0))
         self._apps_table.sortItems(sort_col, sort_order)
         self._apps_table.setAlternatingRowColors(True)
+        self._fit_columns_once(self._apps_table, "apps")
         categories = sorted({self._apps_table.item(r, 2).text()
                             for r in range(self._apps_table.rowCount())})
         current = self._apps_category_combo.currentText()
@@ -866,6 +875,21 @@ class DebloatToolsModule(BaseModule):
                 save_column_widths(table, self.app.config.set,
                                    f"{self._CONFIG_PREFIX}.{tab_type}")
 
+    def _fit_columns_once(self, table: QTableWidget, tab_type: str) -> None:
+        """C07 follow-up: fit `table`'s Interactive columns to content ONCE,
+        on the first real population this session, when nothing was
+        persisted for them -- never again after that. Each of the three
+        tables (Apps, Privacy & Telemetry, AI & Navigation) is repopulated
+        more than once a session (a Show All toggle, an Apply completing,
+        a preset), so tracking is per `tab_type`, not a single bool --
+        firing this on a later repopulate would silently undo an
+        in-session column drag, the same class of bug Task 35 fixed for
+        sort order reverting on every `_populate()` call."""
+        if self._columns_fitted.get(tab_type):
+            return
+        self._columns_fitted[tab_type] = True
+        fit_columns_once(table, self.app.config.get, f"{self._CONFIG_PREFIX}.{tab_type}")
+
     # ------------------------------------------------------------------
     # Tweaks tabs
     # ------------------------------------------------------------------
@@ -1033,6 +1057,10 @@ class DebloatToolsModule(BaseModule):
         # blocks until it has), not before.
         if status_lbl:
             status_lbl.setText(self._format_status_breakdown(counts, len(results)))
+        # Fit AFTER detection has landed, not right after _insert_tweak_rows
+        # above -- the Status column's placeholder text ("... Checking") is
+        # not representative of the real status glyphs/labels it fits to.
+        self._fit_columns_once(table, tab_type)
 
     def _format_status_breakdown(self, counts: Dict[str, int], total: int) -> str:
         """T19: a live "N tweak(s) -- Applied: x, Not Applied: y, ..."

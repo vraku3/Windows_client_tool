@@ -2,6 +2,7 @@
 `driver_reader._PSEUDO_CLASSES` into `_populate`'s filter predicate,
 defaulting to checked (pseudo-class drivers hidden)."""
 import pytest
+from PyQt6.QtWidgets import QHeaderView
 
 from modules.driver_manager import driver_module as dmod
 from modules.driver_manager.driver_reader import DriverInfo
@@ -339,6 +340,67 @@ def test_sort_persists_on_deactivate_and_restores_on_the_next_create_widget():
     ]
     mod2._populate(mod2._drivers_ref[0], "")
     assert mod2._table.item(0, 1).text() == "Acls"
+
+
+# ----------------------------------------------------------------------
+# C07 follow-up: Task 39's save/restore machinery had zero real effect --
+# every column here was Stretch or ResizeToContents, both of which Qt
+# silently ignores setColumnWidth() on. Only Interactive columns can hold
+# a manually-set or persisted width.
+# ----------------------------------------------------------------------
+
+
+def test_columns_other_than_device_name_are_interactive():
+    mod = _module()
+    header = mod._table.horizontalHeader()
+    # Device Name shares the free width; every other column must be
+    # Interactive so a drag-resize or a persisted width actually sticks.
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
+    for i in range(1, len(dmod.COLUMNS)):
+        assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
+            f"column {i} ({dmod.COLUMNS[i]}) is not Interactive"
+
+
+def test_first_populate_fits_columns_when_nothing_was_persisted(monkeypatch):
+    mod = _module()
+    calls = []
+    monkeypatch.setattr(mod._table, "resizeColumnsToContents", lambda: calls.append(1))
+    mod._populate(_drivers())
+    assert calls == [1]
+    assert mod._columns_fitted_this_session is True
+
+
+def test_first_populate_skips_the_fit_when_a_width_is_already_persisted():
+    mod = dmod.DriverModule()
+    app = _FakeApp()
+    app.config._data[f"{dmod.DriverModule._CONFIG_PREFIX}.column_widths"] = \
+        [150] * len(dmod.COLUMNS)
+    mod.on_start(app)
+    mod.create_widget()  # restore_column_widths() applies the saved widths here
+    _created_modules.append(mod)
+
+    assert mod._table.columnWidth(1) == 150
+    mod._populate(_drivers())
+    # The restored width must survive the first real populate untouched.
+    assert mod._table.columnWidth(1) == 150
+
+
+def test_a_later_populate_never_reverts_an_in_session_column_resize(monkeypatch):
+    """Same class of bug Task 35 fixed for sort order: _populate() runs on
+    every filter keystroke, hide-pseudo toggle and flag-combo change, not
+    just a real refresh -- so a fit-once step that fired again on a later
+    call would silently undo a column the user just dragged wider."""
+    mod = _module()
+    mod._populate(_drivers())  # first real populate -- fits once
+
+    mod._table.setColumnWidth(1, 321)  # simulate a user drag-resize
+    calls = []
+    monkeypatch.setattr(mod._table, "resizeColumnsToContents", lambda: calls.append(1))
+
+    mod._populate(_drivers(), filter_text="real")  # e.g. a filter keystroke
+
+    assert calls == []
+    assert mod._table.columnWidth(1) == 321
 
 
 def test_empty_state_shown_before_first_load_and_hidden_once_drivers_arrive(monkeypatch):

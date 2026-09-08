@@ -21,7 +21,7 @@ from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.semantic_colors import semantic
 from core.table_ui import (
-    centered_item, center_header, NumericSortItem,
+    centered_item, center_header, fit_columns_once, NumericSortItem,
     restore_column_widths, save_column_widths,
 )
 from core.widget_life import widget_is_valid
@@ -96,6 +96,9 @@ class DriverModule(BaseModule):
         # hold this same object and still see every future refresh's data.
         self._drivers_ref = [[]]
         self._sort_col: int = -1
+        #: C07 follow-up: has `_populate()` already run its one-time
+        #: resizeColumnsToContents() fit this session? See `_populate()`.
+        self._columns_fitted_this_session = False
 
     def create_widget(self) -> QWidget:
         self._widget = QWidget()
@@ -146,8 +149,14 @@ class DriverModule(BaseModule):
         self._table = QTableWidget(0, len(COLUMNS))
         self._table.setHorizontalHeaderLabels(COLUMNS)
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # Interactive, not ResizeToContents: only Interactive columns can
+        # hold a manually-set or persisted width (see core/table_ui.py's
+        # fit_columns_once/save_column_widths/restore_column_widths). The
+        # one-time content fit on first real population (below, in
+        # _populate()) keeps a fresh install looking exactly as it did
+        # under ResizeToContents.
         for i in range(1, len(COLUMNS)):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -301,6 +310,20 @@ class DriverModule(BaseModule):
                     cell = self._table.item(r, c)
                     if cell:
                         cell.setForeground(QColor(semantic("error")))
+
+        # C07 follow-up: fit Interactive columns to content ONCE, on the
+        # first real population this session, when nothing was persisted
+        # for them -- never again after that (_populate runs on every
+        # filter keystroke, hide-pseudo toggle and flag-combo change; doing
+        # this every time would silently undo an in-session column drag,
+        # the same class of bug Task 35 fixed for sort order).
+        if not self._columns_fitted_this_session:
+            self._columns_fitted_this_session = True
+            cfg = self.app.config if self.app else None
+            if cfg is not None:
+                fit_columns_once(self._table, cfg.get, self._CONFIG_PREFIX)
+            else:
+                self._table.resizeColumnsToContents()
 
     def _select_all_flagged(self) -> None:
         if self._table is None:

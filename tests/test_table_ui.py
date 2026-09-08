@@ -82,3 +82,21 @@ def test_save_and_restore_column_widths(qapp):
         table2, lambda k, default=None: saved.get(k, default), "test.widths")
     assert table2.columnWidth(0) == 111
     assert table2.columnWidth(1) == 222
+
+
+def test_fit_columns_once_fits_when_nothing_persisted(qapp, monkeypatch):
+    table = QTableWidget(1, 2)
+    table.setColumnWidth(0, 50)
+    calls = []
+    monkeypatch.setattr(table, "resizeColumnsToContents", lambda: calls.append(1))
+    table_ui.fit_columns_once(table, lambda k, default=None: default, "test.widths")
+    assert calls == [1]
+
+
+def test_fit_columns_once_skips_when_a_width_is_already_persisted(qapp, monkeypatch):
+    table = QTableWidget(1, 2)
+    calls = []
+    monkeypatch.setattr(table, "resizeColumnsToContents", lambda: calls.append(1))
+    table_ui.fit_columns_once(
+        table, lambda k, default=None: [100, 200], "test.widths")
+    assert calls == []

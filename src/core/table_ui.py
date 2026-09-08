@@ -175,3 +175,29 @@ def restore_column_widths(table: QTableWidget, config_get, key_prefix: str) -> N
     for c, w in enumerate(widths):
         if c < table.columnCount() and isinstance(w, int) and w > 0:
             table.setColumnWidth(c, w)
+
+
+def fit_columns_once(table: QTableWidget, config_get, key_prefix: str) -> None:
+    """First-population column fit -- pairs with `restore_column_widths`.
+
+    Only ``Interactive`` columns can hold a persisted width (Qt silently
+    ignores `setColumnWidth()` on `Stretch`/`ResizeToContents`), but unlike
+    `ResizeToContents`, `Interactive` never re-fits itself as a table's rows
+    change -- once a column has a width it keeps it forever, blank table or
+    not. Call this once, right after a table's FIRST REAL population each
+    session, so a fresh install with nothing persisted still looks exactly
+    as good as `ResizeToContents` did. Skips when a width was already
+    restored for this table (`restore_column_widths` already put it there).
+
+    Never call this on a later repopulate (a filter keystroke, an
+    auto-refresh tick, a checkbox toggle) -- that would silently revert an
+    in-session drag-resize back to a content fit, the same class of bug
+    Task 35 found and fixed for sort order reverting on every `_populate()`
+    call. Callers track "already fitted this session" themselves -- a bool
+    for a single-table module, or a dict keyed by tab for one with several
+    (see DebloatToolsModule's `_columns_fitted`) -- and only call this the
+    first time.
+    """
+    widths = config_get(f"{key_prefix}.column_widths", None)
+    if not widths:
+        table.resizeColumnsToContents()

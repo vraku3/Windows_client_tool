@@ -169,3 +169,57 @@ def test_cancel_button_cancels_the_backup_worker(monkeypatch):
                                         "cancel": lambda self: setattr(self, "cancelled", True)})()
     mod._on_cancel_backup()
     assert mod._backup_worker.cancelled is True
+
+
+class _SyncPool:
+    """Runs a Worker synchronously on the calling thread instead of a real
+    background one, so a test can assert on the UI immediately after."""
+
+    def start(self, worker) -> None:
+        worker.run()
+
+
+def test_cancelling_mid_backup_still_recovers_the_ui(monkeypatch):
+    """Regression: Worker.run() (core/worker.py) emits `cancelled` -- never
+    `result` -- whenever the cancel flag is set by the time `do_backup`
+    returns, even when the per-driver loop noticed it and broke cleanly.
+    Without a `cancelled` handler connected, every control (Backup/Refresh/
+    Export/Filter/Cancel) stayed disabled and the progress bar stayed frozen
+    for the rest of the session -- reachable just by clicking Cancel, or by
+    navigating away mid-backup (on_deactivate -> cancel_all_workers()).
+    This drives a REAL Worker through a real cancellation, not a stub."""
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo("A", "Net", "1.0", "", "V", True, 0, "", inf_name="oem1.inf"),
+        DriverInfo("B", "Net", "1.0", "", "V", True, 0, "", inf_name="oem2.inf"),
+    ]
+    monkeypatch.setattr(dmod.QFileDialog, "getExistingDirectory",
+                        lambda *a, **k: "C:\\backup")
+    monkeypatch.setattr(dmod, "confirm_destructive", lambda *a, **k: True)
+
+    class R:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, **k):
+        # Cancel partway through -- after the first driver "exports" -- so
+        # the loop's own `worker.is_cancelled` check is what breaks it,
+        # exactly the path that leaves `self._cancelled` True when
+        # `do_backup` returns.
+        mod._backup_worker.cancel()
+        return R()
+
+    monkeypatch.setattr(dmod.subprocess, "run", fake_run)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+
+    mod._backup_drivers()
+
+    assert mod._backup_btn.isEnabled() is True
+    assert mod._refresh_btn.isEnabled() is True
+    assert mod._export_btn.isEnabled() is True
+    assert mod._filter_edit.isEnabled() is True
+    assert mod._cancel_backup_btn.isVisible() is False
+    assert mod._backup_worker is None
+    assert mod._status_lbl.text() == "Driver backup cancelled."

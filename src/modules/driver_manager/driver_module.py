@@ -324,9 +324,9 @@ class DriverModule(BaseModule):
         if not confirm_destructive(
                 self._widget, "Export All Drivers",
                 f"Export every driver to {folder}?",
-                detail="This can take a while and cannot be cancelled "
-                      "part-way through cleanly — pnputil does not report "
-                      "progress per driver.",
+                detail="This can take a while for a lot of drivers. Progress "
+                      "is shown per driver, and Cancel stops after the "
+                      "current one.",
                 irreversible=False):
             return
         self._backup_btn.setEnabled(False)
@@ -345,7 +345,12 @@ class DriverModule(BaseModule):
             self._progress.show()
 
         def do_backup(worker):
-            exportable = [d for d in self._drivers_ref[0] if published_name_for(d.inf_name)]
+            # `exportable` is the SAME list computed above, before the
+            # worker starts -- not recomputed from `self._drivers_ref[0]`
+            # here, which could have been replaced by then (a refresh can
+            # land mid-backup; the auto-refresh timer is not gated on a
+            # backup being in progress). Recomputing risked desyncing the
+            # worker's real export count from the progress bar's range.
             combined_output = []
             failures = 0
             for i, d in enumerate(exportable):
@@ -369,6 +374,14 @@ class DriverModule(BaseModule):
         worker.signals.progress.connect(self._progress.setValue)
         worker.signals.result.connect(self._on_backup_done)
         worker.signals.error.connect(self._on_backup_error)
+        # Worker.run() emits `cancelled` -- never `result` or `error` -- if
+        # the cancel flag is set when `do_backup` returns, even when the
+        # loop noticed it and returned cleanly. Without this connection a
+        # cancelled backup (via the button below, or simply navigating away
+        # while one is running, since on_deactivate()/on_stop() call
+        # cancel_all_workers() unconditionally) left every control disabled
+        # and the progress bar frozen for the rest of the session.
+        worker.signals.cancelled.connect(self._on_backup_cancelled)
         self._workers.append(worker)
         self._backup_worker = worker
         if self.app and getattr(self.app, "thread_pool", None) is not None:
@@ -388,14 +401,7 @@ class DriverModule(BaseModule):
 
     def _on_backup_done(self, result) -> None:
         output, returncode = result
-        self._backup_btn.setEnabled(True)
-        self._refresh_btn.setEnabled(True)
-        self._export_btn.setEnabled(True)
-        self._filter_edit.setEnabled(True)
-        self._cancel_backup_btn.setVisible(False)
-        self._cancel_backup_btn.setEnabled(True)
-        if self._progress:
-            self._progress.hide()
+        self._reset_backup_controls()
         if returncode == 0:
             msg = "Driver backup complete — exported to selected folder."
         else:
@@ -404,6 +410,16 @@ class DriverModule(BaseModule):
             self._status_lbl.setText(msg)
 
     def _on_backup_error(self, err_str: str) -> None:
+        self._reset_backup_controls()
+        if self._status_lbl:
+            self._status_lbl.setText(f"Backup error: {err_str}")
+
+    def _on_backup_cancelled(self) -> None:
+        self._reset_backup_controls()
+        if self._status_lbl:
+            self._status_lbl.setText("Driver backup cancelled.")
+
+    def _reset_backup_controls(self) -> None:
         self._backup_btn.setEnabled(True)
         self._refresh_btn.setEnabled(True)
         self._export_btn.setEnabled(True)
@@ -412,5 +428,4 @@ class DriverModule(BaseModule):
         self._cancel_backup_btn.setEnabled(True)
         if self._progress:
             self._progress.hide()
-        if self._status_lbl:
-            self._status_lbl.setText(f"Backup error: {err_str}")
+        self._backup_worker = None

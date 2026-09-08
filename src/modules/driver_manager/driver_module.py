@@ -6,17 +6,21 @@ from typing import List, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QHeaderView, QLineEdit, QLabel,
-    QProgressBar, QFileDialog, QCheckBox,
+    QProgressBar, QFileDialog, QCheckBox, QApplication, QMenu,
 )
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor
 
 from core.base_module import BaseModule
+from core.confirm import confirm_destructive
+from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
+from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
 from modules.driver_manager.driver_reader import (
-    DriverInfo, classify_provider, fetch_drivers, _PSEUDO_CLASSES,
+    DriverInfo, classify_provider, fetch_drivers, published_name_for,
+    _PSEUDO_CLASSES,
 )
 
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
@@ -84,6 +88,8 @@ class DriverModule(BaseModule):
         self._table.setSortingEnabled(True)
         self._table.horizontalHeader().setSortIndicatorShown(True)
         self._table.horizontalHeader().sectionClicked.connect(self._on_header_click)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
         layout.addWidget(self._table, 1)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
@@ -175,6 +181,13 @@ class DriverModule(BaseModule):
         worker = COMWorker(lambda _w: fetch_drivers())
 
         def on_result(data: List[DriverInfo]) -> None:
+            # Guard against the widget having been torn down (module
+            # switched away, app shutting down, or -- in tests -- the
+            # module instance from a previous test) by the time this
+            # closure fires; a Qt call on a deleted C++ object crashes
+            # the process rather than raising. See core/widget_life.py.
+            if not widget_is_valid(self._widget):
+                return
             self._drivers_ref[0] = data
             if self._refresh_btn:
                 self._refresh_btn.setEnabled(True)
@@ -187,6 +200,8 @@ class DriverModule(BaseModule):
                 self._status_lbl.setText(f"{len(data)} drivers, {issues} with issues.")
 
         def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
             if self._refresh_btn:
                 self._refresh_btn.setEnabled(True)
             if self._progress:
@@ -198,7 +213,7 @@ class DriverModule(BaseModule):
         worker.signals.error.connect(on_error)
         self._workers.append(worker)
 
-        if self.app and hasattr(self.app, "thread_pool"):
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
             self.app.thread_pool.start(worker)
         else:
             QThreadPool.globalInstance().start(worker)
@@ -225,6 +240,70 @@ class DriverModule(BaseModule):
 
     def _open_devmgr(self) -> None:
         subprocess.Popen(["mmc", "devmgmt.msc"])
+
+    def _on_context_menu(self, pos) -> None:
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+        device_name = self._table.item(row, 0).text()
+        driver = next((d for d in self._drivers_ref[0]
+                      if d.device_name == device_name), None)
+        published = published_name_for(driver.inf_name) if driver else None
+
+        menu = QMenu(self._table)
+        act_copy = menu.addAction("Copy device name")
+        act_copy.triggered.connect(
+            lambda: QApplication.clipboard().setText(device_name))
+        menu.addSeparator()
+        act_uninstall = menu.addAction("Uninstall driver package…")
+        act_uninstall.setEnabled(bool(published))
+        act_uninstall.setToolTip(
+            "" if published else
+            "This is a driver Windows ships inline, not an installed "
+            "OEM package — remove it from Device Manager instead.")
+        act_uninstall.triggered.connect(
+            lambda: self._do_uninstall_driver(published, device_name))
+        act_rollback = menu.addAction("Roll back to previous version…")
+        act_rollback.setToolTip(
+            "Needs the previous driver still cached, which this app does "
+            "not track — opens Device Manager, where Windows can check.")
+        act_rollback.triggered.connect(self._open_devmgr)
+        menu.addSeparator()
+        act_cleanup = menu.addAction("Open Cleanup's Superseded Drivers panel")
+        act_cleanup.triggered.connect(self._open_cleanup_driver_panel)
+        menu.exec(self._table.viewport().mapToGlobal(pos))
+
+    def _do_uninstall_driver(self, published: str, device_name: str) -> None:
+        if not self.require_admin():
+            return
+        if not confirm_destructive(
+                self._widget, "Uninstall Driver Package",
+                f"Uninstall the driver package for {device_name}?",
+                detail=f"Runs: pnputil /delete-driver {published} /uninstall\n"
+                      f"The device may stop working until Windows finds "
+                      f"another driver for it."):
+            return
+        result = subprocess.run(
+            ["pnputil", "/delete-driver", published, "/uninstall", "/force"],
+            capture_output=True, text=True, timeout=60,
+            creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode == 0:
+            self._status_lbl.setText(f"Removed driver package {published}")
+        else:
+            self._status_lbl.setText(
+                f"Could not remove {published}: {result.stdout + result.stderr}")
+        self._do_refresh()
+
+    def _open_cleanup_driver_panel(self) -> None:
+        if self.app and hasattr(self.app, "event_bus"):
+            self.app.event_bus.publish(
+                NAV_REQUEST_MODULE, NavRequestData(module_name="Cleanup"))
+            # The Superseded Drivers panel lives on Cleanup's Large Items
+            # tab -- selecting the module is what this app's existing
+            # navigation event already does; switching to that specific
+            # inner tab is Cleanup's own concern, not something Driver
+            # Manager reaches into.
 
     def _backup_drivers(self) -> None:
         """Export all third-party drivers to a user-selected folder using pnputil."""
@@ -254,7 +333,7 @@ class DriverModule(BaseModule):
         worker.signals.result.connect(self._on_backup_done)
         worker.signals.error.connect(self._on_backup_error)
         self._workers.append(worker)
-        if self.app and hasattr(self.app, "thread_pool"):
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
             self.app.thread_pool.start(worker)
         else:
             QThreadPool.globalInstance().start(worker)

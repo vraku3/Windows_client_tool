@@ -1,12 +1,23 @@
 import datetime
 import json
+import re
 import subprocess
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 import logging
 logger = logging.getLogger(__name__)
 
 CREATE_NO_WINDOW = 0x08000000
+
+_OEM_INF_RE = re.compile(r"^oem\d+\.inf$", re.IGNORECASE)
+
+
+def published_name_for(inf_name: str) -> Optional[str]:
+    """`inf_name` as pnputil would address it, or None for an inbox
+    driver (e.g. "usb.inf") this path cannot remove -- only an
+    OEM-numbered package (from DriverStore, i.e. one a device manufacturer
+    or Windows Update installed) can be `pnputil /delete-driver`'d."""
+    return inf_name if inf_name and _OEM_INF_RE.match(inf_name) else None
 
 _PS_CMD = r"""
 $drivers = Get-CimInstance -ClassName Win32_PnPSignedDriver |
@@ -24,6 +35,7 @@ $result = foreach ($d in $drivers) {
         Publisher  = [string]$d.Manufacturer
         IsSigned   = [bool]$d.IsSigned
         ErrorCode  = [int]($d.ConfigManagerErrorCode -as [int])
+        InfName    = [string]$d.InfName
     }
 }
 $result | ConvertTo-Json -Compress -Depth 2
@@ -53,6 +65,7 @@ class DriverInfo:
     signed: bool
     error_code: int    # 0 = OK
     flags: str         # status flags string
+    inf_name: str = ""
 
 
 _ERROR_CODE_MEANINGS = {
@@ -133,6 +146,7 @@ def _build_driver_info(d: dict, old_threshold_days: int = 730) -> DriverInfo:
         device_name=name, driver_class=cls, version=version,
         date=date_str, publisher=publisher, signed=signed,
         error_code=error_code, flags=" ".join(flags),
+        inf_name=d.get("InfName") or "",
     )
 
 

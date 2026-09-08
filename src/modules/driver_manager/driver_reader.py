@@ -189,11 +189,21 @@ def _fetch_drivers_for_class(cls: Optional[str], old_threshold_days: int) -> Lis
         ps_cmd = _PS_CMD.replace(
             "Win32_PnPSignedDriver |",
             f"Win32_PnPSignedDriver -Filter \"DeviceClass='{cls}'\" |")
-    proc = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
-        capture_output=True, text=True, errors="replace",
-        creationflags=CREATE_NO_WINDOW, timeout=30,
-    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            capture_output=True, text=True, errors="replace",
+            creationflags=CREATE_NO_WINDOW, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        # One slow/hung query loses at most this one chunk's worth rather
+        # than the whole refresh -- fetch_drivers() still has whatever the
+        # other chunks (and the final unfiltered pass, which also calls
+        # this function) returned.
+        logger.warning(
+            "Driver query timed out for class %r -- skipping this chunk",
+            cls if cls is not None else "(unfiltered)")
+        return []
     raw = proc.stdout.strip()
     if not raw:
         return []
@@ -254,12 +264,19 @@ def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
             seen_keys.add(key)
             drivers.append(d)
 
-    driverless_proc = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD_DRIVERLESS],
-        capture_output=True, text=True, errors="replace",
-        creationflags=CREATE_NO_WINDOW, timeout=30,
-    )
-    drivers = _merge_driverless_devices(drivers, driverless_proc.stdout.strip())
+    try:
+        driverless_proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD_DRIVERLESS],
+            capture_output=True, text=True, errors="replace",
+            creationflags=CREATE_NO_WINDOW, timeout=30,
+        )
+        driverless_raw = driverless_proc.stdout.strip()
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "Driverless-device query timed out -- refresh continues "
+            "without those devices")
+        driverless_raw = ""
+    drivers = _merge_driverless_devices(drivers, driverless_raw)
 
     drivers.sort(key=lambda d: (d.error_code != 0, not d.signed, d.device_name))
     return drivers

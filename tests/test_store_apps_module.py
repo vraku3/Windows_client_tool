@@ -264,6 +264,39 @@ def test_module_filter_and_select(qapp, tmp_path):
     assert len(sel) == 2
 
 
+def test_sort_persists_on_deactivate_and_restores_on_the_next_create_widget(
+        qapp, tmp_path):
+    """End-to-end round trip for T23 sort persistence -- mirrors
+    test_driver_module.py's identically-named test. Nothing else in this
+    file ever actually calls on_deactivate(): every other test hand-injects
+    config values instead, which is exactly the class of gap that let
+    DebloatToolsModule's `int(header.sortIndicatorOrder())` -- missing
+    `.value`, raising TypeError under this PyQt6 build's plain (non-Int)
+    `Qt.SortOrder` enum -- go unnoticed on every real module switch."""
+    from modules.store_apps.store_apps_module import StoreAppsModule
+
+    app = _make_fake_app(tmp_path)
+    mod = StoreAppsModule()
+    mod.on_start(app)
+    mod.create_widget()
+    mod._on_apps_loaded([
+        {"Name": "Zeta.App", "Version": "1.0", "InstallLocation": "",
+         "Publisher": "", "Architecture": "X64"},
+        {"Name": "Alpha.App", "Version": "1.0", "InstallLocation": "",
+         "Publisher": "", "Architecture": "X64"},
+    ], None)
+    header = mod._table.horizontalHeader()
+    header.setSortIndicator(2, Qt.SortOrder.DescendingOrder)  # Version column
+    mod.on_deactivate()  # must not raise -- this is the exact bug
+
+    mod2 = StoreAppsModule()
+    mod2.on_start(app)  # same real, shared ConfigManager
+    mod2.create_widget()
+    header2 = mod2._table.horizontalHeader()
+    assert header2.sortIndicatorSection() == 2
+    assert header2.sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+
+
 def test_a_catalogued_package_gets_the_bloatware_badge(monkeypatch):
     mod = store_module()
     monkeypatch.setattr(sam, "_debloat_catalog_packages",
@@ -296,11 +329,27 @@ def test_uninstall_result_is_verified_against_a_fresh_appx_list(monkeypatch):
         return R()
     monkeypatch.setattr(sam.subprocess, "run", fake_run)
     # still "installed" after the removal call -- Windows lied about success
-    monkeypatch.setattr(sam, "fetch_packages",
+    monkeypatch.setattr(sam, "fetch_packages_or_none",
                         lambda use_cache=False: [{"Name": "Pkg.Ghost"}])
     ok, reason = sam.verify_uninstalled("Pkg.Ghost")
     assert ok is False
     assert "still installed" in reason.lower()
+
+
+def test_uninstall_verification_never_reads_a_failed_reenumeration_as_success(
+        monkeypatch):
+    """A transient PowerShell failure right after the removal call must not
+    make verify_uninstalled report the app gone -- `any(...)` over an empty
+    list is False, so collapsing "enumeration failed" into "[]" would say
+    EVERY app in the batch was successfully removed. See CLAUDE.md's Apps
+    tab section: "a list that could not be read is never read as 'it is
+    gone'"."""
+    monkeypatch.setattr(sam, "fetch_packages_or_none",
+                        lambda use_cache=False: None)
+    ok, reason = sam.verify_uninstalled("Pkg.Ghost")
+    assert ok is False
+    assert "could not verify" in reason.lower()
+    assert "still installed" not in reason.lower()
 
 
 def test_size_column_is_a_numeric_sort_item(monkeypatch):

@@ -2,7 +2,7 @@
   "name": "Full Debloat",
   "version": 1,
   "builtin": true,
-  "description": "Remove all 120+ bloatware apps except protected system apps (Store, Terminal, Get Help, Calculator, Notepad, Alarms). Use with caution.",
+  "description": "Remove all 120+ bloatware apps except protected system apps (Store, Terminal, Get Help, Calculator, Notepad, Alarms, Screen Sketch). Use with caution.",
   "tweaks": {
     "System Utilities": ["remove_dev_home", "remove_feedback_hub", "remove_get_started", "remove_pc_manager", "remove_mixed_reality", "remove_remote_desktop", "remove_widgets", "remove_network_speed_test"],
     "Communications": ["remove_mail", "remove_messaging", "remove_skype", "remove_phone_link", "remove_cortana"],
@@ -13,6 +13,6 @@
     "OEM": ["remove_hp_ai", "remove_hp_connected_music", "remove_hp_connected_photo", "remove_hp_easy_clean", "remove_hp_file_viewer", "remove_hp_jumpstarts", "remove_hp_support", "remove_hp_quickdrop", "remove_hp_printer_control", "remove_hp_pc_hardware", "remove_hp_power_manager", "remove_hp_desktop_support", "remove_dell_digital_delivery", "remove_dell_mobile_connect", "remove_dell_support_assist", "remove_lenovo_vantage", "remove_lenovo_vantage_service"]
   },
   "apps": {
-    "remove_protected": ["Microsoft.WindowsStore", "Microsoft.WindowsTerminal", "Microsoft.GetHelp", "Microsoft.WindowsAlarms", "Microsoft.WindowsCalculator", "Microsoft.WindowsNotepad"]
+    "remove_protected": ["Microsoft.WindowsStore", "Microsoft.WindowsTerminal", "Microsoft.GetHelp", "Microsoft.WindowsAlarms", "Microsoft.WindowsCalculator", "Microsoft.WindowsNotepad", "Microsoft.ScreenSketch"]
   }
 }

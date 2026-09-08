@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from core.confirm import confirm_destructive
 from core.worker import Worker
 from modules.tweaks.tweak_engine import TweakEngine
 
@@ -122,16 +123,43 @@ class RunAllTab(QWidget):
             self._status_lbl.setText("Select at least one preset.")
             return
 
-        self._run_btn.setEnabled(False)
-        self._stop_btn.setEnabled(True)
-        self._log.clear()
-        self._status_lbl.setText("Running…")
-
         from modules.debloat import debloat_presets as dp
 
         tweaks = (module._load_tweak_definitions("tweak")
                  + module._load_tweak_definitions("ai"))
         catalog = module._load_debloat_entries()
+
+        # Resolve every selected preset's counts up front so the
+        # confirmation names what is actually about to happen -- the same
+        # standard the Apps tab's own apply paths hold themselves to
+        # (`_on_apply_all_safe` / `_on_apply_selected`). Applying can
+        # remove dozens of apps and many tweaks in one go with no other
+        # prompt in between.
+        total_tweaks = 0
+        total_apps = 0
+        preview_lines = []
+        for preset_name in presets:
+            preset = dp.load_preset(preset_name)
+            tweak_ids = dp.resolve_tweak_ids(preset, tweaks)
+            app_ids = dp.resolve_app_entry_ids(preset, catalog)
+            total_tweaks += len(tweak_ids)
+            total_apps += len(app_ids)
+            label = dict(_PRESET_LABELS)[preset_name]
+            preview_lines.append(
+                f"{label}: {len(tweak_ids)} tweak(s), {len(app_ids)} app(s)")
+
+        if not confirm_destructive(
+                self, "Run All Presets",
+                f"Apply {len(presets)} preset(s) — {total_tweaks} "
+                f"tweak(s) and {total_apps} app(s) total?",
+                detail="\n".join(preview_lines)):
+            return
+
+        self._run_btn.setEnabled(False)
+        self._stop_btn.setEnabled(True)
+        self._log.clear()
+        self._status_lbl.setText("Running…")
+
         rp_id = module._session.restore_point_id("Run All")
         engine = module._engine or TweakEngine(module.app.backup)
 

@@ -33,11 +33,36 @@ _NAMES = ("light", "full", "privacy", "custom")
 
 
 def _builtins_dir() -> str:
+    """Bundled, READ-ONLY presets -- light/full/privacy, plus the shipped
+    stub for custom used only as a first-run fallback (see `load_preset`
+    below). Resolves via `__file__`, which is exactly right for reading a
+    file shipped alongside this module but WRONG for anything the app
+    writes: in a frozen build `__file__` lands under PyInstaller's
+    `_MEIPASS` temp extraction directory, deleted on exit. `_custom_path()`
+    below deliberately does not use this."""
     return os.path.join(os.path.dirname(__file__), "..", "tweaks",
                         "definitions", "builtins")
 
 
+def _custom_data_dir() -> str:
+    """%APPDATA%/WindowsTweaker -- same idiom `debloat_history.py` already
+    uses, and the one place in this app that survives both a frozen
+    build's exit (unlike `_builtins_dir()`) and a source checkout (so
+    "Save as Custom" no longer writes into a git-tracked file)."""
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    folder = os.path.join(base, "WindowsTweaker")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
 def _custom_path() -> str:
+    """Where the Custom preset is actually read from and written to."""
+    return os.path.join(_custom_data_dir(), "debloat_custom.json")
+
+
+def _bundled_custom_stub_path() -> str:
+    """The shipped, read-only stub -- an empty selection, used only when
+    nothing has been saved yet at `_custom_path()` (a fresh install)."""
     return os.path.join(_builtins_dir(), "debloat_custom.json")
 
 
@@ -47,8 +72,18 @@ def load_preset(name: str, path: str = "") -> dict:
         raise ValueError(
             f"unknown preset {name!r}; expected one of "
             f"light, full, privacy, custom")
-    if not path:
-        path = os.path.join(_builtins_dir(), f"debloat_{name}.json")
+    if path:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    if name == "custom":
+        custom_path = _custom_path()
+        if not os.path.exists(custom_path):
+            # Nothing saved yet at the real (app-data) location -- fall
+            # back to the bundled, read-only stub rather than raising.
+            custom_path = _bundled_custom_stub_path()
+        with open(custom_path, encoding="utf-8") as f:
+            return json.load(f)
+    path = os.path.join(_builtins_dir(), f"debloat_{name}.json")
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 

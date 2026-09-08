@@ -44,6 +44,28 @@ def test_invalidate_cache_resets(monkeypatch):
     appx_service.invalidate_cache()
 
 
+def test_fetch_packages_or_none_preserves_a_failed_enumeration(monkeypatch):
+    """`_enumerate()` returning `None` (every attempt refused/errored) must
+    not be silently turned into "no packages installed" -- a caller reading
+    the list as evidence (verify_uninstalled) needs to be able to tell the
+    two apart."""
+    monkeypatch.setattr(appx_service, "_enumerate", lambda: None)
+    appx_service.invalidate_cache()
+    assert appx_service.fetch_packages_or_none(use_cache=False) is None
+    appx_service.invalidate_cache()
+
+
+def test_fetch_packages_collapses_a_failed_enumeration_to_empty_list(
+        monkeypatch):
+    """Most callers only display or scan this list, so `fetch_packages()`
+    keeps its old, simpler `[]`-on-failure contract; only
+    `fetch_packages_or_none` exposes the distinction."""
+    monkeypatch.setattr(appx_service, "_enumerate", lambda: None)
+    appx_service.invalidate_cache()
+    assert appx_service.fetch_packages(use_cache=False) == []
+    appx_service.invalidate_cache()
+
+
 def test_clean_drops_frameworks_and_resources():
     framework = _pkg("Microsoft.VCLibs", "1.0", framework=True)
     resource = _pkg("Microsoft.X", "1.0")

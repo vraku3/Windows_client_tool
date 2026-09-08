@@ -441,6 +441,78 @@ def test_export_writes_only_visible_rows(tmp_path, monkeypatch):
 
 
 # ----------------------------------------------------------------------
+# Final-review fix: device_name is NOT unique (Task 36's own
+# driver_reader._dedup_key already established this for the class-chunk
+# merge) -- resolving a row back to its DriverInfo by device_name alone,
+# as _on_context_menu and _do_export both used to, silently picks the
+# WRONG physical device whenever two rows share a generic name (multiple
+# "USB Root Hub" entries is the real-machine case that surfaced this).
+# ----------------------------------------------------------------------
+
+
+def _colliding_hubs():
+    return [
+        DriverInfo("USB Root Hub (USB 3.0)", "USB", "1.0", "", "V", True, 0, "",
+                   inf_name="oem10.inf", device_id="USB\\ROOT_HUB30\\1"),
+        DriverInfo("USB Root Hub (USB 3.0)", "USB", "1.0", "", "V", True, 0, "",
+                   inf_name="oem20.inf", device_id="USB\\ROOT_HUB30\\2"),
+    ]
+
+
+def _row_for_device_id(table, device_id: str) -> int:
+    from PyQt6.QtCore import Qt
+    return next(r for r in range(table.rowCount())
+               if table.item(r, 0).data(Qt.ItemDataRole.UserRole) == device_id)
+
+
+def test_context_menu_resolves_the_right_row_when_names_collide(monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = _colliding_hubs()
+    mod._populate(mod._drivers_ref[0], "")
+
+    from PyQt6.QtCore import QPoint
+    table = mod._table
+    row = _row_for_device_id(table, "USB\\ROOT_HUB30\\2")
+    monkeypatch.setattr(table, "indexAt", lambda pos: table.model().index(row, 0))
+    captured = []
+    monkeypatch.setattr(dmod.QMenu, "exec", lambda self, *a, **k: captured.append(self))
+
+    mod._on_context_menu(QPoint(0, 0))
+
+    menu = captured[0]
+    actions = {a.text(): a for a in menu.actions()}
+    calls = []
+    monkeypatch.setattr(mod, "_do_uninstall_driver",
+                        lambda published, name: calls.append(published))
+    actions["Uninstall driver package…"].trigger()
+    # The SECOND device's own package (oem20.inf), not the first row that
+    # happens to share its visible name (oem10.inf).
+    assert calls == ["oem20.inf"]
+
+
+def test_export_filters_by_row_identity_not_visible_name(monkeypatch, tmp_path):
+    from PyQt6.QtCore import Qt
+    mod = _module()
+    mod._drivers_ref[0] = _colliding_hubs()
+    mod._populate(mod._drivers_ref[0], "")
+    # Hide the FIRST device's row only -- both rows show the identical
+    # "USB Root Hub (USB 3.0)" name, so a name-based filter would export
+    # both (or the wrong one) regardless of which row is actually hidden.
+    hidden_row = _row_for_device_id(mod._table, "USB\\ROOT_HUB30\\1")
+    mod._table.setRowHidden(hidden_row, True)
+
+    out = tmp_path / "drivers.csv"
+    monkeypatch.setattr(dmod.QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(out), ""))
+    mod._do_export()
+
+    rows = out.read_text(encoding="utf-8").strip().splitlines()
+    data_rows = [r for r in rows if "USB Root Hub" in r]
+    assert len(data_rows) == 1, \
+        "only the visible row's own device should be exported"
+
+
+# ----------------------------------------------------------------------
 # Task 38 (C01): get_search_provider() wires a live handle into
 # _drivers_ref, not a snapshot taken when the provider was built --
 # see tests/test_driver_search_provider.py for the provider's own

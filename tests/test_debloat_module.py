@@ -138,6 +138,38 @@ def test_preset_button_checks_exactly_what_the_json_file_selects(
     assert checked == {"disable_cortana"}
 
 
+def test_preset_with_no_matching_tweaks_leaves_selection_alone_and_explains(
+        monkeypatch):
+    """debloat_light.json/debloat_full.json group their tweaks entirely
+    under app-removal categories that don't exist in this tab's tweak
+    catalog -- resolve_tweak_ids legitimately returns an empty set. Must
+    NOT silently clear every checkbox with no explanation (that just looks
+    like the preset button is broken)."""
+    mod = _module()
+    tweaks = [{"id": "disable_cortana", "name": "Disable Cortana",
+              "category": "Privacy", "risk": "Low"}]
+    monkeypatch.setattr(mod, "_load_tweak_definitions", lambda tab: tweaks)
+    monkeypatch.setattr(te.TweakEngine, "detect",
+                        lambda self, t: te.DetectionResult(te.NOT_APPLIED))
+    mod._populate_tweaks_table("tweak")
+
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_table_tweak")
+    table.item(0, 0).setCheckState(Qt.CheckState.Checked)  # pre-existing selection
+
+    monkeypatch.setattr(
+        dp, "load_preset",
+        lambda name: {"name": "Light Debloat", "tweaks": {"Bing Apps": ["*"]}})
+
+    mod._on_preset("light", "tweak")
+
+    assert table.item(0, 0).checkState() == Qt.CheckState.Checked, \
+        "an empty resolution for a named preset must not clear the tab"
+    status_lbl = mod._status_lbl_for("tweak")
+    assert "Light Debloat" in status_lbl.text()
+    assert "Apps tab" in status_lbl.text()
+
+
 def test_apps_tab_has_preset_buttons_that_check_the_right_packages(
         monkeypatch):
     mod = _module()
@@ -161,6 +193,32 @@ def test_apps_tab_has_preset_buttons_that_check_the_right_packages(
     checked = sum(1 for r in range(table.rowCount())
                  if table.item(r, 0).checkState() == Qt.CheckState.Checked)
     assert checked == 1
+
+
+def test_apps_preset_with_no_matching_apps_leaves_selection_alone_and_explains(
+        monkeypatch):
+    """debloat_privacy.json is tweaks-only by design ("Keep all apps...
+    No app removal") -- resolve_app_entry_ids legitimately returns an
+    empty set on the Apps tab. Same rule as the tweak tabs: never silently
+    clear the selection with no explanation."""
+    mod = _module()
+    monkeypatch.setattr(
+        mod, "_load_debloat_entries",
+        lambda: {"e1": {"id": "e1", "package": "Pkg.A", "name": "A",
+                        "category": "X"}})
+    mod._populate_apps_table(["Pkg.A"])
+    from PyQt6.QtWidgets import QTableWidget
+    table = mod._widget.findChild(QTableWidget, "_apps_table") or mod._apps_table
+    table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+
+    monkeypatch.setattr(
+        dp, "load_preset",
+        lambda name: {"name": "Privacy-Focused", "apps": {"remove": []}})
+
+    mod._on_apps_preset("privacy")
+
+    assert table.item(0, 0).checkState() == Qt.CheckState.Checked
+    assert "Privacy-Focused" in mod._apps_status.text()
 
 
 def test_custom_preset_saves_the_live_selection_and_reloads_it(
@@ -645,6 +703,39 @@ def test_wrap_adds_a_removed_this_session_banner():
     wrapped = mod.wrap(tabs)
     banner = wrapped.findChild(QLabel, "_removed_this_session_banner")
     assert banner is not None
+
+
+def test_sort_persists_on_deactivate_and_restores_on_the_next_create_widget(
+        monkeypatch):
+    """DebloatToolsModule.on_deactivate()'s FIRST statement used to raise
+    TypeError -- `int(header.sortIndicatorOrder())` under this PyQt6
+    build's plain (non-Int) `Qt.SortOrder` enum -- silently skipping
+    cancel_all_workers() and persistence on EVERY module switch. Every
+    other test in this file hand-injects config values rather than driving
+    a real on_deactivate() -> fresh create_widget() round trip, exactly the
+    class of gap that let it go unnoticed. Mirrors
+    test_driver_module.py's identically-named test."""
+    mod = _module()
+    entries = {
+        "e1": {"id": "e1", "package": "Pkg.Zeta", "name": "Zeta", "category": "X"},
+        "e2": {"id": "e2", "package": "Pkg.Alpha", "name": "Alpha", "category": "X"},
+    }
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: entries)
+    mod._populate_apps_table(["Pkg.Zeta", "Pkg.Alpha"])
+    header = mod._apps_table.horizontalHeader()
+    header.setSortIndicator(1, Qt.SortOrder.DescendingOrder)
+    mod._apps_table.sortItems(1, Qt.SortOrder.DescendingOrder)
+    shared_config = mod.app.config
+
+    mod.on_deactivate()  # must not raise -- this is the exact bug
+
+    mod2 = dm.DebloatToolsModule()
+    mod2.on_start(_FakeApp())
+    mod2.app.config = shared_config  # same persisted store, fresh module
+    mod2.create_widget()
+    monkeypatch.setattr(mod2, "_load_debloat_entries", lambda: entries)
+    mod2._populate_apps_table(["Pkg.Zeta", "Pkg.Alpha"])
+    assert mod2._apps_table.item(0, 1).text() == "Zeta"  # descending -> Zeta first
 
 
 def test_protected_apps_dialog_lists_every_protected_app(monkeypatch):

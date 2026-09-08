@@ -112,6 +112,34 @@ def test_fetch_drivers_chunks_the_wmi_query(monkeypatch):
         "expected per-chunk timeouts well under the old flat 90s"
 
 
+def test_a_chunk_timeout_loses_only_that_chunk_not_the_whole_refresh(monkeypatch):
+    """Every subprocess.run call in the chunked refresh has timeout=30 but
+    nothing used to catch subprocess.TimeoutExpired -- it propagated all
+    the way out of fetch_drivers(), discarding every chunk already
+    successfully collected. One slow/hung class query must cost at most
+    that one chunk's worth, per this exact code's own comment."""
+    net_device = [{"Name": "Real NIC", "Class": "Net", "Version": "1.0",
+                   "Date": "", "Publisher": "Vendor", "IsSigned": True,
+                   "ErrorCode": 0, "InfName": "", "DeviceID": "NET\\1"}]
+
+    def fake_run(cmd, **k):
+        ps_cmd = cmd[-1]
+        if "DeviceClass='Display'" in ps_cmd:
+            raise dr.subprocess.TimeoutExpired(cmd=cmd, timeout=k.get("timeout", 30))
+        class R:
+            returncode = 0
+            stdout = "[]"
+        if "DeviceClass='Net'" in ps_cmd:
+            R.stdout = json.dumps(net_device)
+        return R()
+
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    drivers = dr.fetch_drivers()  # must not raise
+    names = {d.device_name for d in drivers}
+    assert "Real NIC" in names, \
+        "the Net chunk's driver must survive the Display chunk timing out"
+
+
 def test_same_name_devices_are_not_collapsed_but_true_duplicates_are(monkeypatch):
     """Regression: device_name alone is not a safe dedup key for merging
     the class chunks -- Windows commonly reports several distinct physical

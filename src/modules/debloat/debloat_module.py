@@ -789,6 +789,17 @@ class DebloatToolsModule(BaseModule):
         preset = dp.load_preset(preset_name)
         catalog = self._load_debloat_entries()
         selected_ids = dp.resolve_app_entry_ids(preset, catalog)
+        if not selected_ids:
+            # debloat_privacy.json is tweaks-only by design ("Keep all
+            # apps... No app removal") -- resolve_app_entry_ids legitimately
+            # returns nothing here. Leave whatever is already checked alone
+            # and say why, the same rule _on_preset follows for the
+            # tweak/AI tabs.
+            label = preset.get("name", preset_name)
+            self._apps_status.setText(
+                f"{label} selects no apps to remove — see the Privacy & "
+                f"Telemetry / AI & Navigation tabs.")
+            return
         for r in range(self._apps_table.rowCount()):
             item_id = self._apps_table.item(r, 3).data(Qt.ItemDataRole.UserRole)
             self._apps_table.item(r, 0).setCheckState(
@@ -855,8 +866,11 @@ class DebloatToolsModule(BaseModule):
         header = self._apps_table.horizontalHeader()
         self.app.config.set(f"{self._CONFIG_PREFIX}.apps.sort_column",
                             int(header.sortIndicatorSection()))
+        # `Qt.SortOrder` is a plain `enum.Enum` in this PyQt6 build, not
+        # `IntEnum` -- `int(header.sortIndicatorOrder())` raises TypeError.
+        # `.value` first (see store_apps_module.py / driver_module.py).
         self.app.config.set(f"{self._CONFIG_PREFIX}.apps.sort_order",
-                            int(header.sortIndicatorOrder()))
+                            int(header.sortIndicatorOrder().value))
 
     def _persist_column_widths(self) -> None:
         """C07: save each tab's column widths, keyed the same way sort
@@ -1231,6 +1245,21 @@ class DebloatToolsModule(BaseModule):
 
         preset = dp.load_preset(preset_name)
         selected_ids = dp.resolve_tweak_ids(preset, tweaks)
+        if not selected_ids:
+            # debloat_light.json/debloat_full.json group their tweaks
+            # entirely under app-removal categories (e.g. "Bing Apps",
+            # "OEM") that don't exist in this tab's tweak catalog --
+            # resolve_tweak_ids legitimately returns nothing here. Leave
+            # whatever is already checked alone (never silently clear
+            # every row) and say why, or the preset button just looks
+            # broken on this tab.
+            status_lbl = self._status_lbl_for(tab_type)
+            if status_lbl:
+                label = preset.get("name", preset_name)
+                status_lbl.setText(
+                    f"{label} selects no tweaks on this tab — it's an "
+                    f"app-removal preset; use the Apps tab.")
+            return
         for r in range(table.rowCount()):
             item = table.item(r, 0)
             if item is None:

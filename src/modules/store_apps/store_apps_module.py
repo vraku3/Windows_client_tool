@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from core.formatting import human_size
 from core.appx_service import (
     _version_key, dedupe_by_name, dir_size_detailed, fetch_packages,
+    fetch_packages_or_none,
 )
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
@@ -167,8 +168,21 @@ def verify_uninstalled(name: str) -> Tuple[bool, str]:
     """Positive evidence, not an assumed exit code -- Remove-AppxPackage
     exits 0 while removing nothing (documented for the Tweaks Apps tab;
     Store Apps never had the same check). Re-reads the live package list
-    rather than trusting the removal command's own return code."""
-    still_there = any(p.get("Name") == name for p in fetch_packages(use_cache=False))
+    rather than trusting the removal command's own return code.
+
+    A failed re-read is never read as proof of removal. `fetch_packages()`
+    collapses a failed enumeration to `[]`, and `any(...)` over an empty
+    list is False -- so a transient PowerShell failure right after the
+    removal call would otherwise report EVERY app in the batch as
+    verified-removed, exactly the false-positive class CLAUDE.md's Apps
+    tab section forbids ("a list that could not be read is never read as
+    'it is gone'"). `fetch_packages_or_none` keeps the two apart.
+    """
+    packages = fetch_packages_or_none(use_cache=False)
+    if packages is None:
+        return False, (f"could not verify {name} was removed -- the "
+                       f"installed-package list could not be re-read")
+    still_there = any(p.get("Name") == name for p in packages)
     if still_there:
         return False, f"{name} is still installed after the removal call"
     return True, ""

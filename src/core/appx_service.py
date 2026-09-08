@@ -36,13 +36,30 @@ def fetch_packages(*, use_cache: bool = True) -> List[dict]:
     when that is refused, so read-only modules work unelevated. Caches the
     result briefly; pass `use_cache=False` to force a fresh query (e.g. right
     after an uninstall).
+
+    A failed enumeration collapses to `[]` here, same as always -- most
+    callers only ever display or scan this list, for which "nothing found"
+    and "couldn't find out" are an acceptable conflation. A caller that
+    reads the list as EVIDENCE (e.g. verifying an uninstall actually took)
+    must not make that conflation -- use `fetch_packages_or_none` instead.
     """
+    packages = fetch_packages_or_none(use_cache=use_cache)
+    return packages if packages is not None else []
+
+
+def fetch_packages_or_none(*, use_cache: bool = True) -> Optional[List[dict]]:
+    """Same as `fetch_packages`, but preserves `_enumerate`'s distinction
+    between a genuinely empty result and a failed one: returns `None` when
+    the enumeration itself could not be completed, rather than silently
+    turning that into "no packages installed"."""
     global _cache
     if use_cache:
         with _lock:
             if _cache is not None and time.monotonic() - _cache[0] < CACHE_TTL_SECONDS:
                 return _cache[1]
     packages = _enumerate()
+    if packages is None:
+        return None
     if use_cache:
         with _lock:
             _cache = (time.monotonic(), packages)
@@ -61,7 +78,13 @@ def _clean(data) -> List[dict]:
     ]
 
 
-def _enumerate() -> List[dict]:
+def _enumerate() -> Optional[List[dict]]:
+    """Every installed AppX package, or `None` when every attempt was
+    refused, errored, or produced unparseable output -- NEVER collapsed
+    into `[]`. `_clean()`'s frameworks/resources filtering can validly
+    reduce a real machine's packages to an empty list; a query that never
+    got a usable answer must not look identical to that (see
+    `fetch_packages_or_none`)."""
     from core.admin_utils import is_admin
 
     # -AllUsers needs elevation on some machines; try the per-user query as
@@ -85,7 +108,9 @@ def _enumerate() -> List[dict]:
             return _clean(json.loads(result.stdout))
         except json.JSONDecodeError:
             logger.warning("Failed to parse AppxPackage output")
-    return []
+    logger.warning("AppxPackage enumeration failed -- every attempt was "
+                   "refused, errored, or returned no usable output")
+    return None
 
 
 def dedupe_by_name(packages: List[dict]) -> List[dict]:

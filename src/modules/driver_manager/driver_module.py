@@ -28,7 +28,7 @@ from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
 from modules.driver_manager.driver_reader import (
     DriverInfo, classify_provider, fetch_drivers, published_name_for,
-    _PSEUDO_CLASSES,
+    _dedup_key, _PSEUDO_CLASSES,
 )
 from modules.driver_manager.driver_search_provider import DriverSearchProvider
 from ui.empty_state import EmptyState
@@ -38,6 +38,20 @@ logger = logging.getLogger(__name__)
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
 
 FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "Old"]
+
+
+def _row_dedup_key(name_item) -> str:
+    """The same key `driver_reader._dedup_key` computes for a `DriverInfo`,
+    rebuilt here from what `_populate` stores on a row's column-0 item --
+    `device_id` (via UserRole) when the driver has one, else the identical
+    name-based fallback. Task 36 established `device_name` is NOT a unique
+    key (several distinct physical devices commonly share a generic name,
+    e.g. multiple "USB Root Hub" entries) -- resolving a right-clicked or
+    exported row back to its own `DriverInfo` by name alone can silently
+    act on the wrong physical device. See `_on_context_menu`/`_do_export`.
+    """
+    device_id = name_item.data(Qt.ItemDataRole.UserRole) or ""
+    return device_id or f"\x00name:{name_item.text()}"
 
 
 def _date_sort_value(date_str: str) -> float:
@@ -308,6 +322,12 @@ class DriverModule(BaseModule):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 else:
                     item = centered_item(str(val), sortable=(c == 0))
+                if c == 0:
+                    # Task 36: device_name alone can't tell two distinct
+                    # devices apart. Carry the real identity on the row so
+                    # a later context-menu click or export can resolve it
+                    # back to the right DriverInfo -- see _row_dedup_key.
+                    item.setData(Qt.ItemDataRole.UserRole, d.device_id)
                 self._table.setItem(r, c, item)
             if d.error_code != 0 or not d.signed:
                 for c in range(len(COLUMNS)):
@@ -403,14 +423,18 @@ class DriverModule(BaseModule):
         )
         if not path:
             return
-        visible_names = {self._table.item(r, 0).text()
-                        for r in range(self._table.rowCount())
-                        if not self._table.isRowHidden(r)}
+        # Task 36: device_name is not unique -- filter by the same
+        # device_id-based key _on_context_menu resolves rows with, or
+        # exporting a visible row also exports every OTHER driver sharing
+        # its visible name, not just the rows actually shown.
+        visible_ids = {_row_dedup_key(self._table.item(r, 0))
+                       for r in range(self._table.rowCount())
+                       if not self._table.isRowHidden(r)}
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(COLUMNS)
             for d in self._drivers_ref[0]:
-                if d.device_name not in visible_names:
+                if _dedup_key(d) not in visible_ids:
                     continue
                 prov = classify_provider(d.publisher)
                 writer.writerow([
@@ -446,9 +470,15 @@ class DriverModule(BaseModule):
         if not index.isValid():
             return
         row = index.row()
-        device_name = self._table.item(row, 0).text()
+        name_item = self._table.item(row, 0)
+        device_name = name_item.text()
+        # Task 36: device_name is not unique -- resolve by device_id (via
+        # the same key driver_reader._dedup_key computes), not by name, or
+        # two rows sharing a generic name ("USB Root Hub" x N) can resolve
+        # to the wrong physical device.
+        row_key = _row_dedup_key(name_item)
         driver = next((d for d in self._drivers_ref[0]
-                      if d.device_name == device_name), None)
+                      if _dedup_key(d) == row_key), None)
         published = published_name_for(driver.inf_name) if driver else None
 
         menu = QMenu(self._table)

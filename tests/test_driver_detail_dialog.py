@@ -36,6 +36,44 @@ def test_dialog_shows_whql_yes_or_no(qapp):
 
 
 # ----------------------------------------------------------------------
+# Final-review finding I1 (site A): reliability_records=None ("we never
+# looked") must render differently from reliability_records=[] ("a real
+# search ran and found nothing") -- driver_module.py's call site always
+# passes the former today, since it never actually fetches Reliability
+# Monitor data (Task 10's documented scope decision).
+# ----------------------------------------------------------------------
+
+
+def _crashes_text(dlg) -> str:
+    from PyQt6.QtWidgets import QTextEdit
+    views = dlg.findChildren(QTextEdit)
+    assert len(views) == 1
+    return views[0].toPlainText()
+
+
+def test_dialog_says_not_loaded_when_reliability_records_is_none(qapp):
+    dlg = DriverDetailDialog(_driver(), reliability_records=None)
+    text = _crashes_text(dlg)
+    assert "not loaded" in text.lower()
+    assert "No matching entries found." not in text
+
+
+def test_dialog_defaults_to_not_loaded_when_reliability_records_omitted(qapp):
+    dlg = DriverDetailDialog(_driver())
+    text = _crashes_text(dlg)
+    assert "not loaded" in text.lower()
+
+
+def test_dialog_says_no_matching_entries_when_a_real_empty_search_ran(qapp, monkeypatch):
+    monkeypatch.setattr(
+        "modules.driver_manager.driver_detail_dialog.crashes_for",
+        lambda name, records: [])
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+    text = _crashes_text(dlg)
+    assert text == "No matching entries found."
+
+
+# ----------------------------------------------------------------------
 # Double-click wiring gap: the brief's own Files section calls for
 # "double-click + a Details... context-menu action", but only sketches
 # the context-menu half. driver_module.py must resolve the clicked row

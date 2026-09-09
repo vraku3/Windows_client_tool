@@ -71,20 +71,31 @@ except ImportError:
     _PSUTIL = False
 
 
-def _driver_problem_count(app) -> int:
+def _driver_problem_count(app) -> Optional[int]:
     """Reads Driver Manager's live, already-fetched driver list (the same
     _drivers_ref cell DriverSearchProvider already holds a live handle
     to -- see driver_module.py's get_search_provider) without triggering
-    a new scan. 0 if Driver Manager hasn't run yet, or isn't registered
-    (e.g. in a test harness) -- not an error, just nothing to report."""
+    a new scan.
+
+    None -- not 0 -- when there is nothing to report YET: Driver Manager
+    isn't registered (e.g. in a test harness), or it is registered but
+    hasn't scanned this session (`_drivers_ref[0]` is still the empty list
+    `DriverModule.__init__` seeds it with). Driver Manager exposes no
+    separate "have I ever scanned" flag, so an empty list is the best
+    available signal for "not yet scanned" -- collapsing that into a real
+    0 would render "No driver problems detected" for a machine nobody has
+    actually looked at. 0 is still the real answer once a scan has
+    actually returned at least one driver with no problems flagged."""
     if app is None or getattr(app, "module_registry", None) is None:
-        return 0
+        return None
     driver_module = next(
         (m for m in app.module_registry.modules if m.name == "Driver Manager"),
         None)
     if driver_module is None:
-        return 0
+        return None
     drivers = driver_module._drivers_ref[0]
+    if not drivers:
+        return None
     return sum(1 for d in drivers if d.error_code != 0 or not d.signed)
 
 
@@ -441,8 +452,13 @@ class _DashboardWidget(QWidget):
 
     def _refresh_driver_health(self) -> None:
         count = _driver_problem_count(self.app)
-        self._driver_problems_lbl.setText(
-            f"{count} driver(s) need attention" if count else "No driver problems detected")
+        if count is None:
+            text = "Not scanned yet — open Driver Manager"
+        elif count:
+            text = f"{count} driver(s) need attention"
+        else:
+            text = "No driver problems detected"
+        self._driver_problems_lbl.setText(text)
 
     def stop_timer(self) -> None:
         self._timer.stop()

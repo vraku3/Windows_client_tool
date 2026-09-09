@@ -365,6 +365,19 @@ def list_restore_points() -> Optional[List[dict]]:
         return None
     raw = proc.stdout.strip()
     if not raw:
+        # Get-ComputerRestorePoint needs elevation, and PowerShell can
+        # exit 0 unelevated while writing the real refusal to stderr and
+        # producing no JSON at all -- this codebase has multiple other
+        # documented cases of exactly this (Get-BitLockerVolume, Get-Tpm,
+        # dism, netsh). Only a genuinely empty stderr means "really has
+        # zero restore points"; anything on stderr with no output is a
+        # refused read, not an empty answer.
+        stderr = (getattr(proc, "stderr", "") or "").strip()
+        if stderr:
+            logger.warning(
+                "Restore point query exited 0 but produced no output and "
+                "wrote to stderr -- treating as a refused read: %s", stderr)
+            return None
         return []
     try:
         data = json.loads(raw)

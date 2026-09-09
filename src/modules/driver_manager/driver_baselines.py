@@ -91,10 +91,16 @@ def load_baseline(name: str) -> Optional[List[DriverInfo]]:
     try:
         with open(path, encoding="utf-8") as f:
             raw = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
+        return [DriverInfo(**d) for d in raw]
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        # TypeError is what `[DriverInfo(**d) for d in raw]` raises on
+        # well-formed JSON of the wrong shape -- a top-level dict instead
+        # of a list of dicts, a dict missing/mismatching DriverInfo's
+        # required fields, or a list of non-dict values. That's still
+        # "otherwise unreadable" per this function's own docstring, not a
+        # crash.
         logger.warning("Could not load baseline %r: %s", name, exc)
         return None
-    return [DriverInfo(**d) for d in raw]
 
 
 @dataclass

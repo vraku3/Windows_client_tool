@@ -274,6 +274,21 @@ def test_list_restore_points_returns_empty_list_when_none_exist(monkeypatch):
     assert dr.list_restore_points() == []
 
 
+def test_list_restore_points_returns_none_when_exit_zero_hides_a_refusal(monkeypatch):
+    """Get-ComputerRestorePoint needs elevation; unelevated, PowerShell can
+    exit 0 while writing the real refusal to stderr and producing no
+    stdout at all -- collapsing that into [] would report "No restore
+    points found." with no mention of admin rights (finding I2)."""
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = "Access is denied."
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    assert dr.list_restore_points() is None
+
+
 def test_list_restore_points_parses_real_shaped_output(monkeypatch):
     def fake_run(cmd, **k):
         class R:

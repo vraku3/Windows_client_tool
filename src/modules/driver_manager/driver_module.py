@@ -542,7 +542,20 @@ class DriverModule(BaseModule):
         if not name:
             return
         from modules.driver_manager import driver_baselines as db
-        db.save_baseline(name, self._drivers_ref[0])
+        try:
+            db.save_baseline(name, self._drivers_ref[0])
+        except OSError as exc:
+            # The baseline name is free-typed user text -- a very long or
+            # otherwise problematic name can make save_baseline's own
+            # os.makedirs()/open() raise (e.g. a path exceeding MAX_PATH).
+            # Uncaught, that would abort the whole process via qFatal()
+            # rather than being caught by main.py's exception handler --
+            # this is a PyQt6 slot, not a plain function call.
+            logger.warning("Could not save baseline %r: %s", name, exc)
+            QMessageBox.warning(
+                self._widget, "Save Baseline",
+                f"Could not save baseline '{name}': {exc}")
+            return
         if self._status_lbl:
             self._status_lbl.setText(f"Saved baseline '{name}'.")
 
@@ -674,7 +687,12 @@ class DriverModule(BaseModule):
         if driver is None:
             return
         from modules.driver_manager.driver_detail_dialog import DriverDetailDialog
-        dlg = DriverDetailDialog(driver, reliability_records=[], parent=self._widget)
+        # reliability_records is omitted (defaults to None): this module
+        # never actually fetches Reliability Monitor data -- see Task 10's
+        # documented scope decision in driver_detail_dialog.py's module
+        # docstring. None tells the dialog "we never looked", distinct
+        # from a real, empty search result.
+        dlg = DriverDetailDialog(driver, parent=self._widget)
         dlg.exec()
 
     def _on_context_menu(self, pos) -> None:

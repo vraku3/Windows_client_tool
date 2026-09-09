@@ -643,6 +643,33 @@ def test_save_baseline_action_calls_save_baseline_with_current_drivers(monkeypat
     assert [m.name for m in db.list_baselines()] == ["session-1"]
 
 
+def test_save_baseline_action_shows_a_warning_instead_of_crashing_on_oserror(monkeypatch, tmp_path):
+    """Final-review finding I3 (site A): a name db.save_baseline can't
+    write (e.g. one producing a path over MAX_PATH) must not propagate an
+    uncaught exception out of this PyQt6 slot -- that aborts the whole
+    process via qFatal() rather than being caught by main.py's handler."""
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    monkeypatch.setattr(dmod, "_ask_baseline_name", lambda parent: "bad-name")
+
+    def _raise(*a, **k):
+        raise OSError("path too long")
+    monkeypatch.setattr(db, "save_baseline", _raise)
+    warned = []
+    monkeypatch.setattr(dmod.QMessageBox, "warning",
+                        lambda *a, **k: warned.append(a))
+
+    mod._save_baseline_action()  # must not raise
+
+    assert warned
+    assert "bad-name" in warned[0][2]
+
+
 def test_diff_against_baseline_action_shows_a_summary(monkeypatch, tmp_path):
     from modules.driver_manager import driver_baselines as db
     monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))

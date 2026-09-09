@@ -39,6 +39,23 @@ def test_driver_problem_count_counts_unsigned_and_errored_devices():
     assert _driver_problem_count(app) == 2
 
 
-def test_driver_problem_count_is_zero_when_driver_manager_not_found():
+def test_driver_problem_count_is_none_when_driver_manager_not_found():
     app = _FakeApp([])
+    assert _driver_problem_count(app) is None
+
+
+def test_driver_problem_count_is_none_when_driver_manager_has_not_scanned_yet():
+    """`_drivers_ref[0]` is still the empty list DriverModule.__init__ seeds
+    it with -- that's "never scanned", not "scanned and found zero
+    drivers", and must not render as the tile's real 0 answer."""
+    app = _FakeApp([_FakeDriverModule([])])
+    assert _driver_problem_count(app) is None
+
+
+def test_driver_problem_count_is_a_real_zero_after_a_clean_scan():
+    drivers = [
+        DriverInfo(device_name="OK", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    app = _FakeApp([_FakeDriverModule(drivers)])
     assert _driver_problem_count(app) == 0

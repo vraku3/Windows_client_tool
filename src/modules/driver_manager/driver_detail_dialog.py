@@ -75,15 +75,26 @@ class DriverDetailDialog(QDialog):
 
         layout.addWidget(QLabel("<b>Recent Reliability Monitor entries "
                                 "(approximate match by device name):</b>"))
-        crashes = crashes_for(driver.device_name, reliability_records or [])
         crashes_view = QTextEdit()
         crashes_view.setReadOnly(True)
-        if crashes:
-            crashes_view.setPlainText("\n".join(
-                f"{getattr(c, 'timestamp', '')}: {getattr(c, 'message', '')}"
-                for c in crashes))
+        if reliability_records is None:
+            # Nobody ever fetched Reliability Monitor data for this dialog
+            # to search -- driver_module.py's call site always passes this
+            # today (Task 10's own documented scope decision, see the
+            # module docstring above). Rendering that as "No matching
+            # entries found." reads as a completed, negative search when
+            # no search ran at all.
+            crashes_view.setPlainText(
+                "Reliability Monitor data not loaded — open Diagnose ▸ "
+                "Reliability.")
         else:
-            crashes_view.setPlainText("No matching entries found.")
+            crashes = crashes_for(driver.device_name, reliability_records)
+            if crashes:
+                crashes_view.setPlainText("\n".join(
+                    f"{getattr(c, 'timestamp', '')}: {getattr(c, 'message', '')}"
+                    for c in crashes))
+            else:
+                crashes_view.setPlainText("No matching entries found.")
         crashes_view.setMaximumHeight(100)
         layout.addWidget(crashes_view)
 

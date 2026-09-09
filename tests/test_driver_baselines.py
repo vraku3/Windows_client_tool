@@ -53,6 +53,30 @@ def test_load_baseline_returns_none_for_missing_baseline(tmp_path, monkeypatch):
     assert db.load_baseline("does-not-exist") is None
 
 
+def test_load_baseline_returns_none_for_a_top_level_dict_instead_of_a_list(tmp_path, monkeypatch):
+    """Final-review finding I3 (site B): well-formed JSON of the wrong
+    shape raises TypeError out of `[DriverInfo(**d) for d in raw]` --
+    that IS "otherwise unreadable" per this function's own docstring, and
+    must return None rather than crash."""
+    import json
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    os.makedirs(tmp_path, exist_ok=True)
+    with open(os.path.join(str(tmp_path), "wrong-shape.json"), "w") as f:
+        json.dump({"not": "a list"}, f)
+    assert db.load_baseline("wrong-shape") is None
+
+
+def test_load_baseline_returns_none_for_a_list_of_dicts_with_wrong_keys(tmp_path, monkeypatch):
+    """Same TypeError path, a different way to trigger it: a list of dicts
+    whose keys don't match DriverInfo's fields."""
+    import json
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    os.makedirs(tmp_path, exist_ok=True)
+    with open(os.path.join(str(tmp_path), "wrong-keys.json"), "w") as f:
+        json.dump([{"wrong": "keys"}], f)
+    assert db.load_baseline("wrong-keys") is None
+
+
 def test_diff_distinguishes_same_named_devices_by_device_id():
     # Two distinct physical devices sharing a generic name, both present
     # unchanged in baseline and current -- must NOT collapse into one

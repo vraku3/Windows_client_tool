@@ -459,6 +459,41 @@ class DriverModule(BaseModule):
         logger.info(msg)
         self._status_lbl.setText(msg)
 
+    def _copy_hardware_id(self, hardware_id: str) -> None:
+        if hardware_id:
+            QApplication.clipboard().setText(hardware_id)
+
+    _FLAG_EXPLANATIONS = {
+        "Unsigned": "This driver's publisher could not be verified by "
+                    "Windows. It may still work fine, but an unsigned "
+                    "driver is a common vector for malware pretending to "
+                    "be a hardware driver.",
+        "Error": "Windows reports a problem with this device right now -- "
+                "see the exact error text in the Status column for what "
+                "it is.",
+        "Old": "This driver has not been updated in over two years. Many "
+              "devices work fine on an old driver forever, but graphics, "
+              "network and storage controllers benefit most from staying "
+              "current.",
+        "date unreadable": "Windows reported a driver date this app could "
+                          "not parse -- not necessarily a problem, just "
+                          "an unusual value.",
+        "No driver installed": "Windows found this device but has no "
+                              "driver for it at all -- it will not work "
+                              "until one is installed.",
+    }
+
+    def _explain_flags(self, flags: str) -> str:
+        matched = [text for key, text in self._FLAG_EXPLANATIONS.items()
+                  if key in flags]
+        return "\n\n".join(matched) if matched else (
+            "This driver has a flag this app doesn't have an explanation for yet.")
+
+    def _show_flag_explanation(self, flags: str) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self._widget, "Why does this matter?",
+                                self._explain_flags(flags))
+
     def _open_windows_update_settings(self) -> None:
         os.startfile("ms-settings:windowsupdate")
 
@@ -498,6 +533,10 @@ class DriverModule(BaseModule):
         act_export_one.setEnabled(bool(published))
         act_export_one.triggered.connect(
             lambda: self._export_one_driver(published))
+        act_copy_hwid = menu.addAction("Copy Hardware ID")
+        act_copy_hwid.setEnabled(bool(driver and driver.hardware_id))
+        act_copy_hwid.triggered.connect(
+            lambda: self._copy_hardware_id(driver.hardware_id if driver else ""))
         act_rollback = menu.addAction("Roll back to previous version…")
         act_rollback.setToolTip(
             "Needs the previous driver still cached, which this app does "
@@ -506,6 +545,10 @@ class DriverModule(BaseModule):
         menu.addSeparator()
         act_cleanup = menu.addAction("Open Cleanup's Superseded Drivers panel")
         act_cleanup.triggered.connect(self._open_cleanup_driver_panel)
+        if driver and driver.flags.strip():
+            act_explain = menu.addAction("Why does this matter?")
+            act_explain.triggered.connect(
+                lambda: self._show_flag_explanation(driver.flags))
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _do_uninstall_driver(self, published: str, device_name: str) -> None:

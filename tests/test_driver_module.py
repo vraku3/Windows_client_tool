@@ -513,6 +513,34 @@ def test_export_filters_by_row_identity_not_visible_name(monkeypatch, tmp_path):
 
 
 # ----------------------------------------------------------------------
+# Task 7: "Copy Hardware ID" + "Why does this matter?" context-menu
+# actions.
+# ----------------------------------------------------------------------
+
+
+def test_copy_hardware_id_puts_the_devices_hardware_id_on_the_clipboard(monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0,
+                   flags="", hardware_id="PCI\\VEN_1234"),
+    ]
+    mod._populate(mod._drivers_ref[0], "")
+    copied = []
+    monkeypatch.setattr(dmod.QApplication, "clipboard",
+                        lambda: type("C", (), {"setText": lambda self, t: copied.append(t)})())
+    mod._copy_hardware_id("PCI\\VEN_1234")
+    assert copied == ["PCI\\VEN_1234"]
+
+
+def test_why_does_this_matter_explains_each_flag_present():
+    mod = _module()
+    text = mod._explain_flags("🔴 Unsigned (as reported by Windows) 🟠 Old")
+    assert "unsigned" in text.lower()
+    assert "old" in text.lower()
+
+
+# ----------------------------------------------------------------------
 # Task 38 (C01): get_search_provider() wires a live handle into
 # _drivers_ref, not a snapshot taken when the provider was built --
 # see tests/test_driver_search_provider.py for the provider's own

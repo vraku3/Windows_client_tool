@@ -52,6 +52,12 @@ $devices | Select-Object Name, ConfigManagerErrorCode, PNPClass |
     ConvertTo-Json -Compress -Depth 2
 """
 
+_PS_CMD_RESTORE_POINTS = (
+    "Get-ComputerRestorePoint | "
+    "Select-Object SequenceNumber, Description, RestorePointType, CreationTime | "
+    "ConvertTo-Json -Compress"
+)
+
 
 class DriverReadError(RuntimeError):
     """The PowerShell driver query returned something that could not be
@@ -338,3 +344,31 @@ def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
 
     drivers.sort(key=lambda d: (d.error_code != 0, not d.signed, d.device_name))
     return drivers
+
+
+def list_restore_points() -> Optional[List[dict]]:
+    """None on a failed read (refused, timed out, unparseable) -- an
+    empty list is the real, different answer "System Restore is off, or
+    no points exist yet". Never collapse the two."""
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             _PS_CMD_RESTORE_POINTS],
+            capture_output=True, text=True, errors="replace",
+            creationflags=CREATE_NO_WINDOW, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Restore point query timed out")
+        return None
+    if proc.returncode != 0:
+        logger.warning("Restore point query failed: %s", proc.stderr.strip())
+        return None
+    raw = proc.stdout.strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Could not parse restore point list: %s", exc)
+        return None
+    return [data] if isinstance(data, dict) else data

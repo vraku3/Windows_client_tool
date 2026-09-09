@@ -251,3 +251,41 @@ def test_duplicate_hardware_ids_groups_only_real_collisions():
                           error_code=0, flags="", hardware_id="")
     groups = dr.detect_duplicate_hardware_ids([a, b, c, no_id])
     assert groups == {"PCI\\VEN_AAAA": [a, b]}
+
+
+def test_list_restore_points_returns_none_on_a_failed_read(monkeypatch):
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "Access is denied."
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    assert dr.list_restore_points() is None
+
+
+def test_list_restore_points_returns_empty_list_when_none_exist(monkeypatch):
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 0
+            stdout = ""
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    assert dr.list_restore_points() == []
+
+
+def test_list_restore_points_parses_real_shaped_output(monkeypatch):
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 0
+            stdout = json.dumps({
+                "SequenceNumber": 42, "Description": "Driver update",
+                "RestorePointType": 12, "CreationTime": "20260101120000.000000-000",
+            })
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    points = dr.list_restore_points()
+    assert points == [{
+        "SequenceNumber": 42, "Description": "Driver update",
+        "RestorePointType": 12, "CreationTime": "20260101120000.000000-000",
+    }]

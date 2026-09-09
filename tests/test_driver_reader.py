@@ -289,3 +289,20 @@ def test_list_restore_points_parses_real_shaped_output(monkeypatch):
         "SequenceNumber": 42, "Description": "Driver update",
         "RestorePointType": 12, "CreationTime": "20260101120000.000000-000",
     }]
+
+
+def test_list_restore_points_returns_none_on_timeout(monkeypatch):
+    """Restore point query timeout should return None, not raise."""
+    def fake_run(cmd, **k):
+        raise dr.subprocess.TimeoutExpired(cmd=cmd, timeout=k.get("timeout", 30))
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    assert dr.list_restore_points() is None
+
+
+def test_list_restore_points_returns_none_on_malformed_json(monkeypatch):
+    """Malformed JSON output should return None, not raise."""
+    class FakeProc:
+        stdout = "{not valid json"
+        returncode = 0
+    monkeypatch.setattr(dr.subprocess, "run", lambda *a, **k: FakeProc())
+    assert dr.list_restore_points() is None

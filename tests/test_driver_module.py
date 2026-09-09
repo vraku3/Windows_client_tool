@@ -687,3 +687,44 @@ def test_diff_against_baseline_action_handles_a_load_failure_without_crashing(mo
     mod._diff_against_baseline_action()
     assert diff_calls == []
     assert warned
+
+
+# ----------------------------------------------------------------------
+# Task 12: System Restore Points toolbar button.
+# ----------------------------------------------------------------------
+
+
+def test_show_restore_points_lists_them_by_creation_time_descending(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(
+        dmod, "list_restore_points",
+        lambda: [
+            {"SequenceNumber": 1, "Description": "Older", "CreationTime": "20260101000000.000000-000"},
+            {"SequenceNumber": 2, "Description": "Newer", "CreationTime": "20260201000000.000000-000"},
+        ])
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._show_restore_points()
+    assert shown
+    assert shown[0].index("Newer") < shown[0].index("Older")
+
+
+def test_show_restore_points_explains_a_failed_read(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(dmod, "list_restore_points", lambda: None)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._show_restore_points()
+    assert "could not" in shown[0].lower()
+
+
+def test_show_restore_points_explains_an_empty_list(monkeypatch):
+    mod = _module()
+    monkeypatch.setattr(dmod, "list_restore_points", lambda: [])
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._show_restore_points()
+    assert "no restore points" in shown[0].lower()

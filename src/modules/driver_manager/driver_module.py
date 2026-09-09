@@ -28,8 +28,8 @@ from core.table_ui import (
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
 from modules.driver_manager.driver_reader import (
-    DriverInfo, classify_provider, fetch_drivers, published_name_for,
-    _dedup_key, _PSEUDO_CLASSES,
+    DriverInfo, classify_provider, fetch_drivers, list_restore_points,
+    published_name_for, _dedup_key, _PSEUDO_CLASSES,
 )
 from modules.driver_manager.driver_search_provider import DriverSearchProvider
 from ui.empty_state import EmptyState
@@ -229,6 +229,7 @@ class DriverModule(BaseModule):
         snapshots_menu.addAction("Save Baseline...", self._save_baseline_action)
         snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
         snapshots_btn.setMenu(snapshots_menu)
+        restore_points_btn = QPushButton("System Restore Points")
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
@@ -252,6 +253,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._export_btn)
         toolbar.addWidget(self._export_inventory_btn)
         toolbar.addWidget(snapshots_btn)
+        toolbar.addWidget(restore_points_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(wu_btn)
         toolbar.addWidget(self._backup_btn)
@@ -270,6 +272,7 @@ class DriverModule(BaseModule):
         self._export_btn.clicked.connect(self._do_export)
         self._export_inventory_btn.clicked.connect(self._export_inventory)
         devmgr_btn.clicked.connect(self._open_devmgr)
+        restore_points_btn.clicked.connect(self._show_restore_points)
         wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
         self._cancel_backup_btn.clicked.connect(self._on_cancel_backup)
@@ -623,6 +626,30 @@ class DriverModule(BaseModule):
 
     def _open_devmgr(self) -> None:
         subprocess.Popen(["mmc", "devmgmt.msc"])
+
+    def _show_restore_points(self) -> None:
+        points = list_restore_points()
+        if points is None:
+            QMessageBox.information(
+                self._widget, "System Restore Points",
+                "Could not read System Restore points -- this may need "
+                "administrator rights, or System Restore may be off.")
+            return
+        if not points:
+            QMessageBox.information(
+                self._widget, "System Restore Points",
+                "No restore points found.")
+            return
+        # Newest first -- CreationTime is a WMI datetime string
+        # ("20260201000000.000000-000"), which sorts correctly as plain
+        # text since it's already zero-padded, fixed-width, and
+        # year-first, without needing to parse it into a real datetime.
+        ordered = sorted(points, key=lambda p: p.get("CreationTime", ""), reverse=True)
+        lines = [
+            f"{p.get('CreationTime', 'Unknown time')}: {p.get('Description', '')}"
+            for p in ordered
+        ]
+        QMessageBox.information(self._widget, "System Restore Points", "\n".join(lines))
 
     def _resolve_driver_for_row(self, row: int) -> Optional[DriverInfo]:
         """The row's real `DriverInfo`, resolved the same way

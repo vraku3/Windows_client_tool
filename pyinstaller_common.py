@@ -157,6 +157,16 @@ HIDDEN_IMPORTS = [
     # the frozen build runs fine until someone clicks it.
     "modules.log_viewer.match_colour_dialog",
     "modules.log_viewer.match_colours",
+    # Driver Manager. Both imported lazily inside DriverModule method
+    # bodies -- driver_detail_dialog from the double-click/Details...
+    # handler, driver_baselines from the Snapshots menu's Save/Diff
+    # actions -- so PyInstaller's static analysis misses them the same
+    # way it misses GPResult's and Log Viewer's dialogs above. Frozen
+    # without them, Driver Manager opens and reads drivers perfectly
+    # well, and Details/Save Baseline/Diff Against raise ImportError the
+    # moment someone clicks them.
+    "modules.driver_manager.driver_detail_dialog",
+    "modules.driver_manager.driver_baselines",
     # Imported inside DashboardModule.__init__, so PyInstaller's static
     # analysis can miss them and the tabs would be silently absent.
     "modules.dashboard.details_module",

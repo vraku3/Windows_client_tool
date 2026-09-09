@@ -178,3 +178,38 @@ def test_same_name_devices_are_not_collapsed_but_true_duplicates_are(monkeypatch
     hubs = [d for d in drivers if d.device_name == "USB Root Hub (USB 3.0)"]
     assert len(hubs) == 2, "two DISTINCT devices sharing a name must both survive"
     assert {d.device_id for d in hubs} == {"USB\\ROOT_HUB30\\1", "USB\\ROOT_HUB30\\2"}
+
+
+def test_whql_certified_true_only_for_the_real_whcp_signer(monkeypatch):
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 0
+            stdout = json.dumps([
+                {"Name": "AMD Radeon RX 7900 XTX", "Class": "Display",
+                 "Version": "1.0", "Date": "", "Publisher": "AMD",
+                 "IsSigned": True, "ErrorCode": 0, "InfName": "oem1.inf",
+                 "DeviceID": "PCI\\VEN_1002", "HardWareID": "PCI\\VEN_1002;PCI\\VEN_1002&DEV_744C",
+                 "Signer": "Microsoft Windows Hardware Compatibility Publisher"},
+                {"Name": "WAN Miniport (IP)", "Class": "Net",
+                 "Version": "1.0", "Date": "", "Publisher": "Microsoft",
+                 "IsSigned": True, "ErrorCode": 0, "InfName": "netvmini.inf",
+                 "DeviceID": "ROOT\\MS_NDISWANIP", "HardWareID": "ROOT\\MS_NDISWANIP",
+                 "Signer": "Microsoft Windows"},
+            ])
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    drivers = dr.fetch_drivers()
+    by_name = {d.device_name: d for d in drivers}
+    assert by_name["AMD Radeon RX 7900 XTX"].whql_certified is True
+    assert by_name["WAN Miniport (IP)"].whql_certified is False
+
+
+def test_hardware_id_takes_the_first_of_a_semicolon_joined_array():
+    info = dr._build_driver_info({
+        "Name": "Test Device", "Class": "Net", "Version": "1.0", "Date": "",
+        "Publisher": "V", "IsSigned": True, "ErrorCode": 0,
+        "HardWareID": "PCI\\VEN_1234&DEV_5678;PCI\\VEN_1234",
+        "Signer": "Microsoft Windows Hardware Compatibility Publisher",
+    })
+    assert info.hardware_id == "PCI\\VEN_1234&DEV_5678"
+    assert info.whql_certified is True

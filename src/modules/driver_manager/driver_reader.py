@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 CREATE_NO_WINDOW = 0x08000000
 
 _OEM_INF_RE = re.compile(r"^oem\d+\.inf$", re.IGNORECASE)
+_WHCP_SIGNER = "Microsoft Windows Hardware Compatibility Publisher"
 
 
 def published_name_for(inf_name: str) -> Optional[str]:
@@ -37,6 +38,8 @@ $result = foreach ($d in $drivers) {
         ErrorCode  = [int]($d.ConfigManagerErrorCode -as [int])
         InfName    = [string]$d.InfName
         DeviceID   = [string]$d.DeviceID
+        HardWareID = [string]$d.HardWareID
+        Signer     = [string]$d.Signer
     }
 }
 $result | ConvertTo-Json -Compress -Depth 2
@@ -69,6 +72,13 @@ class DriverInfo:
     inf_name: str = ""
     device_id: str = ""  # PNP device instance id -- a real unique key,
                           # unlike device_name (see fetch_drivers' dedup)
+    hardware_id: str = ""  # the FIRST (most specific) of the driver's
+                            # HardWareID array -- the one Windows actually
+                            # matched against, semicolon-joined by
+                            # PowerShell's [string] cast on a string array
+    whql_certified: bool = False  # Signer == the exact WHCP string below,
+                                   # not a heuristic -- verified live
+                                   # against this machine's real drivers
 
 
 _ERROR_CODE_MEANINGS = {
@@ -145,12 +155,18 @@ def _build_driver_info(d: dict, old_threshold_days: int = 730) -> DriverInfo:
     if date_unreadable:
         flags.append("⚪ date unreadable")
 
+    hardware_id_raw = d.get("HardWareID") or ""
+    hardware_id = hardware_id_raw.split(";")[0] if hardware_id_raw else ""
+    whql_certified = (d.get("Signer") or "") == _WHCP_SIGNER
+
     return DriverInfo(
         device_name=name, driver_class=cls, version=version,
         date=date_str, publisher=publisher, signed=signed,
         error_code=error_code, flags=" ".join(flags),
         inf_name=d.get("InfName") or "",
         device_id=d.get("DeviceID") or "",
+        hardware_id=hardware_id,
+        whql_certified=whql_certified,
     )
 
 

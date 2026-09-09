@@ -224,6 +224,7 @@ class DriverModule(BaseModule):
         self._table.horizontalHeader().sectionClicked.connect(self._on_header_click)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_context_menu)
+        self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
         self._table_stack = QStackedWidget()
         self._table_stack.addWidget(self._table)
@@ -616,6 +617,32 @@ class DriverModule(BaseModule):
     def _open_devmgr(self) -> None:
         subprocess.Popen(["mmc", "devmgmt.msc"])
 
+    def _resolve_driver_for_row(self, row: int) -> Optional[DriverInfo]:
+        """The row's real `DriverInfo`, resolved the same way
+        `_on_context_menu` always has -- Task 36: `device_name` is not
+        unique (several distinct physical devices commonly share a
+        generic name, e.g. multiple "USB Root Hub" entries), so this
+        keys on `device_id` via `_row_dedup_key`/`_dedup_key`, never on
+        the visible name alone. Shared by the context menu and the
+        double-click handler so the two can never resolve a click on the
+        same row to two different devices."""
+        name_item = self._table.item(row, 0)
+        if name_item is None:
+            return None
+        row_key = _row_dedup_key(name_item)
+        return next((d for d in self._drivers_ref[0]
+                    if _dedup_key(d) == row_key), None)
+
+    def _on_cell_double_clicked(self, row: int, _column: int) -> None:
+        self._show_driver_details(self._resolve_driver_for_row(row))
+
+    def _show_driver_details(self, driver: Optional[DriverInfo]) -> None:
+        if driver is None:
+            return
+        from modules.driver_manager.driver_detail_dialog import DriverDetailDialog
+        dlg = DriverDetailDialog(driver, reliability_records=[], parent=self._widget)
+        dlg.exec()
+
     def _on_context_menu(self, pos) -> None:
         index = self._table.indexAt(pos)
         if not index.isValid():
@@ -627,15 +654,16 @@ class DriverModule(BaseModule):
         # the same key driver_reader._dedup_key computes), not by name, or
         # two rows sharing a generic name ("USB Root Hub" x N) can resolve
         # to the wrong physical device.
-        row_key = _row_dedup_key(name_item)
-        driver = next((d for d in self._drivers_ref[0]
-                      if _dedup_key(d) == row_key), None)
+        driver = self._resolve_driver_for_row(row)
         published = published_name_for(driver.inf_name) if driver else None
 
         menu = QMenu(self._table)
         act_copy = menu.addAction("Copy device name")
         act_copy.triggered.connect(
             lambda: QApplication.clipboard().setText(device_name))
+        act_details = menu.addAction("Details...")
+        act_details.setEnabled(bool(driver))
+        act_details.triggered.connect(lambda: self._show_driver_details(driver))
         menu.addSeparator()
         act_uninstall = menu.addAction("Uninstall driver package…")
         act_uninstall.setEnabled(bool(published))

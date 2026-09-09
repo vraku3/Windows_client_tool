@@ -3,7 +3,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Dict
 import logging
 logger = logging.getLogger(__name__)
 
@@ -255,6 +255,20 @@ def _dedup_key(d: DriverInfo) -> str:
     "USB\\VID_046D&PID_C52B\\5&1CB39CA&0&1") is the real unique key; fall
     back to name only on the rare device that reports no id at all."""
     return d.device_id or f"\x00name:{d.device_name}"
+
+
+def detect_duplicate_hardware_ids(drivers: List[DriverInfo]) -> Dict[str, List[DriverInfo]]:
+    """Two installed driver packages both claiming the same hardware ID is
+    a real, if uncommon, source of instability (a generic driver and an
+    OEM one both bound to the same device). Groups by `hardware_id`,
+    excluding devices with no hardware_id at all (nothing to compare) and
+    excluding groups of exactly one (the normal case)."""
+    by_id: Dict[str, List[DriverInfo]] = {}
+    for d in drivers:
+        if not d.hardware_id:
+            continue
+        by_id.setdefault(d.hardware_id, []).append(d)
+    return {hwid: group for hwid, group in by_id.items() if len(group) > 1}
 
 
 def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:

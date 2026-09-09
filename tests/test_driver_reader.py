@@ -213,3 +213,20 @@ def test_hardware_id_takes_the_first_of_a_semicolon_joined_array():
     })
     assert info.hardware_id == "PCI\\VEN_1234&DEV_5678"
     assert info.whql_certified is True
+
+
+def test_duplicate_hardware_ids_groups_only_real_collisions():
+    a = dr.DriverInfo(device_name="Generic Driver A", driver_class="Net",
+                      version="1.0", date="", publisher="X", signed=True,
+                      error_code=0, flags="", hardware_id="PCI\\VEN_AAAA")
+    b = dr.DriverInfo(device_name="Generic Driver B", driver_class="Net",
+                      version="1.0", date="", publisher="Y", signed=True,
+                      error_code=0, flags="", hardware_id="PCI\\VEN_AAAA")
+    c = dr.DriverInfo(device_name="Unique Driver", driver_class="Net",
+                      version="1.0", date="", publisher="Z", signed=True,
+                      error_code=0, flags="", hardware_id="PCI\\VEN_BBBB")
+    no_id = dr.DriverInfo(device_name="No HWID", driver_class="Net",
+                          version="1.0", date="", publisher="W", signed=True,
+                          error_code=0, flags="", hardware_id="")
+    groups = dr.detect_duplicate_hardware_ids([a, b, c, no_id])
+    assert groups == {"PCI\\VEN_AAAA": [a, b]}

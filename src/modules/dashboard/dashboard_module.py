@@ -71,6 +71,23 @@ except ImportError:
     _PSUTIL = False
 
 
+def _driver_problem_count(app) -> int:
+    """Reads Driver Manager's live, already-fetched driver list (the same
+    _drivers_ref cell DriverSearchProvider already holds a live handle
+    to -- see driver_module.py's get_search_provider) without triggering
+    a new scan. 0 if Driver Manager hasn't run yet, or isn't registered
+    (e.g. in a test harness) -- not an error, just nothing to report."""
+    if app is None or getattr(app, "module_registry", None) is None:
+        return 0
+    driver_module = next(
+        (m for m in app.module_registry.modules if m.name == "Driver Manager"),
+        None)
+    if driver_module is None:
+        return 0
+    drivers = driver_module._drivers_ref[0]
+    return sum(1 for d in drivers if d.error_code != 0 or not d.signed)
+
+
 # ---------------------------------------------------------------------------
 # Small reusable card widget
 # ---------------------------------------------------------------------------
@@ -254,7 +271,15 @@ class _DashboardWidget(QWidget):
         self._net_card.body().addWidget(self._net_recv)
         grid.addWidget(self._net_card, 3, 0, 1, 2)
 
-        grid.setRowStretch(4, 1)
+        # --- Driver Health card (row 4, col 0) ---
+        # Read-only: shows Driver Manager's already-fetched driver list via
+        # the module registry, never triggers a scan of its own.
+        self._driver_card = _Card("Driver Health")
+        self._driver_problems_lbl = QLabel("—")
+        self._driver_card.body().addWidget(self._driver_problems_lbl)
+        grid.addWidget(self._driver_card, 4, 0)
+
+        grid.setRowStretch(5, 1)
         scroll.setWidget(inner)
 
         # --- Low disk space warning banner (hidden unless below threshold) ---
@@ -307,6 +332,7 @@ class _DashboardWidget(QWidget):
         self._refresh_memory()
         self._refresh_disk()
         self._refresh_network()
+        self._refresh_driver_health()
 
     def _refresh_system(self) -> None:
         self._os_lbl.setText(
@@ -412,6 +438,11 @@ class _DashboardWidget(QWidget):
         io = psutil.net_io_counters()
         self._net_sent.setText(f"Sent:       {_fmt(io.bytes_sent)}")
         self._net_recv.setText(f"Received:  {_fmt(io.bytes_recv)}")
+
+    def _refresh_driver_health(self) -> None:
+        count = _driver_problem_count(self.app)
+        self._driver_problems_lbl.setText(
+            f"{count} driver(s) need attention" if count else "No driver problems detected")
 
     def stop_timer(self) -> None:
         self._timer.stop()

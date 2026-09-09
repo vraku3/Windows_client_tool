@@ -152,7 +152,74 @@ class DriverModule(BaseModule):
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        # Toolbar
+        toolbar = self._build_toolbar()
+        layout.addLayout(toolbar)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setFixedHeight(4)
+        self._progress.hide()
+        layout.addWidget(self._progress)
+
+        self._table = QTableWidget(0, len(COLUMNS))
+        self._table.setHorizontalHeaderLabels(COLUMNS)
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # Interactive, not ResizeToContents: only Interactive columns can
+        # hold a manually-set or persisted width (see core/table_ui.py's
+        # fit_columns_once/save_column_widths/restore_column_widths). The
+        # one-time content fit on first real population (below, in
+        # _populate()) keeps a fresh install looking exactly as it did
+        # under ResizeToContents.
+        for i in range(1, len(COLUMNS)):
+            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+        center_header(self._table)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSortingEnabled(True)
+        self._table.horizontalHeader().setSortIndicatorShown(True)
+        self._table.horizontalHeader().sectionClicked.connect(self._on_header_click)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_context_menu)
+        self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self._table)
+        self._empty = EmptyState(
+            "🖨️", "No drivers loaded", "Click Refresh to scan.", "Refresh")
+        self._empty.action_triggered.connect(self._do_refresh)
+        self._table_stack.addWidget(self._empty)
+        layout.addWidget(self._table_stack, 1)
+
+        self._table_stack.setCurrentIndex(1)
+
+        # D23: restore the last sort column/order this session saved in
+        # on_deactivate. Done ONCE here, via the header's indicator, rather
+        # than reloaded from config on every _populate() call -- _populate
+        # runs on every filter keystroke, hide-pseudo toggle and flag-combo
+        # change, and a per-call reload-and-reapply silently reverted an
+        # in-session header click back to the last-persisted order the
+        # moment any of those fired. setSortingEnabled(True) (above) makes
+        # the table re-sort itself on every future row rebuild using
+        # whatever the header's indicator currently says, so setting it
+        # once here is sufficient -- a later click updates it directly
+        # (see _on_header_click) and on_deactivate persists whatever it
+        # ends up at.
+        cfg = self.app.config if self.app else None
+        sort_col = int(cfg.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0) if cfg else 0
+        sort_order = (Qt.SortOrder(int(cfg.get(f"{self._CONFIG_PREFIX}.sort_order",
+                      int(Qt.SortOrder.AscendingOrder.value)) or 0)) if cfg
+                      else Qt.SortOrder.AscendingOrder)
+        self._table.horizontalHeader().setSortIndicator(sort_col, sort_order)
+        self._sort_col = sort_col
+
+        # C07: restore any column widths saved from a previous session.
+        if cfg is not None:
+            restore_column_widths(self._table, cfg.get, self._CONFIG_PREFIX)
+
+        return self._widget
+
+    def _build_toolbar(self) -> QHBoxLayout:
+        """Build and return the toolbar layout with all widgets and signal connections."""
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
@@ -197,43 +264,8 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._hide_pseudo_cb)
         toolbar.addWidget(self._status_lbl)
         toolbar.addWidget(auto_refresh_lbl)
-        layout.addLayout(toolbar)
 
-        self._progress = QProgressBar()
-        self._progress.setRange(0, 0)
-        self._progress.setFixedHeight(4)
-        self._progress.hide()
-        layout.addWidget(self._progress)
-
-        self._table = QTableWidget(0, len(COLUMNS))
-        self._table.setHorizontalHeaderLabels(COLUMNS)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        # Interactive, not ResizeToContents: only Interactive columns can
-        # hold a manually-set or persisted width (see core/table_ui.py's
-        # fit_columns_once/save_column_widths/restore_column_widths). The
-        # one-time content fit on first real population (below, in
-        # _populate()) keeps a fresh install looking exactly as it did
-        # under ResizeToContents.
-        for i in range(1, len(COLUMNS)):
-            self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-        center_header(self._table)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.setSortingEnabled(True)
-        self._table.horizontalHeader().setSortIndicatorShown(True)
-        self._table.horizontalHeader().sectionClicked.connect(self._on_header_click)
-        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._table.customContextMenuRequested.connect(self._on_context_menu)
-        self._table.cellDoubleClicked.connect(self._on_cell_double_clicked)
-
-        self._table_stack = QStackedWidget()
-        self._table_stack.addWidget(self._table)
-        self._empty = EmptyState(
-            "🖨️", "No drivers loaded", "Click Refresh to scan.", "Refresh")
-        self._empty.action_triggered.connect(self._do_refresh)
-        self._table_stack.addWidget(self._empty)
-        layout.addWidget(self._table_stack, 1)
-
+        # Connect button signals
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._export_btn.clicked.connect(self._do_export)
         self._export_inventory_btn.clicked.connect(self._export_inventory)
@@ -251,33 +283,8 @@ class DriverModule(BaseModule):
         self._flag_filter_combo.currentTextChanged.connect(
             lambda _txt: self._populate(self._drivers_ref[0], self._filter_edit.text())
         )
-        self._table_stack.setCurrentIndex(1)
 
-        # D23: restore the last sort column/order this session saved in
-        # on_deactivate. Done ONCE here, via the header's indicator, rather
-        # than reloaded from config on every _populate() call -- _populate
-        # runs on every filter keystroke, hide-pseudo toggle and flag-combo
-        # change, and a per-call reload-and-reapply silently reverted an
-        # in-session header click back to the last-persisted order the
-        # moment any of those fired. setSortingEnabled(True) (above) makes
-        # the table re-sort itself on every future row rebuild using
-        # whatever the header's indicator currently says, so setting it
-        # once here is sufficient -- a later click updates it directly
-        # (see _on_header_click) and on_deactivate persists whatever it
-        # ends up at.
-        cfg = self.app.config if self.app else None
-        sort_col = int(cfg.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0) if cfg else 0
-        sort_order = (Qt.SortOrder(int(cfg.get(f"{self._CONFIG_PREFIX}.sort_order",
-                      int(Qt.SortOrder.AscendingOrder.value)) or 0)) if cfg
-                      else Qt.SortOrder.AscendingOrder)
-        self._table.horizontalHeader().setSortIndicator(sort_col, sort_order)
-        self._sort_col = sort_col
-
-        # C07: restore any column widths saved from a previous session.
-        if cfg is not None:
-            restore_column_widths(self._table, cfg.get, self._CONFIG_PREFIX)
-
-        return self._widget
+        return toolbar
 
     def on_start(self, app) -> None:
         self.app = app

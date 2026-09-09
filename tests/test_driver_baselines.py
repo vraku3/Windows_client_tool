@@ -4,10 +4,10 @@ from modules.driver_manager import driver_baselines as db
 from modules.driver_manager.driver_reader import DriverInfo
 
 
-def _driver(name, version="1.0", publisher="V"):
+def _driver(name, version="1.0", publisher="V", device_id=""):
     return DriverInfo(device_name=name, driver_class="Net", version=version,
                       date="2020-01-01", publisher=publisher, signed=True,
-                      error_code=0, flags="")
+                      error_code=0, flags="", device_id=device_id)
 
 
 def test_save_list_load_round_trip(tmp_path, monkeypatch):
@@ -46,3 +46,42 @@ def test_diff_against_baseline_finds_added_removed_and_changed():
     assert len(diff.changed) == 1
     old, new = diff.changed[0]
     assert old.version == "1.0" and new.version == "2.0"
+
+
+def test_load_baseline_returns_none_for_missing_baseline(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    assert db.load_baseline("does-not-exist") is None
+
+
+def test_diff_distinguishes_same_named_devices_by_device_id():
+    # Two distinct physical devices sharing a generic name, both present
+    # unchanged in baseline and current -- must NOT collapse into one
+    # entry, and must NOT be paired against each other as "changed".
+    baseline = [
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\1", version="1.0"),
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\2", version="2.0"),
+    ]
+    current = [
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\1", version="1.0"),
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\2", version="2.0"),
+    ]
+    diff = db.diff_against_baseline(baseline, current)
+    assert diff.added == []
+    assert diff.removed == []
+    assert diff.changed == []
+
+
+def test_diff_reports_only_the_actually_removed_same_named_device():
+    baseline = [
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\1"),
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\2"),
+    ]
+    # Only the second device is removed; the first, same-named device stays.
+    current = [
+        _driver("USB Root Hub", device_id="USB\\ROOT_HUB\\1"),
+    ]
+    diff = db.diff_against_baseline(baseline, current)
+    assert len(diff.removed) == 1
+    assert diff.removed[0].device_id == "USB\\ROOT_HUB\\2"
+    assert diff.added == []
+    assert diff.changed == []

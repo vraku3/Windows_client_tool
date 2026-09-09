@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from modules.driver_manager.driver_reader import DriverInfo
 
@@ -80,12 +80,20 @@ def list_baselines() -> List[BaselineMeta]:
     return metas
 
 
-def load_baseline(name: str) -> List[DriverInfo]:
+def load_baseline(name: str) -> Optional[List[DriverInfo]]:
+    """None means the baseline could not be read (missing file, corrupt
+    JSON, ...) -- distinct from a real, successfully-read baseline, which
+    can legitimately be an empty list. Never collapse a failed read into a
+    value that looks like a real answer."""
     directory = default_baseline_dir()
     stem = _safe_filename(name)
     path = os.path.join(directory, f"{stem}.json")
-    with open(path, encoding="utf-8") as f:
-        raw = json.load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not load baseline %r: %s", name, exc)
+        return None
     return [DriverInfo(**d) for d in raw]
 
 
@@ -96,20 +104,33 @@ class DriverDiff:
     changed: List[Tuple[DriverInfo, DriverInfo]] = field(default_factory=list)
 
 
+def _diff_key(d: DriverInfo) -> str:
+    """Same fallback shape as driver_reader._dedup_key(): device_id (a real
+    unique PNP device instance id) when present, falling back to a
+    name-based key only for the rare device that reports none. device_name
+    ALONE is not safe here either -- Windows commonly reports several
+    distinct physical devices under an identical generic name ("USB Root
+    Hub" x3, "Generic PnP Monitor" x2), which would either collapse two
+    distinct devices into one dict entry (hiding a real added/removed
+    device) or pair two unrelated devices across baseline/current into a
+    spurious "changed" entry."""
+    return d.device_id or f"\x00name:{d.device_name}"
+
+
 def diff_against_baseline(baseline: List[DriverInfo],
                           current: List[DriverInfo]) -> DriverDiff:
-    """Matches by device_name -- a same-machine, same-hardware-set
-    comparison over time, not a cross-machine one (a cross-machine
-    "known-good profile" comparison is a different, harder feature and
-    out of scope here)."""
-    old_by_name = {d.device_name: d for d in baseline}
-    new_by_name = {d.device_name: d for d in current}
-    added = [d for name, d in new_by_name.items() if name not in old_by_name]
-    removed = [d for name, d in old_by_name.items() if name not in new_by_name]
+    """Matches by _diff_key (device_id, falling back to device_name) -- a
+    same-machine, same-hardware-set comparison over time, not a
+    cross-machine one (a cross-machine "known-good profile" comparison is a
+    different, harder feature and out of scope here)."""
+    old_by_key = {_diff_key(d): d for d in baseline}
+    new_by_key = {_diff_key(d): d for d in current}
+    added = [d for key, d in new_by_key.items() if key not in old_by_key]
+    removed = [d for key, d in old_by_key.items() if key not in new_by_key]
     changed = [
-        (old_by_name[name], new_by_name[name])
-        for name in old_by_name.keys() & new_by_name.keys()
-        if old_by_name[name].version != new_by_name[name].version
-        or old_by_name[name].publisher != new_by_name[name].publisher
+        (old_by_key[key], new_by_key[key])
+        for key in old_by_key.keys() & new_by_key.keys()
+        if old_by_key[key].version != new_by_key[key].version
+        or old_by_key[key].publisher != new_by_key[key].publisher
     ]
     return DriverDiff(added=added, removed=removed, changed=changed)

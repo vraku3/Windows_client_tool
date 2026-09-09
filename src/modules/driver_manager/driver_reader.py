@@ -81,6 +81,34 @@ class DriverInfo:
                                    # against this machine's real drivers
 
 
+def driver_store_size(driver: DriverInfo) -> Optional[int]:
+    """Bytes this device's driver package occupies in the store, or None
+    if it isn't an OEM-published package (nothing in the store to size)
+    or the size genuinely can't be determined (see driver_store.package_size's
+    own docstring -- None, never 0, when unmeasurable). Call this lazily,
+    per device on demand, never for every row on every refresh -- it walks
+    a real folder on disk.
+
+    The DriverPackage fields beyond `published` (class_guid, version, date,
+    provider, original) are unused placeholders here -- confirmed by reading
+    store_folder_for()/package_size()'s real bodies: store_folder_for reads
+    only the `published` string it's passed, and package_size reads only
+    `package.published` (plus file_repository(), which takes no package at
+    all). Nothing in that path touches class_guid/version/date/provider."""
+    published = published_name_for(driver.inf_name)
+    if not published:
+        return None
+    from modules.cleanup.cleanup_scanner.driver_store import (
+        DriverPackage, package_size,
+    )
+    import datetime as _dt
+    package = DriverPackage(
+        published=published, original=driver.inf_name, provider=driver.publisher,
+        class_guid="", version=(0,), date=_dt.date.today(),
+    )
+    return package_size(package)
+
+
 _ERROR_CODE_MEANINGS = {
     1: "This device is not configured correctly",
     3: "The driver may be corrupted, or the system may be low on memory",

@@ -215,6 +215,27 @@ def test_hardware_id_takes_the_first_of_a_semicolon_joined_array():
     assert info.whql_certified is True
 
 
+def test_driver_store_size_returns_none_for_an_inbox_driver():
+    d = dr.DriverInfo(device_name="X", driver_class="Net", version="1.0",
+                      date="", publisher="V", signed=True, error_code=0,
+                      flags="", inf_name="usb.inf")  # inbox, no oem number
+    assert dr.driver_store_size(d) is None
+
+
+def test_driver_store_size_delegates_to_the_cleanup_scanners_sizing_code(monkeypatch):
+    d = dr.DriverInfo(device_name="X", driver_class="Net", version="1.0",
+                      date="", publisher="V", signed=True, error_code=0,
+                      flags="", inf_name="oem42.inf")
+    from modules.cleanup.cleanup_scanner import driver_store as ds
+    captured = {}
+    def fake_package_size(package):
+        captured["published"] = package.published
+        return 12345
+    monkeypatch.setattr(ds, "package_size", fake_package_size)
+    assert dr.driver_store_size(d) == 12345
+    assert captured["published"] == "oem42.inf"
+
+
 def test_duplicate_hardware_ids_groups_only_real_collisions():
     a = dr.DriverInfo(device_name="Generic Driver A", driver_class="Net",
                       version="1.0", date="", publisher="X", signed=True,

@@ -3,6 +3,7 @@ import datetime
 import logging
 import os
 import subprocess
+from html import escape as _html_escape
 from typing import List, Optional
 
 from PyQt6.QtWidgets import (
@@ -38,6 +39,21 @@ logger = logging.getLogger(__name__)
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
 
 FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "Old"]
+
+# Task 8: the full inventory export -- distinct from COLUMNS/_do_export
+# (which respect the current filter/visible rows and the table's own
+# provider-classified view) -- carries the full field set including the
+# Task 1/2/3 additions (hardware_id, whql_certified, inf_name).
+_INVENTORY_COLUMNS = [
+    "Device Name", "Class", "Version", "Date", "Publisher", "Signed",
+    "WHQL Certified", "Error Code", "Hardware ID", "INF Name", "Flags",
+]
+
+
+def _inventory_row(d: DriverInfo) -> list:
+    return [d.device_name, d.driver_class, d.version, d.date, d.publisher,
+            d.signed, d.whql_certified, d.error_code, d.hardware_id,
+            d.inf_name, d.flags]
 
 
 def _row_dedup_key(name_item) -> str:
@@ -102,6 +118,7 @@ class DriverModule(BaseModule):
         self._hide_pseudo_cb: Optional[QCheckBox] = None
         self._refresh_btn: Optional[QPushButton] = None
         self._export_btn: Optional[QPushButton] = None
+        self._export_inventory_btn: Optional[QPushButton] = None
         self._cancel_backup_btn: Optional[QPushButton] = None
         self._backup_worker: Optional[Worker] = None
         # [list of DriverInfo] -- a single-element cell, not reassigned after
@@ -123,6 +140,7 @@ class DriverModule(BaseModule):
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
+        self._export_inventory_btn = QPushButton("Export Inventory")
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
@@ -144,6 +162,7 @@ class DriverModule(BaseModule):
         auto_refresh_lbl.setObjectName("muted")
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(self._export_btn)
+        toolbar.addWidget(self._export_inventory_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(wu_btn)
         toolbar.addWidget(self._backup_btn)
@@ -194,6 +213,7 @@ class DriverModule(BaseModule):
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._export_btn.clicked.connect(self._do_export)
+        self._export_inventory_btn.clicked.connect(self._export_inventory)
         devmgr_btn.clicked.connect(self._open_devmgr)
         wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
@@ -443,6 +463,46 @@ class DriverModule(BaseModule):
                 ])
         if self._status_lbl:
             self._status_lbl.setText(f"Exported to {os.path.basename(path)}")
+
+    def _export_inventory(self) -> None:
+        # Distinct from _do_export: this exports the FULL current driver
+        # list (self._drivers_ref[0], unfiltered), with the full field set
+        # including the Task 1/2/3 additions.
+        if self._widget is None:
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self._widget, "Export Driver Inventory", "driver_inventory.csv",
+            "CSV (*.csv);;HTML (*.html)")
+        if not path:
+            return
+        drivers = self._drivers_ref[0]
+        if path.lower().endswith(".html") or "HTML" in selected_filter:
+            self._write_inventory_html(path, drivers)
+        else:
+            self._write_inventory_csv(path, drivers)
+        if self._status_lbl:
+            self._status_lbl.setText(f"Exported inventory to {os.path.basename(path)}")
+
+    def _write_inventory_csv(self, path: str, drivers: List[DriverInfo]) -> None:
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(_INVENTORY_COLUMNS)
+            for d in drivers:
+                writer.writerow(_inventory_row(d))
+
+    def _write_inventory_html(self, path: str, drivers: List[DriverInfo]) -> None:
+        rows_html = []
+        for d in drivers:
+            cells = "".join(f"<td>{_html_escape(str(v))}</td>" for v in _inventory_row(d))
+            rows_html.append(f"<tr>{cells}</tr>")
+        header_html = "".join(f"<th>{_html_escape(c)}</th>" for c in _INVENTORY_COLUMNS)
+        html = (
+            "<html><head><meta charset='utf-8'><title>Driver Inventory</title></head>"
+            "<body><table border='1' cellspacing='0' cellpadding='4'>"
+            f"<tr>{header_html}</tr>{''.join(rows_html)}</table></body></html>"
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html)
 
     def _export_one_driver(self, published: str) -> None:
         folder = QFileDialog.getExistingDirectory(self._widget, "Export Driver")

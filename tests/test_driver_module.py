@@ -582,3 +582,44 @@ def test_get_search_provider_called_before_a_refresh_finds_nothing_not_none():
     mod.on_start(_FakeApp())
     provider = mod.get_search_provider()
     assert provider.search(SearchQuery(text="anything")) == []
+
+
+# ----------------------------------------------------------------------
+# Task 8: full inventory export (CSV + HTML) -- distinct from _do_export,
+# which respects the current filter/visible rows. This exports the FULL
+# current driver list unfiltered, with the full field set including the
+# Task 1/2/3 fields (hardware_id, whql_certified, inf_name).
+# ----------------------------------------------------------------------
+
+
+def test_export_inventory_csv_includes_every_driver_and_new_fields(tmp_path, monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0,
+                   flags="", hardware_id="PCI\\VEN_1", whql_certified=True),
+        DriverInfo(device_name="B", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=False, error_code=0, flags=""),
+    ]
+    out = tmp_path / "inventory.csv"
+    monkeypatch.setattr(dmod.QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(out), ""))
+    mod._export_inventory()
+    text = out.read_text(encoding="utf-8")
+    assert "A" in text and "B" in text
+    assert "PCI\\VEN_1" in text
+    assert "True" in text  # whql_certified for A
+
+
+def test_export_inventory_html_produces_a_table(tmp_path, monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    out = tmp_path / "inventory.html"
+    monkeypatch.setattr(dmod.QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(out), "HTML (*.html)"))
+    mod._export_inventory()
+    text = out.read_text(encoding="utf-8")
+    assert "<table" in text and "A" in text

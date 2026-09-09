@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QHeaderView, QLineEdit, QLabel,
     QProgressBar, QFileDialog, QCheckBox, QApplication, QMenu,
-    QStackedWidget, QComboBox,
+    QStackedWidget, QComboBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QThreadPool, QItemSelectionModel
 from PyQt6.QtGui import QColor
@@ -89,6 +89,22 @@ def _date_sort_value(date_str: str) -> float:
         return 0.0
 
 
+def _ask_baseline_name(parent) -> Optional[str]:
+    from PyQt6.QtWidgets import QInputDialog
+    name, ok = QInputDialog.getText(parent, "Save Baseline", "Baseline name:")
+    return name.strip() if ok and name.strip() else None
+
+
+def _choose_baseline(parent, metas: list) -> Optional[str]:
+    from PyQt6.QtWidgets import QInputDialog
+    if not metas:
+        return None
+    names = [m.name for m in metas]
+    choice, ok = QInputDialog.getItem(
+        parent, "Diff Against Baseline", "Baseline:", names, 0, False)
+    return choice if ok else None
+
+
 class DriverModule(BaseModule):
     name = "Driver Manager"
     icon = "🖨️"
@@ -141,6 +157,11 @@ class DriverModule(BaseModule):
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
         self._export_inventory_btn = QPushButton("Export Inventory")
+        snapshots_btn = QPushButton("Snapshots ▾")
+        snapshots_menu = QMenu(snapshots_btn)
+        snapshots_menu.addAction("Save Baseline...", self._save_baseline_action)
+        snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
+        snapshots_btn.setMenu(snapshots_menu)
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
@@ -163,6 +184,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(self._export_btn)
         toolbar.addWidget(self._export_inventory_btn)
+        toolbar.addWidget(snapshots_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(wu_btn)
         toolbar.addWidget(self._backup_btn)
@@ -504,6 +526,41 @@ class DriverModule(BaseModule):
         with open(path, "w", encoding="utf-8") as f:
             f.write(html)
 
+    def _save_baseline_action(self) -> None:
+        name = _ask_baseline_name(self._widget)
+        if not name:
+            return
+        from modules.driver_manager import driver_baselines as db
+        db.save_baseline(name, self._drivers_ref[0])
+        if self._status_lbl:
+            self._status_lbl.setText(f"Saved baseline '{name}'.")
+
+    def _diff_against_baseline_action(self) -> None:
+        from modules.driver_manager import driver_baselines as db
+        metas = db.list_baselines()
+        name = _choose_baseline(self._widget, metas)
+        if not name:
+            return
+        baseline = db.load_baseline(name)
+        if baseline is None:
+            # Task 5: load_baseline() returns None (rather than raising) when
+            # the named baseline can't be read -- a real race against
+            # list_baselines(), which just enumerated the sidecar file
+            # successfully moments before. Never pass None into
+            # diff_against_baseline(); show the user why nothing happened.
+            QMessageBox.warning(
+                self._widget, "Diff Against Baseline",
+                f"Could not load baseline '{name}' -- it may have been "
+                f"deleted or corrupted.")
+            return
+        diff = db.diff_against_baseline(baseline, self._drivers_ref[0])
+        lines = [f"Added ({len(diff.added)}):"] + [f"  + {d.device_name}" for d in diff.added]
+        lines += [f"Removed ({len(diff.removed)}):"] + [f"  - {d.device_name}" for d in diff.removed]
+        lines += [f"Changed ({len(diff.changed)}):"] + [
+            f"  ~ {old.device_name}: {old.version} -> {new.version}"
+            for old, new in diff.changed]
+        QMessageBox.information(self._widget, f"Diff against '{name}'", "\n".join(lines))
+
     def _export_one_driver(self, published: str) -> None:
         folder = QFileDialog.getExistingDirectory(self._widget, "Export Driver")
         if not folder:
@@ -550,7 +607,6 @@ class DriverModule(BaseModule):
             "This driver has a flag this app doesn't have an explanation for yet.")
 
     def _show_flag_explanation(self, flags: str) -> None:
-        from PyQt6.QtWidgets import QMessageBox
         QMessageBox.information(self._widget, "Why does this matter?",
                                 self._explain_flags(flags))
 

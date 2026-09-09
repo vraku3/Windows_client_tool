@@ -623,3 +623,67 @@ def test_export_inventory_html_produces_a_table(tmp_path, monkeypatch):
     mod._export_inventory()
     text = out.read_text(encoding="utf-8")
     assert "<table" in text and "A" in text
+
+
+# ----------------------------------------------------------------------
+# Task 9: "Snapshots" menu -- save baseline / diff against one.
+# ----------------------------------------------------------------------
+
+
+def test_save_baseline_action_calls_save_baseline_with_current_drivers(monkeypatch, tmp_path):
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    monkeypatch.setattr(dmod, "_ask_baseline_name", lambda parent: "session-1")
+    mod._save_baseline_action()
+    assert [m.name for m in db.list_baselines()] == ["session-1"]
+
+
+def test_diff_against_baseline_action_shows_a_summary(monkeypatch, tmp_path):
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    db.save_baseline("old", [
+        DriverInfo(device_name="Removed", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ])
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="Added", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    shown = []
+    monkeypatch.setattr(dmod, "_choose_baseline", lambda parent, metas: "old")
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a))
+    mod._diff_against_baseline_action()
+    assert shown
+    assert "Added" in shown[0][2] and "Removed" in shown[0][2]
+
+
+def test_diff_against_baseline_action_handles_a_load_failure_without_crashing(monkeypatch, tmp_path):
+    """Task 5 changed load_baseline() to return None (rather than raise) on
+    a missing/corrupt baseline file -- a real race against list_baselines(),
+    which just enumerated the sidecar successfully. The action must show an
+    error and return, never pass None into diff_against_baseline()."""
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="Added", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    monkeypatch.setattr(dmod, "_choose_baseline", lambda parent, metas: "missing")
+    monkeypatch.setattr(db, "load_baseline", lambda name: None)
+    diff_calls = []
+    monkeypatch.setattr(db, "diff_against_baseline",
+                        lambda *a, **k: diff_calls.append(a))
+    warned = []
+    monkeypatch.setattr(dmod.QMessageBox, "warning",
+                        lambda *a, **k: warned.append(a))
+    mod._diff_against_baseline_action()
+    assert diff_calls == []
+    assert warned

@@ -15,6 +15,7 @@ from urllib.request import urlopen
 
 from core.procengine.signatures import verify_signature
 from core.system_restore import create_restore_point
+from core.windows_utils import program_files
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,20 @@ class InstallResult:
     previous_package_hint: Optional[str] = None  # for rollback.py, Task 6
 
 
+def _find_7zip() -> Optional[str]:
+    """Resolves 7z.exe's real install path the same way cbs_module.py does
+    for CBS log cab extraction -- 7-Zip's own installer does not add itself
+    to PATH, so a bare '7z' command name never resolves on an ordinary
+    machine. None (never raises) if it isn't installed in either the 64-bit
+    or 32-bit Program Files."""
+    seven_zip = os.path.join(program_files(), "7-Zip", "7z.exe")
+    if not os.path.exists(seven_zip):
+        seven_zip = os.path.join(program_files(x86=True), "7-Zip", "7z.exe")
+    if not os.path.exists(seven_zip):
+        return None
+    return seven_zip
+
+
 def _extract_with_7zip(installer_path: str, dest_dir: str) -> bool:
     """Shells out to 7z the same way this codebase already does for CBS
     log cab extraction -- same CREATE_NO_WINDOW discipline as every other
@@ -121,9 +136,14 @@ def _extract_with_7zip(installer_path: str, dest_dir: str) -> bool:
     cleanly; a non-zero exit here is a real, expected outcome (NSIS/
     InstallShield/custom wrappers vary), not a bug -- the caller treats a
     False return as 'LIGHT not available for this package', never a crash."""
+    seven_zip = _find_7zip()
+    if seven_zip is None:
+        logger.warning("pipeline: 7-Zip is not installed -- cannot extract %s",
+                       installer_path)
+        return False
     try:
         proc = subprocess.run(
-            ["7z", "x", installer_path, f"-o{dest_dir}", "-y"],
+            [seven_zip, "x", installer_path, f"-o{dest_dir}", "-y"],
             capture_output=True, timeout=120, creationflags=CREATE_NO_WINDOW)
         return proc.returncode == 0
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -132,19 +152,22 @@ def _extract_with_7zip(installer_path: str, dest_dir: str) -> bool:
 
 
 def _find_inf_with_sys(dest_dir: str) -> Optional[str]:
-    """The first .inf file in dest_dir's tree whose own directory also has
-    a .sys -- an inf with no driver binary alongside it isn't installable,
-    and picking the wrong inf out of a package with several (a control-
-    panel's own inf vs. the actual device driver's) is a real risk this
-    check reduces, though not eliminates -- Phase 2 may need to be pickier
-    once a real, messy vendor package is tested against this."""
+    """Prefers an .inf whose OWN directory also has a same-stem .sys (the
+    real driver binary, not some other tool's .inf) -- only falls back to
+    the first .inf found in a directory with ANY .sys present if no exact
+    stem match exists anywhere, since some real driver packages split the
+    two into differently-named files. An inf with no driver binary
+    alongside it at all isn't installable and is skipped entirely."""
+    fallback = None
     for root, _dirs, files in os.walk(dest_dir):
         infs = [f for f in files if f.lower().endswith(".inf")]
         syss = {f.lower()[:-4] for f in files if f.lower().endswith(".sys")}
         for inf in infs:
-            if inf.lower()[:-4] in syss or syss:
+            if inf.lower()[:-4] in syss:
                 return os.path.join(root, inf)
-    return None
+            if syss and fallback is None:
+                fallback = os.path.join(root, inf)
+    return fallback
 
 
 def _run_pnputil_install(inf_path: str) -> tuple:
@@ -157,6 +180,7 @@ def _run_pnputil_install(inf_path: str) -> tuple:
             return True, ""
         return False, f"pnputil exited {proc.returncode}: {proc.stdout or proc.stderr}"
     except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("pipeline: pnputil could not be run: %s", exc)
         return False, f"pnputil could not be run: {exc}"
 
 

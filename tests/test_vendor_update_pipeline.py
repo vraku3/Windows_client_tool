@@ -154,6 +154,38 @@ def test_install_light_runs_pnputil_when_an_inf_is_found(tmp_path, monkeypatch):
     assert ran["inf_path"].endswith("nv_disp.inf")
 
 
+def test_find_inf_with_sys_prefers_the_stem_matching_inf_over_an_unrelated_one(tmp_path):
+    # "aaa_setup_tool.inf" sorts before "zzz_nvidia_disp.inf" in a plain
+    # directory listing, so a naive "first .inf found in a directory that
+    # has ANY .sys" implementation would hand back the wrong one. Only
+    # "zzz_nvidia_disp.inf" shares a stem with the .sys actually present.
+    directory = tmp_path / "pkg"
+    directory.mkdir()
+    (directory / "aaa_setup_tool.inf").write_text("; unrelated tool inf")
+    (directory / "zzz_nvidia_disp.inf").write_text("; the real driver inf")
+    (directory / "zzz_nvidia_disp.sys").write_bytes(b"fake sys")
+
+    result = pl._find_inf_with_sys(str(directory))
+
+    assert result is not None
+    assert os.path.basename(result) == "zzz_nvidia_disp.inf"
+
+
+def test_find_inf_with_sys_falls_back_to_any_inf_when_no_stem_matches(tmp_path):
+    # Some real driver packages split the .inf and .sys into differently
+    # named files -- a directory with an .inf and an unrelated .sys is
+    # still worth trying, just as a fallback, never a hard refusal.
+    directory = tmp_path / "pkg"
+    directory.mkdir()
+    (directory / "driver.inf").write_text("; the inf")
+    (directory / "other_name.sys").write_bytes(b"fake sys")
+
+    result = pl._find_inf_with_sys(str(directory))
+
+    assert result is not None
+    assert os.path.basename(result) == "driver.inf"
+
+
 def test_install_light_reports_pnputil_failure_distinctly(tmp_path, monkeypatch):
     def fake_extract(installer, dest):
         os.makedirs(os.path.join(dest, "d"), exist_ok=True)

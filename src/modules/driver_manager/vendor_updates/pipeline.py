@@ -66,6 +66,8 @@ def download_and_verify(update, allowed_domains: List[str],
         # A malformed download_url (e.g. a bad vendor API response) must
         # come back as a clean refusal, not an uncaught exception -- the
         # entire point of this pipeline.
+        logger.warning("pipeline: malformed download URL %s: %s",
+                       update.download_url, exc)
         return DownloadResult(
             path=None,
             reason=f"download URL is malformed: {exc}")

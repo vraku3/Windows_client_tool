@@ -721,6 +721,50 @@ def test_diff_against_baseline_action_handles_a_load_failure_without_crashing(mo
 # ----------------------------------------------------------------------
 
 
+def test_show_restore_points_runs_off_the_ui_thread(monkeypatch):
+    """Final-review finding I4: `list_restore_points()` runs a PowerShell
+    subprocess with a 30s timeout, so it must be dispatched via a Worker
+    rather than called inline in the click handler. Patch QThreadPool to
+    run it synchronously (this codebase's established idiom, see
+    `_SyncPool` and `test_empty_state_shown_before_first_load_...`) and
+    confirm a Worker actually got constructed and started, and that the
+    button shows a loading state while it's "running"."""
+    mod = _module()
+    started = []
+
+    class _RecordingPool:
+        def start(self, worker) -> None:
+            started.append(worker)
+            worker.run()
+
+    monkeypatch.setattr(dmod, "list_restore_points", lambda: [])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+
+    mod._show_restore_points()
+
+    assert len(started) == 1
+    assert isinstance(started[0], dmod.Worker)
+    # Restored after the (synchronously-run) worker's result lands.
+    assert mod._restore_points_btn.isEnabled() is True
+    assert mod._restore_points_btn.text() == "System Restore Points"
+
+
+def test_show_restore_points_disables_button_while_running(monkeypatch):
+    """The button shows a loading state for as long as the worker has not
+    reported back -- checked with a pool that doesn't run the worker at
+    all, so the "while running" state is observable."""
+    mod = _module()
+    monkeypatch.setattr(dmod, "list_restore_points", lambda: [])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: type("NoopPool", (), {"start": lambda self, w: None})()))
+
+    mod._show_restore_points()
+
+    assert mod._restore_points_btn.isEnabled() is False
+    assert mod._restore_points_btn.text() == "Loading…"
+
+
 def test_show_restore_points_lists_them_by_creation_time_descending(monkeypatch):
     mod = _module()
     monkeypatch.setattr(
@@ -729,6 +773,8 @@ def test_show_restore_points_lists_them_by_creation_time_descending(monkeypatch)
             {"SequenceNumber": 1, "Description": "Older", "CreationTime": "20260101000000.000000-000"},
             {"SequenceNumber": 2, "Description": "Newer", "CreationTime": "20260201000000.000000-000"},
         ])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
                         lambda *a, **k: shown.append(a[2]))
@@ -740,6 +786,8 @@ def test_show_restore_points_lists_them_by_creation_time_descending(monkeypatch)
 def test_show_restore_points_explains_a_failed_read(monkeypatch):
     mod = _module()
     monkeypatch.setattr(dmod, "list_restore_points", lambda: None)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
                         lambda *a, **k: shown.append(a[2]))
@@ -750,6 +798,8 @@ def test_show_restore_points_explains_a_failed_read(monkeypatch):
 def test_show_restore_points_explains_an_empty_list(monkeypatch):
     mod = _module()
     monkeypatch.setattr(dmod, "list_restore_points", lambda: [])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
                         lambda *a, **k: shown.append(a[2]))

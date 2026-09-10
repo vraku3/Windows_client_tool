@@ -11,16 +11,25 @@ Does NOT consume `driver_reader.list_restore_points` -- restore points
 are a system-wide, not a per-device, concept; they get their own
 toolbar action and dialog in Task 12, not a slot in this per-device
 view.
+
+Final-review finding I4: `driver_store_size()` walks a real folder tree on
+disk and can be GB-scale (see its own docstring), so it must not run
+synchronously in `__init__` -- the dialog now shows "Calculating..." for
+that one row and fills it in from a background `Worker` once the walk
+finishes, guarded by `widget_is_valid` so a result landing after the
+dialog is closed (Close button / Esc / window X) is a no-op.
 """
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QWidget, QDialogButtonBox,
     QTextEdit,
 )
 
 from core.types import LogEntry
+from core.widget_life import widget_is_valid
+from core.worker import Worker
 from modules.driver_manager.driver_diagnostics import crashes_for, suggested_action
 from modules.driver_manager.driver_reader import DriverInfo, driver_store_size
 
@@ -50,12 +59,7 @@ class DriverDetailDialog(QDialog):
         self.setWindowTitle(f"Driver Details — {driver.device_name}")
         self.resize(560, 480)
         layout = QVBoxLayout(self)
-
-        # driver_store_size() walks a real folder on disk -- called here,
-        # lazily, only when this dialog actually opens, never for every
-        # row on every refresh.
-        size = driver_store_size(driver)
-        size_text = f"{size:,} bytes" if size is not None else "Unknown"
+        self._workers: list = []
 
         for label, value in [
             ("Device Name", driver.device_name),
@@ -68,10 +72,32 @@ class DriverDetailDialog(QDialog):
             ("Error Code", str(driver.error_code) if driver.error_code else "None"),
             ("Hardware ID", driver.hardware_id or "Unknown"),
             ("INF Name", driver.inf_name or "Unknown"),
-            ("Driver Store Size", size_text),
-            ("Flags", driver.flags or "None"),
         ]:
             layout.addWidget(_row(label, value))
+
+        # driver_store_size() walks a real folder on disk -- for a
+        # GB-scale package (see its own docstring) that hangs the dialog
+        # open if run synchronously. Built inline rather than via _row()
+        # so the value QLabel can be reached back out of the background
+        # callback -- matches _row()'s own visual construction exactly.
+        size_row = QWidget()
+        size_h = QHBoxLayout(size_row)
+        size_h.setContentsMargins(0, 0, 0, 0)
+        size_label = QLabel("<b>Driver Store Size:</b>")
+        size_label.setFixedWidth(140)
+        self._size_lbl = QLabel("Calculating…")
+        self._size_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._size_lbl.setWordWrap(True)
+        size_h.addWidget(size_label)
+        size_h.addWidget(self._size_lbl, 1)
+        layout.addWidget(size_row)
+
+        layout.addWidget(_row("Flags", driver.flags or "None"))
+
+        size_worker = Worker(lambda _w: driver_store_size(driver))
+        size_worker.signals.result.connect(self._on_size_computed)
+        self._workers.append(size_worker)
+        QThreadPool.globalInstance().start(size_worker)
 
         layout.addWidget(QLabel("<b>Recent Reliability Monitor entries "
                                 "(approximate match by device name):</b>"))
@@ -105,3 +131,21 @@ class DriverDetailDialog(QDialog):
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
+
+    def _on_size_computed(self, size: Optional[int]) -> None:
+        # The dialog (Close button, Esc, or the window's own X) can be
+        # gone before the store walk finishes -- a stale result must not
+        # touch a destroyed QLabel.
+        if not widget_is_valid(self):
+            return
+        self._size_lbl.setText(f"{size:,} bytes" if size is not None else "Unknown")
+
+    def reject(self) -> None:
+        # Cancelling here is about the `widget_is_valid` guard above
+        # skipping a result that arrives after this point, not about
+        # interrupting the filesystem walk itself -- driver_store_size()
+        # is a single blocking call with no loop to check is_cancelled
+        # inside.
+        for worker in self._workers:
+            worker.cancel()
+        super().reject()

@@ -1,5 +1,16 @@
+from modules.driver_manager import driver_detail_dialog as ddmod
 from modules.driver_manager.driver_detail_dialog import DriverDetailDialog
 from modules.driver_manager.driver_reader import DriverInfo
+
+
+class _SyncPool:
+    """Runs a Worker synchronously on the calling thread instead of a real
+    background one -- this codebase's established idiom for driving a
+    Worker-based method in a test (see test_driver_module.py's own
+    `_SyncPool`)."""
+
+    def start(self, worker) -> None:
+        worker.run()
 
 
 def _driver():
@@ -148,3 +159,91 @@ def test_resolve_driver_for_row_matches_context_menu_resolution(monkeypatch):
         assert resolved is not None
         assert resolved.device_id == mod._table.item(row, 0).data(
             __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.ItemDataRole.UserRole)
+
+
+# ----------------------------------------------------------------------
+# Final-review finding I4: driver_store_size() walks a real folder tree on
+# disk (GB-scale for some packages, per its own docstring) and must not
+# run synchronously in __init__ -- it now runs on a background Worker,
+# with the row showing "Calculating..." until the result lands.
+# ----------------------------------------------------------------------
+
+
+def test_size_row_shows_calculating_before_the_worker_reports_back(qapp, monkeypatch):
+    # A pool that never actually runs the worker -- the "while running"
+    # state must be observable, not just the eventual result.
+    monkeypatch.setattr(
+        ddmod.QThreadPool, "globalInstance",
+        staticmethod(lambda: type("NoopPool", (), {"start": lambda self, w: None})()))
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+    assert dlg._size_lbl.text() == "Calculating…"
+
+
+def test_size_row_updates_once_the_worker_reports_back(qapp, monkeypatch):
+    monkeypatch.setattr(ddmod, "driver_store_size", lambda d: 1234567)
+    monkeypatch.setattr(ddmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+    assert dlg._size_lbl.text() == "1,234,567 bytes"
+
+
+def test_size_row_shows_unknown_when_the_size_cannot_be_determined(qapp, monkeypatch):
+    monkeypatch.setattr(ddmod, "driver_store_size", lambda d: None)
+    monkeypatch.setattr(ddmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+    assert dlg._size_lbl.text() == "Unknown"
+
+
+def test_reject_cancels_the_size_worker(qapp, monkeypatch):
+    started = []
+
+    class _RecordingPool:
+        def start(self, worker) -> None:
+            started.append(worker)
+            # Deliberately NOT run here -- simulates the worker still
+            # being in flight when the dialog is closed below.
+
+    monkeypatch.setattr(ddmod, "driver_store_size", lambda d: 999)
+    monkeypatch.setattr(ddmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+    assert len(started) == 1
+    worker = started[0]
+
+    dlg.reject()
+    assert worker.is_cancelled is True
+
+
+def test_closing_the_dialog_before_the_worker_completes_does_not_crash(qapp, monkeypatch):
+    """The dialog can be closed (Close button / Esc / window X, all of
+    which route through reject()) before the size calculation finishes.
+    A stale result landing on an ALREADY-DESTROYED dialog (what real Qt
+    teardown does -- see test_widget_life.py / test_cleanup_late_signal.py's
+    own `sip.delete()` pattern) must be a no-op via the `widget_is_valid`
+    guard, not a crash on a dead QLabel.
+
+    Calls `_on_size_computed` directly rather than through the signal:
+    `_on_size_computed` is a bound method of the dialog itself, and PyQt
+    auto-disconnects a bound-method connection when its receiver QObject
+    is destroyed -- emitting through the signal after `sip.delete(dlg)`
+    would pass trivially without ever reaching the guard. Calling the
+    method directly is what actually exercises `widget_is_valid`."""
+    from PyQt6 import sip
+
+    # A pool that never runs the worker -- keeps this test from spawning a
+    # real background thread that walks the filesystem after the dialog
+    # (and the test) is gone.
+    monkeypatch.setattr(
+        ddmod.QThreadPool, "globalInstance",
+        staticmethod(lambda: type("NoopPool", (), {"start": lambda self, w: None})()))
+
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+
+    dlg.reject()
+    sip.delete(dlg)  # what Qt teardown does to a closed dialog
+
+    # Must not raise -- the guard inside _on_size_computed skips the dead
+    # dialog before touching the (also-destroyed) _size_lbl.
+    dlg._on_size_computed(999)

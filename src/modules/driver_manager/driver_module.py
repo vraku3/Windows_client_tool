@@ -137,6 +137,7 @@ class DriverModule(BaseModule):
         self._export_inventory_btn: Optional[QPushButton] = None
         self._cancel_backup_btn: Optional[QPushButton] = None
         self._backup_worker: Optional[Worker] = None
+        self._restore_points_btn: Optional[QPushButton] = None
         # [list of DriverInfo] -- a single-element cell, not reassigned after
         # this, so DriverSearchProvider (built once in get_search_provider(),
         # itself called from on_start() before create_widget() ever runs) can
@@ -229,7 +230,7 @@ class DriverModule(BaseModule):
         snapshots_menu.addAction("Save Baseline...", self._save_baseline_action)
         snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
         snapshots_btn.setMenu(snapshots_menu)
-        restore_points_btn = QPushButton("System Restore Points")
+        self._restore_points_btn = QPushButton("System Restore Points")
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
@@ -253,7 +254,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._export_btn)
         toolbar.addWidget(self._export_inventory_btn)
         toolbar.addWidget(snapshots_btn)
-        toolbar.addWidget(restore_points_btn)
+        toolbar.addWidget(self._restore_points_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(wu_btn)
         toolbar.addWidget(self._backup_btn)
@@ -272,7 +273,7 @@ class DriverModule(BaseModule):
         self._export_btn.clicked.connect(self._do_export)
         self._export_inventory_btn.clicked.connect(self._export_inventory)
         devmgr_btn.clicked.connect(self._open_devmgr)
-        restore_points_btn.clicked.connect(self._show_restore_points)
+        self._restore_points_btn.clicked.connect(self._show_restore_points)
         wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
         self._cancel_backup_btn.clicked.connect(self._on_cancel_backup)
@@ -641,7 +642,49 @@ class DriverModule(BaseModule):
         subprocess.Popen(["mmc", "devmgmt.msc"])
 
     def _show_restore_points(self) -> None:
-        points = list_restore_points()
+        # list_restore_points() runs a PowerShell subprocess with a 30s
+        # timeout -- doing that synchronously in a toolbar click handler
+        # froze the whole window for however long it took (final-review
+        # finding I4). A plain Worker, not COMWorker: this is a subprocess
+        # call, no WMI/COM involved (core/worker.py's own guidance).
+        if self._restore_points_btn:
+            self._restore_points_btn.setEnabled(False)
+            self._restore_points_btn.setText("Loading…")
+
+        worker = Worker(lambda _w: list_restore_points())
+
+        def on_result(points) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            self._reset_restore_points_btn()
+            self._present_restore_points(points)
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            self._reset_restore_points_btn()
+            QMessageBox.information(
+                self._widget, "System Restore Points",
+                f"Could not read System Restore points: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _reset_restore_points_btn(self) -> None:
+        if self._restore_points_btn:
+            self._restore_points_btn.setEnabled(True)
+            self._restore_points_btn.setText("System Restore Points")
+
+    def _present_restore_points(self, points: Optional[list]) -> None:
+        """Same branching logic `_show_restore_points` ran inline before
+        it moved to a background Worker -- unchanged, just called from the
+        async result handler."""
         if points is None:
             QMessageBox.information(
                 self._widget, "System Restore Points",

@@ -381,23 +381,59 @@ never collapsed into a value that looks like a real answer. Specifically:
   suite — this phase installs real driver files, which is not something
   any automated test suite should ever do unattended.
 
-## Open Questions (to resolve during implementation, not blocking spec approval)
+## Open Questions
 
-1. **NVIDIA driver-lookup response shape** — exact JSON/XML fields and the
-   real CDN domain(s), confirmed with a live call during implementation
-   (the request pattern itself is proven; the response body isn't captured
-   yet).
-2. **Correct `osID` for Windows 11 64-bit** — confirm against nvidia.com's
-   own UI for a known GPU rather than guessing from a Windows-10-era
+Four of the five raised during the design session were resolved with real,
+live verification before the plan was written (kept here for the record,
+not as open items anymore):
+
+1. **NVIDIA driver-lookup response shape — RESOLVED.** A real call
+   (`func=DriverManualLookup&psid=101&pfid=995&osID=135&languageCode=1033&
+   beta=null&isWHQL=1&dch=1&sort1=0&numberOfResults=10` — `psid=101` is
+   GeForce's product-series id, required alongside `pfid` or the endpoint
+   answers `DriverDownloadIDNotFound`) returned real JSON. The true success
+   signal is `IDS[0].downloadInfo.Success == "1"` — **not** the top-level
+   `Success` field, which echoes back something else entirely (observed
+   `"10"` in a real response, not a boolean). Real field names on the
+   result object: `Version`, `DownloadURL`, `DownloadURLFileSize`,
+   `ReleaseDateTime`, `IsWHQL`, `IsBeta`, `DetailsURL`, `OSList` (array of
+   `{OSName, OsCode}`). Every string value is URL-encoded (`%20` for
+   spaces) — decode with `urllib.parse.unquote()` before display.
+2. **Correct `osID` for Windows 11 — RESOLVED.** `135` (a single unified
+   "Windows 11" entry — unlike Windows 10, there's no separate 32/64-bit
+   split since Windows 11 only ships 64-bit). Confirmed via
+   `lookupValueSearch.aspx?TypeID=4`'s real OS table, not the Windows-10-era
    community value.
-3. **Rollback mechanism** — copy the OEM package ourselves at snapshot time,
-   vs. trust the driver store still holds the superseded package — a real-
-   machine spike, not a guess, decides which `rollback.py` actually does.
-4. **Power-management registry path** — confirm the exact key/value against
-   a real device with a Power Management tab, matching what Device
-   Manager's own UI reads/writes.
-5. **Download cache staleness window** — how long an undecided/declined
-   download sits before cleanup.
+3. **Real CDN domain — RESOLVED.** `us.download.nvidia.com`, observed in a
+   real response. Allowlist by suffix match (`host.endswith
+   ("download.nvidia.com")`) to also cover regional mirrors
+   (`international.download.nvidia.com` etc.) without a loose substring
+   check.
+4. **Rollback mechanism — RESOLVED (evidence-based, not experimental).**
+   This codebase's own Cleanup module already measures that Windows
+   retains superseded OEM driver packages after a real-world update on
+   this exact machine (CLAUDE.md: "the 7.13 GB store yields 2.2 MB of
+   superseded packages"). `rollback.py` therefore trusts the driver store
+   to still hold the pre-update package rather than copying it separately
+   — BUT the implementation task must verify this holds true immediately
+   after THIS feature's own install (not just "eventually", which is what
+   the existing evidence actually shows), and fall back to copying the
+   package proactively before install if a real test shows otherwise.
+5. **Power-management registry mechanism — STILL OPEN, needs a real-machine
+   experiment, not web research.** Community sources point at a
+   `PnPCapabilities` DWORD under the device's Class registry key, but what
+   was actually verified live: this codebase's own machine has a real
+   device with the value entirely ABSENT (consistent with "default/allowed,
+   matching this codebase's established 'absent means applied' pattern" —
+   but not proof of the bit-level meaning for the checked/unchecked state,
+   only for whether the feature is available at all). The implementation
+   task for `power_management.py` starts with a concrete experiment (toggle
+   the checkbox via Device Manager's own UI on a real device that has one,
+   diff the registry before/after) rather than a guessed bit value — see
+   Task 8 in the plan.
+6. **Download cache staleness window** — how long an undecided/declined
+   download sits before cleanup; a reasonable default (e.g. 7 days) ships
+   in the plan, adjustable later, not blocking.
 
 ## Self-Review
 

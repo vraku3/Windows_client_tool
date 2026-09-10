@@ -992,6 +992,23 @@ def test_install_light_reports_pnputil_failure_distinctly(tmp_path, monkeypatch)
     result = pl.install_light(str(tmp_path / "installer.exe"), _driver_for_install())
     assert result.ok is False
     assert "pnputil" in result.reason.lower()
+
+
+def test_install_light_refuses_cleanly_when_the_temp_dir_cannot_be_created(monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+
+    class _FailingTempDir:
+        def __enter__(self):
+            raise OSError("disk full")
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(pl.tempfile, "TemporaryDirectory", lambda prefix=None: _FailingTempDir())
+    result = pl.install_light("installer.exe", _driver_for_install())
+    assert result.ok is False
+    assert result.restore_point_taken is True
+    assert "temporary directory" in result.reason.lower()
 ```
 
 Add `import os` at the top of the test file if not already present.
@@ -1081,30 +1098,43 @@ def install_light(installer_path: str, driver) -> InstallResult:
                              f"point, refusing to proceed: {reason}",
                              restore_point_taken=False)
 
-    with tempfile.TemporaryDirectory(prefix="wct_driver_update_") as dest_dir:
-        if not _extract_with_7zip(installer_path, dest_dir):
-            return InstallResult(ok=False,
-                                 reason="LIGHT install is not available for "
-                                        "this package -- 7-Zip could not "
-                                        "extract it",
-                                 restore_point_taken=True)
-        inf_path = _find_inf_with_sys(dest_dir)
-        if inf_path is None:
-            return InstallResult(ok=False,
-                                 reason="LIGHT install is not available for "
-                                        "this package -- no usable INF/SYS "
-                                        "pair was found inside it",
-                                 restore_point_taken=True)
-        ok, reason = _run_pnputil_install(inf_path)
-        if not ok:
-            return InstallResult(ok=False, reason=reason, restore_point_taken=True)
-        return InstallResult(ok=True, reason="", restore_point_taken=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="wct_driver_update_") as dest_dir:
+            if not _extract_with_7zip(installer_path, dest_dir):
+                return InstallResult(ok=False,
+                                     reason="LIGHT install is not available for "
+                                            "this package -- 7-Zip could not "
+                                            "extract it",
+                                     restore_point_taken=True)
+            inf_path = _find_inf_with_sys(dest_dir)
+            if inf_path is None:
+                return InstallResult(ok=False,
+                                     reason="LIGHT install is not available for "
+                                            "this package -- no usable INF/SYS "
+                                            "pair was found inside it",
+                                     restore_point_taken=True)
+            ok, reason = _run_pnputil_install(inf_path)
+            if not ok:
+                return InstallResult(ok=False, reason=reason, restore_point_taken=True)
+    except OSError as exc:
+        # A restore point was already taken above -- this only covers the
+        # temp directory itself failing (disk full, no permission to create
+        # one), which must still come back as a normal refusal, not an
+        # exception escaping a function whose whole contract is "always
+        # returns an InstallResult."
+        logger.warning("pipeline: could not create a temp directory for "
+                       "LIGHT extraction: %s", exc)
+        return InstallResult(ok=False,
+                             reason=f"could not create a temporary directory "
+                                    f"for extraction: {exc}",
+                             restore_point_taken=True)
+    return InstallResult(ok=True, reason="", restore_point_taken=True)
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vendor_update_pipeline.py -v`
-Expected: PASS (10 passed).
+Expected: PASS (11 passed).
 
 - [ ] **Step 5: Commit**
 

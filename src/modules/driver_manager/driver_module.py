@@ -38,6 +38,10 @@ from modules.driver_manager.vendor_updates.provider import (
 )
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
+from modules.driver_manager.vendor_updates.rollback import (
+    rollback as rollback_one, bulk_rollback as bulk_rollback_all,
+)
+from modules.driver_manager.vendor_updates.pipeline import InstallResult  # noqa: F401 -- tests build these via dmod.InstallResult(...)
 from ui.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
@@ -151,6 +155,7 @@ class DriverModule(BaseModule):
         self._cancel_backup_btn: Optional[QPushButton] = None
         self._backup_worker: Optional[Worker] = None
         self._restore_points_btn: Optional[QPushButton] = None
+        self._undo_all_updates_btn: Optional[QPushButton] = None
         # [list of DriverInfo] -- a single-element cell, not reassigned after
         # this, so DriverSearchProvider (built once in get_search_provider(),
         # itself called from on_start() before create_widget() ever runs) can
@@ -248,6 +253,8 @@ class DriverModule(BaseModule):
         snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
         snapshots_btn.setMenu(snapshots_menu)
         self._restore_points_btn = QPushButton("System Restore Points")
+        self._undo_all_updates_btn = QPushButton("Undo All Updates This Session")
+        self._undo_all_updates_btn.setEnabled(False)  # enabled once len(self._applied_update_tokens) > 0
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
@@ -272,6 +279,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._export_inventory_btn)
         toolbar.addWidget(snapshots_btn)
         toolbar.addWidget(self._restore_points_btn)
+        toolbar.addWidget(self._undo_all_updates_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(wu_btn)
         toolbar.addWidget(self._backup_btn)
@@ -291,6 +299,7 @@ class DriverModule(BaseModule):
         self._export_inventory_btn.clicked.connect(self._export_inventory)
         devmgr_btn.clicked.connect(self._open_devmgr)
         self._restore_points_btn.clicked.connect(self._show_restore_points)
+        self._undo_all_updates_btn.clicked.connect(self._undo_all_updates_this_session)
         wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
         self._cancel_backup_btn.clicked.connect(self._on_cancel_backup)
@@ -796,6 +805,128 @@ class DriverModule(BaseModule):
         else:
             QThreadPool.globalInstance().start(worker)
 
+    def _can_undo_update(self, driver: DriverInfo) -> bool:
+        token = published_name_for(driver.inf_name)
+        return bool(token) and token in self._applied_update_tokens
+
+    def _undo_this_update(self, driver: DriverInfo) -> None:
+        token = published_name_for(driver.inf_name)
+        if not token or token not in self._applied_update_tokens:
+            return
+        confirm = QMessageBox.question(
+            self._widget, "Undo This Update",
+            f"Roll {driver.device_name} back to its previous driver "
+            f"package ({token})?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        if self._status_lbl:
+            self._status_lbl.setText(f"Rolling back {driver.device_name}...")
+
+        def do_undo(worker):
+            return rollback_one(token)
+
+        worker = Worker(do_undo)
+
+        def on_result(result) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if result.ok:
+                # Guarded, not a bare .remove(): a concurrent "Undo All
+                # Updates This Session" can finish first and clear the
+                # whole list (or, less exotically, this same row's undo
+                # can be triggered twice before the first result lands --
+                # nothing in this module disables the action while a
+                # rollback is in flight, only the enable check at menu-open
+                # time). Either way the token can legitimately already be
+                # gone by the time this result arrives; list.remove() on a
+                # missing item raises ValueError, which is exactly the
+                # "raise instead of handling cleanly" class of bug this
+                # plan has hit five times already -- a rollback that
+                # genuinely succeeded must not surface as an unhandled
+                # exception in a Qt slot.
+                if token in self._applied_update_tokens:
+                    self._applied_update_tokens.remove(token)
+                QMessageBox.information(self._widget, "Undo This Update",
+                                       f"{driver.device_name} was rolled back.")
+            else:
+                QMessageBox.warning(self._widget, "Undo This Update",
+                                   f"Could not roll back: {result.reason}")
+            self._refresh_undo_all_button_state()
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Undo This Update",
+                               f"Rollback failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _undo_all_updates_this_session(self) -> None:
+        if not self._applied_update_tokens:
+            return
+        confirm = QMessageBox.question(
+            self._widget, "Undo All Updates This Session",
+            f"Roll back all {len(self._applied_update_tokens)} update(s) "
+            f"applied this session?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        tokens = list(self._applied_update_tokens)
+        if self._status_lbl:
+            self._status_lbl.setText(f"Rolling back {len(tokens)} update(s)...")
+
+        def do_undo_all(worker):
+            return bulk_rollback_all(tokens)
+
+        worker = Worker(do_undo_all)
+
+        def on_result(results) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            succeeded = sum(1 for r in results if r.ok)
+            failures = [r.reason for r in results if not r.ok]
+            self._applied_update_tokens.clear()
+            message = f"{succeeded} of {len(results)} rolled back successfully."
+            if failures:
+                message += "\n\nFailures:\n" + "\n".join(f"- {f}" for f in failures)
+            QMessageBox.information(self._widget, "Undo All Updates This Session", message)
+            self._refresh_undo_all_button_state()
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Undo All Updates This Session",
+                               f"Rollback failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _refresh_undo_all_button_state(self) -> None:
+        if self._undo_all_updates_btn:
+            self._undo_all_updates_btn.setEnabled(bool(self._applied_update_tokens))
+
     def _open_windows_update_settings(self) -> None:
         os.startfile("ms-settings:windowsupdate")
 
@@ -971,6 +1102,10 @@ class DriverModule(BaseModule):
         act_check_update = menu.addAction("Check for Vendor Update...")
         act_check_update.triggered.connect(
             lambda: self._check_for_vendor_update(driver) if driver else None)
+        act_undo_update = menu.addAction("Undo This Update")
+        act_undo_update.setEnabled(bool(driver) and self._can_undo_update(driver))
+        act_undo_update.triggered.connect(
+            lambda: self._undo_this_update(driver) if driver else None)
         menu.addSeparator()
         act_cleanup = menu.addAction("Open Cleanup's Superseded Drivers panel")
         act_cleanup.triggered.connect(self._open_cleanup_driver_panel)

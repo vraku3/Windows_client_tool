@@ -1126,3 +1126,171 @@ def test_check_for_vendor_update_dispatches_the_network_check_on_a_worker_not_in
     assert isinstance(started[0], dmod.Worker)
     assert started[0] in mod._workers
     assert not shown  # the network check never actually ran
+
+
+class _RecordingPool:
+    def __init__(self):
+        self.started = []
+
+    def start(self, worker) -> None:
+        self.started.append(worker)
+        worker.run()
+
+
+def test_undo_this_update_is_disabled_when_nothing_was_updated_this_session():
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf")
+    assert mod._can_undo_update(driver) is False
+
+
+def test_undo_this_update_rolls_back_the_devices_own_token(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf")
+    mod._applied_update_tokens.append("oem12.inf")
+    assert mod._can_undo_update(driver) is True
+    called = []
+    monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token) or
+                        dmod.InstallResult(ok=True, reason="", restore_point_taken=True))
+    pool = _RecordingPool()
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._undo_this_update(driver)
+    assert called == ["oem12.inf"]
+    assert mod._applied_update_tokens == []  # consumed on success
+    assert shown
+    assert len(pool.started) == 1
+    assert isinstance(pool.started[0], dmod.Worker)
+
+
+def test_undo_this_update_does_not_raise_if_the_token_is_already_gone_when_the_result_lands(monkeypatch):
+    """Nothing disables the row action or the toolbar button while a
+    rollback is in flight -- only the enable checks at menu-open/dispatch
+    time -- so the token this worker is rolling back can legitimately be
+    removed by something else (a concurrent "Undo All", or this same undo
+    triggered twice) before its own result arrives. A bare
+    list.remove(token) would raise ValueError in that case; simulate it by
+    having the rollback itself clear the list as a side effect (standing
+    in for a concurrent "Undo All" finishing first) before returning
+    success."""
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf")
+    mod._applied_update_tokens.append("oem12.inf")
+
+    def fake_rollback(token):
+        mod._applied_update_tokens.clear()
+        return dmod.InstallResult(ok=True, reason="", restore_point_taken=True)
+
+    monkeypatch.setattr(dmod, "rollback_one", fake_rollback)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._undo_this_update(driver)  # must not raise ValueError
+    assert mod._applied_update_tokens == []
+    assert shown
+
+
+def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf")
+    mod._applied_update_tokens.append("oem12.inf")
+    monkeypatch.setattr(dmod, "rollback_one",
+                        lambda token: dmod.InstallResult(ok=False, reason="store pruned it",
+                                                         restore_point_taken=True))
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "warning",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._undo_this_update(driver)
+    assert shown
+    assert "store pruned it" in shown[0]
+    # token stays -- rollback failed, nothing to consume
+    assert mod._applied_update_tokens == ["oem12.inf"]
+
+
+def test_undo_this_update_does_nothing_if_the_user_declines_the_confirm(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf")
+    mod._applied_update_tokens.append("oem12.inf")
+    called = []
+    monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token))
+    pool = _RecordingPool()
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.No)
+    mod._undo_this_update(driver)
+    assert called == []
+    assert pool.started == []
+    assert mod._applied_update_tokens == ["oem12.inf"]
+
+
+def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
+    mod = _module()
+    mod._applied_update_tokens.extend(["oem1.inf", "oem2.inf"])
+    monkeypatch.setattr(dmod, "bulk_rollback_all", lambda tokens: [
+        dmod.InstallResult(ok=True, reason="", restore_point_taken=True),
+        dmod.InstallResult(ok=False, reason="not found", restore_point_taken=True),
+    ])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._undo_all_updates_this_session()
+    assert shown
+    assert "1" in shown[0] and "not found" in shown[0]
+    assert mod._applied_update_tokens == []
+
+
+def test_undo_all_updates_this_session_dispatches_on_a_worker_not_inline(monkeypatch):
+    mod = _module()
+    mod._applied_update_tokens.extend(["oem1.inf"])
+
+    def slow_bulk_rollback(tokens):
+        raise AssertionError("bulk_rollback_all must not run before the "
+                             "worker is actually started")
+
+    monkeypatch.setattr(dmod, "bulk_rollback_all", slow_bulk_rollback)
+
+    class _NeverRunPool:
+        def __init__(self):
+            self.started = []
+
+        def start(self, worker) -> None:
+            self.started.append(worker)
+            # Deliberately never calls worker.run() -- proves dispatch
+            # alone doesn't execute the real rollback inline.
+
+    pool = _NeverRunPool()
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._undo_all_updates_this_session()
+    assert len(pool.started) == 1
+    assert isinstance(pool.started[0], dmod.Worker)
+    assert not shown  # nothing shown yet -- the worker never ran

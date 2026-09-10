@@ -68,7 +68,9 @@ class DriverDetailDialog(QDialog):
             ("Date", driver.date or "Unknown"),
             ("Publisher", driver.publisher or "Unknown"),
             ("Signed", "Yes" if driver.signed else "No"),
-            ("WHQL Certified", "Yes" if driver.whql_certified else "No"),
+            ("WHQL Certified",
+             "N/A" if not driver.inf_name
+             else ("Yes" if driver.whql_certified else "No")),
             ("Error Code", str(driver.error_code) if driver.error_code else "None"),
             ("Hardware ID", driver.hardware_id or "Unknown"),
             ("INF Name", driver.inf_name or "Unknown"),
@@ -96,6 +98,7 @@ class DriverDetailDialog(QDialog):
 
         size_worker = Worker(lambda _w: driver_store_size(driver))
         size_worker.signals.result.connect(self._on_size_computed)
+        size_worker.signals.error.connect(self._on_size_error)
         self._workers.append(size_worker)
         QThreadPool.globalInstance().start(size_worker)
 
@@ -139,6 +142,15 @@ class DriverDetailDialog(QDialog):
         if not widget_is_valid(self):
             return
         self._size_lbl.setText(f"{size:,} bytes" if size is not None else "Unknown")
+
+    def _on_size_error(self, _err_str: str) -> None:
+        # Without this, an exception in driver_store_size() left the row
+        # reading "Calculating…" forever with no way to notice anything
+        # went wrong -- see _on_size_computed's guard for why the row can
+        # legitimately be gone by the time this fires too.
+        if not widget_is_valid(self):
+            return
+        self._size_lbl.setText("Unknown")
 
     def reject(self) -> None:
         # Cancelling here is about the `widget_is_valid` guard above

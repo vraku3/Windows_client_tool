@@ -39,11 +39,42 @@ def test_dialog_shows_the_devices_own_fields(qapp, monkeypatch):
     assert "oem12.inf" in all_text
 
 
-def test_dialog_shows_whql_yes_or_no(qapp):
+def test_dialog_shows_whql_yes_or_no(qapp, monkeypatch):
+    # `_driver()` carries a real OEM-numbered inf_name ("oem12.inf") --
+    # without this monkeypatch (matching the sibling test just above),
+    # __init__'s background size worker calls the REAL driver_store_size(),
+    # which does a real registry lookup plus a real folder walk on any
+    # machine where oem12 happens to exist.
+    monkeypatch.setattr(
+        "modules.driver_manager.driver_detail_dialog.driver_store_size",
+        lambda d: 1234567)
     dlg = DriverDetailDialog(_driver(), reliability_records=[])
     labels = [w.text() for w in dlg.findChildren(
         __import__("PyQt6.QtWidgets", fromlist=["QLabel"]).QLabel)]
     assert any("WHQL" in t for t in labels)
+
+
+def test_whql_shows_not_applicable_for_a_driverless_device(qapp, monkeypatch):
+    """A device with NO driver installed at all (inf_name == "", see
+    driver_reader._merge_driverless_devices) has no driver to be WHQL
+    certified or not -- a confident "No" overstates what Windows actually
+    knows here."""
+    monkeypatch.setattr(
+        "modules.driver_manager.driver_detail_dialog.driver_store_size",
+        lambda d: None)
+    driverless = DriverInfo(
+        device_name="Unknown device", driver_class="Net", version="",
+        date="", publisher="", signed=False, error_code=28, flags="",
+        inf_name="", whql_certified=False,
+    )
+    dlg = DriverDetailDialog(driverless, reliability_records=[])
+    labels = [w.text() for w in dlg.findChildren(
+        __import__("PyQt6.QtWidgets", fromlist=["QLabel"]).QLabel)]
+    whql_label_idx = next(i for i, t in enumerate(labels) if "WHQL" in t)
+    # `_row()` builds a bold label ("<b>WHQL Certified:</b>") immediately
+    # followed by its own value QLabel -- the very next label in
+    # construction order, per `_row()`'s own layout.
+    assert labels[whql_label_idx + 1] == "N/A"
 
 
 # ----------------------------------------------------------------------
@@ -189,6 +220,19 @@ def test_size_row_updates_once_the_worker_reports_back(qapp, monkeypatch):
 
 def test_size_row_shows_unknown_when_the_size_cannot_be_determined(qapp, monkeypatch):
     monkeypatch.setattr(ddmod, "driver_store_size", lambda d: None)
+    monkeypatch.setattr(ddmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    dlg = DriverDetailDialog(_driver(), reliability_records=[])
+    assert dlg._size_lbl.text() == "Unknown"
+
+
+def test_size_row_shows_unknown_when_the_worker_errors(qapp, monkeypatch):
+    """Without an error handler, an exception in driver_store_size() left
+    the row reading "Calculating…" forever with no way to notice."""
+    def _raise(_d):
+        raise OSError("boom")
+
+    monkeypatch.setattr(ddmod, "driver_store_size", _raise)
     monkeypatch.setattr(ddmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _SyncPool()))
     dlg = DriverDetailDialog(_driver(), reliability_records=[])

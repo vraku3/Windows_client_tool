@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QHeaderView, QLineEdit, QLabel,
     QProgressBar, QFileDialog, QCheckBox, QApplication, QMenu,
-    QStackedWidget, QComboBox, QMessageBox,
+    QStackedWidget, QComboBox, QMessageBox, QInputDialog,
 )
 from PyQt6.QtCore import Qt, QThreadPool, QItemSelectionModel
 from PyQt6.QtGui import QColor
@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
 
 FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "Old"]
+
+# A machine with default scheduled checkpoints can have dozens of restore
+# points; the System Restore Points QMessageBox caps its DISPLAY at this
+# many (newest first), never the underlying data, or the box grows
+# unreadably tall.
+_RESTORE_POINTS_DISPLAY_LIMIT = 20
 
 # Task 8: the full inventory export -- distinct from COLUMNS/_do_export
 # (which respect the current filter/visible rows and the table's own
@@ -90,13 +96,11 @@ def _date_sort_value(date_str: str) -> float:
 
 
 def _ask_baseline_name(parent) -> Optional[str]:
-    from PyQt6.QtWidgets import QInputDialog
     name, ok = QInputDialog.getText(parent, "Save Baseline", "Baseline name:")
     return name.strip() if ok and name.strip() else None
 
 
 def _choose_baseline(parent, metas: list) -> Optional[str]:
-    from PyQt6.QtWidgets import QInputDialog
     if not metas:
         return None
     names = [m.name for m in metas]
@@ -543,6 +547,14 @@ class DriverModule(BaseModule):
         if not name:
             return
         from modules.driver_manager import driver_baselines as db
+        if db.baseline_exists(name):
+            if QMessageBox.question(
+                    self._widget, "Save Baseline",
+                    f"A baseline named '{name}' already exists. "
+                    f"Overwrite it?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
         try:
             db.save_baseline(name, self._drivers_ref[0])
         except OSError as exc:
@@ -623,6 +635,12 @@ class DriverModule(BaseModule):
         "No driver installed": "Windows found this device but has no "
                               "driver for it at all -- it will not work "
                               "until one is installed.",
+        "Shared Hardware ID": "This device's hardware ID is claimed by "
+                             "more than one installed driver package -- "
+                             "for example a generic driver and a vendor "
+                             "one both bound to it. Not necessarily a "
+                             "problem, but worth a look in Device Manager "
+                             "if the device is misbehaving.",
     }
 
     def _explain_flags(self, flags: str) -> str:
@@ -667,8 +685,26 @@ class DriverModule(BaseModule):
                 self._widget, "System Restore Points",
                 f"Could not read System Restore points: {err_str}")
 
+        def on_cancelled() -> None:
+            # Worker.run() emits `cancelled` -- never `result` or `error`
+            # -- when the cancel flag is set by the time the function
+            # returns. on_deactivate() calls cancel_all_workers()
+            # unconditionally on module switch, and list_restore_points()
+            # can legitimately still be running (up to its own 30s
+            # subprocess timeout) when that happens. Without this handler
+            # the button stayed stuck on "Loading…"/disabled forever --
+            # the same class of bug _backup_drivers's
+            # `signals.cancelled.connect(self._on_backup_cancelled)`
+            # exists to prevent. No message box here, just recovery: a
+            # cancelled load isn't an error worth interrupting the user
+            # for, and the widget may already be on its way out anyway.
+            if not widget_is_valid(self._widget):
+                return
+            self._reset_restore_points_btn()
+
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
+        worker.signals.cancelled.connect(on_cancelled)
         self._workers.append(worker)
 
         if self.app and getattr(self.app, "thread_pool", None) is not None:
@@ -701,10 +737,18 @@ class DriverModule(BaseModule):
         # text since it's already zero-padded, fixed-width, and
         # year-first, without needing to parse it into a real datetime.
         ordered = sorted(points, key=lambda p: p.get("CreationTime", ""), reverse=True)
+        # A machine with default scheduled checkpoints can have dozens of
+        # restore points -- cap the DISPLAY only (the sort above still
+        # covers every point) so the QMessageBox doesn't grow unreadably
+        # tall.
+        shown = ordered[:_RESTORE_POINTS_DISPLAY_LIMIT]
         lines = [
             f"{p.get('CreationTime', 'Unknown time')}: {p.get('Description', '')}"
-            for p in ordered
+            for p in shown
         ]
+        remaining = len(ordered) - len(shown)
+        if remaining > 0:
+            lines.append(f"...and {remaining} more.")
         QMessageBox.information(self._widget, "System Restore Points", "\n".join(lines))
 
     def _resolve_driver_for_row(self, row: int) -> Optional[DriverInfo]:

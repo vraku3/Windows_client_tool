@@ -670,6 +670,79 @@ def test_save_baseline_action_shows_a_warning_instead_of_crashing_on_oserror(mon
     assert "bad-name" in warned[0][2]
 
 
+def test_save_baseline_action_saves_without_confirmation_when_no_name_collides(monkeypatch, tmp_path):
+    """A brand-new baseline name proceeds straight through -- no dialog."""
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    monkeypatch.setattr(dmod, "_ask_baseline_name", lambda parent: "fresh-name")
+
+    def _fail_if_called(*a, **k):
+        raise AssertionError("QMessageBox.question must not be shown for a "
+                              "non-colliding baseline name")
+    monkeypatch.setattr(dmod.QMessageBox, "question", _fail_if_called)
+
+    mod._save_baseline_action()
+
+    assert [m.name for m in db.list_baselines()] == ["fresh-name"]
+
+
+def test_save_baseline_action_asks_before_overwriting_a_colliding_name_and_respects_no(monkeypatch, tmp_path):
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    db.save_baseline("existing", [
+        DriverInfo(device_name="Old", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ])
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="New", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    monkeypatch.setattr(dmod, "_ask_baseline_name", lambda parent: "existing")
+    asked = []
+    monkeypatch.setattr(
+        dmod.QMessageBox, "question",
+        lambda *a, **k: (asked.append(a) or dmod.QMessageBox.StandardButton.No))
+    save_calls = []
+    monkeypatch.setattr(
+        db, "save_baseline", lambda *a, **k: save_calls.append(a))
+
+    mod._save_baseline_action()
+
+    assert asked, "expected a confirmation dialog for the colliding name"
+    assert "existing" in asked[0][2]
+    assert save_calls == [], "save_baseline must not run when the user says No"
+
+
+def test_save_baseline_action_overwrites_a_colliding_name_on_yes(monkeypatch, tmp_path):
+    from modules.driver_manager import driver_baselines as db
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    db.save_baseline("existing", [
+        DriverInfo(device_name="Old", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ])
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="New", driver_class="Net", version="1.0",
+                   date="", publisher="V", signed=True, error_code=0, flags=""),
+    ]
+    monkeypatch.setattr(dmod, "_ask_baseline_name", lambda parent: "existing")
+    monkeypatch.setattr(
+        dmod.QMessageBox, "question",
+        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+
+    mod._save_baseline_action()
+
+    saved = db.load_baseline("existing")
+    assert saved is not None
+    assert [d.device_name for d in saved] == ["New"]
+
+
 def test_diff_against_baseline_action_shows_a_summary(monkeypatch, tmp_path):
     from modules.driver_manager import driver_baselines as db
     monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
@@ -740,6 +813,10 @@ def test_show_restore_points_runs_off_the_ui_thread(monkeypatch):
     monkeypatch.setattr(dmod, "list_restore_points", lambda: [])
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _RecordingPool()))
+    # The empty-list branch pops a real QMessageBox -- a modal dialog with
+    # no event loop to click it hangs the test forever. Every sibling test
+    # below mocks this; this one must too.
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
 
     mod._show_restore_points()
 
@@ -748,6 +825,42 @@ def test_show_restore_points_runs_off_the_ui_thread(monkeypatch):
     # Restored after the (synchronously-run) worker's result lands.
     assert mod._restore_points_btn.isEnabled() is True
     assert mod._restore_points_btn.text() == "System Restore Points"
+
+
+def test_restore_points_message_is_capped_with_a_more_line(monkeypatch):
+    """A machine with default scheduled checkpoints can have dozens of
+    restore points -- the QMessageBox must cap the DISPLAY (newest first)
+    and say how many more there are, rather than showing every single
+    one."""
+    mod = _module()
+
+    class _RecordingPool:
+        def start(self, worker) -> None:
+            worker.run()
+
+    total = dmod._RESTORE_POINTS_DISPLAY_LIMIT + 7
+    points = [
+        {"CreationTime": f"202601{str(i + 1).zfill(2)}000000.000000-000",
+         "Description": f"Checkpoint {i}"}
+        for i in range(total)
+    ]
+    monkeypatch.setattr(dmod, "list_restore_points", lambda: points)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a))
+
+    mod._show_restore_points()
+
+    assert shown
+    message = shown[0][2]
+    assert "...and 7 more." in message
+    # Only the capped, newest-first slice's descriptions should appear --
+    # the oldest 7 (Checkpoint 0..6) must not be individually listed.
+    for i in range(7):
+        assert f"Checkpoint {i}\n" not in message
+        assert not message.endswith(f"Checkpoint {i}")
 
 
 def test_show_restore_points_disables_button_while_running(monkeypatch):
@@ -763,6 +876,71 @@ def test_show_restore_points_disables_button_while_running(monkeypatch):
 
     assert mod._restore_points_btn.isEnabled() is False
     assert mod._restore_points_btn.text() == "Loading…"
+
+
+def test_restore_points_worker_cancelled_mid_load_still_recovers_the_button(monkeypatch):
+    """Regression, same class of bug `test_cancelling_mid_backup_still_
+    recovers_the_ui` guards against for the backup worker: Worker.run()
+    (core/worker.py) emits `cancelled` -- never `result` or `error` --
+    whenever the cancel flag is set by the time the worker function
+    returns. `on_deactivate()` calls `cancel_all_workers()`
+    unconditionally on module switch, and `list_restore_points()` can
+    legitimately still be running (up to its own 30s subprocess timeout)
+    when that happens. Without a `cancelled` handler connected, the
+    button was left stuck on "Loading…"/disabled for the rest of the
+    session. Drives a REAL Worker through a real cancellation, not a
+    stub."""
+
+    class _CancelMidRunPool:
+        """Cancels the worker from inside the "subprocess" call itself,
+        then runs it -- so `worker.is_cancelled` is already True by the
+        time `Worker.run()` checks it after `fn()` returns, exactly the
+        path that emits `cancelled` instead of `result`."""
+
+        def start(self, worker) -> None:
+            self._worker = worker
+            worker.run()
+
+    mod = _module()
+    pool = _CancelMidRunPool()
+
+    def slow_list_restore_points():
+        # Simulates a still-running subprocess call getting cancelled by
+        # a module switch (on_deactivate -> cancel_all_workers()) before
+        # it returns.
+        pool._worker.cancel()
+        return []
+
+    monkeypatch.setattr(dmod, "list_restore_points", slow_list_restore_points)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: pool))
+
+    mod._show_restore_points()
+
+    assert mod._restore_points_btn.isEnabled() is True
+    assert mod._restore_points_btn.text() == "System Restore Points"
+
+
+def test_show_restore_points_shows_message_box_and_recovers_button_on_error(monkeypatch):
+    """The `on_error` handler exists but had no test -- drive a real
+    Worker through a real exception in list_restore_points()."""
+    mod = _module()
+
+    def _raise():
+        raise OSError("boom")
+
+    monkeypatch.setattr(dmod, "list_restore_points", _raise)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+
+    mod._show_restore_points()
+
+    assert shown and "boom" in shown[0]
+    assert mod._restore_points_btn.isEnabled() is True
+    assert mod._restore_points_btn.text() == "System Restore Points"
 
 
 def test_show_restore_points_lists_them_by_creation_time_descending(monkeypatch):

@@ -160,3 +160,111 @@ None. Both sites now match the codebase's established async-worker
 pattern, both have widget-lifetime guards on their result callbacks, and
 the test suite exercises the loading state, the completed state, and the
 early-close-then-stale-result path for both.
+
+---
+
+## Fix pass (post-review)
+
+Re-verified branch (`feat/driver-manager-followups`) before touching
+anything. A concurrently-dispatched Batch B was landing uncommitted
+changes on this same checkout while this fix pass ran (a
+`_RESTORE_POINTS_DISPLAY_LIMIT` cap in `driver_module.py`/its test, and a
+"WHQL Certified: N/A for a driverless device" tweak in
+`driver_detail_dialog.py`) — read both files fresh rather than assuming
+they matched what Batch A originally wrote, per the coordinator's note.
+Neither conflicted with anything below.
+
+### 1. Critical — hanging test fixed
+
+`test_show_restore_points_runs_off_the_ui_thread` drove
+`_present_restore_points([])` into its "no points" branch, which pops a
+real `QMessageBox.information(...)`. With no event loop to click it and
+no mock, the test hung indefinitely. Added the same
+`monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)`
+its sibling tests already use. Confirmed the fix by actually running the
+suite (not just reading the diff) and watching it complete well under
+the 120s pytest-timeout.
+
+### 2. Important — `signals.cancelled` now handled on both new workers
+
+- **`_show_restore_points`** (`driver_module.py`): added an `on_cancelled`
+  handler, connected to `worker.signals.cancelled`, that guards with
+  `widget_is_valid(self._widget)` and calls the existing
+  `_reset_restore_points_btn()` — no message box, just recovery, matching
+  `_backup_drivers`'s established `signals.cancelled.connect(self._on_backup_cancelled)`
+  pattern exactly. Without this, `on_deactivate()`'s unconditional
+  `cancel_all_workers()` firing while `list_restore_points()` was still
+  inside its (up to 30s) subprocess call left the button stuck on
+  "Loading…"/disabled for the rest of the session.
+- Added `test_restore_points_worker_cancelled_mid_load_still_recovers_the_button`,
+  modeled directly on `test_cancelling_mid_backup_still_recovers_the_ui`:
+  a `_CancelMidRunPool` calls `worker.cancel()` from *inside* the faked
+  `list_restore_points()` itself, then runs the worker — so
+  `worker.is_cancelled` is already `True` by the time `Worker.run()`
+  checks it after the function returns, which is the exact code path that
+  emits `cancelled` instead of `result`. This drives a real `Worker`
+  through a real cancellation rather than stubbing the signal.
+- **`DriverDetailDialog`**'s size-computation worker (`driver_detail_dialog.py`)
+  had no `signals.error` connection at all — an exception in
+  `driver_store_size()` would have left the row reading "Calculating…"
+  forever with no way to notice. Added `_on_size_error`, guarded the same
+  way as `_on_size_computed` (`widget_is_valid(self)`), setting the label
+  to "Unknown" on error. Added
+  `test_size_row_shows_unknown_when_the_worker_errors`, which makes
+  `driver_store_size` raise `OSError` and confirms the label lands on
+  "Unknown" via a real `Worker` run synchronously through `_SyncPool`.
+
+### 3. Minor — also addressed
+
+- Added `test_show_restore_points_shows_message_box_and_recovers_button_on_error`
+  for Site 1's `on_error` path (previously untested even though the
+  handler existed): `list_restore_points` raises `OSError("boom")`, and
+  the test confirms both the message box text and that the button
+  recovers to its normal enabled/text state afterward.
+- Did not touch the "52 vs 56" discrepancy investigation beyond re-running
+  for real this time (below) — the mismatch was from the original report
+  not having actually re-collected after edits; this pass's numbers come
+  from a fresh `--collect-only` and a fresh full run, both just now.
+
+### Test results (re-verified for real this time)
+
+```
+$ .venv\Scripts\python.exe -m pytest tests/test_driver_module.py tests/test_driver_detail_dialog.py --collect-only -q
+tests/test_driver_detail_dialog.py: 13
+tests/test_driver_module.py: 46
+(59 total)
+
+$ .venv\Scripts\python.exe -m pytest tests/test_driver_module.py tests/test_driver_detail_dialog.py -v
+============================= test session starts =============================
+collected 59 items
+tests\test_driver_module.py ............................................ [ 74%]
+..                                                                       [ 77%]
+tests\test_driver_detail_dialog.py .............                        [100%]
+============================= 59 passed in 0.54s ==============================
+```
+
+Ran again after Batch B's concurrent edits landed on disk
+(`driver_module.py` gained `_RESTORE_POINTS_DISPLAY_LIMIT` and its test;
+`driver_detail_dialog.py` gained the WHQL "N/A" tweak and its own test)
+— 59 passed, no hang, exit code 0. Ran once more after a further Batch B
+test addition landed mid-fix-pass: 60 passed, exit code 0, still no hang.
+Also ran the wider driver-manager slice (`test_driver_module.py
+test_driver_detail_dialog.py test_driver_reader.py test_driver_baselines.py`)
+as a sanity check against Batch B's changes to those other two files:
+exit code 0, no failure markers.
+
+`ruff check` on all four touched files still reports only the same 5
+pre-existing issues from before this fix pass (unused `mod` in
+`test_uninstall_is_offered_only_for_oem_numbered_drivers`, the one-line
+`class R: ...` statement, an unused `Qt` import in
+`test_export_filters_by_row_identity_not_visible_name`) — none in lines
+this pass touched.
+
+### Concerns
+
+None. The hang is fixed and was confirmed fixed by actually running the
+suite to completion rather than reading the diff and assuming; both
+`signals.cancelled` gaps are closed with regression tests modeled on this
+file's own established `_backup_drivers` precedent; the detail dialog's
+size worker now reports failure instead of hanging at "Calculating…"
+forever.

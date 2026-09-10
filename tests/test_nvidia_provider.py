@@ -107,6 +107,43 @@ def test_check_for_update_returns_none_and_logs_on_malformed_json(tmp_path, monk
     assert any("nvidia" in r.message.lower() for r in caplog.records)
 
 
+def test_check_for_update_returns_none_and_logs_when_pfid_fetch_raises_oserror(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(nvp, "_pfid_cache_path", lambda: str(tmp_path / "pfid.xml"))
+
+    def fake_urlopen(url, timeout=None):
+        raise OSError("network unreachable")
+
+    monkeypatch.setattr(nvp, "urlopen", fake_urlopen)
+    provider = nvp.NvidiaProvider()
+    with caplog.at_level("WARNING"):
+        result = provider.check_for_update(_driver())
+    assert result is None
+    assert any("nvidia" in r.message.lower() for r in caplog.records)
+
+
+def test_check_for_update_returns_none_and_logs_on_missing_version_or_download_url(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(nvp, "_pfid_cache_path", lambda: str(tmp_path / "pfid.xml"))
+    incomplete_json = json.dumps({
+        "Success": "10",
+        "IDS": [{"downloadInfo": {"Success": "1", "IsWHQL": "1"}}],
+    }).encode("utf-8")
+    responses = [_PFID_XML, incomplete_json]
+
+    def fake_urlopen(url, timeout=None):
+        m = MagicMock()
+        m.read.return_value = responses.pop(0)
+        m.__enter__ = lambda s: m
+        m.__exit__ = lambda *a: False
+        return m
+
+    monkeypatch.setattr(nvp, "urlopen", fake_urlopen)
+    provider = nvp.NvidiaProvider()
+    with caplog.at_level("WARNING"):
+        result = provider.check_for_update(_driver())
+    assert result is None
+    assert any("nvidia" in r.message.lower() for r in caplog.records)
+
+
 def test_pfid_cache_is_reused_when_fresh(tmp_path, monkeypatch):
     cache_path = tmp_path / "pfid.xml"
     cache_path.write_bytes(_PFID_XML)

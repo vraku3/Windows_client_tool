@@ -35,23 +35,35 @@ def _pfid_cache_path() -> str:
     return os.path.join(directory, "nvidia_pfid_cache.xml")
 
 
-def _fetch_pfid_table() -> bytes:
+def _fetch_pfid_table() -> Optional[bytes]:
+    """The pfid lookup table, from cache or a fresh fetch -- or None if
+    neither the cache nor the network could produce it. Never raises: a
+    network failure or a local disk error is a "we don't know", the same
+    as a parse failure, not an uncaught exception out of check_for_update.
+    """
     cache_path = _pfid_cache_path()
-    if os.path.exists(cache_path):
-        age = time.time() - os.path.getmtime(cache_path)
-        if age < _PFID_CACHE_MAX_AGE_SECONDS:
-            with open(cache_path, "rb") as f:
-                return f.read()
-    with urlopen(_PFID_LOOKUP_URL, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
-        data = resp.read()
-    with open(cache_path, "wb") as f:
-        f.write(data)
-    return data
+    try:
+        if os.path.exists(cache_path):
+            age = time.time() - os.path.getmtime(cache_path)
+            if age < _PFID_CACHE_MAX_AGE_SECONDS:
+                with open(cache_path, "rb") as f:
+                    return f.read()
+        with urlopen(_PFID_LOOKUP_URL, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+            data = resp.read()
+        with open(cache_path, "wb") as f:
+            f.write(data)
+        return data
+    except OSError as exc:
+        logger.warning("nvidia_provider: could not fetch/cache pfid table: %s", exc)
+        return None
 
 
 def _pfid_for_gpu_name(gpu_name: str) -> Optional[str]:
+    table = _fetch_pfid_table()
+    if table is None:
+        return None
     try:
-        root = ET.fromstring(_fetch_pfid_table())
+        root = ET.fromstring(table)
     except ET.ParseError as exc:
         logger.warning("nvidia_provider: could not parse pfid table: %s", exc)
         return None

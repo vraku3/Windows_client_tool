@@ -67,3 +67,30 @@ def test_bulk_rollback_reports_every_result_even_with_a_partial_failure(monkeypa
     assert len(results) == 2
     assert results[0].ok is True
     assert results[1].ok is False
+
+
+def test_rollback_with_no_token_refuses_without_raising():
+    # snapshot_before_install legitimately returns None for a driverless
+    # device or an inbox driver -- a caller that forwards that straight
+    # into rollback() must get a clean refusal, not a TypeError from
+    # store_folder_for's string concatenation.
+    result = rb.rollback(None)
+    assert result.ok is False
+    assert "token" in result.reason.lower()
+    assert result.restore_point_taken is False
+
+
+def test_rollback_with_empty_string_token_refuses_without_raising():
+    result = rb.rollback("")
+    assert result.ok is False
+    assert result.restore_point_taken is False
+
+
+def test_bulk_rollback_survives_a_none_token_in_the_middle_of_the_list(monkeypatch):
+    monkeypatch.setattr(rb, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(rb, "store_folder_for", lambda published: r"C:\...\ok")
+    monkeypatch.setattr(rb, "_run_pnputil_install", lambda inf: (True, ""))
+    results = rb.bulk_rollback(["oem1.inf", None])
+    assert len(results) == 2
+    assert results[0].ok is True
+    assert results[1].ok is False

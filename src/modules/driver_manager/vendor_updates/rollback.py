@@ -29,6 +29,11 @@ def rollback(token: str) -> InstallResult:
     """Reverses one snapshot_before_install token through the identical
     restore-point -> write -> verify discipline install_light uses -- a
     rollback is a write too, no shortcuts."""
+    if not token:
+        logger.warning("rollback: called with no token (nothing to roll back to)")
+        return InstallResult(ok=False,
+                             reason="no rollback token recorded for this device",
+                             restore_point_taken=False)
     ok, reason = create_restore_point(f"Before rolling back driver update: {token}")
     if not ok:
         return InstallResult(ok=False,

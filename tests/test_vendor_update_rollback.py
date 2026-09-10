@@ -1,0 +1,69 @@
+from modules.driver_manager.driver_reader import DriverInfo
+from modules.driver_manager.vendor_updates import rollback as rb
+
+
+def _driver(inf_name="oem12.inf"):
+    return DriverInfo(device_name="Test GPU", driver_class="Display",
+                      version="1.0", date="", publisher="V", signed=True,
+                      error_code=0, flags="", inf_name=inf_name,
+                      hardware_id="PCI\\VEN_10DE&DEV_2684")
+
+
+def test_snapshot_before_install_records_the_oem_published_name():
+    token = rb.snapshot_before_install(_driver(inf_name="oem12.inf"))
+    assert token == "oem12.inf"
+
+
+def test_snapshot_before_install_returns_none_for_a_driverless_device():
+    token = rb.snapshot_before_install(_driver(inf_name=""))
+    assert token is None
+
+
+def test_snapshot_before_install_returns_none_for_an_inbox_driver():
+    # published_name_for() itself returns None for non-oem infs like usb.inf
+    token = rb.snapshot_before_install(_driver(inf_name="usb.inf"))
+    assert token is None
+
+
+def test_rollback_reinstalls_the_snapshotted_package(monkeypatch):
+    monkeypatch.setattr(rb, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(rb, "store_folder_for", lambda published: r"C:\Windows\System32\DriverStore\FileRepository\display.inf_amd64_abc")
+    ran = {}
+
+    def fake_pnputil(inf_path):
+        ran["inf_path"] = inf_path
+        return True, ""
+
+    monkeypatch.setattr(rb, "_run_pnputil_install", fake_pnputil)
+    result = rb.rollback("oem12.inf")
+    assert result.ok is True
+    assert "oem12.inf" in ran["inf_path"]
+
+
+def test_rollback_refuses_when_no_restore_point_can_be_created(monkeypatch):
+    monkeypatch.setattr(rb, "create_restore_point", lambda desc, timeout=60: (False, "disabled"))
+    result = rb.rollback("oem12.inf")
+    assert result.ok is False
+    assert "restore point" in result.reason.lower()
+
+
+def test_rollback_reports_when_the_store_no_longer_has_the_package(monkeypatch):
+    monkeypatch.setattr(rb, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(rb, "store_folder_for", lambda published: None)
+    result = rb.rollback("oem12.inf")
+    assert result.ok is False
+    assert "no longer" in result.reason.lower() or "not found" in result.reason.lower()
+
+
+def test_bulk_rollback_reports_every_result_even_with_a_partial_failure(monkeypatch):
+    monkeypatch.setattr(rb, "create_restore_point", lambda desc, timeout=60: (True, ""))
+
+    def fake_store_folder(published):
+        return r"C:\...\ok" if published == "oem1.inf" else None
+
+    monkeypatch.setattr(rb, "store_folder_for", fake_store_folder)
+    monkeypatch.setattr(rb, "_run_pnputil_install", lambda inf: (True, ""))
+    results = rb.bulk_rollback(["oem1.inf", "oem2.inf"])
+    assert len(results) == 2
+    assert results[0].ok is True
+    assert results[1].ok is False

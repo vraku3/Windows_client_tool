@@ -5,6 +5,8 @@ calls into this from a Worker, never the UI thread.
 """
 import logging
 import os
+import subprocess
+import tempfile
 import uuid
 from dataclasses import dataclass
 from typing import List, Optional
@@ -12,8 +14,11 @@ from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from core.procengine.signatures import verify_signature
+from core.system_restore import create_restore_point
 
 logger = logging.getLogger(__name__)
+
+CREATE_NO_WINDOW = 0x08000000
 
 
 def _default_cache_dir() -> Optional[str]:
@@ -99,3 +104,103 @@ def download_and_verify(update, allowed_domains: List[str],
                    f"expected {update.installer_signer!r} -- refusing to "
                    f"run something not from the expected vendor")
     return DownloadResult(path=dest_path)
+
+
+@dataclass(frozen=True)
+class InstallResult:
+    ok: bool
+    reason: str
+    restore_point_taken: bool
+    previous_package_hint: Optional[str] = None  # for rollback.py, Task 6
+
+
+def _extract_with_7zip(installer_path: str, dest_dir: str) -> bool:
+    """Shells out to 7z the same way this codebase already does for CBS
+    log cab extraction -- same CREATE_NO_WINDOW discipline as every other
+    subprocess call in this module. Not every installer format extracts
+    cleanly; a non-zero exit here is a real, expected outcome (NSIS/
+    InstallShield/custom wrappers vary), not a bug -- the caller treats a
+    False return as 'LIGHT not available for this package', never a crash."""
+    try:
+        proc = subprocess.run(
+            ["7z", "x", installer_path, f"-o{dest_dir}", "-y"],
+            capture_output=True, timeout=120, creationflags=CREATE_NO_WINDOW)
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("pipeline: 7z extraction failed for %s: %s", installer_path, exc)
+        return False
+
+
+def _find_inf_with_sys(dest_dir: str) -> Optional[str]:
+    """The first .inf file in dest_dir's tree whose own directory also has
+    a .sys -- an inf with no driver binary alongside it isn't installable,
+    and picking the wrong inf out of a package with several (a control-
+    panel's own inf vs. the actual device driver's) is a real risk this
+    check reduces, though not eliminates -- Phase 2 may need to be pickier
+    once a real, messy vendor package is tested against this."""
+    for root, _dirs, files in os.walk(dest_dir):
+        infs = [f for f in files if f.lower().endswith(".inf")]
+        syss = {f.lower()[:-4] for f in files if f.lower().endswith(".sys")}
+        for inf in infs:
+            if inf.lower()[:-4] in syss or syss:
+                return os.path.join(root, inf)
+    return None
+
+
+def _run_pnputil_install(inf_path: str) -> tuple:
+    try:
+        proc = subprocess.run(
+            ["pnputil", "/add-driver", inf_path, "/install"],
+            capture_output=True, text=True, timeout=120,
+            creationflags=CREATE_NO_WINDOW)
+        if proc.returncode == 0:
+            return True, ""
+        return False, f"pnputil exited {proc.returncode}: {proc.stdout or proc.stderr}"
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"pnputil could not be run: {exc}"
+
+
+def install_light(installer_path: str, driver) -> InstallResult:
+    """The LIGHT install path: extract just INF/SYS from installer_path
+    and pnputil-install it -- never runs the vendor's own installer.
+    Always takes a restore point first; refuses outright if one can't be
+    created. driver: a driver_reader.DriverInfo, used only for the
+    restore-point description text."""
+    ok, reason = create_restore_point(
+        f"Before LIGHT driver update: {driver.device_name}")
+    if not ok:
+        return InstallResult(ok=False, reason=f"could not take a restore "
+                             f"point, refusing to proceed: {reason}",
+                             restore_point_taken=False)
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="wct_driver_update_") as dest_dir:
+            if not _extract_with_7zip(installer_path, dest_dir):
+                return InstallResult(ok=False,
+                                     reason="LIGHT install is not available for "
+                                            "this package -- 7-Zip could not "
+                                            "extract it",
+                                     restore_point_taken=True)
+            inf_path = _find_inf_with_sys(dest_dir)
+            if inf_path is None:
+                return InstallResult(ok=False,
+                                     reason="LIGHT install is not available for "
+                                            "this package -- no usable INF/SYS "
+                                            "pair was found inside it",
+                                     restore_point_taken=True)
+            ok, reason = _run_pnputil_install(inf_path)
+            if not ok:
+                return InstallResult(ok=False, reason=reason, restore_point_taken=True)
+    except OSError as exc:
+        # A restore point was already taken above -- this only covers the
+        # temp directory itself failing (disk full, no permission to create
+        # one), which must still come back as a normal refusal, not an
+        # exception escaping a function whose whole contract is "always
+        # returns an InstallResult."
+        logger.warning("pipeline: could not create a temp directory for "
+                       "LIGHT extraction: %s", exc)
+        return InstallResult(ok=False,
+                             reason=f"could not create a temporary directory "
+                                    f"for extraction: {exc}",
+                             restore_point_taken=True)
+    return InstallResult(ok=True, reason="", restore_point_taken=True)

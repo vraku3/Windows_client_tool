@@ -1,5 +1,8 @@
+import os
+
 from core.procengine.signatures import SignatureFacts, VALID, NOT_SIGNED
 from modules.driver_manager.vendor_updates import pipeline as pl
+from modules.driver_manager.vendor_updates.pipeline import InstallResult
 from modules.driver_manager.vendor_updates.provider import UpdateInfo
 
 
@@ -96,3 +99,88 @@ def test_download_and_verify_refuses_cleanly_on_a_malformed_url(tmp_path):
         update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
     assert result.path is None
     assert "url" in result.reason.lower()
+
+
+def _driver_for_install():
+    from modules.driver_manager.driver_reader import DriverInfo
+    return DriverInfo(device_name="Test GPU", driver_class="Display",
+                      version="1.0", date="", publisher="V", signed=True,
+                      error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
+
+
+def test_install_light_refuses_when_no_restore_point_can_be_created(tmp_path, monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (False, "policy disabled"))
+    result = pl.install_light(str(tmp_path / "installer.exe"), _driver_for_install())
+    assert result.ok is False
+    assert result.restore_point_taken is False
+    assert "restore point" in result.reason.lower()
+
+
+def test_install_light_refuses_when_extraction_finds_no_inf(tmp_path, monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl, "_extract_with_7zip", lambda installer, dest: True)
+    # extraction "succeeds" but leaves no usable inf/sys pair
+    result = pl.install_light(str(tmp_path / "installer.exe"), _driver_for_install())
+    assert result.ok is False
+    assert result.restore_point_taken is True
+    assert "not available" in result.reason.lower() or "no usable" in result.reason.lower()
+
+
+def test_install_light_runs_pnputil_when_an_inf_is_found(tmp_path, monkeypatch):
+    extract_dir_holder = {}
+
+    def fake_extract(installer, dest):
+        extract_dir_holder["dir"] = dest
+        os.makedirs(os.path.join(dest, "display.driver"), exist_ok=True)
+        with open(os.path.join(dest, "display.driver", "nv_disp.inf"), "w") as f:
+            f.write("; fake inf")
+        with open(os.path.join(dest, "display.driver", "nv_disp.sys"), "wb") as f:
+            f.write(b"fake sys")
+        return True
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl, "_extract_with_7zip", fake_extract)
+    ran = {}
+
+    def fake_run_pnputil(inf_path):
+        ran["inf_path"] = inf_path
+        return True, ""
+
+    monkeypatch.setattr(pl, "_run_pnputil_install", fake_run_pnputil)
+    result = pl.install_light(str(tmp_path / "installer.exe"), _driver_for_install())
+    assert isinstance(result, InstallResult)
+    assert result.ok is True
+    assert result.restore_point_taken is True
+    assert ran["inf_path"].endswith("nv_disp.inf")
+
+
+def test_install_light_reports_pnputil_failure_distinctly(tmp_path, monkeypatch):
+    def fake_extract(installer, dest):
+        os.makedirs(os.path.join(dest, "d"), exist_ok=True)
+        open(os.path.join(dest, "d", "x.inf"), "w").close()
+        open(os.path.join(dest, "d", "x.sys"), "wb").close()
+        return True
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl, "_extract_with_7zip", fake_extract)
+    monkeypatch.setattr(pl, "_run_pnputil_install", lambda inf: (False, "pnputil exited 3"))
+    result = pl.install_light(str(tmp_path / "installer.exe"), _driver_for_install())
+    assert result.ok is False
+    assert "pnputil" in result.reason.lower()
+
+
+def test_install_light_refuses_cleanly_when_the_temp_dir_cannot_be_created(monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+
+    class _FailingTempDir:
+        def __enter__(self):
+            raise OSError("disk full")
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(pl.tempfile, "TemporaryDirectory", lambda prefix=None: _FailingTempDir())
+    result = pl.install_light("installer.exe", _driver_for_install())
+    assert result.ok is False
+    assert result.restore_point_taken is True
+    assert "temporary directory" in result.reason.lower()

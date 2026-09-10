@@ -1809,8 +1809,29 @@ every other action in this file already uses.
 
 - [ ] **Step 1: Write the failing tests**
 
+Both `_undo_this_update` and `_undo_all_updates_this_session` run their
+real rollback work (`rollback_one`/`bulk_rollback_all` — real
+`pnputil`/restore-point calls) on a `Worker`, matching Task 8's own
+`_run_vendor_update` pattern exactly (Task 8's first version left this
+network-bound work synchronous and a review found and fixed it — this
+task is written already-backgrounded, not repeating that). Tests use this
+file's own established `_RecordingPool`-style idiom (a fake
+`QThreadPool.globalInstance()` whose `start(worker)` calls `worker.run()`
+synchronously, so the test can assert on results immediately after —
+see this same file's existing `test_show_restore_points_runs_off_the_ui_thread`
+and its sibling tests for the pattern being followed here).
+
 ```python
 # tests/test_driver_module.py -- add these
+class _RecordingPool:
+    def __init__(self):
+        self.started = []
+
+    def start(self, worker) -> None:
+        self.started.append(worker)
+        worker.run()
+
+
 def test_undo_this_update_is_disabled_when_nothing_was_updated_this_session():
     mod = _module()
     driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
@@ -1829,6 +1850,10 @@ def test_undo_this_update_rolls_back_the_devices_own_token(monkeypatch):
     called = []
     monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token) or
                         dmod.InstallResult(ok=True, reason="", restore_point_taken=True))
+    pool = _RecordingPool()
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
                         lambda *a, **k: shown.append(a[2]))
@@ -1836,6 +1861,8 @@ def test_undo_this_update_rolls_back_the_devices_own_token(monkeypatch):
     assert called == ["oem12.inf"]
     assert mod._applied_update_tokens == []  # consumed on success
     assert shown
+    assert len(pool.started) == 1
+    assert isinstance(pool.started[0], dmod.Worker)
 
 
 def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
@@ -1847,6 +1874,10 @@ def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
     monkeypatch.setattr(dmod, "rollback_one",
                         lambda token: dmod.InstallResult(ok=False, reason="store pruned it",
                                                          restore_point_taken=True))
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "warning",
                         lambda *a, **k: shown.append(a[2]))
@@ -1857,6 +1888,24 @@ def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
     assert mod._applied_update_tokens == ["oem12.inf"]
 
 
+def test_undo_this_update_does_nothing_if_the_user_declines_the_confirm(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf")
+    mod._applied_update_tokens.append("oem12.inf")
+    called = []
+    monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token))
+    pool = _RecordingPool()
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.No)
+    mod._undo_this_update(driver)
+    assert called == []
+    assert pool.started == []
+    assert mod._applied_update_tokens == ["oem12.inf"]
+
+
 def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
     mod = _module()
     mod._applied_update_tokens.extend(["oem1.inf", "oem2.inf"])
@@ -1864,6 +1913,10 @@ def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
         dmod.InstallResult(ok=True, reason="", restore_point_taken=True),
         dmod.InstallResult(ok=False, reason="not found", restore_point_taken=True),
     ])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
                         lambda *a, **k: shown.append(a[2]))
@@ -1871,6 +1924,38 @@ def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
     assert shown
     assert "1" in shown[0] and "not found" in shown[0]
     assert mod._applied_update_tokens == []
+
+
+def test_undo_all_updates_this_session_dispatches_on_a_worker_not_inline(monkeypatch):
+    mod = _module()
+    mod._applied_update_tokens.extend(["oem1.inf"])
+
+    def slow_bulk_rollback(tokens):
+        raise AssertionError("bulk_rollback_all must not run before the "
+                             "worker is actually started")
+
+    monkeypatch.setattr(dmod, "bulk_rollback_all", slow_bulk_rollback)
+
+    class _NeverRunPool:
+        def __init__(self):
+            self.started = []
+
+        def start(self, worker) -> None:
+            self.started.append(worker)
+            # Deliberately never calls worker.run() -- proves dispatch
+            # alone doesn't execute the real rollback inline.
+
+    pool = _NeverRunPool()
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._undo_all_updates_this_session()
+    assert len(pool.started) == 1
+    assert isinstance(pool.started[0], dmod.Worker)
+    assert not shown  # nothing shown yet -- the worker never ran
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1909,7 +1994,12 @@ and its wiring, alongside the other button connections:
         self._undo_all_updates_btn.clicked.connect(self._undo_all_updates_this_session)
 ```
 
-New methods on `DriverModule`:
+New methods on `DriverModule`. Both real-rollback methods run
+`rollback_one`/`bulk_rollback_all` on a `Worker` — a real
+`pnputil`/restore-point call per device, exactly the class of "don't
+block the UI thread for real work" mistake Task 8's own first attempt
+made and a review then had to fix; this task is written already-
+backgrounded so that fix round doesn't repeat:
 ```python
     def _can_undo_update(self, driver: DriverInfo) -> bool:
         token = published_name_for(driver.inf_name)
@@ -1927,15 +2017,43 @@ New methods on `DriverModule`:
             QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        result = rollback_one(token)
-        if result.ok:
-            self._applied_update_tokens.remove(token)
-            QMessageBox.information(self._widget, "Undo This Update",
-                                   f"{driver.device_name} was rolled back.")
-        else:
+        if self._status_lbl:
+            self._status_lbl.setText(f"Rolling back {driver.device_name}...")
+
+        def do_undo(worker):
+            return rollback_one(token)
+
+        worker = Worker(do_undo)
+
+        def on_result(result) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if result.ok:
+                self._applied_update_tokens.remove(token)
+                QMessageBox.information(self._widget, "Undo This Update",
+                                       f"{driver.device_name} was rolled back.")
+            else:
+                QMessageBox.warning(self._widget, "Undo This Update",
+                                   f"Could not roll back: {result.reason}")
+            self._refresh_undo_all_button_state()
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
             QMessageBox.warning(self._widget, "Undo This Update",
-                               f"Could not roll back: {result.reason}")
-        self._refresh_undo_all_button_state()
+                               f"Rollback failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
 
     def _undo_all_updates_this_session(self) -> None:
         if not self._applied_update_tokens:
@@ -1949,40 +2067,53 @@ New methods on `DriverModule`:
         if confirm != QMessageBox.StandardButton.Yes:
             return
         tokens = list(self._applied_update_tokens)
-        results = bulk_rollback_all(tokens)
-        succeeded = sum(1 for r in results if r.ok)
-        failures = [r.reason for r in results if not r.ok]
-        self._applied_update_tokens.clear()
-        message = f"{succeeded} of {len(results)} rolled back successfully."
-        if failures:
-            message += "\n\nFailures:\n" + "\n".join(f"- {f}" for f in failures)
-        QMessageBox.information(self._widget, "Undo All Updates This Session", message)
-        self._refresh_undo_all_button_state()
+        if self._status_lbl:
+            self._status_lbl.setText(f"Rolling back {len(tokens)} update(s)...")
+
+        def do_undo_all(worker):
+            return bulk_rollback_all(tokens)
+
+        worker = Worker(do_undo_all)
+
+        def on_result(results) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            succeeded = sum(1 for r in results if r.ok)
+            failures = [r.reason for r in results if not r.ok]
+            self._applied_update_tokens.clear()
+            message = f"{succeeded} of {len(results)} rolled back successfully."
+            if failures:
+                message += "\n\nFailures:\n" + "\n".join(f"- {f}" for f in failures)
+            QMessageBox.information(self._widget, "Undo All Updates This Session", message)
+            self._refresh_undo_all_button_state()
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Undo All Updates This Session",
+                               f"Rollback failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
 
     def _refresh_undo_all_button_state(self) -> None:
         if self._undo_all_updates_btn:
             self._undo_all_updates_btn.setEnabled(bool(self._applied_update_tokens))
 ```
 
-Note: `_undo_all_updates_this_session`'s `bulk_rollback_all` call, like
-every other real-work call in this file, should run on a `Worker` rather
-than the UI thread once a real rollback is more than a fast local
-operation — `pnputil /add-driver ... /install` is a real subprocess call
-per device, so for 2+ devices this can take real time. Wrap the body above
-in a `Worker` the same way `_run_vendor_update` (Task 8) does; the given
-code above is deliberately shown synchronous for test clarity — the
-Worker wrapping is mechanical (see Task 8's `_run_vendor_update` for the
-exact pattern to copy: build the worker function, connect
-`signals.result`/`signals.error`, guard with `widget_is_valid`, track in
-`self._workers`, start via `self.app.thread_pool`/`QThreadPool.globalInstance()`
-fallback) and the tests above test the underlying logic directly by
-calling the methods synchronously, matching this file's existing test
-style for its other Worker-driven methods.
-
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_driver_module.py -k "undo" -v`
-Expected: PASS (4 passed).
+Expected: PASS (6 passed).
 
 - [ ] **Step 5: Commit**
 

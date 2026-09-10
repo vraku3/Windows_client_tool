@@ -771,6 +771,16 @@ def test_download_and_verify_reports_a_download_failure_distinctly(tmp_path, mon
         update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
     assert result.path is None
     assert "download" in result.reason.lower()
+
+
+def test_download_and_verify_refuses_cleanly_when_the_cache_directory_cannot_be_created(monkeypatch):
+    # No cache_dir passed -- forces the default-cache-dir path, which is
+    # made to fail here rather than actually touching a real directory.
+    monkeypatch.setattr(pl, "_default_cache_dir", lambda: None)
+    update = _update()
+    result = pl.download_and_verify(update, allowed_domains=["download.nvidia.com"])
+    assert result.path is None
+    assert "cache directory" in result.reason.lower()
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -800,10 +810,19 @@ from core.procengine.signatures import verify_signature
 logger = logging.getLogger(__name__)
 
 
-def _default_cache_dir() -> str:
+def _default_cache_dir() -> Optional[str]:
+    """None (never raises) if the directory can't be created -- a
+    permission error here must reach download_and_verify as a normal
+    refusal, the same as every other failure mode in this pipeline, not
+    an uncaught exception."""
     base = os.environ.get("APPDATA", os.path.expanduser("~"))
     directory = os.path.join(base, "WindowsTweaker", "driver_updates", "downloads")
-    os.makedirs(directory, exist_ok=True)
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        logger.warning("pipeline: could not create cache directory %s: %s",
+                       directory, exc)
+        return None
     return directory
 
 
@@ -842,6 +861,9 @@ def download_and_verify(update, allowed_domains: List[str],
                    f"allowed list for {update.vendor}")
 
     directory = cache_dir or _default_cache_dir()
+    if directory is None:
+        return DownloadResult(path=None, reason="could not create a cache "
+                             "directory for the download")
     dest_path = os.path.join(directory, f"{uuid.uuid4().hex}.exe")
     if not _download_file(update.download_url, dest_path):
         return DownloadResult(path=None, reason="the download itself failed")
@@ -864,7 +886,7 @@ def download_and_verify(update, allowed_domains: List[str],
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vendor_update_pipeline.py -v`
-Expected: PASS (5 passed).
+Expected: PASS (6 passed).
 
 - [ ] **Step 5: Commit**
 
@@ -1082,7 +1104,7 @@ def install_light(installer_path: str, driver) -> InstallResult:
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vendor_update_pipeline.py -v`
-Expected: PASS (9 passed).
+Expected: PASS (10 passed).
 
 - [ ] **Step 5: Commit**
 

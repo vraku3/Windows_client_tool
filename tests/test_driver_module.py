@@ -983,3 +983,96 @@ def test_show_restore_points_explains_an_empty_list(monkeypatch):
                         lambda *a, **k: shown.append(a[2]))
     mod._show_restore_points()
     assert "no restore points" in shown[0].lower()
+
+
+# ----------------------------------------------------------------------
+# Task 8: "Check for Vendor Update..." context-menu action -- elevation
+# gate, no-provider explanations, and confirm-before-download/install.
+# ----------------------------------------------------------------------
+
+def test_driver_module_requires_admin_is_still_false_but_read_only_unelevated_is_true():
+    mod = _module()
+    assert mod.requires_admin is False
+    assert mod.read_only_unelevated is True
+
+
+def test_check_for_vendor_update_shows_no_provider_reason_when_vendor_unrecognized(monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="Weird Card", driver_class="Display", version="1.0",
+                  date="", publisher="V", signed=True, error_code=0, flags="",
+                  hardware_id="PCI\\VEN_FFFF&DEV_0000"),
+    ]
+    mod._populate(mod._drivers_ref[0], "")
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._check_for_vendor_update(mod._drivers_ref[0][0])
+    assert shown
+    assert "vendor" in shown[0].lower()
+
+
+def test_check_for_vendor_update_shows_no_adapter_reason_for_a_recognized_unsupported_vendor(monkeypatch):
+    mod = _module()
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name="AMD Card", driver_class="Display", version="1.0",
+                  date="", publisher="V", signed=True, error_code=0, flags="",
+                  hardware_id="PCI\\VEN_1002&DEV_744C"),
+    ]
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._check_for_vendor_update(mod._drivers_ref[0][0])
+    assert shown
+    assert "no update source" in shown[0].lower() or "not configured" in shown[0].lower()
+
+
+def _fake_nvidia_update_provider():
+    class _FakeProvider:
+        vendor_name = "NVIDIA"
+        allowed_download_domains = ["download.nvidia.com"]
+        expected_signer = "NVIDIA Corporation"
+
+        def check_for_update(self, d):
+            from modules.driver_manager.vendor_updates.provider import UpdateInfo
+            return UpdateInfo(vendor="NVIDIA", current_version="1.0",
+                              latest_version="2.0",
+                              download_url="https://us.download.nvidia.com/x.exe",
+                              installer_signer="NVIDIA Corporation")
+    return _FakeProvider()
+
+
+def test_check_for_vendor_update_refuses_unelevated_before_any_confirm(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
+    monkeypatch.setattr(dmod, "is_admin", lambda: False)
+    asked_to_confirm = []
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: asked_to_confirm.append(a))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    mod._check_for_vendor_update(driver)
+    assert not asked_to_confirm  # never reached the confirm dialog
+    assert shown
+    assert "administrator" in shown[0].lower()
+
+
+def test_check_for_vendor_update_confirms_before_downloading_when_elevated(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    confirmed = []
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: confirmed.append(a) or dmod.QMessageBox.StandardButton.No)
+    mod._check_for_vendor_update(driver)
+    assert confirmed
+    # the confirm text names the vendor and both versions
+    confirm_text = confirmed[0][2]
+    assert "NVIDIA" in confirm_text and "1.0" in confirm_text and "2.0" in confirm_text

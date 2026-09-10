@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThreadPool, QItemSelectionModel
 from PyQt6.QtGui import QColor
 
+from core.admin_utils import is_admin
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.events import NAV_REQUEST_MODULE, NavRequestData
@@ -32,6 +33,11 @@ from modules.driver_manager.driver_reader import (
     published_name_for, _dedup_key, _PSEUDO_CLASSES,
 )
 from modules.driver_manager.driver_search_provider import DriverSearchProvider
+from modules.driver_manager.vendor_updates.provider import (
+    provider_for, no_provider_reason, NoProviderReason,
+)
+from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
+from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
 from ui.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
@@ -118,6 +124,9 @@ class DriverModule(BaseModule):
     #: require_admin() itself and is refused with a message pointing at the
     #: "Restart as Admin" banner rather than failing silently.
     requires_admin = False
+    #: Phase 1: reads (unchanged from Phase 0) need no elevation; only the
+    #: new vendor-update write action below checks is_admin() itself.
+    read_only_unelevated = True
     group = ModuleGroup.SYSTEM
 
     #: D23 sort-column persistence key prefix. Mirrors DebloatModule's
@@ -147,6 +156,10 @@ class DriverModule(BaseModule):
         # itself called from on_start() before create_widget() ever runs) can
         # hold this same object and still see every future refresh's data.
         self._drivers_ref = [[]]
+        # Rollback tokens (snapshot_before_install()'s return value) for
+        # every vendor update applied this session -- appended to by
+        # _run_vendor_update, consumed by Task 9's rollback UI.
+        self._applied_update_tokens: List[str] = []
         self._sort_col: int = -1
         #: C07 follow-up: has `_populate()` already run its one-time
         #: resizeColumnsToContents() fit this session? See `_populate()`.
@@ -653,6 +666,101 @@ class DriverModule(BaseModule):
         QMessageBox.information(self._widget, "Why does this matter?",
                                 self._explain_flags(flags))
 
+    def _check_for_vendor_update(self, driver: DriverInfo) -> None:
+        reason = no_provider_reason(driver)
+        if reason == NoProviderReason.UNRECOGNIZED_VENDOR:
+            QMessageBox.information(
+                self._widget, "Check for Vendor Update",
+                f"Could not identify {driver.device_name}'s vendor from "
+                f"its hardware ID -- no update check is possible.")
+            return
+        if reason == NoProviderReason.NO_ADAPTER_FOR_VENDOR:
+            QMessageBox.information(
+                self._widget, "Check for Vendor Update",
+                f"{driver.device_name}'s vendor is recognized, but no "
+                f"update source is configured for it yet.")
+            return
+        provider = provider_for(driver)
+        update = provider.check_for_update(driver)
+        if update is None:
+            QMessageBox.information(
+                self._widget, "Check for Vendor Update",
+                f"No update available for {driver.device_name} (currently "
+                f"{driver.version}).")
+            return
+        if not is_admin():
+            QMessageBox.information(
+                self._widget, "Check for Vendor Update",
+                f"A newer driver ({update.latest_version}) is available "
+                f"for {driver.device_name}, but installing it needs "
+                f"administrator rights. Restart this app as administrator "
+                f"to install it.")
+            return
+        confirm = QMessageBox.question(
+            self._widget, "Check for Vendor Update",
+            f"{update.vendor} has version {update.latest_version} "
+            f"available for {driver.device_name} (currently "
+            f"{update.current_version}).\n\nDownload from "
+            f"{update.download_url}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._run_vendor_update(driver, provider, update)
+
+    def _run_vendor_update(self, driver: DriverInfo, provider, update) -> None:
+        if self._status_lbl:
+            self._status_lbl.setText(f"Downloading {update.vendor} driver...")
+
+        def do_update(worker):
+            download_result = vendor_pipeline.download_and_verify(
+                update, allowed_domains=provider.allowed_download_domains)
+            if download_result.path is None:
+                return ("download_failed", download_result.reason)
+            from modules.driver_manager.vendor_updates.rollback import snapshot_before_install
+            token = snapshot_before_install(driver)
+            install_result = vendor_pipeline.install_light(download_result.path, driver)
+            return ("installed", install_result, token)
+
+        worker = Worker(do_update)
+
+        def on_result(result) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if result[0] == "download_failed":
+                QMessageBox.warning(self._widget, "Check for Vendor Update",
+                                   f"Could not use this update: {result[1]}")
+                return
+            _, install_result, token = result
+            if not install_result.ok:
+                QMessageBox.warning(self._widget, "Check for Vendor Update",
+                                   f"Install failed: {install_result.reason}")
+                return
+            if token:
+                self._applied_update_tokens.append(token)
+            QMessageBox.information(self._widget, "Check for Vendor Update",
+                                   f"{driver.device_name} updated to "
+                                   f"{update.latest_version}. Click Refresh "
+                                   f"to see the change.")
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check for Vendor Update",
+                               f"Update failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
     def _open_windows_update_settings(self) -> None:
         os.startfile("ms-settings:windowsupdate")
 
@@ -825,6 +933,9 @@ class DriverModule(BaseModule):
             "Needs the previous driver still cached, which this app does "
             "not track — opens Device Manager, where Windows can check.")
         act_rollback.triggered.connect(self._open_devmgr)
+        act_check_update = menu.addAction("Check for Vendor Update...")
+        act_check_update.triggered.connect(
+            lambda: self._check_for_vendor_update(driver) if driver else None)
         menu.addSeparator()
         act_cleanup = menu.addAction("Open Cleanup's Superseded Drivers panel")
         act_cleanup.triggered.connect(self._open_cleanup_driver_panel)

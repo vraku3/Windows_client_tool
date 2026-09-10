@@ -253,6 +253,36 @@ def test_duplicate_hardware_ids_groups_only_real_collisions():
     assert groups == {"PCI\\VEN_AAAA": [a, b]}
 
 
+def test_duplicate_hardware_id_is_surfaced_as_a_flag(monkeypatch):
+    """detect_duplicate_hardware_ids() was tested but had no production
+    consumer -- fetch_drivers() must now flag every device in a real
+    collision group, and leave an unrelated device alone."""
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 0
+            stdout = json.dumps([
+                {"Name": "Generic Driver A", "Class": "Net", "Version": "1.0",
+                 "Date": "", "Publisher": "X", "IsSigned": True, "ErrorCode": 0,
+                 "InfName": "oem1.inf", "DeviceID": "NET\\1",
+                 "HardWareID": "PCI\\VEN_AAAA"},
+                {"Name": "Generic Driver B", "Class": "Net", "Version": "1.0",
+                 "Date": "", "Publisher": "Y", "IsSigned": True, "ErrorCode": 0,
+                 "InfName": "oem2.inf", "DeviceID": "NET\\2",
+                 "HardWareID": "PCI\\VEN_AAAA"},
+                {"Name": "Unique Driver", "Class": "Net", "Version": "1.0",
+                 "Date": "", "Publisher": "Z", "IsSigned": True, "ErrorCode": 0,
+                 "InfName": "oem3.inf", "DeviceID": "NET\\3",
+                 "HardWareID": "PCI\\VEN_BBBB"},
+            ])
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    drivers = dr.fetch_drivers()
+    by_name = {d.device_name: d for d in drivers}
+    assert "Shared Hardware ID" in by_name["Generic Driver A"].flags
+    assert "Shared Hardware ID" in by_name["Generic Driver B"].flags
+    assert "Shared Hardware ID" not in by_name["Unique Driver"].flags
+
+
 def test_list_restore_points_returns_none_on_a_failed_read(monkeypatch):
     def fake_run(cmd, **k):
         class R:

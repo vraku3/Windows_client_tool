@@ -40,6 +40,16 @@ def _safe_filename(name: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
 
 
+def baseline_exists(name: str) -> bool:
+    """True when `name` sanitizes (via `_safe_filename`) to the same stem
+    an existing baseline already uses -- two different typed names ("My
+    Baseline", "My/Baseline") can collide on one file, and save_baseline
+    overwrites with no warning either way. Callers use this to ask before
+    that happens."""
+    stem = _safe_filename(name)
+    return os.path.isfile(os.path.join(default_baseline_dir(), f"{stem}.json"))
+
+
 def save_baseline(name: str, drivers: List[DriverInfo]) -> None:
     directory = default_baseline_dir()
     os.makedirs(directory, exist_ok=True)

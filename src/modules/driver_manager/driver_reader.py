@@ -107,10 +107,9 @@ def driver_store_size(driver: DriverInfo) -> Optional[int]:
     from modules.cleanup.cleanup_scanner.driver_store import (
         DriverPackage, package_size,
     )
-    import datetime as _dt
     package = DriverPackage(
         published=published, original=driver.inf_name, provider=driver.publisher,
-        class_guid="", version=(0,), date=_dt.date.today(),
+        class_guid="", version=(0,), date=datetime.date.today(),
     )
     return package_size(package)
 
@@ -341,6 +340,10 @@ def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
             "without those devices")
         driverless_raw = ""
     drivers = _merge_driverless_devices(drivers, driverless_raw)
+
+    for group in detect_duplicate_hardware_ids(drivers).values():
+        for d in group:
+            d.flags = (d.flags + " 🟠 Shared Hardware ID").strip()
 
     drivers.sort(key=lambda d: (d.error_code != 0, not d.signed, d.device_name))
     return drivers

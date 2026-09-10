@@ -48,6 +48,20 @@ def test_diff_against_baseline_finds_added_removed_and_changed():
     assert old.version == "1.0" and new.version == "2.0"
 
 
+def test_baseline_exists_matches_the_same_sanitized_stem_save_would_use(tmp_path, monkeypatch):
+    """Two different typed names can collide on the same sanitized stem
+    (_safe_filename) -- baseline_exists must answer using that same
+    sanitization, not a literal-name comparison."""
+    monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
+    assert db.baseline_exists("My Baseline") is False
+    db.save_baseline("My Baseline", [_driver("A")])
+    assert db.baseline_exists("My Baseline") is True
+    # "My/Baseline" sanitizes to the same stem as "My Baseline" (both
+    # non-alnum/-/_ characters become "_") -- a real collision.
+    assert db.baseline_exists("My/Baseline") is True
+    assert db.baseline_exists("Totally Different") is False
+
+
 def test_load_baseline_returns_none_for_missing_baseline(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "default_baseline_dir", lambda: str(tmp_path))
     assert db.load_baseline("does-not-exist") is None

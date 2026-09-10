@@ -681,32 +681,67 @@ class DriverModule(BaseModule):
                 f"update source is configured for it yet.")
             return
         provider = provider_for(driver)
-        update = provider.check_for_update(driver)
-        if update is None:
-            QMessageBox.information(
+        # provider.check_for_update() is a real, uncached-per-call network
+        # round trip (NvidiaProvider: a pfid lookup plus a driver-lookup
+        # call, up to ~15s each, worse on a cold 7-day pfid cache) -- it
+        # must not run on the UI thread, the same reason _do_refresh and
+        # _show_restore_points already background their own I/O.
+        if self._status_lbl:
+            self._status_lbl.setText(
+                f"Checking {provider.vendor_name} for an update...")
+
+        def do_check(worker):
+            return provider.check_for_update(driver)
+
+        worker = Worker(do_check)
+
+        def on_check_result(update) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if update is None:
+                QMessageBox.information(
+                    self._widget, "Check for Vendor Update",
+                    f"No update available for {driver.device_name} "
+                    f"(currently {driver.version}).")
+                return
+            if not is_admin():
+                QMessageBox.information(
+                    self._widget, "Check for Vendor Update",
+                    f"A newer driver ({update.latest_version}) is available "
+                    f"for {driver.device_name}, but installing it needs "
+                    f"administrator rights. Restart this app as "
+                    f"administrator to install it.")
+                return
+            confirm = QMessageBox.question(
                 self._widget, "Check for Vendor Update",
-                f"No update available for {driver.device_name} (currently "
-                f"{driver.version}).")
-            return
-        if not is_admin():
-            QMessageBox.information(
+                f"{update.vendor} has version {update.latest_version} "
+                f"available for {driver.device_name} (currently "
+                f"{update.current_version}).\n\nDownload from "
+                f"{update.download_url}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            self._run_vendor_update(driver, provider, update)
+
+        def on_check_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(
                 self._widget, "Check for Vendor Update",
-                f"A newer driver ({update.latest_version}) is available "
-                f"for {driver.device_name}, but installing it needs "
-                f"administrator rights. Restart this app as administrator "
-                f"to install it.")
-            return
-        confirm = QMessageBox.question(
-            self._widget, "Check for Vendor Update",
-            f"{update.vendor} has version {update.latest_version} "
-            f"available for {driver.device_name} (currently "
-            f"{update.current_version}).\n\nDownload from "
-            f"{update.download_url}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        self._run_vendor_update(driver, provider, update)
+                f"Could not check for an update: {err_str}")
+
+        worker.signals.result.connect(on_check_result)
+        worker.signals.error.connect(on_check_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
 
     def _run_vendor_update(self, driver: DriverInfo, provider, update) -> None:
         if self._status_lbl:

@@ -1043,12 +1043,18 @@ def _fake_nvidia_update_provider():
 
 
 def test_check_for_vendor_update_refuses_unelevated_before_any_confirm(monkeypatch):
+    # The network check (provider.check_for_update) now runs on a Worker,
+    # not inline -- _SyncPool drives that worker synchronously on this
+    # thread so the rest of the test can assert on the UI immediately
+    # afterward, the same pattern _backup_drivers's own tests use.
     mod = _module()
     driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
                         version="1.0", date="", publisher="V", signed=True,
                         error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
     monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
     monkeypatch.setattr(dmod, "is_admin", lambda: False)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
     asked_to_confirm = []
     monkeypatch.setattr(dmod.QMessageBox, "question",
                         lambda *a, **k: asked_to_confirm.append(a))
@@ -1068,6 +1074,8 @@ def test_check_for_vendor_update_confirms_before_downloading_when_elevated(monke
                         error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
     monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
     monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
     confirmed = []
     monkeypatch.setattr(dmod.QMessageBox, "question",
                         lambda *a, **k: confirmed.append(a) or dmod.QMessageBox.StandardButton.No)
@@ -1076,3 +1084,45 @@ def test_check_for_vendor_update_confirms_before_downloading_when_elevated(monke
     # the confirm text names the vendor and both versions
     confirm_text = confirmed[0][2]
     assert "NVIDIA" in confirm_text and "1.0" in confirm_text and "2.0" in confirm_text
+
+
+def test_check_for_vendor_update_dispatches_the_network_check_on_a_worker_not_inline(monkeypatch):
+    """Regression for the UI-thread-freeze finding: provider.check_for_update()
+    is a real, uncached-per-call network round trip (NvidiaProvider: a pfid
+    lookup plus a driver-lookup call, up to ~15s each). This proves the check
+    itself goes through a Worker rather than running before dispatch -- a
+    pool stub that deliberately never calls worker.run() must see NOTHING
+    happen synchronously: no QMessageBox, no confirm, just a Worker handed
+    to the pool."""
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
+
+    started = []
+
+    class _NeverRunPool:
+        def start(self, worker) -> None:
+            # Deliberately does NOT call worker.run() -- if the network
+            # check ran inline before reaching here, evidence of it (a
+            # QMessageBox call) would already exist by the time this
+            # method returns.
+            started.append(worker)
+
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _NeverRunPool()))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information",
+                        lambda *a, **k: shown.append(a[2]))
+    monkeypatch.setattr(
+        dmod.QMessageBox, "question",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("confirm dialog reached before the worker ran")))
+
+    mod._check_for_vendor_update(driver)
+
+    assert len(started) == 1
+    assert isinstance(started[0], dmod.Worker)
+    assert started[0] in mod._workers
+    assert not shown  # the network check never actually ran

@@ -38,6 +38,7 @@ from modules.driver_manager.vendor_updates.provider import (
 )
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
+from modules.driver_manager.vendor_updates.amd_provider import AmdProvider  # noqa: F401 -- import registers the provider
 from modules.driver_manager.vendor_updates.rollback import (
     rollback as rollback_one, bulk_rollback as bulk_rollback_all,
 )
@@ -760,7 +761,8 @@ class DriverModule(BaseModule):
 
         def do_update(worker):
             download_result = vendor_pipeline.download_and_verify(
-                update, allowed_domains=provider.allowed_download_domains)
+                update, allowed_domains=provider.allowed_download_domains,
+                extra_headers=getattr(provider, "download_headers", None))
             if download_result.path is None:
                 return ("download_failed", download_result.reason)
             from modules.driver_manager.vendor_updates.rollback import snapshot_before_install

@@ -1,3 +1,4 @@
+import dataclasses
 import os
 
 from core.procengine.signatures import SignatureFacts, VALID, NOT_SIGNED
@@ -203,6 +204,76 @@ def test_download_and_verify_refuses_cleanly_when_the_cache_directory_cannot_be_
     assert "cache directory" in result.reason.lower()
 
 
+def test_download_and_verify_threads_extra_headers_through_to_the_request(tmp_path, monkeypatch):
+    # AMD's real CDN needs this: drivers.amd.com serves its "Download
+    # Incomplete" page instead of the real file to a request with no
+    # Referer naming an amd.com page (verified live).
+    captured = {}
+
+    def fake_download_file(url, dest_path, headers=None):
+        captured["headers"] = headers
+        with open(dest_path, "wb") as f:
+            f.write(b"fake installer bytes")
+        return True
+
+    monkeypatch.setattr(pl, "_download_file", fake_download_file)
+    monkeypatch.setattr(pl, "verify_signature",
+                        lambda path: SignatureFacts(path=path, status=VALID,
+                                                    signer="Advanced Micro Devices"))
+    update = UpdateInfo(vendor="AMD", current_version="1.0", latest_version="2.0",
+                        download_url="https://drivers.amd.com/x.exe",
+                        installer_signer="Advanced Micro Devices")
+    result = pl.download_and_verify(
+        update, allowed_domains=["drivers.amd.com"], cache_dir=str(tmp_path),
+        extra_headers={"Referer": "https://www.amd.com/"})
+    assert result.path is not None
+    assert captured["headers"] == {"Referer": "https://www.amd.com/"}
+
+
+def test_download_and_verify_omits_the_headers_kwarg_when_none_given(tmp_path, monkeypatch):
+    # A mock that replaces _download_file with the OLD 2-arg signature
+    # (as every NVIDIA-era test above does) must keep working -- headers
+    # is only ever passed when a provider actually declares some.
+    def fake_download_file(url, dest_path):
+        with open(dest_path, "wb") as f:
+            f.write(b"fake installer bytes")
+        return True
+
+    monkeypatch.setattr(pl, "_download_file", fake_download_file)
+    monkeypatch.setattr(pl, "verify_signature",
+                        lambda path: SignatureFacts(path=path, status=VALID,
+                                                    signer="NVIDIA Corporation"))
+    update = _update()
+    result = pl.download_and_verify(
+        update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
+    assert result.path is not None
+
+
+def test_download_file_sends_given_headers_on_the_real_request(tmp_path, monkeypatch):
+    captured = {}
+
+    class _Resp:
+        def read(self, size=-1):
+            return b""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["header"] = request.get_header("Referer")
+        return _Resp()
+
+    monkeypatch.setattr(pl, "urlopen", fake_urlopen)
+    dest = str(tmp_path / "out.exe")
+    ok = pl._download_file("https://drivers.amd.com/x.exe", dest,
+                           headers={"Referer": "https://www.amd.com/"})
+    assert ok is True
+    assert captured["header"] == "https://www.amd.com/"
+
+
 def test_download_and_verify_refuses_cleanly_on_a_malformed_url(tmp_path):
     # urlparse(...).hostname raises ValueError for a malformed IPv6-style
     # URL -- confirmed empirically against this Python's urllib. A
@@ -314,6 +385,87 @@ def test_install_light_reports_pnputil_failure_distinctly(tmp_path, monkeypatch)
     result = pl.install_light(str(tmp_path / "installer.exe"), _driver_for_install())
     assert result.ok is False
     assert "pnputil" in result.reason.lower()
+
+
+def test_find_inf_for_device_matches_by_hardware_id_content_not_layout(tmp_path):
+    # Real AMD data: the right .inf for a device shares neither a
+    # directory nor a filename stem with its own driver binary -- a real
+    # multi-component package bundles many unrelated .inf/.sys pairs that
+    # DO share a directory (the trap _find_inf_with_sys alone falls into).
+    # Only the content of the real one names this device's VEN&DEV.
+    pkg = tmp_path / "pkg"
+    (pkg / "unrelated_component").mkdir(parents=True)
+    (pkg / "unrelated_component" / "other.inf").write_text("; some other AMD component")
+    (pkg / "unrelated_component" / "other.sys").write_bytes(b"fake")
+    (pkg / "display").mkdir()
+    (pkg / "display" / "u0203731.inf").write_text(
+        "[Manufacturer]\n%AMD%=ATI.Mfg\n[ATI.Mfg.NTamd64]\n"
+        "%DEV1% = DriverInstall, PCI\\VEN_1002&DEV_744C&SUBSYS_471E1DA2\n")
+    # the real .sys is a directory BELOW the inf, per SourceDisksNames --
+    # no .sys sits next to u0203731.inf at all.
+    (pkg / "display" / "B026470").mkdir()
+    (pkg / "display" / "B026470" / "amdkmdag.sys").write_bytes(b"fake")
+
+    driver = _driver_for_install()
+    driver = dataclasses.replace(driver, hardware_id="PCI\\VEN_1002&DEV_744C&SUBSYS_471E1DA2&REV_C8")
+
+    result = pl._find_inf_for_device(str(pkg), driver)
+
+    assert result is not None
+    assert os.path.basename(result) == "u0203731.inf"
+
+
+def test_find_inf_for_device_returns_none_when_nothing_mentions_the_device(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "other.inf").write_text("; mentions a completely different vendor id")
+    driver = _driver_for_install()
+    driver = dataclasses.replace(driver, hardware_id="PCI\\VEN_1002&DEV_744C")
+    assert pl._find_inf_for_device(str(pkg), driver) is None
+
+
+def test_find_inf_for_device_returns_none_for_a_non_pci_hardware_id(tmp_path):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    driver = _driver_for_install()
+    driver = dataclasses.replace(driver, hardware_id="ACPI\\VEN_ACPI&DEV_0007")
+    assert pl._find_inf_for_device(str(pkg), driver) is None
+
+
+def test_install_light_prefers_the_device_matched_inf_over_the_layout_heuristic(tmp_path, monkeypatch):
+    # Reproduces the real AMD bug: a package bundling an unrelated
+    # same-directory inf/sys pair (which the old heuristic would pick
+    # first) alongside the real, correctly-content-matched one for this
+    # device, split across directories the way AMD's real package is.
+    def fake_extract(installer, dest):
+        unrelated = os.path.join(dest, "unrelated")
+        os.makedirs(unrelated, exist_ok=True)
+        with open(os.path.join(unrelated, "aaa_other.inf"), "w") as f:
+            f.write("; a different AMD component, not this device")
+        with open(os.path.join(unrelated, "aaa_other.sys"), "wb") as f:
+            f.write(b"fake")
+        real = os.path.join(dest, "display")
+        os.makedirs(real, exist_ok=True)
+        with open(os.path.join(real, "u0203731.inf"), "w") as f:
+            f.write("PCI\\VEN_1002&DEV_744C&SUBSYS_471E1DA2\n")
+        # no .sys next to the real inf -- it's one level below, as in
+        # AMD's real package, and pnputil is what would resolve that.
+        return True
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl, "_extract_with_7zip", fake_extract)
+    ran = {}
+
+    def fake_run_pnputil(inf_path):
+        ran["inf_path"] = inf_path
+        return True, ""
+
+    monkeypatch.setattr(pl, "_run_pnputil_install", fake_run_pnputil)
+    driver = _driver_for_install()
+    driver = dataclasses.replace(driver, hardware_id="PCI\\VEN_1002&DEV_744C&SUBSYS_471E1DA2&REV_C8")
+    result = pl.install_light(str(tmp_path / "installer.exe"), driver)
+    assert result.ok is True
+    assert os.path.basename(ran["inf_path"]) == "u0203731.inf"
 
 
 def test_install_light_refuses_cleanly_when_the_temp_dir_cannot_be_created(monkeypatch):

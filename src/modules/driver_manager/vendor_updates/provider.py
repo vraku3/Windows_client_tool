@@ -28,6 +28,13 @@ class VendorProvider(Protocol):
     vendor_name: str
     allowed_download_domains: List[str]
     expected_signer: str
+    # Optional. Not declared here as a required Protocol attribute so
+    # existing providers (NVIDIA) need no change -- read via
+    # getattr(provider, "download_headers", None) at the call site.
+    # AMD's CDN needs this: drivers.amd.com serves its "Download
+    # Incomplete" page instead of the real file to a request with no
+    # Referer naming an amd.com page (verified live).
+    # download_headers: Dict[str, str]
 
     def check_for_update(self, driver: DriverInfo) -> Optional[UpdateInfo]:
         ...

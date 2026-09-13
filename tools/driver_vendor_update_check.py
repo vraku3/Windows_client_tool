@@ -17,6 +17,7 @@ sys.path.insert(0, "src")
 from modules.driver_manager.driver_reader import fetch_drivers
 from modules.driver_manager.vendor_updates.provider import provider_for, no_provider_reason
 from modules.driver_manager.vendor_updates import nvidia_provider  # noqa: F401 -- registers NVIDIA
+from modules.driver_manager.vendor_updates import amd_provider  # noqa: F401 -- registers AMD
 from modules.driver_manager.vendor_updates.pipeline import download_and_verify
 
 
@@ -53,7 +54,9 @@ def main() -> int:
         if args.download and not any_update_found:
             any_update_found = True
             print("  Downloading and verifying (will NOT install)...")
-            result = download_and_verify(update, allowed_domains=provider.allowed_download_domains)
+            result = download_and_verify(
+                update, allowed_domains=provider.allowed_download_domains,
+                extra_headers=getattr(provider, "download_headers", None))
             if result.path:
                 print(f"  Downloaded and signature-verified OK: {result.path}")
             else:

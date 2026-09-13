@@ -889,6 +889,64 @@ permission-restricted folder do.
   pair a toggle could flip. See
   `docs/superpowers/specs/2026-09-10-driver-manager-phase1-design.md` for
   the full reasoning.
+- **A real vendor package's LIGHT install can bundle dozens of unrelated
+  .inf/.sys pairs, and the right one does not necessarily share a
+  directory OR a filename stem with its own driver binary.** AMD's real
+  Adrenalin package (verified 930MB, 7z-extractable) ships 41 .inf files
+  (GPU, audio, camera, NPU, chipset...) — the GPU's own `u0203731.inf`
+  has NO .sys next to it at all; `amdkmdag.sys` sits one level below, in
+  `.\B026470\`, referenced only inside the INF's `[SourceDisksNames]`
+  section (a normal, spec-legal layout `pnputil` resolves on its own).
+  `pipeline._find_inf_with_sys`'s directory-proximity heuristic (built
+  and only ever tested against NVIDIA's simpler single-purpose package)
+  would have silently picked some OTHER component's .inf/.sys pair
+  instead and called it a successful GPU driver update.
+  `pipeline._find_inf_for_device` fixes this by matching each candidate
+  .inf's own CONTENT against the device's real PCI VEN&DEV id — the same
+  fact Windows itself matches on — and runs FIRST, falling back to the
+  old layout heuristic only when hardware_id has no PCI token or nothing
+  in the package names it.
+- **`drivers.amd.com` requires a `Referer` header naming any amd.com
+  page, or it 302s to a "Download Incomplete" page instead of serving
+  the real file** — confirmed live, both with the exact referring page
+  and with a bare `"https://www.amd.com/"`. NVIDIA's CDN has not been
+  observed to need this. `pipeline.download_and_verify`'s new
+  `extra_headers` parameter (read from the optional
+  `VendorProvider.download_headers` attribute, via
+  `getattr(provider, "download_headers", None)` at every call site) is
+  what carries this — omitted entirely when a provider doesn't declare
+  it, so `_download_file`'s original 2-arg call shape, and every NVIDIA
+  test mocking it that way, still works unmodified.
+- **AMD publishes no public driver API** (unlike NVIDIA's
+  lookupValueSearch/AjaxDriverService pair) — `amd_provider.py` instead
+  CONSTRUCTS a per-model product-page URL from the device name
+  (`radeon-rx-<NNNN>-series/amd-radeon-rx-<model>.html`), verified live
+  across 5 real models spanning RX 5000–9000 series, and scrapes the
+  "WHQL Recommended" build's link from that page. No hardcoded
+  per-model slug table. A device with no RX model number in its name
+  (an APU's integrated GPU, e.g. "AMD Radeon(TM) Graphics") has no
+  product page this scheme can reach — `check_for_update` returns `None`
+  honestly rather than guessing a URL.
+- **7-Zip is not installed on this real machine at all** (checked both
+  `Program Files` locations `_find_7zip()` looks in) — `install_light`
+  therefore fails outright, honestly, with "7-Zip could not extract it",
+  for EVERY vendor, until 7-Zip is installed separately. This is a
+  pre-existing, repo-wide dependency (`cbs_module.py`'s CBS-log cab
+  extraction relies on the same system install), not something new to
+  vendor updates — worth knowing before assuming LIGHT install is
+  broken when it's really just this.
+- **Realtek (`0x10EC`) and MediaTek (`0x14C3`) are recognized vendors
+  (`vendor_id.py`) with no registered provider yet** — a real-machine
+  sweep found three Realtek NICs and a MediaTek WiFi7+Bluetooth combo
+  all reporting `UNRECOGNIZED_VENDOR` before this. ASRock's own support
+  site (a real motherboard vendor, for chipset/network re-hosts) sits
+  behind Incapsula bot-protection and returns a JS challenge page to a
+  plain HTTP fetch, not real content — not viable for the same
+  curl-with-a-UA approach that works against AMD's and NVIDIA's pages.
+  Realtek's own download page loads its list client-side (Kendo grid)
+  with no API endpoint visible in the page's own raw HTML — reaching it
+  needs more research (finding the JS bundle's real API calls) before a
+  provider can be built the same verified way NVIDIA's and AMD's were.
 
 ### Debloat (`src/modules/debloat/`)
 

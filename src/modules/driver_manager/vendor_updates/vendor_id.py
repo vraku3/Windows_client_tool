@@ -25,6 +25,13 @@ Real machine data caught two gaps in the first pass of this table:
    so device-name substring matching is the deliberate, documented
    fallback for exactly this shape, used only when no PCI vendor ID could
    be found at all (never as an override of a real one).
+
+Realtek (0x10EC) and MediaTek (0x14C3) were added after a real-machine
+sweep found three Realtek NICs (onboard 5GbE, two USB dongles) and a
+MediaTek WiFi7+Bluetooth combo (RZ717) all reporting UNRECOGNIZED_VENDOR
+-- recognized here even before either has a registered provider (see
+provider.py), so the UI can say "Realtek detected, no update source yet"
+rather than "unknown vendor" for hardware this table now knows about.
 """
 import re
 from typing import Optional
@@ -36,6 +43,8 @@ _PCI_VENDOR_IDS = {
     "1002": "AMD",   # ATI heritage ID: GPUs, GPU-attached audio
     "1022": "AMD",   # AMD's own ID: platform security processor, SMBUS, chipset
     "8086": "Intel",
+    "10EC": "Realtek",   # real machine data: onboard/USB 2.5GbE/5GbE NICs
+    "14C3": "MediaTek",  # real machine data: RZ717 WiFi 7 + Bluetooth combo
 }
 
 _VEN_RE = re.compile(r"PCI\\VEN_([0-9A-Fa-f]{4})", re.IGNORECASE)

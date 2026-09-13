@@ -1013,11 +1013,14 @@ def test_check_for_vendor_update_shows_no_provider_reason_when_vendor_unrecogniz
 
 
 def test_check_for_vendor_update_shows_no_adapter_reason_for_a_recognized_unsupported_vendor(monkeypatch):
+    # Intel is recognized by vendor_id.py but has no registered provider
+    # (unlike AMD and NVIDIA, both adapted now) -- the real case this
+    # message exists for.
     mod = _module()
     mod._drivers_ref[0] = [
-        DriverInfo(device_name="AMD Card", driver_class="Display", version="1.0",
+        DriverInfo(device_name="Intel Card", driver_class="Display", version="1.0",
                   date="", publisher="V", signed=True, error_code=0, flags="",
-                  hardware_id="PCI\\VEN_1002&DEV_744C"),
+                  hardware_id="PCI\\VEN_8086&DEV_A780"),
     ]
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
@@ -1159,7 +1162,7 @@ def test_run_vendor_update_enables_undo_all_button_on_a_successful_install(monke
     downloaded.write_bytes(b"fake")
 
     monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
-                        lambda update, allowed_domains: dmod.vendor_pipeline.DownloadResult(
+                        lambda update, allowed_domains, extra_headers=None: dmod.vendor_pipeline.DownloadResult(
                             path=str(downloaded)))
     monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
                         lambda path, driver: dmod.InstallResult(
@@ -1188,7 +1191,7 @@ def test_run_vendor_update_deletes_the_downloaded_installer_on_success(monkeypat
     downloaded.write_bytes(b"fake")
 
     monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
-                        lambda update, allowed_domains: dmod.vendor_pipeline.DownloadResult(
+                        lambda update, allowed_domains, extra_headers=None: dmod.vendor_pipeline.DownloadResult(
                             path=str(downloaded)))
     monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
                         lambda path, driver: dmod.InstallResult(
@@ -1214,7 +1217,7 @@ def test_run_vendor_update_deletes_the_downloaded_installer_even_when_install_fa
     downloaded.write_bytes(b"fake")
 
     monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
-                        lambda update, allowed_domains: dmod.vendor_pipeline.DownloadResult(
+                        lambda update, allowed_domains, extra_headers=None: dmod.vendor_pipeline.DownloadResult(
                             path=str(downloaded)))
     monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
                         lambda path, driver: dmod.InstallResult(

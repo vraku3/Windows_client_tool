@@ -21,6 +21,18 @@ def test_recognizes_intel_from_a_pci_hardware_id():
     assert vendor_for_hardware_id("PCI\\VEN_8086&DEV_A780&SUBSYS_00000000") == "Intel"
 
 
+def test_recognizes_realtek_from_a_pci_hardware_id():
+    # Real machine data: "Realtek PCIe 5GbE Family Controller" reports
+    # hardware_id "PCI\VEN_10EC&DEV_8126&SUBSYS_81261849&REV_01".
+    assert vendor_for_hardware_id("PCI\\VEN_10EC&DEV_8126&SUBSYS_81261849&REV_01") == "Realtek"
+
+
+def test_recognizes_mediatek_from_a_pci_hardware_id():
+    # Real machine data: "RZ717 WiFi 7 160MHz" reports hardware_id
+    # "PCI\VEN_14C3&DEV_0717&SUBSYS_071714C3&REV_00".
+    assert vendor_for_hardware_id("PCI\\VEN_14C3&DEV_0717&SUBSYS_071714C3&REV_00") == "MediaTek"
+
+
 def test_unrecognized_vendor_id_returns_none():
     assert vendor_for_hardware_id("PCI\\VEN_FFFF&DEV_0000") is None
 

@@ -5,14 +5,15 @@ calls into this from a Worker, never the UI thread.
 """
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import uuid
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from core.procengine.signatures import verify_signature
 from core.system_restore import create_restore_point
@@ -45,12 +46,17 @@ class DownloadResult:
     reason: str = ""  # always populated on failure, empty on success
 
 
-def _download_file(url: str, dest_path: str) -> bool:
+def _download_file(url: str, dest_path: str, headers: Optional[Dict[str, str]] = None) -> bool:
     """Real network download -- mocked in every test above it. Returns
     False on any failure rather than raising, so the caller's reason
-    text stays uniform with every other refusal in this pipeline."""
+    text stays uniform with every other refusal in this pipeline.
+    headers: extra request headers (e.g. AMD's CDN requires a Referer
+    naming an amd.com page, or it 302s to a "Download Incomplete" page
+    instead of the real file -- verified live; NVIDIA's CDN has not been
+    observed to need this, so it stays optional)."""
     try:
-        with urlopen(url, timeout=120) as resp, open(dest_path, "wb") as out:
+        request = Request(url, headers=headers or {})
+        with urlopen(request, timeout=120) as resp, open(dest_path, "wb") as out:
             shutil.copyfileobj(resp, out)
         return True
     except OSError as exc:
@@ -59,14 +65,20 @@ def _download_file(url: str, dest_path: str) -> bool:
 
 
 def download_and_verify(update, allowed_domains: List[str],
-                        cache_dir: Optional[str] = None) -> DownloadResult:
+                        cache_dir: Optional[str] = None,
+                        extra_headers: Optional[Dict[str, str]] = None) -> DownloadResult:
     """update: a provider.UpdateInfo. Refuses (path=None, a stated reason)
     for: a malformed download URL, a download URL outside allowed_domains
     (checked by host suffix, never substring), a download that fails
     outright, or a downloaded file whose Authenticode signature is not
     VALID and signed by update.installer_signer exactly. Never runs
     anything it downloads -- that's the caller's job, only after this
-    returns a real path."""
+    returns a real path.
+
+    extra_headers: passed straight to the download request when given
+    (see provider.VendorProvider.download_headers) -- omitted entirely
+    (rather than passed as {}) when None, so a test that replaces
+    _download_file with a plain 2-arg fake keeps working unmodified."""
     try:
         host = urlparse(update.download_url).hostname or ""
     except ValueError as exc:
@@ -90,7 +102,11 @@ def download_and_verify(update, allowed_domains: List[str],
         return DownloadResult(path=None, reason="could not create a cache "
                              "directory for the download")
     dest_path = os.path.join(directory, f"{uuid.uuid4().hex}.exe")
-    if not _download_file(update.download_url, dest_path):
+    if extra_headers:
+        downloaded = _download_file(update.download_url, dest_path, headers=extra_headers)
+    else:
+        downloaded = _download_file(update.download_url, dest_path)
+    if not downloaded:
         return DownloadResult(path=None, reason="the download itself failed")
 
     facts = verify_signature(dest_path)
@@ -185,6 +201,48 @@ def _find_inf_with_sys(dest_dir: str) -> Optional[str]:
     return fallback
 
 
+_VEN_DEV_RE = re.compile(r"PCI\\VEN_[0-9A-Fa-f]{4}&DEV_[0-9A-Fa-f]{4}", re.IGNORECASE)
+
+
+def _find_inf_for_device(dest_dir: str, driver) -> Optional[str]:
+    """The .inf inside dest_dir whose own CONTENT names driver's PCI
+    vendor+device id -- the only correct way to pick the right package
+    out of a real multi-component vendor installer. Real AMD data: a
+    single Adrenalin download bundles 41 .inf files (GPU, audio, camera,
+    NPU, chipset...), and the right one for a real RX 7900 XTX
+    (u0203731.inf) shares neither a directory NOR a filename stem with
+    its own driver binary -- amdkmdag.sys sits one level below it, in
+    .\\B026470\\, referenced only inside the INF's own SourceDisksNames
+    section (a normal, spec-legal layout pnputil resolves itself; it is
+    _find_inf_with_sys's directory-proximity guess that cannot see it).
+    Matching on the device id actually being serviced, the same fact
+    Windows itself matches on, works regardless of how a package lays
+    its files out. None (never raises) if hardware_id has no PCI
+    VEN&DEV token to extract, or nothing in the package mentions it --
+    callers fall back to the layout-based heuristic in that case, never
+    treating this as a hard failure by itself."""
+    hardware_id = getattr(driver, "hardware_id", "") or ""
+    match = _VEN_DEV_RE.match(hardware_id)
+    if match is None:
+        return None
+    needle = match.group(0).lower().encode("ascii", errors="ignore")
+    for root, _dirs, files in os.walk(dest_dir):
+        for f in files:
+            if not f.lower().endswith(".inf"):
+                continue
+            inf_path = os.path.join(root, f)
+            try:
+                with open(inf_path, "rb") as fh:
+                    data = fh.read()
+            except OSError as exc:
+                logger.warning("pipeline: could not read %s while matching "
+                               "device id: %s", inf_path, exc)
+                continue
+            if needle in data.lower():
+                return inf_path
+    return None
+
+
 def _run_pnputil_install(inf_path: str) -> tuple:
     try:
         proc = subprocess.run(
@@ -220,7 +278,14 @@ def install_light(installer_path: str, driver) -> InstallResult:
                                             "this package -- 7-Zip could not "
                                             "extract it",
                                      restore_point_taken=True)
-            inf_path = _find_inf_with_sys(dest_dir)
+            # Device-id content match first (correct for a real
+            # multi-component package, see _find_inf_for_device); the
+            # older directory-proximity heuristic only as a fallback,
+            # for a device with no PCI vendor id or a package that
+            # never names it explicitly.
+            inf_path = _find_inf_for_device(dest_dir, driver)
+            if inf_path is None:
+                inf_path = _find_inf_with_sys(dest_dir)
             if inf_path is None:
                 return InstallResult(ok=False,
                                      reason="LIGHT install is not available for "

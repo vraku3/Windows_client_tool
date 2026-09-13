@@ -56,7 +56,7 @@ def register_provider(provider: VendorProvider) -> None:
 def provider_for(driver: DriverInfo) -> Optional[VendorProvider]:
     """The registered provider for driver's vendor, or None -- call
     no_provider_reason(driver) to learn why when this is None."""
-    vendor = vendor_for_hardware_id(driver.hardware_id)
+    vendor = vendor_for_hardware_id(driver.hardware_id, driver.device_name)
     if vendor is None:
         return None
     return _PROVIDERS.get(vendor)
@@ -65,7 +65,7 @@ def provider_for(driver: DriverInfo) -> Optional[VendorProvider]:
 def no_provider_reason(driver: DriverInfo) -> Optional[NoProviderReason]:
     """None only when provider_for(driver) would actually find one --
     otherwise the specific reason it didn't."""
-    vendor = vendor_for_hardware_id(driver.hardware_id)
+    vendor = vendor_for_hardware_id(driver.hardware_id, driver.device_name)
     if vendor is None:
         return NoProviderReason.UNRECOGNIZED_VENDOR
     if vendor not in _PROVIDERS:

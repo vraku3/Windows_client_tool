@@ -37,7 +37,12 @@ def main() -> int:
             reason = no_provider_reason(driver)
             print(f"[{driver.device_name}] no check possible: {reason.value if reason else 'unknown'}")
             continue
-        update = provider.check_for_update(driver)
+        try:
+            update = provider.check_for_update(driver)
+        except Exception as exc:
+            print(f"[{driver.device_name}] ({provider.vendor_name}): "
+                 f"check failed unexpectedly: {exc}")
+            continue
         if update is None:
             print(f"[{driver.device_name}] ({provider.vendor_name}): "
                  f"no update available (current: {driver.version})")

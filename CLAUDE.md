@@ -872,6 +872,23 @@ permission-restricted folder do.
   Hub" entries, several "Generic PnP Monitor"s) — keys on `device_id` (the
   PNP device instance id, a real per-device unique string) instead,
   falling back to name only for the rare device that reports none.
+- **`store_folder_for()` returns a bare FileRepository folder NAME, never a
+  path** (e.g. `"amdgpio2.inf_amd64_e3ba65168b9dbb29"`), and the real
+  `.inf` file inside that folder is the vendor's OWN original filename
+  (`amdgpio2.inf`), never the OEM published name (`oem12.inf`) that
+  addresses the package as a whole — `pnputil` uses the published name for
+  listing/deleting a package, not as a literal filename on disk. Building
+  an install path by joining the published name straight onto the folder
+  name (skipping `file_repository()` and never listing the folder for the
+  real `.inf`) resolves to a file that can never exist; this got a
+  dedicated task review through undetected (Finding C1, final review).
+- **A per-device power-management toggle (Phase 1 Tasks 7/10) was
+  attempted and deferred**, not implemented: the assumed `PnPCapabilities`
+  registry mechanism was contradicted by real evidence on this machine —
+  real inbox driver INFs use values `1` and `0x120`, not a clean binary
+  pair a toggle could flip. See
+  `docs/superpowers/specs/2026-09-10-driver-manager-phase1-design.md` for
+  the full reasoning.
 
 ### Debloat (`src/modules/debloat/`)
 

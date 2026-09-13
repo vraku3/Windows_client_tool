@@ -1,3 +1,4 @@
+import http.client
 import json
 from unittest.mock import patch, MagicMock
 
@@ -165,6 +166,64 @@ def test_pfid_cache_is_reused_when_fresh(tmp_path, monkeypatch):
     # no lookupValueSearch.aspx call
     assert len(calls) == 1
     assert "AjaxDriverService" in calls[0]
+
+
+def test_check_for_update_returns_none_when_driver_lookup_raises_http_exception(tmp_path, monkeypatch, caplog):
+    # Finding I5: http.client.HTTPException (IncompleteRead, BadStatusLine,
+    # a non-socket RemoteDisconnected) derives from Exception, NOT OSError --
+    # resp.read() raising one must not escape check_for_update uncaught.
+    monkeypatch.setattr(nvp, "_pfid_cache_path", lambda: str(tmp_path / "pfid.xml"))
+
+    class _RaisingResponse:
+        def read(self):
+            raise http.client.IncompleteRead(b"")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    responses = [_PFID_XML]
+
+    def fake_urlopen(url, timeout=None):
+        if responses:
+            data = responses.pop(0)
+            m = MagicMock()
+            m.read.return_value = data
+            m.__enter__ = lambda s: m
+            m.__exit__ = lambda *a: False
+            return m
+        return _RaisingResponse()
+
+    monkeypatch.setattr(nvp, "urlopen", fake_urlopen)
+    provider = nvp.NvidiaProvider()
+    with caplog.at_level("WARNING"):
+        result = provider.check_for_update(_driver())
+    assert result is None
+    assert any("nvidia" in r.message.lower() for r in caplog.records)
+
+
+@pytest.mark.parametrize("bad_body", [
+    json.dumps([1, 2, 3]).encode("utf-8"),
+    json.dumps({"IDS": ["not a dict"]}).encode("utf-8"),
+    json.dumps({"IDS": [{"downloadInfo": "not a dict"}]}).encode("utf-8"),
+])
+def test_check_for_update_returns_none_for_an_unexpected_response_shape(tmp_path, monkeypatch, bad_body):
+    monkeypatch.setattr(nvp, "_pfid_cache_path", lambda: str(tmp_path / "pfid.xml"))
+    responses = [_PFID_XML, bad_body]
+
+    def fake_urlopen(url, timeout=None):
+        m = MagicMock()
+        m.read.return_value = responses.pop(0)
+        m.__enter__ = lambda s: m
+        m.__exit__ = lambda *a: False
+        return m
+
+    monkeypatch.setattr(nvp, "urlopen", fake_urlopen)
+    provider = nvp.NvidiaProvider()
+    result = provider.check_for_update(_driver())
+    assert result is None
 
 
 def test_provider_registers_itself_on_import():

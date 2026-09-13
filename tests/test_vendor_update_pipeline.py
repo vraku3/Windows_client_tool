@@ -11,6 +11,37 @@ def _update(url="https://us.download.nvidia.com/x.exe", signer="NVIDIA Corporati
                       download_url=url, installer_signer=signer)
 
 
+def test_download_file_streams_rather_than_reading_the_whole_response(tmp_path, monkeypatch):
+    # Finding I4: must not call resp.read() and materialize the whole body
+    # in memory (NVIDIA packages run 600-900MB) -- shutil.copyfileobj streams
+    # it instead. A fake response object whose .read() raises proves the
+    # code path never calls it.
+    class _StreamingResponse:
+        def __init__(self, data: bytes):
+            self._buf = data
+
+        def read(self, size=-1):
+            if size is None or size < 0:
+                raise AssertionError("must not read the whole body at once")
+            chunk = self._buf[:size]
+            self._buf = self._buf[size:]
+            return chunk
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    resp = _StreamingResponse(b"x" * 1000)
+    monkeypatch.setattr(pl, "urlopen", lambda url, timeout=None: resp)
+    dest = str(tmp_path / "out.exe")
+    ok = pl._download_file("https://download.nvidia.com/x.exe", dest)
+    assert ok is True
+    with open(dest, "rb") as f:
+        assert f.read() == b"x" * 1000
+
+
 def test_download_and_verify_refuses_a_url_outside_the_allowed_domain(tmp_path):
     update = _update(url="https://evil.example.com/x.exe")
     result = pl.download_and_verify(
@@ -53,6 +84,28 @@ def test_download_and_verify_refuses_a_wrong_signer(tmp_path, monkeypatch):
     assert "signer" in result.reason.lower()
 
 
+def test_download_and_verify_deletes_the_file_when_the_signer_is_wrong(tmp_path, monkeypatch):
+    # Finding I3: a rejected download (the pipeline itself just concluded
+    # it isn't from the claimed vendor) must not be left on disk forever.
+    written = {}
+
+    def fake_download(url, dest_path):
+        with open(dest_path, "wb") as f:
+            f.write(b"fake installer bytes")
+        written["path"] = dest_path
+        return True
+
+    monkeypatch.setattr(pl, "_download_file", fake_download)
+    monkeypatch.setattr(pl, "verify_signature",
+                        lambda path: SignatureFacts(path=path, status=VALID,
+                                                    signer="Some Other Company"))
+    update = _update()
+    result = pl.download_and_verify(
+        update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
+    assert result.path is None
+    assert os.path.exists(written["path"]) is False
+
+
 def test_download_and_verify_refuses_an_unsigned_file(tmp_path, monkeypatch):
     def fake_download(url, dest_path):
         with open(dest_path, "wb") as f:
@@ -67,6 +120,68 @@ def test_download_and_verify_refuses_an_unsigned_file(tmp_path, monkeypatch):
         update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
     assert result.path is None
     assert "not_signed" in result.reason.lower() or "unsigned" in result.reason.lower()
+
+
+def test_download_and_verify_deletes_the_file_when_unsigned(tmp_path, monkeypatch):
+    written = {}
+
+    def fake_download(url, dest_path):
+        with open(dest_path, "wb") as f:
+            f.write(b"fake installer bytes")
+        written["path"] = dest_path
+        return True
+
+    monkeypatch.setattr(pl, "_download_file", fake_download)
+    monkeypatch.setattr(pl, "verify_signature",
+                        lambda path: SignatureFacts(path=path, status=NOT_SIGNED))
+    update = _update()
+    result = pl.download_and_verify(
+        update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
+    assert result.path is None
+    assert os.path.exists(written["path"]) is False
+
+
+def test_download_and_verify_survives_a_delete_failure_on_rejection(tmp_path, monkeypatch, caplog):
+    # A failed cleanup must never mask the real refusal reason.
+    def fake_download(url, dest_path):
+        with open(dest_path, "wb") as f:
+            f.write(b"fake installer bytes")
+        return True
+
+    monkeypatch.setattr(pl, "_download_file", fake_download)
+    monkeypatch.setattr(pl, "verify_signature",
+                        lambda path: SignatureFacts(path=path, status=NOT_SIGNED))
+    monkeypatch.setattr(pl.os, "remove",
+                        lambda path: (_ for _ in ()).throw(OSError("locked")))
+    update = _update()
+    with caplog.at_level("WARNING"):
+        result = pl.download_and_verify(
+            update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
+    assert result.path is None
+    assert "not_signed" in result.reason.lower() or "unsigned" in result.reason.lower()
+    assert any("delete" in r.message.lower() for r in caplog.records)
+
+
+def test_download_and_verify_leaves_a_verified_file_in_place(tmp_path, monkeypatch):
+    # The success path is the CALLER's cleanup responsibility (driver_module),
+    # never the pipeline's -- the caller still needs the file to install it.
+    written = {}
+
+    def fake_download(url, dest_path):
+        with open(dest_path, "wb") as f:
+            f.write(b"fake installer bytes")
+        written["path"] = dest_path
+        return True
+
+    monkeypatch.setattr(pl, "_download_file", fake_download)
+    monkeypatch.setattr(pl, "verify_signature",
+                        lambda path: SignatureFacts(path=path, status=VALID,
+                                                    signer="NVIDIA Corporation"))
+    update = _update()
+    result = pl.download_and_verify(
+        update, allowed_domains=["download.nvidia.com"], cache_dir=str(tmp_path))
+    assert result.path is not None
+    assert os.path.exists(written["path"]) is True
 
 
 def test_download_and_verify_reports_a_download_failure_distinctly(tmp_path, monkeypatch):

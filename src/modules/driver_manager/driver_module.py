@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 from html import escape as _html_escape
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -162,9 +162,11 @@ class DriverModule(BaseModule):
         # hold this same object and still see every future refresh's data.
         self._drivers_ref = [[]]
         # Rollback tokens (snapshot_before_install()'s return value) for
-        # every vendor update applied this session -- appended to by
-        # _run_vendor_update, consumed by Task 9's rollback UI.
-        self._applied_update_tokens: List[str] = []
+        # every vendor update applied this session, keyed on DriverInfo's
+        # own device_id -- never on the published OEM name, which changes
+        # after Refresh (Finding I1, final-review). Consumed by Task 9's
+        # rollback UI.
+        self._applied_update_tokens: Dict[str, str] = {}
         self._sort_col: int = -1
         #: C07 follow-up: has `_populate()` already run its one-time
         #: resizeColumnsToContents() fit this session? See `_populate()`.
@@ -254,7 +256,7 @@ class DriverModule(BaseModule):
         snapshots_btn.setMenu(snapshots_menu)
         self._restore_points_btn = QPushButton("System Restore Points")
         self._undo_all_updates_btn = QPushButton("Undo All Updates This Session")
-        self._undo_all_updates_btn.setEnabled(False)  # enabled once len(self._applied_update_tokens) > 0
+        self._undo_all_updates_btn.setEnabled(False)  # enabled once self._applied_update_tokens is non-empty
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
@@ -763,7 +765,19 @@ class DriverModule(BaseModule):
                 return ("download_failed", download_result.reason)
             from modules.driver_manager.vendor_updates.rollback import snapshot_before_install
             token = snapshot_before_install(driver)
-            install_result = vendor_pipeline.install_light(download_result.path, driver)
+            try:
+                install_result = vendor_pipeline.install_light(download_result.path, driver)
+            finally:
+                # The downloaded installer (NVIDIA packages run 600-900MB)
+                # is this caller's to clean up once done with it -- a
+                # verified download that download_and_verify itself has no
+                # further use for (Finding I3). A cleanup failure must
+                # never mask the real install result.
+                try:
+                    os.remove(download_result.path)
+                except OSError as exc:
+                    logger.warning("driver_module: could not delete downloaded "
+                                  "installer %s: %s", download_result.path, exc)
             return ("installed", install_result, token)
 
         worker = Worker(do_update)
@@ -782,8 +796,9 @@ class DriverModule(BaseModule):
                 QMessageBox.warning(self._widget, "Check for Vendor Update",
                                    f"Install failed: {install_result.reason}")
                 return
-            if token:
-                self._applied_update_tokens.append(token)
+            if token and driver.device_id:
+                self._applied_update_tokens[driver.device_id] = token
+                self._refresh_undo_all_button_state()
             QMessageBox.information(self._widget, "Check for Vendor Update",
                                    f"{driver.device_name} updated to "
                                    f"{update.latest_version}. Click Refresh "
@@ -806,12 +821,11 @@ class DriverModule(BaseModule):
             QThreadPool.globalInstance().start(worker)
 
     def _can_undo_update(self, driver: DriverInfo) -> bool:
-        token = published_name_for(driver.inf_name)
-        return bool(token) and token in self._applied_update_tokens
+        return bool(driver.device_id) and driver.device_id in self._applied_update_tokens
 
     def _undo_this_update(self, driver: DriverInfo) -> None:
-        token = published_name_for(driver.inf_name)
-        if not token or token not in self._applied_update_tokens:
+        token = self._applied_update_tokens.get(driver.device_id) if driver.device_id else None
+        if not token:
             return
         confirm = QMessageBox.question(
             self._widget, "Undo This Update",
@@ -835,21 +849,20 @@ class DriverModule(BaseModule):
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
             if result.ok:
-                # Guarded, not a bare .remove(): a concurrent "Undo All
-                # Updates This Session" can finish first and clear the
-                # whole list (or, less exotically, this same row's undo
-                # can be triggered twice before the first result lands --
-                # nothing in this module disables the action while a
-                # rollback is in flight, only the enable check at menu-open
-                # time). Either way the token can legitimately already be
-                # gone by the time this result arrives; list.remove() on a
-                # missing item raises ValueError, which is exactly the
-                # "raise instead of handling cleanly" class of bug this
-                # plan has hit five times already -- a rollback that
-                # genuinely succeeded must not surface as an unhandled
-                # exception in a Qt slot.
-                if token in self._applied_update_tokens:
-                    self._applied_update_tokens.remove(token)
+                # Guarded, not a bare del: a concurrent "Undo All Updates
+                # This Session" can finish first and clear the whole dict
+                # (or, less exotically, this same row's undo can be
+                # triggered twice before the first result lands -- nothing
+                # in this module disables the action while a rollback is
+                # in flight, only the enable check at menu-open time).
+                # Either way the device_id can legitimately already be
+                # gone by the time this result arrives; `del` on a missing
+                # key raises KeyError, which is exactly the "raise instead
+                # of handling cleanly" class of bug this plan has hit five
+                # times already -- a rollback that genuinely succeeded must
+                # not surface as an unhandled exception in a Qt slot.
+                if driver.device_id in self._applied_update_tokens:
+                    del self._applied_update_tokens[driver.device_id]
                 QMessageBox.information(self._widget, "Undo This Update",
                                        f"{driver.device_name} was rolled back.")
             else:
@@ -884,7 +897,12 @@ class DriverModule(BaseModule):
             QMessageBox.StandardButton.No)
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        tokens = list(self._applied_update_tokens)
+        # Keep the device_id <-> token pairing around so a partial failure
+        # (Finding I2) can put back only the tokens whose rollback did NOT
+        # succeed -- an unconditional .clear() silently discarded
+        # still-retryable tokens with no way back through this UI.
+        device_ids_and_tokens = list(self._applied_update_tokens.items())
+        tokens = [t for _, t in device_ids_and_tokens]
         if self._status_lbl:
             self._status_lbl.setText(f"Rolling back {len(tokens)} update(s)...")
 
@@ -900,10 +918,15 @@ class DriverModule(BaseModule):
                 self._status_lbl.setText("Click Refresh to load drivers.")
             succeeded = sum(1 for r in results if r.ok)
             failures = [r.reason for r in results if not r.ok]
-            self._applied_update_tokens.clear()
+            # Only drop the device_ids whose rollback actually succeeded --
+            # a failed one stays in the dict, retryable.
+            for (device_id, _token), result in zip(device_ids_and_tokens, results):
+                if result.ok:
+                    self._applied_update_tokens.pop(device_id, None)
             message = f"{succeeded} of {len(results)} rolled back successfully."
             if failures:
                 message += "\n\nFailures:\n" + "\n".join(f"- {f}" for f in failures)
+                message += "\n\nFailed rollbacks remain available to retry."
             QMessageBox.information(self._widget, "Undo All Updates This Session", message)
             self._refresh_undo_all_button_state()
 

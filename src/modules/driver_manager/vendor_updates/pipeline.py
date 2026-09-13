@@ -5,6 +5,7 @@ calls into this from a Worker, never the UI thread.
 """
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -50,7 +51,7 @@ def _download_file(url: str, dest_path: str) -> bool:
     text stays uniform with every other refusal in this pipeline."""
     try:
         with urlopen(url, timeout=120) as resp, open(dest_path, "wb") as out:
-            out.write(resp.read())
+            shutil.copyfileobj(resp, out)
         return True
     except OSError as exc:
         logger.warning("pipeline: download failed for %s: %s", url, exc)
@@ -94,17 +95,31 @@ def download_and_verify(update, allowed_domains: List[str],
 
     facts = verify_signature(dest_path)
     if not facts.signed:
+        _delete_rejected_download(dest_path)
         return DownloadResult(
             path=None,
             reason=f"downloaded file's signature is {facts.status} "
                    f"(expected a VALID signature from {update.installer_signer!r})")
     if facts.signer != update.installer_signer:
+        _delete_rejected_download(dest_path)
         return DownloadResult(
             path=None,
             reason=f"downloaded file's signer is {facts.signer!r}, "
                    f"expected {update.installer_signer!r} -- refusing to "
                    f"run something not from the expected vendor")
     return DownloadResult(path=dest_path)
+
+
+def _delete_rejected_download(dest_path: str) -> None:
+    """A file whose signature this pipeline just refused must not linger
+    on disk forever -- NVIDIA packages alone run 600-900MB. Best-effort:
+    a failure to delete must never mask the real refusal reason the
+    caller is about to return."""
+    try:
+        os.remove(dest_path)
+    except OSError as exc:
+        logger.warning("pipeline: could not delete rejected download %s: %s",
+                       dest_path, exc)
 
 
 @dataclass(frozen=True)

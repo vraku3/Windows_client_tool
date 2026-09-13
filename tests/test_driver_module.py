@@ -1128,6 +1128,114 @@ def test_check_for_vendor_update_dispatches_the_network_check_on_a_worker_not_in
     assert not shown  # the network check never actually ran
 
 
+# ----------------------------------------------------------------------
+# _run_vendor_update -- no dedicated test existed at all before the final
+# whole-branch review (Findings C2 and I3): the undo-all button was never
+# refreshed the one place a token is ever recorded, and the downloaded
+# installer was never deleted, win or lose.
+# ----------------------------------------------------------------------
+
+def _fake_update():
+    from modules.driver_manager.vendor_updates.provider import UpdateInfo
+    return UpdateInfo(vendor="NVIDIA", current_version="1.0", latest_version="2.0",
+                      download_url="https://us.download.nvidia.com/x.exe",
+                      installer_signer="NVIDIA Corporation")
+
+
+def _fake_provider():
+    class _P:
+        vendor_name = "NVIDIA"
+        allowed_download_domains = ["download.nvidia.com"]
+    return _P()
+
+
+def test_run_vendor_update_enables_undo_all_button_on_a_successful_install(monkeypatch, tmp_path):
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684",
+                        device_id="PCI\\DEV1")
+    downloaded = tmp_path / "installer.exe"
+    downloaded.write_bytes(b"fake")
+
+    monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
+                        lambda update, allowed_domains: dmod.vendor_pipeline.DownloadResult(
+                            path=str(downloaded)))
+    monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
+                        lambda path, driver: dmod.InstallResult(
+                            ok=True, reason="", restore_point_taken=True))
+    from modules.driver_manager.vendor_updates import rollback as rb_mod
+    monkeypatch.setattr(rb_mod, "snapshot_before_install", lambda driver: "oem12.inf")
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+
+    assert mod._undo_all_updates_btn.isEnabled() is False  # precondition
+
+    mod._run_vendor_update(driver, _fake_provider(), _fake_update())
+
+    assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
+    assert mod._undo_all_updates_btn.isEnabled() is True
+
+
+def test_run_vendor_update_deletes_the_downloaded_installer_on_success(monkeypatch, tmp_path):
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684",
+                        device_id="PCI\\DEV1")
+    downloaded = tmp_path / "installer.exe"
+    downloaded.write_bytes(b"fake")
+
+    monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
+                        lambda update, allowed_domains: dmod.vendor_pipeline.DownloadResult(
+                            path=str(downloaded)))
+    monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
+                        lambda path, driver: dmod.InstallResult(
+                            ok=True, reason="", restore_point_taken=True))
+    from modules.driver_manager.vendor_updates import rollback as rb_mod
+    monkeypatch.setattr(rb_mod, "snapshot_before_install", lambda driver: "oem12.inf")
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+
+    mod._run_vendor_update(driver, _fake_provider(), _fake_update())
+
+    assert downloaded.exists() is False
+
+
+def test_run_vendor_update_deletes_the_downloaded_installer_even_when_install_fails(monkeypatch, tmp_path):
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684",
+                        device_id="PCI\\DEV1")
+    downloaded = tmp_path / "installer.exe"
+    downloaded.write_bytes(b"fake")
+
+    monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
+                        lambda update, allowed_domains: dmod.vendor_pipeline.DownloadResult(
+                            path=str(downloaded)))
+    monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
+                        lambda path, driver: dmod.InstallResult(
+                            ok=False, reason="pnputil failed", restore_point_taken=True))
+    from modules.driver_manager.vendor_updates import rollback as rb_mod
+    monkeypatch.setattr(rb_mod, "snapshot_before_install", lambda driver: "oem12.inf")
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    warned = []
+    monkeypatch.setattr(dmod.QMessageBox, "warning",
+                        lambda *a, **k: warned.append(a[2]))
+
+    mod._run_vendor_update(driver, _fake_provider(), _fake_update())
+
+    assert downloaded.exists() is False
+    assert warned  # install failure still reported
+    # no token recorded, button stays disabled -- the install failed
+    assert mod._applied_update_tokens == {}
+    assert mod._undo_all_updates_btn.isEnabled() is False
+
+
 class _RecordingPool:
     def __init__(self):
         self.started = []
@@ -1141,7 +1249,7 @@ def test_undo_this_update_is_disabled_when_nothing_was_updated_this_session():
     mod = _module()
     driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
                         date="", publisher="V", signed=True, error_code=0,
-                        flags="", inf_name="oem12.inf")
+                        flags="", inf_name="oem12.inf", device_id="PCI\\DEV1")
     assert mod._can_undo_update(driver) is False
 
 
@@ -1149,8 +1257,8 @@ def test_undo_this_update_rolls_back_the_devices_own_token(monkeypatch):
     mod = _module()
     driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
                         date="", publisher="V", signed=True, error_code=0,
-                        flags="", inf_name="oem12.inf")
-    mod._applied_update_tokens.append("oem12.inf")
+                        flags="", inf_name="oem12.inf", device_id="PCI\\DEV1")
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem12.inf"
     assert mod._can_undo_update(driver) is True
     called = []
     monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token) or
@@ -1164,10 +1272,24 @@ def test_undo_this_update_rolls_back_the_devices_own_token(monkeypatch):
                         lambda *a, **k: shown.append(a[2]))
     mod._undo_this_update(driver)
     assert called == ["oem12.inf"]
-    assert mod._applied_update_tokens == []  # consumed on success
+    assert mod._applied_update_tokens == {}  # consumed on success
     assert shown
     assert len(pool.started) == 1
     assert isinstance(pool.started[0], dmod.Worker)
+
+
+def test_undo_this_update_still_works_after_a_refresh_changes_the_infs_oem_number():
+    """Finding I1: after Refresh, Win32_PnPSignedDriver.InfName reports the
+    NEW oem number for this device -- keying the lookup on
+    published_name_for(driver.inf_name) permanently fails to match past
+    that point. Keying on device_id (stable across Refresh) is the fix."""
+    mod = _module()
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem12.inf"
+    # Simulate the post-Refresh DriverInfo: same device_id, new inf_name.
+    driver_after = DriverInfo(device_name="A", driver_class="Net", version="2.0",
+                              date="", publisher="V", signed=True, error_code=0,
+                              flags="", inf_name="oem77.inf", device_id="PCI\\DEV1")
+    assert mod._can_undo_update(driver_after) is True
 
 
 def test_undo_this_update_does_not_raise_if_the_token_is_already_gone_when_the_result_lands(monkeypatch):
@@ -1176,15 +1298,15 @@ def test_undo_this_update_does_not_raise_if_the_token_is_already_gone_when_the_r
     time -- so the token this worker is rolling back can legitimately be
     removed by something else (a concurrent "Undo All", or this same undo
     triggered twice) before its own result arrives. A bare
-    list.remove(token) would raise ValueError in that case; simulate it by
-    having the rollback itself clear the list as a side effect (standing
+    `del dict[key]` would raise KeyError in that case; simulate it by
+    having the rollback itself clear the dict as a side effect (standing
     in for a concurrent "Undo All" finishing first) before returning
     success."""
     mod = _module()
     driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
                         date="", publisher="V", signed=True, error_code=0,
-                        flags="", inf_name="oem12.inf")
-    mod._applied_update_tokens.append("oem12.inf")
+                        flags="", inf_name="oem12.inf", device_id="PCI\\DEV1")
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem12.inf"
 
     def fake_rollback(token):
         mod._applied_update_tokens.clear()
@@ -1198,8 +1320,8 @@ def test_undo_this_update_does_not_raise_if_the_token_is_already_gone_when_the_r
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information",
                         lambda *a, **k: shown.append(a[2]))
-    mod._undo_this_update(driver)  # must not raise ValueError
-    assert mod._applied_update_tokens == []
+    mod._undo_this_update(driver)  # must not raise KeyError
+    assert mod._applied_update_tokens == {}
     assert shown
 
 
@@ -1207,8 +1329,8 @@ def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
     mod = _module()
     driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
                         date="", publisher="V", signed=True, error_code=0,
-                        flags="", inf_name="oem12.inf")
-    mod._applied_update_tokens.append("oem12.inf")
+                        flags="", inf_name="oem12.inf", device_id="PCI\\DEV1")
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem12.inf"
     monkeypatch.setattr(dmod, "rollback_one",
                         lambda token: dmod.InstallResult(ok=False, reason="store pruned it",
                                                          restore_point_taken=True))
@@ -1223,15 +1345,15 @@ def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
     assert shown
     assert "store pruned it" in shown[0]
     # token stays -- rollback failed, nothing to consume
-    assert mod._applied_update_tokens == ["oem12.inf"]
+    assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
 
 
 def test_undo_this_update_does_nothing_if_the_user_declines_the_confirm(monkeypatch):
     mod = _module()
     driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
                         date="", publisher="V", signed=True, error_code=0,
-                        flags="", inf_name="oem12.inf")
-    mod._applied_update_tokens.append("oem12.inf")
+                        flags="", inf_name="oem12.inf", device_id="PCI\\DEV1")
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem12.inf"
     called = []
     monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token))
     pool = _RecordingPool()
@@ -1241,12 +1363,12 @@ def test_undo_this_update_does_nothing_if_the_user_declines_the_confirm(monkeypa
     mod._undo_this_update(driver)
     assert called == []
     assert pool.started == []
-    assert mod._applied_update_tokens == ["oem12.inf"]
+    assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
 
 
 def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
     mod = _module()
-    mod._applied_update_tokens.extend(["oem1.inf", "oem2.inf"])
+    mod._applied_update_tokens.update({"PCI\\DEV1": "oem1.inf", "PCI\\DEV2": "oem2.inf"})
     monkeypatch.setattr(dmod, "bulk_rollback_all", lambda tokens: [
         dmod.InstallResult(ok=True, reason="", restore_point_taken=True),
         dmod.InstallResult(ok=False, reason="not found", restore_point_taken=True),
@@ -1261,12 +1383,14 @@ def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
     mod._undo_all_updates_this_session()
     assert shown
     assert "1" in shown[0] and "not found" in shown[0]
-    assert mod._applied_update_tokens == []
+    # Finding I2: only the SUCCEEDED device_id (PCI\DEV1, the first result)
+    # is dropped -- the failed one (PCI\DEV2) must remain, retryable.
+    assert mod._applied_update_tokens == {"PCI\\DEV2": "oem2.inf"}
 
 
 def test_undo_all_updates_this_session_dispatches_on_a_worker_not_inline(monkeypatch):
     mod = _module()
-    mod._applied_update_tokens.extend(["oem1.inf"])
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem1.inf"
 
     def slow_bulk_rollback(tokens):
         raise AssertionError("bulk_rollback_all must not run before the "
@@ -1294,3 +1418,27 @@ def test_undo_all_updates_this_session_dispatches_on_a_worker_not_inline(monkeyp
     assert len(pool.started) == 1
     assert isinstance(pool.started[0], dmod.Worker)
     assert not shown  # nothing shown yet -- the worker never ran
+
+
+def test_undo_all_updates_this_session_keeps_the_failed_token_only(monkeypatch):
+    """Finding I2, isolated: 1 of 2 succeeds -- exactly the failed
+    device_id's token remains afterward, not an empty dict."""
+    mod = _module()
+    mod._applied_update_tokens.update({"PCI\\OK": "oem1.inf", "PCI\\FAIL": "oem2.inf"})
+
+    def fake_bulk(tokens):
+        # Positionally aligned with the input token list.
+        return [
+            dmod.InstallResult(ok=(t == "oem1.inf"), reason="" if t == "oem1.inf" else "gone",
+                               restore_point_taken=True)
+            for t in tokens
+        ]
+
+    monkeypatch.setattr(dmod, "bulk_rollback_all", fake_bulk)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    mod._undo_all_updates_this_session()
+    assert mod._applied_update_tokens == {"PCI\\FAIL": "oem2.inf"}

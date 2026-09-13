@@ -4,6 +4,7 @@ for the full verification record. Two real calls: a GPU-name-to-pfid
 lookup table (cached locally, NVIDIA's own page uses the same table), and
 a driver-lookup call keyed by that pfid.
 """
+import http.client
 import json
 import logging
 import os
@@ -53,7 +54,7 @@ def _fetch_pfid_table() -> Optional[bytes]:
         with open(cache_path, "wb") as f:
             f.write(data)
         return data
-    except OSError as exc:
+    except (OSError, http.client.HTTPException, ValueError) as exc:
         logger.warning("nvidia_provider: could not fetch/cache pfid table: %s", exc)
         return None
 
@@ -91,14 +92,23 @@ class NvidiaProvider:
             with urlopen(url, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
                 raw = resp.read()
             data = json.loads(raw)
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, http.client.HTTPException, ValueError) as exc:
+            # ValueError covers both json.JSONDecodeError (malformed JSON)
+            # and UnicodeDecodeError (non-UTF-8 bytes) -- json.loads can
+            # raise either, and neither is an OSError.
             logger.warning("nvidia_provider: driver lookup failed for pfid %s: %s",
                            pfid, exc)
             return None
-        ids = data.get("IDS") or []
-        if not ids:
+        if not isinstance(data, dict):
+            logger.warning("nvidia_provider: unexpected response shape for "
+                          "pfid %s (not an object): %r", pfid, type(data))
             return None
-        info = ids[0].get("downloadInfo") or {}
+        ids = data.get("IDS") or []
+        if not ids or not isinstance(ids[0], dict):
+            return None
+        info = ids[0].get("downloadInfo")
+        if not isinstance(info, dict):
+            return None
         if info.get("Success") != "1":
             return None
         version = info.get("Version")

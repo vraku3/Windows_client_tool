@@ -125,5 +125,21 @@ class NvidiaProvider:
             installer_signer=self.expected_signer,
         )
 
+    def build_silent_install_args(self, log_path: str) -> list:
+        """NVIDIA's own documented switches (nvidia.custhelp.com KB
+        a_id/2985, confirmed 2026-09-13): "-s" is silent install/uninstall
+        (no UI at all), "-n" ignores any reboot requirement rather than
+        prompting for one. log_path is unused -- NVIDIA's silent switches
+        don't take a result-log path the way AMD's do; accepted anyway to
+        keep providers interchangeable to the pipeline."""
+        return ["-s", "-n"]
+
+    def silent_install_succeeded(self, log_path: str, exit_code: int) -> Optional[bool]:
+        """NVIDIA's own KB documents exit code 0 as silent-install success
+        -- unlike AMD, no separate result-log file is documented, so
+        exit_code is the real (and only) signal here. log_path is unused
+        for the same reason build_silent_install_args ignores it."""
+        return exit_code == 0
+
 
 register_provider(NvidiaProvider())

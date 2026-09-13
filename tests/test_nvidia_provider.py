@@ -230,3 +230,24 @@ def test_provider_registers_itself_on_import():
     from modules.driver_manager.vendor_updates import provider as pv
     assert "NVIDIA" in pv._PROVIDERS
     assert isinstance(pv._PROVIDERS["NVIDIA"], nvp.NvidiaProvider)
+
+
+# ---------------------------------------------------------------------
+# silent FULL install (NVIDIA's own support KB, a_id/2985)
+# ---------------------------------------------------------------------
+
+def test_build_silent_install_args_uses_nvidias_documented_switches():
+    provider = nvp.NvidiaProvider()
+    args = provider.build_silent_install_args("C:\\temp\\install.log")
+    assert "-s" in args
+    assert "-n" in args
+
+
+def test_silent_install_succeeded_is_exit_code_zero():
+    provider = nvp.NvidiaProvider()
+    assert provider.silent_install_succeeded("unused.log", exit_code=0) is True
+
+
+def test_silent_install_succeeded_is_false_for_a_nonzero_exit_code():
+    provider = nvp.NvidiaProvider()
+    assert provider.silent_install_succeeded("unused.log", exit_code=1) is False

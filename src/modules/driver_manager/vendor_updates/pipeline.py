@@ -1,7 +1,7 @@
 """The one safety pipeline every vendor provider and every install mode
-(LIGHT now, FULL in Phase 2) goes through -- so adding either never means
-re-deriving download/verification safety logic. Qt-free: driver_module.py
-calls into this from a Worker, never the UI thread.
+(LIGHT, FULL) goes through -- so adding either never means re-deriving
+download/verification safety logic. Qt-free: driver_module.py calls into
+this from a Worker, never the UI thread.
 """
 import logging
 import os
@@ -144,6 +144,13 @@ class InstallResult:
     reason: str
     restore_point_taken: bool
     previous_package_hint: Optional[str] = None  # for rollback.py, Task 6
+    # FULL install only: True when a silent install couldn't be confirmed
+    # one way or the other and this instead launched the vendor's own
+    # installer window for the user to finish by hand. ok is False in
+    # that case too (nothing is confirmed installed yet) -- this field is
+    # what lets the caller show "opened the installer for you" rather
+    # than a plain failure message for the exact same ok=False.
+    handed_off_to_ui: bool = False
 
 
 def _find_7zip() -> Optional[str]:
@@ -307,4 +314,134 @@ def install_light(installer_path: str, driver) -> InstallResult:
                              reason=f"could not create a temporary directory "
                                     f"for extraction: {exc}",
                              restore_point_taken=True)
+    return InstallResult(ok=True, reason="", restore_point_taken=True)
+
+
+_SILENT_INSTALL_TIMEOUT_SECONDS = 900  # AMD/NVIDIA packages run 600-900MB;
+                                        # a silent install of one is not fast
+
+
+def _launch_interactive_installer(installer_path: str, reason_prefix: str) -> InstallResult:
+    """Starts installer_path's own normal (visible) install wizard and
+    returns immediately -- never waits for it, since there is no way to
+    know how long a person takes to click through a wizard. ok=False
+    because nothing is confirmed installed by the time this returns;
+    handed_off_to_ui=True is what tells the caller this is an intentional
+    handoff, not a plain failure."""
+    try:
+        subprocess.Popen([installer_path])
+    except OSError as exc:
+        logger.warning("pipeline: could not launch %s interactively: %s", installer_path, exc)
+        return InstallResult(
+            ok=False,
+            reason=f"{reason_prefix} -- and could not launch the installer's "
+                   f"own window either: {exc}",
+            restore_point_taken=True)
+    return InstallResult(
+        ok=False,
+        reason=f"{reason_prefix} -- opened the installer's own window for "
+               f"you to finish",
+        restore_point_taken=True,
+        handed_off_to_ui=True)
+
+
+def install_full(installer_path: str, driver, provider,
+                 allow_interactive_fallback: bool = True) -> InstallResult:
+    """The FULL install path: runs the vendor's OWN installer rather than
+    extracting just INF/SYS. Always takes a restore point first, same as
+    install_light, and refuses outright if one can't be taken.
+
+    provider supplies the vendor-specific mechanism, via two OPTIONAL
+    methods (see provider.VendorProvider) -- shared pipeline code stays
+    generic, the same way allowed_download_domains/expected_signer keep
+    per-vendor facts on the provider rather than here:
+
+    - build_silent_install_args(log_path) -> List[str]: the documented
+      silent-install command-line switches for this vendor's installer
+      (AMD: "-INSTALL" + a -LOG path, per AMD's own Command Line
+      Installation User Guide; NVIDIA: "-s -n", per NVIDIA's own support
+      KB). log_path is passed even when a vendor's switches don't use it
+      (NVIDIA) -- providers that don't need it simply ignore the arg.
+    - silent_install_succeeded(log_path, exit_code) -> Optional[bool]:
+      True/False is a confident answer; None means "could not tell" (the
+      log never appeared, didn't parse, or the vendor's exit code isn't
+      documented as meaningful) and triggers the interactive fallback
+      rather than guessing.
+
+    A provider missing either method (no documented silent mechanism
+    verified for it yet) goes straight to the interactive installer --
+    never guesses at generic-sounding flags that were never confirmed
+    against that vendor's own documentation.
+
+    allow_interactive_fallback=False (bulk installs): an inconclusive
+    silent result is reported as a skipped device instead of popping up
+    a visible installer window mid-batch -- retry that one device
+    individually to get the interactive fallback.
+    """
+    ok, reason = create_restore_point(
+        f"Before FULL driver update: {driver.device_name}")
+    if not ok:
+        return InstallResult(ok=False, reason=f"could not take a restore "
+                             f"point, refusing to proceed: {reason}",
+                             restore_point_taken=False)
+
+    build_args = getattr(provider, "build_silent_install_args", None)
+    check_result = getattr(provider, "silent_install_succeeded", None)
+    if build_args is None or check_result is None:
+        if not allow_interactive_fallback:
+            return InstallResult(
+                ok=False,
+                reason=f"{provider.vendor_name} has no documented silent-install "
+                       f"mechanism -- skipped (retry individually to use the "
+                       f"installer's own window)",
+                restore_point_taken=True)
+        return _launch_interactive_installer(
+            installer_path,
+            reason_prefix=f"{provider.vendor_name} has no documented "
+                          f"silent-install mechanism")
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="wct_driver_full_install_") as tmp_dir:
+            log_path = os.path.join(tmp_dir, "install.log")
+            args = build_args(log_path)
+            try:
+                proc = subprocess.run(
+                    [installer_path] + list(args), timeout=_SILENT_INSTALL_TIMEOUT_SECONDS,
+                    capture_output=True, creationflags=CREATE_NO_WINDOW)
+                exit_code = proc.returncode
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                logger.warning("pipeline: silent FULL install failed to run for "
+                               "%s: %s", installer_path, exc)
+                if not allow_interactive_fallback:
+                    return InstallResult(
+                        ok=False,
+                        reason=f"silent install could not be run: {exc} -- skipped",
+                        restore_point_taken=True)
+                return _launch_interactive_installer(
+                    installer_path, reason_prefix=f"silent install could not be run: {exc}")
+            succeeded = check_result(log_path, exit_code)
+    except OSError as exc:
+        logger.warning("pipeline: could not create a temp directory for "
+                       "FULL install: %s", exc)
+        return InstallResult(ok=False,
+                             reason=f"could not create a temporary directory "
+                                    f"for the silent install log: {exc}",
+                             restore_point_taken=True)
+
+    if succeeded is True:
+        return InstallResult(ok=True, reason="", restore_point_taken=True)
+    if succeeded is False:
+        return InstallResult(ok=False,
+                             reason=f"{provider.vendor_name}'s installer reported "
+                                    f"failure",
+                             restore_point_taken=True)
+    # None: inconclusive, never guessed at
+    if not allow_interactive_fallback:
+        return InstallResult(
+            ok=False,
+            reason="could not confirm the silent install's result -- skipped "
+                   "(retry individually to use the installer's own window)",
+            restore_point_taken=True)
+    return _launch_interactive_installer(
+        installer_path, reason_prefix="could not confirm the silent install's result")
     return InstallResult(ok=True, reason="", restore_point_taken=True)

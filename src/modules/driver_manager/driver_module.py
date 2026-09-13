@@ -43,11 +43,12 @@ from modules.driver_manager.vendor_updates.rollback import (
     rollback as rollback_one, bulk_rollback as bulk_rollback_all,
 )
 from modules.driver_manager.vendor_updates.pipeline import InstallResult  # noqa: F401 -- tests build these via dmod.InstallResult(...)
+from modules.driver_manager.vendor_updates import update_history
 from ui.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
 
-COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status"]
+COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status", "Update Status"]
 
 FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "Old"]
 
@@ -85,6 +86,18 @@ def _row_dedup_key(name_item) -> str:
     """
     device_id = name_item.data(Qt.ItemDataRole.UserRole) or ""
     return device_id or f"\x00name:{name_item.text()}"
+
+
+def _update_status_text(driver: DriverInfo, history_by_id: Dict[str, "update_history.DeviceHistory"]) -> str:
+    """The Update Status column's text for one row. A dash for a device
+    with no configured update source at all -- "Not checked yet" there
+    would wrongly imply checking is even possible. history_by_id: the
+    WHOLE history store, loaded once per _populate()/_do_export() call
+    rather than once per row (update_history.get_all() vs. N calls to
+    get()) -- _populate runs on every filter keystroke."""
+    if provider_for(driver) is None:
+        return "—"
+    return update_history.status_label(driver.version, history_by_id.get(driver.device_id))
 
 
 def _date_sort_value(date_str: str) -> float:
@@ -156,6 +169,7 @@ class DriverModule(BaseModule):
         self._cancel_backup_btn: Optional[QPushButton] = None
         self._backup_worker: Optional[Worker] = None
         self._restore_points_btn: Optional[QPushButton] = None
+        self._check_all_updates_btn: Optional[QPushButton] = None
         self._undo_all_updates_btn: Optional[QPushButton] = None
         # [list of DriverInfo] -- a single-element cell, not reassigned after
         # this, so DriverSearchProvider (built once in get_search_provider(),
@@ -256,6 +270,7 @@ class DriverModule(BaseModule):
         snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
         snapshots_btn.setMenu(snapshots_menu)
         self._restore_points_btn = QPushButton("System Restore Points")
+        self._check_all_updates_btn = QPushButton("Check All for Updates")
         self._undo_all_updates_btn = QPushButton("Undo All Updates This Session")
         self._undo_all_updates_btn.setEnabled(False)  # enabled once self._applied_update_tokens is non-empty
         devmgr_btn = QPushButton("Open Device Manager")
@@ -282,6 +297,7 @@ class DriverModule(BaseModule):
         toolbar.addWidget(self._export_inventory_btn)
         toolbar.addWidget(snapshots_btn)
         toolbar.addWidget(self._restore_points_btn)
+        toolbar.addWidget(self._check_all_updates_btn)
         toolbar.addWidget(self._undo_all_updates_btn)
         toolbar.addWidget(devmgr_btn)
         toolbar.addWidget(wu_btn)
@@ -302,6 +318,7 @@ class DriverModule(BaseModule):
         self._export_inventory_btn.clicked.connect(self._export_inventory)
         devmgr_btn.clicked.connect(self._open_devmgr)
         self._restore_points_btn.clicked.connect(self._show_restore_points)
+        self._check_all_updates_btn.clicked.connect(self._check_all_for_updates)
         self._undo_all_updates_btn.clicked.connect(self._undo_all_updates_this_session)
         wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
@@ -393,11 +410,18 @@ class DriverModule(BaseModule):
                  or (flag == "Old" and "Old" in d.flags))
         ]
         self._table.setRowCount(len(visible))
+        # Loaded ONCE for the whole population, not once per row --
+        # _populate runs on every filter keystroke, hide-pseudo toggle
+        # and flag-combo change, and update_history.get() alone (a file
+        # read+parse per call) would re-read the same small JSON file
+        # once per VISIBLE ROW every time any of those fire.
+        history_by_id = update_history.get_all()
         for r, d in enumerate(visible):
             provider = classify_provider(d.publisher)
             values = [
                 d.device_name, d.driver_class, d.version, d.date,
                 d.publisher, provider, "✓" if d.signed else "✗", d.flags,
+                _update_status_text(d, history_by_id),
             ]
             for c, val in enumerate(values):
                 if c == 3:
@@ -513,6 +537,7 @@ class DriverModule(BaseModule):
         visible_ids = {_row_dedup_key(self._table.item(r, 0))
                        for r in range(self._table.rowCount())
                        if not self._table.isRowHidden(r)}
+        history_by_id = update_history.get_all()
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(COLUMNS)
@@ -523,6 +548,7 @@ class DriverModule(BaseModule):
                 writer.writerow([
                     d.device_name, d.driver_class, d.version, d.date,
                     d.publisher, prov, d.signed, d.flags,
+                    _update_status_text(d, history_by_id),
                 ])
         if self._status_lbl:
             self._status_lbl.setText(f"Exported to {os.path.basename(path)}")
@@ -678,6 +704,95 @@ class DriverModule(BaseModule):
         QMessageBox.information(self._widget, "Why does this matter?",
                                 self._explain_flags(flags))
 
+    def _refresh_status_cell_for_device(self, device_id: str, driver: DriverInfo) -> None:
+        """Updates just the Update Status cell for one row, right after a
+        check or install completes -- never a full _populate() rebuild
+        for a one-row change (that would also re-run the filter/sort and
+        drop the user's current selection). Finds the row by device_id
+        the same way _row_dedup_key does, since a table position isn't
+        reliable after sorting."""
+        if self._table is None or not device_id:
+            return
+        status_col = len(COLUMNS) - 1
+        for r in range(self._table.rowCount()):
+            item0 = self._table.item(r, 0)
+            if item0 is not None and item0.data(Qt.ItemDataRole.UserRole) == device_id:
+                text = update_history.status_label(driver.version, update_history.get(device_id))
+                self._table.setItem(r, status_col, centered_item(text))
+                return
+
+    def _reread_driver_version(self, driver: DriverInfo) -> Optional[str]:
+        """A cheap, SINGLE-CLASS re-query right after installing a vendor
+        update, so update_history can record what Windows now reports
+        without paying for this app's full chunked driver sweep (which
+        exists specifically because one class's WMI query can itself run
+        up to ~30s). Called from a Worker's own function, never from a
+        result/error callback -- those run on the UI thread, and this is
+        exactly the kind of blocking call this module already backgrounds
+        everywhere else. None (never raises) if the class query fails or
+        the device isn't found in its own result."""
+        from modules.driver_manager.driver_reader import _fetch_drivers_for_class, DriverReadError
+        try:
+            fresh = _fetch_drivers_for_class(driver.driver_class, old_threshold_days=730)
+        except DriverReadError as exc:
+            logger.warning("driver_module: could not re-read driver version "
+                           "for %s after install: %s", driver.device_name, exc)
+            return None
+        for d in fresh:
+            if d.device_id == driver.device_id:
+                return d.version
+        return None
+
+    def _ask_install_mode(self, driver: DriverInfo, update) -> Optional[str]:
+        """"light", "full", or None (cancelled) -- a separate method
+        (rather than an inlined QMessageBox call) so tests can
+        monkeypatch DriverModule._ask_install_mode directly, the same
+        way other tests here monkeypatch QMessageBox class methods for
+        the plain yes/no/information dialogs."""
+        box = QMessageBox(self._widget)
+        box.setWindowTitle("Check for Vendor Update")
+        box.setText(f"{update.vendor} has version {update.latest_version} "
+                   f"available for {driver.device_name} (currently "
+                   f"{update.current_version}).")
+        box.setInformativeText(
+            "LIGHT installs just the INF/SYS driver files (smaller attack "
+            "surface, no bundled software). FULL runs the vendor's own "
+            "installer (everything they ship, including control panel apps).\n\n"
+            f"Download from {update.download_url}")
+        light_btn = box.addButton("Install LIGHT", QMessageBox.ButtonRole.AcceptRole)
+        full_btn = box.addButton("Install FULL", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is light_btn:
+            return "light"
+        if clicked is full_btn:
+            return "full"
+        return None
+
+    def _ask_bulk_install_mode(self, found: list, checked_count: int) -> Optional[str]:
+        """"light", "full", or None (skip) -- the bulk-sweep equivalent of
+        _ask_install_mode, ONE choice for the whole batch. Separate method
+        for the same reason: directly monkeypatchable in tests instead of
+        faking the whole QMessageBox construction."""
+        names = "\n".join(f"- {d.device_name}: {u.latest_version}" for d, _, u in found)
+        box = QMessageBox(self._widget)
+        box.setWindowTitle("Check All for Updates")
+        box.setText(f"{len(found)} of {checked_count} checked device(s) "
+                   f"have an update available.")
+        box.setInformativeText(names)
+        light_btn = box.addButton("Install All (LIGHT)", QMessageBox.ButtonRole.AcceptRole)
+        full_btn = box.addButton("Install All (FULL)", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Skip Installing", QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is light_btn:
+            return "light"
+        if clicked is full_btn:
+            return "full"
+        return None
+
     def _check_for_vendor_update(self, driver: DriverInfo) -> None:
         reason = no_provider_reason(driver)
         if reason == NoProviderReason.UNRECOGNIZED_VENDOR:
@@ -712,6 +827,12 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
+            update_history.record_check(
+                driver.device_id, driver.device_name, provider.vendor_name,
+                update_history.OUTCOME_UPDATE_FOUND if update is not None
+                else update_history.OUTCOME_NO_UPDATE,
+                seen_vendor_version=update.latest_version if update is not None else None)
+            self._refresh_status_cell_for_device(driver.device_id, driver)
             if update is None:
                 QMessageBox.information(
                     self._widget, "Check for Vendor Update",
@@ -726,23 +847,20 @@ class DriverModule(BaseModule):
                     f"administrator rights. Restart this app as "
                     f"administrator to install it.")
                 return
-            confirm = QMessageBox.question(
-                self._widget, "Check for Vendor Update",
-                f"{update.vendor} has version {update.latest_version} "
-                f"available for {driver.device_name} (currently "
-                f"{update.current_version}).\n\nDownload from "
-                f"{update.download_url}?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No)
-            if confirm != QMessageBox.StandardButton.Yes:
+            mode = self._ask_install_mode(driver, update)
+            if mode is None:
                 return
-            self._run_vendor_update(driver, provider, update)
+            self._run_vendor_update(driver, provider, update, mode)
 
         def on_check_error(err_str: str) -> None:
             if not widget_is_valid(self._widget):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
+            update_history.record_check(
+                driver.device_id, driver.device_name, provider.vendor_name,
+                update_history.OUTCOME_CHECK_FAILED, error=err_str)
+            self._refresh_status_cell_for_device(driver.device_id, driver)
             QMessageBox.warning(
                 self._widget, "Check for Vendor Update",
                 f"Could not check for an update: {err_str}")
@@ -755,7 +873,7 @@ class DriverModule(BaseModule):
         else:
             QThreadPool.globalInstance().start(worker)
 
-    def _run_vendor_update(self, driver: DriverInfo, provider, update) -> None:
+    def _run_vendor_update(self, driver: DriverInfo, provider, update, mode: str = "light") -> None:
         if self._status_lbl:
             self._status_lbl.setText(f"Downloading {update.vendor} driver...")
 
@@ -768,7 +886,11 @@ class DriverModule(BaseModule):
             from modules.driver_manager.vendor_updates.rollback import snapshot_before_install
             token = snapshot_before_install(driver)
             try:
-                install_result = vendor_pipeline.install_light(download_result.path, driver)
+                if mode == "full":
+                    install_result = vendor_pipeline.install_full(
+                        download_result.path, driver, provider)
+                else:
+                    install_result = vendor_pipeline.install_light(download_result.path, driver)
             finally:
                 # The downloaded installer (NVIDIA packages run 600-900MB)
                 # is this caller's to clean up once done with it -- a
@@ -780,7 +902,11 @@ class DriverModule(BaseModule):
                 except OSError as exc:
                     logger.warning("driver_module: could not delete downloaded "
                                   "installer %s: %s", download_result.path, exc)
-            return ("installed", install_result, token)
+            # Re-read Windows' own version now, still on this worker
+            # thread -- _reread_driver_version shells out and must never
+            # run from a result/error callback (those are UI-thread).
+            fresh_version = self._reread_driver_version(driver) if install_result.ok else None
+            return ("installed", install_result, token, fresh_version)
 
         worker = Worker(do_update)
 
@@ -793,14 +919,22 @@ class DriverModule(BaseModule):
                 QMessageBox.warning(self._widget, "Check for Vendor Update",
                                    f"Could not use this update: {result[1]}")
                 return
-            _, install_result, token = result
+            _, install_result, token, fresh_version = result
             if not install_result.ok:
-                QMessageBox.warning(self._widget, "Check for Vendor Update",
-                                   f"Install failed: {install_result.reason}")
+                if install_result.handed_off_to_ui:
+                    QMessageBox.information(self._widget, "Check for Vendor Update",
+                                           install_result.reason)
+                else:
+                    QMessageBox.warning(self._widget, "Check for Vendor Update",
+                                       f"Install failed: {install_result.reason}")
                 return
             if token and driver.device_id:
                 self._applied_update_tokens[driver.device_id] = token
                 self._refresh_undo_all_button_state()
+            update_history.record_applied(
+                driver.device_id, driver.device_name, update.vendor,
+                update.latest_version, fresh_version, mode)
+            self._refresh_status_cell_for_device(driver.device_id, driver)
             QMessageBox.information(self._widget, "Check for Vendor Update",
                                    f"{driver.device_name} updated to "
                                    f"{update.latest_version}. Click Refresh "
@@ -816,6 +950,214 @@ class DriverModule(BaseModule):
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _check_all_for_updates(self) -> None:
+        """Sweeps every device with a recognized vendor AND a registered
+        provider -- devices with neither get no meaningful check, the
+        same "-" the Update Status column already shows them. Sequential,
+        not parallel: one vendor's slow response must not block another's
+        result, but hammering every vendor's site at once from one click
+        is worse citizenship than a slightly longer sweep."""
+        drivers = list(self._drivers_ref[0])
+        checkable = [d for d in drivers if provider_for(d) is not None]
+        if not checkable:
+            QMessageBox.information(
+                self._widget, "Check All for Updates",
+                "No devices with a configured update source were found.")
+            return
+        if self._status_lbl:
+            self._status_lbl.setText(f"Checking {len(checkable)} device(s) for updates...")
+        if self._progress:
+            self._progress.setRange(0, len(checkable))
+            self._progress.setValue(0)
+            self._progress.show()
+
+        def do_sweep(worker):
+            found = []
+            for i, d in enumerate(checkable):
+                if worker.is_cancelled:
+                    break
+                provider = provider_for(d)
+                try:
+                    update = provider.check_for_update(d)
+                except Exception as exc:  # noqa: BLE001 -- one bad vendor
+                    # response must not abort every other device's check;
+                    # matches tools/driver_vendor_update_check.py's own
+                    # per-device try/except around this exact call.
+                    logger.warning("driver_module: bulk check failed for "
+                                   "%s: %s", d.device_name, exc)
+                    update_history.record_check(
+                        d.device_id, d.device_name, provider.vendor_name,
+                        update_history.OUTCOME_CHECK_FAILED, error=str(exc))
+                    worker.signals.progress.emit(i + 1)
+                    continue
+                update_history.record_check(
+                    d.device_id, d.device_name, provider.vendor_name,
+                    update_history.OUTCOME_UPDATE_FOUND if update is not None
+                    else update_history.OUTCOME_NO_UPDATE,
+                    seen_vendor_version=update.latest_version if update is not None else None)
+                if update is not None:
+                    found.append((d, provider, update))
+                worker.signals.progress.emit(i + 1)
+            return found
+
+        worker = Worker(do_sweep)
+
+        def on_progress(n: int) -> None:
+            if self._progress:
+                self._progress.setValue(n)
+
+        def on_sweep_done(found) -> None:
+            if self._progress:
+                self._progress.hide()
+            if not widget_is_valid(self._widget):
+                return
+            for d in checkable:
+                self._refresh_status_cell_for_device(d.device_id, d)
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if not found:
+                QMessageBox.information(
+                    self._widget, "Check All for Updates",
+                    f"Checked {len(checkable)} device(s). No updates found.")
+                return
+            if not is_admin():
+                names = "\n".join(f"- {d.device_name}: {u.latest_version}" for d, _, u in found)
+                QMessageBox.information(
+                    self._widget, "Check All for Updates",
+                    f"{len(found)} update(s) found, but installing needs "
+                    f"administrator rights:\n\n{names}\n\nRestart this app "
+                    f"as administrator to install them.")
+                return
+            mode = self._ask_bulk_install_mode(found, len(checkable))
+            if mode is not None:
+                self._bulk_install(found, mode)
+
+        def on_sweep_error(err_str: str) -> None:
+            if self._progress:
+                self._progress.hide()
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check All for Updates",
+                               f"Bulk check failed unexpectedly: {err_str}")
+
+        worker.signals.progress.connect(on_progress)
+        worker.signals.result.connect(on_sweep_done)
+        worker.signals.error.connect(on_sweep_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _bulk_install(self, found: list, mode: str) -> None:
+        """found: (driver, provider, update) tuples, already confirmed
+        admin and with ONE mode chosen for the whole batch. Sequential
+        installs, one restore point per device (same as the single-device
+        path). FULL installs run with allow_interactive_fallback=False --
+        an inconclusive silent result is reported as skipped rather than
+        popping up the vendor's installer window mid-batch; that device
+        can be retried individually (which does allow the interactive
+        fallback) from the context menu."""
+        if self._status_lbl:
+            self._status_lbl.setText(f"Installing {len(found)} update(s)...")
+        if self._progress:
+            self._progress.setRange(0, len(found))
+            self._progress.setValue(0)
+            self._progress.show()
+
+        def do_bulk(worker):
+            from modules.driver_manager.vendor_updates.rollback import snapshot_before_install
+            results = []
+            for i, (driver, provider, update) in enumerate(found):
+                if worker.is_cancelled:
+                    break
+                download_result = vendor_pipeline.download_and_verify(
+                    update, allowed_domains=provider.allowed_download_domains,
+                    extra_headers=getattr(provider, "download_headers", None))
+                if download_result.path is None:
+                    results.append((driver, provider, update, None, None, None,
+                                   download_result.reason))
+                    worker.signals.progress.emit(i + 1)
+                    continue
+                token = snapshot_before_install(driver)
+                try:
+                    if mode == "full":
+                        install_result = vendor_pipeline.install_full(
+                            download_result.path, driver, provider,
+                            allow_interactive_fallback=False)
+                    else:
+                        install_result = vendor_pipeline.install_light(
+                            download_result.path, driver)
+                finally:
+                    try:
+                        os.remove(download_result.path)
+                    except OSError as exc:
+                        logger.warning("driver_module: could not delete "
+                                       "downloaded installer %s: %s",
+                                       download_result.path, exc)
+                fresh_version = self._reread_driver_version(driver) if install_result.ok else None
+                results.append((driver, provider, update, install_result, token,
+                               fresh_version, None))
+                worker.signals.progress.emit(i + 1)
+            return results
+
+        worker = Worker(do_bulk)
+
+        def on_progress(n: int) -> None:
+            if self._progress:
+                self._progress.setValue(n)
+
+        def on_bulk_done(results) -> None:
+            if self._progress:
+                self._progress.hide()
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            succeeded = 0
+            failed_lines = []
+            for driver, provider, update, install_result, token, fresh_version, dl_reason in results:
+                if install_result is None:
+                    failed_lines.append(f"- {driver.device_name}: download failed -- {dl_reason}")
+                    continue
+                if not install_result.ok:
+                    failed_lines.append(f"- {driver.device_name}: {install_result.reason}")
+                    continue
+                succeeded += 1
+                if token and driver.device_id:
+                    self._applied_update_tokens[driver.device_id] = token
+                update_history.record_applied(
+                    driver.device_id, driver.device_name, update.vendor,
+                    update.latest_version, fresh_version, mode)
+                self._refresh_status_cell_for_device(driver.device_id, driver)
+            if self._applied_update_tokens:
+                self._refresh_undo_all_button_state()
+            summary = f"Installed {succeeded} of {len(results)} update(s)."
+            if failed_lines:
+                summary += "\n\nNot installed:\n" + "\n".join(failed_lines)
+            QMessageBox.information(self._widget, "Check All for Updates", summary)
+
+        def on_bulk_error(err_str: str) -> None:
+            if self._progress:
+                self._progress.hide()
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check All for Updates",
+                               f"Bulk install failed unexpectedly: {err_str}")
+
+        worker.signals.progress.connect(on_progress)
+        worker.signals.result.connect(on_bulk_done)
+        worker.signals.error.connect(on_bulk_error)
         self._workers.append(worker)
         if self.app and getattr(self.app, "thread_pool", None) is not None:
             self.app.thread_pool.start(worker)

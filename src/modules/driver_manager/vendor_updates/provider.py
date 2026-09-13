@@ -39,6 +39,14 @@ class VendorProvider(Protocol):
     def check_for_update(self, driver: DriverInfo) -> Optional[UpdateInfo]:
         ...
 
+    # Both optional, both read via getattr(provider, "...", None) at the
+    # pipeline.install_full call site -- a provider missing either goes
+    # straight to the interactive installer rather than a guessed
+    # command line. See pipeline.install_full's docstring for the full
+    # contract.
+    # def build_silent_install_args(self, log_path: str) -> List[str]: ...
+    # def silent_install_succeeded(self, log_path: str, exit_code: int) -> Optional[bool]: ...
+
 
 class NoProviderReason(enum.Enum):
     UNRECOGNIZED_VENDOR = "unrecognized_vendor"       # vendor_id has no entry

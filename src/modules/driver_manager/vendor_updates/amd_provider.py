@@ -40,6 +40,7 @@ all) has no product page this scheme can construct -- check_for_update
 returns None for it honestly rather than guessing a URL.
 """
 import logging
+import os
 import re
 from typing import Optional
 from urllib.request import Request, urlopen
@@ -127,6 +128,35 @@ class AmdProvider:
             download_url=found.group(0),
             installer_signer=self.expected_signer,
         )
+
+    def build_silent_install_args(self, log_path: str) -> list:
+        """AMD's own documented mechanism (Command Line Installation User
+        Guide, drivers.amd.com/relnotes/command-line-installation.pdf,
+        confirmed 2026-09-13): "-INSTALL" runs a silent install with no
+        UI; "-LOG <path>" writes a result-code log to that path. The same
+        guide's "-UI" switch is what a non-silent run would use instead
+        -- never passed here."""
+        return ["-INSTALL", "-OUTPUT", "screen", "-LOG", log_path]
+
+    def silent_install_succeeded(self, log_path: str, exit_code: int) -> Optional[bool]:
+        """AMD's guide documents the LOG FILE's "ResultCode" as the real
+        success signal (0 = PASS, 1/2 = FAIL) -- it never documents what
+        the process's own exit code means, so exit_code is intentionally
+        unused here rather than guessed at. None (triggers the
+        interactive-installer fallback) when the log never appeared or
+        didn't contain a recognizable ResultCode line."""
+        if not os.path.exists(log_path):
+            return None
+        try:
+            with open(log_path, "r", errors="ignore") as f:
+                text = f.read()
+        except OSError as exc:
+            logger.warning("amd_provider: could not read install log %s: %s", log_path, exc)
+            return None
+        match = re.search(r"ResultCode\s*=\s*(\d+)", text)
+        if match is None:
+            return None
+        return match.group(1) == "0"
 
 
 register_provider(AmdProvider())

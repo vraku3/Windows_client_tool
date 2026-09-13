@@ -132,3 +132,44 @@ def test_provider_registers_itself_on_import():
     from modules.driver_manager.vendor_updates import provider as pv
     assert "AMD" in pv._PROVIDERS
     assert isinstance(pv._PROVIDERS["AMD"], amp.AmdProvider)
+
+
+# ---------------------------------------------------------------------
+# silent FULL install (AMD's own Command Line Installation User Guide)
+# ---------------------------------------------------------------------
+
+def test_build_silent_install_args_uses_amds_documented_install_switch():
+    provider = amp.AmdProvider()
+    args = provider.build_silent_install_args("C:\\temp\\install.log")
+    assert "-INSTALL" in args
+    assert "-LOG" in args
+    assert "C:\\temp\\install.log" in args
+    assert "-UI" not in args  # -UI launches the interactive installer -- never here
+
+
+def test_silent_install_succeeded_reads_result_code_zero_as_success(tmp_path):
+    log = tmp_path / "install.log"
+    log.write_text("[ResponseResult]\nResultCode = 0\n[Details]\n")
+    provider = amp.AmdProvider()
+    assert provider.silent_install_succeeded(str(log), exit_code=0) is True
+
+
+def test_silent_install_succeeded_reads_nonzero_result_code_as_failure(tmp_path):
+    log = tmp_path / "install.log"
+    log.write_text("[ResponseResult]\nResultCode = 1\n[Details]\n")
+    provider = amp.AmdProvider()
+    # even if the process exit code looks fine, the LOG's ResultCode is
+    # AMD's own documented signal -- exit_code must not override it
+    assert provider.silent_install_succeeded(str(log), exit_code=0) is False
+
+
+def test_silent_install_succeeded_returns_none_when_the_log_never_appeared(tmp_path):
+    provider = amp.AmdProvider()
+    assert provider.silent_install_succeeded(str(tmp_path / "missing.log"), exit_code=0) is None
+
+
+def test_silent_install_succeeded_returns_none_when_the_log_has_no_result_code(tmp_path):
+    log = tmp_path / "install.log"
+    log.write_text("some unrelated content\n")
+    provider = amp.AmdProvider()
+    assert provider.silent_install_succeeded(str(log), exit_code=0) is None

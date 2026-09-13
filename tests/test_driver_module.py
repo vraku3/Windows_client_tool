@@ -6,6 +6,20 @@ from PyQt6.QtWidgets import QHeaderView
 
 from modules.driver_manager import driver_module as dmod
 from modules.driver_manager.driver_reader import DriverInfo
+from modules.driver_manager.vendor_updates import update_history as uh
+
+
+@pytest.fixture(autouse=True)
+def _isolated_update_history(tmp_path, monkeypatch):
+    """Every test in this file that installs/checks a vendor update goes
+    through record_check/record_applied, which write to
+    %APPDATA%/WindowsTweaker/driver_updates/update_history.json by
+    default -- without this, a test run writes fabricated device history
+    (fake GPUs, fake versions) straight into the REAL user's app-data
+    file. Confirmed this actually happened once already: a prior run of
+    this suite left a "GeForce RTX 4090" entry in the real file on this
+    exact machine, which does not own an NVIDIA GPU at all."""
+    monkeypatch.setattr(uh, "_history_path", lambda: str(tmp_path / "update_history.json"))
 
 
 def _drivers():
@@ -1070,7 +1084,7 @@ def test_check_for_vendor_update_refuses_unelevated_before_any_confirm(monkeypat
     assert "administrator" in shown[0].lower()
 
 
-def test_check_for_vendor_update_confirms_before_downloading_when_elevated(monkeypatch):
+def test_check_for_vendor_update_asks_light_or_full_before_downloading_when_elevated(monkeypatch):
     mod = _module()
     driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
                         version="1.0", date="", publisher="V", signed=True,
@@ -1079,14 +1093,37 @@ def test_check_for_vendor_update_confirms_before_downloading_when_elevated(monke
     monkeypatch.setattr(dmod, "is_admin", lambda: True)
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _SyncPool()))
-    confirmed = []
-    monkeypatch.setattr(dmod.QMessageBox, "question",
-                        lambda *a, **k: confirmed.append(a) or dmod.QMessageBox.StandardButton.No)
+    asked = []
+
+    def fake_ask(self, driver, update):
+        asked.append((driver, update))
+        return None  # cancel -- must not proceed to _run_vendor_update
+
+    monkeypatch.setattr(dmod.DriverModule, "_ask_install_mode", fake_ask)
     mod._check_for_vendor_update(driver)
-    assert confirmed
-    # the confirm text names the vendor and both versions
-    confirm_text = confirmed[0][2]
-    assert "NVIDIA" in confirm_text and "1.0" in confirm_text and "2.0" in confirm_text
+    assert asked
+    asked_driver, asked_update = asked[0]
+    assert asked_driver is driver
+    assert asked_update.vendor == "NVIDIA"
+    assert asked_update.current_version == "1.0"
+    assert asked_update.latest_version == "2.0"
+
+
+def test_check_for_vendor_update_proceeds_to_run_update_with_the_chosen_mode(monkeypatch):
+    mod = _module()
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.DriverModule, "_ask_install_mode", lambda self, driver, update: "full")
+    ran = []
+    monkeypatch.setattr(dmod.DriverModule, "_run_vendor_update",
+                        lambda self, driver, provider, update, mode: ran.append(mode))
+    mod._check_for_vendor_update(driver)
+    assert ran == ["full"]
 
 
 def test_check_for_vendor_update_dispatches_the_network_check_on_a_worker_not_inline(monkeypatch):
@@ -1172,6 +1209,9 @@ def test_run_vendor_update_enables_undo_all_button_on_a_successful_install(monke
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _SyncPool()))
     monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    # _reread_driver_version shells out to PowerShell for real -- must be
+    # mocked in every unit test, not just left to actually run one.
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_version", lambda self, driver: "1.0")
 
     assert mod._undo_all_updates_btn.isEnabled() is False  # precondition
 
@@ -1201,6 +1241,7 @@ def test_run_vendor_update_deletes_the_downloaded_installer_on_success(monkeypat
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _SyncPool()))
     monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_version", lambda self, driver: "1.0")
 
     mod._run_vendor_update(driver, _fake_provider(), _fake_update())
 
@@ -1445,3 +1486,185 @@ def test_undo_all_updates_this_session_keeps_the_failed_token_only(monkeypatch):
     monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
     mod._undo_all_updates_this_session()
     assert mod._applied_update_tokens == {"PCI\\FAIL": "oem2.inf"}
+
+
+# ----------------------------------------------------------------------
+# Update Status column + history recording
+# ----------------------------------------------------------------------
+
+def test_update_status_column_shows_a_dash_for_a_device_with_no_provider(monkeypatch):
+    monkeypatch.setattr(dmod, "provider_for", lambda d: None)
+    driver = DriverInfo(device_name="Intel Card", driver_class="Display", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0, flags="",
+                        hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\INTEL1")
+    mod = _module()
+    mod._populate([driver])
+    assert mod._table.item(0, len(dmod.COLUMNS) - 1).text() == "—"
+
+
+def test_check_for_vendor_update_records_history_and_updates_the_status_cell(monkeypatch):
+    driver = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display",
+                        version="1.0", date="", publisher="V", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10DE&DEV_2684",
+                        device_id="PCI\\DEV1")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_nvidia_update_provider())
+    monkeypatch.setattr(dmod, "is_admin", lambda: False)  # stop before the mode dialog
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    mod = _module()
+    mod._populate([driver])
+    mod._check_for_vendor_update(driver)
+    history = uh.get("PCI\\DEV1")
+    assert history is not None
+    assert history.last_check_outcome == uh.OUTCOME_UPDATE_FOUND
+    assert history.last_seen_vendor_version == "2.0"
+    status_cell = mod._table.item(0, len(dmod.COLUMNS) - 1)
+    assert "2.0" in status_cell.text()
+
+
+def _fake_provider_for_bulk(vendor_name="NVIDIA"):
+    class _P:
+        vendor_name = vendor_name
+        allowed_download_domains = ["download.nvidia.com"]
+    return _P()
+
+
+def test_check_all_for_updates_finds_updates_and_offers_bulk_install(monkeypatch):
+    d1 = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_10DE&DEV_2684", device_id="PCI\\DEV1")
+    d2 = DriverInfo(device_name="Some Unrelated Device", driver_class="System", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_FFFF&DEV_0000", device_id="PCI\\DEV2")
+    mod = _module()
+    mod._drivers_ref[0] = [d1, d2]
+
+    class _P:
+        vendor_name = "NVIDIA"
+
+        def check_for_update(self, driver):
+            return _fake_update()
+
+    def fake_provider_for(d):
+        return _P() if d is d1 else None
+
+    monkeypatch.setattr(dmod, "provider_for", fake_provider_for)
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    asked = []
+
+    def fake_ask_bulk(self, found, checked_count):
+        asked.append((found, checked_count))
+        return "light"
+
+    monkeypatch.setattr(dmod.DriverModule, "_ask_bulk_install_mode", fake_ask_bulk)
+    bulk_calls = []
+    monkeypatch.setattr(dmod.DriverModule, "_bulk_install",
+                        lambda self, found, mode: bulk_calls.append((found, mode)))
+
+    mod._check_all_for_updates()
+
+    assert len(asked) == 1
+    assert asked[0][1] == 1  # only d1 has a provider -- d2 is filtered out before the sweep
+    assert len(bulk_calls) == 1
+    found, mode = bulk_calls[0]
+    assert mode == "light"
+    assert len(found) == 1
+    assert found[0][0] is d1
+
+
+def test_ask_bulk_install_mode_returns_the_clicked_choice():
+    # Real QMessageBox, real buttons -- clickedButton() is simulated by
+    # calling the button's own click() rather than faking the whole Qt
+    # class, since QMessageBox.exec() would otherwise block on a real
+    # modal event loop in a headless test.
+    mod = _module()
+    d1 = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="")
+    found = [(d1, _fake_provider(), _fake_update())]
+
+    from PyQt6.QtWidgets import QMessageBox as RealQMessageBox
+    original_exec = RealQMessageBox.exec
+
+    def fake_exec(self):
+        # Click "Install All (FULL)" instead of actually blocking on exec().
+        for btn in self.buttons():
+            if btn.text().replace("&", "") == "Install All (FULL)":
+                btn.click()
+                return 0
+        return original_exec(self)
+
+    RealQMessageBox.exec = fake_exec
+    try:
+        result = mod._ask_bulk_install_mode(found, checked_count=5)
+    finally:
+        RealQMessageBox.exec = original_exec
+    assert result == "full"
+
+
+def test_check_all_for_updates_reports_nothing_found_and_still_no_ops_cleanly(monkeypatch):
+    d1 = DriverInfo(device_name="Some Unrelated Device", driver_class="System", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_FFFF&DEV_0000", device_id="PCI\\DEV1")
+    mod = _module()
+    mod._drivers_ref[0] = [d1]
+    monkeypatch.setattr(dmod, "provider_for", lambda d: None)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    mod._check_all_for_updates()
+    assert shown
+    assert "no devices" in shown[0].lower()
+
+
+def test_bulk_install_records_history_and_undo_tokens_for_each_success(monkeypatch, tmp_path):
+    d1 = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_10DE&DEV_2684", device_id="PCI\\DEV1")
+    downloaded = tmp_path / "installer.exe"
+    downloaded.write_bytes(b"fake")
+
+    monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
+                        lambda update, allowed_domains, extra_headers=None:
+                            dmod.vendor_pipeline.DownloadResult(path=str(downloaded)))
+    monkeypatch.setattr(dmod.vendor_pipeline, "install_light",
+                        lambda path, driver: dmod.InstallResult(ok=True, reason="", restore_point_taken=True))
+    from modules.driver_manager.vendor_updates import rollback as rb_mod
+    monkeypatch.setattr(rb_mod, "snapshot_before_install", lambda driver: "oem12.inf")
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_version", lambda self, driver: "2.0")
+
+    mod = _module()
+    mod._populate([d1])
+
+    mod._bulk_install([(d1, _fake_provider(), _fake_update())], "light")
+
+    assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
+    history = uh.get("PCI\\DEV1")
+    assert history is not None
+    assert history.last_applied_vendor_version == "2.0"
+    assert history.last_applied_windows_version == "2.0"
+    assert history.last_applied_mode == "light"
+
+
+def test_bulk_install_reports_a_failed_device_without_stopping_the_batch(monkeypatch, tmp_path):
+    d1 = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_10DE&DEV_2684", device_id="PCI\\DEV1")
+    downloaded = tmp_path / "installer.exe"
+    downloaded.write_bytes(b"fake")
+
+    monkeypatch.setattr(dmod.vendor_pipeline, "download_and_verify",
+                        lambda update, allowed_domains, extra_headers=None:
+                            dmod.vendor_pipeline.DownloadResult(path=None, reason="signature invalid"))
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    mod = _module()
+    mod._bulk_install([(d1, _fake_provider(), _fake_update())], "light")
+
+    assert shown
+    assert "signature invalid" in shown[0]
+    assert mod._applied_update_tokens == {}

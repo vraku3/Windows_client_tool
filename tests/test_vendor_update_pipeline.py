@@ -483,3 +483,147 @@ def test_install_light_refuses_cleanly_when_the_temp_dir_cannot_be_created(monke
     assert result.ok is False
     assert result.restore_point_taken is True
     assert "temporary directory" in result.reason.lower()
+
+
+# ---------------------------------------------------------------------
+# install_full
+# ---------------------------------------------------------------------
+
+class _FakeFullProvider:
+    """Mimics AMD's real shape: a log-file result code, exit_code unused."""
+    vendor_name = "AMD"
+
+    def __init__(self, write_result_code=None, raise_on_run=None):
+        self._write_result_code = write_result_code
+        self._raise_on_run = raise_on_run
+
+    def build_silent_install_args(self, log_path):
+        self._log_path = log_path
+        return ["-INSTALL", "-LOG", log_path]
+
+    def silent_install_succeeded(self, log_path, exit_code):
+        if not os.path.exists(log_path):
+            return None
+        with open(log_path) as f:
+            text = f.read()
+        import re
+        match = re.search(r"ResultCode = (\d+)", text)
+        if match is None:
+            return None
+        return match.group(1) == "0"
+
+
+def _fake_run_writes_log(result_code):
+    def fake_run(cmd, timeout=None, capture_output=None, creationflags=None):
+        # cmd = [installer_path, "-INSTALL", "-LOG", log_path]
+        log_path = cmd[-1]
+        with open(log_path, "w") as f:
+            f.write(f"[ResponseResult]\nResultCode = {result_code}\n")
+        class _Proc:
+            returncode = 0
+        return _Proc()
+    return fake_run
+
+
+def test_install_full_reports_success_from_the_providers_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl.subprocess, "run", _fake_run_writes_log("0"))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(), _FakeFullProvider())
+    assert result.ok is True
+    assert result.handed_off_to_ui is False
+
+
+def test_install_full_reports_failure_from_the_providers_log(tmp_path, monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl.subprocess, "run", _fake_run_writes_log("1"))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(), _FakeFullProvider())
+    assert result.ok is False
+    assert result.handed_off_to_ui is False
+    assert "failure" in result.reason.lower()
+
+
+def test_install_full_falls_back_to_interactive_when_result_is_inconclusive(tmp_path, monkeypatch):
+    # log file never appears -- e.g. the installer silently ignored the flags
+    def fake_run(cmd, timeout=None, capture_output=None, creationflags=None):
+        class _Proc:
+            returncode = 0
+        return _Proc()
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl.subprocess, "run", fake_run)
+    popened = []
+    monkeypatch.setattr(pl.subprocess, "Popen", lambda cmd: popened.append(cmd))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(), _FakeFullProvider())
+    assert result.ok is False
+    assert result.handed_off_to_ui is True
+    assert len(popened) == 1
+
+
+def test_install_full_skips_instead_of_launching_ui_when_fallback_disallowed(tmp_path, monkeypatch):
+    def fake_run(cmd, timeout=None, capture_output=None, creationflags=None):
+        class _Proc:
+            returncode = 0
+        return _Proc()
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl.subprocess, "run", fake_run)
+    popened = []
+    monkeypatch.setattr(pl.subprocess, "Popen", lambda cmd: popened.append(cmd))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(),
+                             _FakeFullProvider(), allow_interactive_fallback=False)
+    assert result.ok is False
+    assert result.handed_off_to_ui is False
+    assert len(popened) == 0
+    assert "skipped" in result.reason.lower()
+
+
+def test_install_full_goes_straight_to_interactive_when_provider_has_no_silent_mechanism(tmp_path, monkeypatch):
+    class _NoSilentMechanismProvider:
+        vendor_name = "SomeVendor"
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    popened = []
+    monkeypatch.setattr(pl.subprocess, "Popen", lambda cmd: popened.append(cmd))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(),
+                             _NoSilentMechanismProvider())
+    assert result.ok is False
+    assert result.handed_off_to_ui is True
+    assert len(popened) == 1
+
+
+def test_install_full_refuses_when_no_restore_point_can_be_created(tmp_path, monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (False, "policy disabled"))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(), _FakeFullProvider())
+    assert result.ok is False
+    assert result.restore_point_taken is False
+    assert "restore point" in result.reason.lower()
+
+
+def test_install_full_survives_the_silent_run_itself_raising(tmp_path, monkeypatch):
+    def raising_run(cmd, timeout=None, capture_output=None, creationflags=None):
+        raise OSError("could not launch")
+
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+    monkeypatch.setattr(pl.subprocess, "run", raising_run)
+    popened = []
+    monkeypatch.setattr(pl.subprocess, "Popen", lambda cmd: popened.append(cmd))
+    result = pl.install_full(str(tmp_path / "installer.exe"), _driver_for_install(), _FakeFullProvider())
+    assert result.handed_off_to_ui is True
+    assert len(popened) == 1
+
+
+def test_install_full_refuses_cleanly_when_the_temp_dir_cannot_be_created(monkeypatch):
+    monkeypatch.setattr(pl, "create_restore_point", lambda desc, timeout=60: (True, ""))
+
+    class _FailingTempDir:
+        def __enter__(self):
+            raise OSError("disk full")
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(pl.tempfile, "TemporaryDirectory", lambda prefix=None: _FailingTempDir())
+    result = pl.install_full("installer.exe", _driver_for_install(), _FakeFullProvider())
+    assert result.ok is False
+    assert result.restore_point_taken is True
+    assert "temporary directory" in result.reason.lower()

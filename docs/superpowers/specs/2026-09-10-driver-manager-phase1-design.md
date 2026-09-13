@@ -1,10 +1,28 @@
 # Driver Manager Phase 1 — Update Foundation (LIGHT Install, Rollback, Power Toggle)
 
-**Status:** Draft, pending spec review
+**Status:** Implemented and merged, MINUS the power-management toggle
+(deferred — see note below and the implementation plan's Task 7/10
+entries for the full reason).
 **Author:** Claude (design session with user, 2026-09-10)
 **Scope:** Phase 1 of the 6-phase Driver Manager improvement program named in
 `docs/superpowers/specs/2026-09-09-driver-manager-phase0-design.md`'s Context
 section. This is the first phase with real writes.
+
+**Post-implementation note (2026-09-13):** Goal 7 and its `power_management.py`
+component (below) were never built. The design assumed a `PnPCapabilities`
+registry DWORD maps cleanly to the Power Management tab's checkbox (0 =
+allowed, 24 = disabled), sourced secondhand and flagged in this spec's own
+Open Questions as needing live verification. That verification — an
+interactive Device Manager experiment — never happened (no agent working
+this plan has interactive GUI access, and the user was unable to complete
+it after being asked). Real evidence surfaced in the meantime that
+contradicts the assumption: real inbox driver INFs on the dev machine set
+`PnPCapabilities` to `1` and `0x120`, not a clean binary pair — suggesting
+it's a general capability bitfield, not a single toggle. Shipping either
+direction (read or write) on an unverified, now actively-contradicted
+mapping risked confidently telling the user the wrong thing about a real
+device's state, which is worse than not shipping it. Everything else in
+this spec (Goals 1-6, 8) was built as designed.
 
 ## Context
 

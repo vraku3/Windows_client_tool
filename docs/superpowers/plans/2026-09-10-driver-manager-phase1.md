@@ -6,16 +6,19 @@
 whether a device has a newer driver from its vendor (proven on NVIDIA),
 download it, verify it, and install just the driver files (LIGHT: INF/SYS/CAT
 via `pnputil`, no vendor bloatware) — plus rollback of an update this feature
-applied, bulk rollback across a session, and a per-device power-management
-toggle.
+applied and bulk rollback across a session. (A per-device power-management
+toggle was originally in scope too — **deferred**, see Task 7's own entry
+below for why: the assumed registry mechanism turned out contradicted by
+real evidence, and shipping it anyway risked confidently misreporting a
+device's actual state.)
 
 **Architecture:** A new Qt-free `vendor_updates/` package under
 `driver_manager/`: a pluggable vendor-provider registry keyed by PCI vendor
 ID, one proven provider (NVIDIA, using its own real download-page API,
-verified live during design), a shared safety pipeline (download → verify
-signature → restore point → install), and rollback/power-management as
-siblings sharing that pipeline. `driver_module.py` gets the Qt wiring
-(confirm dialogs, context-menu actions, `Worker`-based orchestration) and an
+verified live during design), and a shared safety pipeline (download →
+verify signature → restore point → install), with rollback as a sibling
+sharing that pipeline. `driver_module.py` gets the Qt wiring (confirm
+dialogs, context-menu actions, `Worker`-based orchestration) and an
 elevation gate for the new write actions only.
 
 **Tech Stack:** Python 3.12, PyQt6, `urllib.request`/`requests` (check which
@@ -48,7 +51,7 @@ shelled out to elsewhere in this codebase), `pnputil`.
 - Nothing under `vendor_updates/` imports PyQt6 — same Qt-free split this
   codebase already keeps in TreeSize's `scan/`/`store/`, Monitor Control, and
   GPResult. Only `driver_module.py` itself touches Qt.
-- Every write action (install, rollback, power-management write) runs on a
+- Every write action (install, rollback) runs on a
   `Worker`, never the UI thread, and confirms with the user first — Phase
   0's own final review already found and fixed this exact mistake once in
   this same module; it does not get repeated here.
@@ -1329,201 +1332,57 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 7: `power_management.py`
+### Task 7: `power_management.py` — DEFERRED, not built this phase
 
-**Files:**
-- Create: `src/modules/driver_manager/vendor_updates/power_management.py`
-- Test: `tests/test_power_management.py`
+**Status as of 2026-09-13: dropped from Phase 1's scope.** Not implemented,
+not attempted. Recorded here (rather than silently deleted) so the reason
+is visible to whoever picks this up next.
 
-**Interfaces:**
-- Produces: `get_power_management(device_id) -> Optional[bool]`,
-  `set_power_management(device_id, allow_off) -> Tuple[bool, str]`, consumed
-  by `driver_module.py` (Task 8).
+**Why:** this task originally assumed the Device Manager "Allow the
+computer to turn off this device to save power" checkbox maps to a simple
+binary registry value (`PnPCapabilities`, 0=allowed/24=disabled), sourced
+from secondhand community documentation. The plan called for a real-
+machine experiment (toggle the checkbox, diff the registry) to confirm or
+correct this before writing any code — that experiment needs interactive
+Device Manager access, which no agent working on this plan (including the
+controller) has, and which the user was unable to complete after being
+asked.
 
-**This task starts with a real-machine experiment, not a guess.** The spec's
-Open Questions record what's already known: community sources point at a
-`PnPCapabilities` DWORD under a device's Class registry key, and this exact
-machine has a real device with that value entirely absent (consistent with
-"default/allowed", but not proof of the bit-level meaning for an explicitly
-disabled state). Do this before writing any implementation code:
+In the meantime, direct evidence surfaced that contradicts the assumed
+values: real inbox driver INF files on the development machine
+(`C:\Windows\INF\netrasa.inf`, `C:\Windows\INF\netl1c63x64.inf`) set
+`PnPCapabilities` to `1` and `0x120` respectively — neither matches a
+clean 0/24 binary toggle. This strongly suggests `PnPCapabilities` is a
+general capability bitfield (matching the documented `CM_DEVCAP_*` flags)
+with the power-management setting living in a specific bit, not the whole
+field being one of two exact values. That means even a READ-ONLY
+implementation using the assumed values would confidently report the
+WRONG state to the user for many real devices — worse than not shipping
+the feature at all, and a direct violation of this codebase's "a refused
+read is never collapsed into a value that looks like a real answer" rule
+(misreporting a real answer as confidently correct is the same failure in
+a different shape).
 
-- [ ] **Step 1: Run the real-machine experiment**
+**What it would take to un-defer this:** either (a) the interactive
+Device Manager experiment this task originally specified, run by someone
+with hands-on access to a real machine, with the resulting registry diff
+recorded verbatim; or (b) reverse-engineering the exact bit `devmgr.dll`/
+Device Manager's own Power Management property page reads, e.g. via
+`SetupDiGetClassDevPropertySheets`/the specific `DEVPKEY_*` property that
+page actually queries (which may not be `PnPCapabilities` at all — that
+registry value's role in the checkbox's state was never independently
+confirmed, only assumed from secondhand sources plus its real-but-
+unrelated use in real INF files for other capability bits). Either
+resolution belongs in a follow-up phase with its own spec update, not a
+guess folded into this one.
 
-1. Pick a real device on the test machine that has a Power Management tab
-   with the "Allow the computer to turn off this device to save power"
-   checkbox available (most USB devices and many network adapters have
-   one; a GPU typically does not — check a few via Device Manager's
-   Properties → Power Management tab until one with the checkbox found).
-2. Note its device instance ID (Device Manager → Details tab → "Device
-   instance path").
-3. Read its current registry state:
-   ```powershell
-   $instanceId = "<the device instance id from step 2>"
-   $driverKey = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Enum\$instanceId").Driver
-   Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Class\$driverKey" | Format-List *
-   ```
-   Save this output.
-4. In Device Manager, UNCHECK the "Allow the computer to turn off..."
-   checkbox and click OK.
-5. Re-run the same PowerShell from step 3 and diff the two outputs — note
-   exactly which value(s) appeared, changed, or disappeared.
-6. Re-CHECK the checkbox (restore the original state) and confirm the
-   registry reverts.
-7. Compare against the implementation below: it already codes
-   `PnPCapabilities` (0 = allowed, 24 = disabled) as its working answer,
-   based on real community documentation of this exact mechanism — but
-   that is secondhand, not verified live on this machine the way every
-   other resolved item in this plan was. **If your experiment's diff shows
-   a different value name or different numbers, update `_VALUE_NAME`,
-   `_ALLOWED_VALUE`, and `_DISABLED_VALUE` in Step 4 below to match what
-   you actually observed before treating this task as done** — the code
-   below is a documented-but-unverified starting point, not a final
-   answer to build on blindly.
+---
 
-- [ ] **Step 2: Write the failing tests**
+### Task 8's original Interfaces note on `power_management.py`
 
-```python
-# tests/test_power_management.py
-from modules.driver_manager.vendor_updates import power_management as pm
-
-
-def test_get_power_management_returns_none_when_the_device_has_no_setting(monkeypatch):
-    monkeypatch.setattr(pm, "_read_registry_value", lambda device_id: None)
-    assert pm.get_power_management("PCI\\VEN_1234&DEV_5678\\0") is None
-
-
-def test_get_power_management_returns_true_when_allowed(monkeypatch):
-    monkeypatch.setattr(pm, "_read_registry_value", lambda device_id: pm._ALLOWED_VALUE)
-    assert pm.get_power_management("PCI\\VEN_1234&DEV_5678\\0") is True
-
-
-def test_get_power_management_returns_false_when_disabled(monkeypatch):
-    monkeypatch.setattr(pm, "_read_registry_value", lambda device_id: pm._DISABLED_VALUE)
-    assert pm.get_power_management("PCI\\VEN_1234&DEV_5678\\0") is False
-
-
-def test_set_power_management_writes_the_disabled_value(monkeypatch):
-    written = {}
-    monkeypatch.setattr(pm, "_write_registry_value",
-                        lambda device_id, value: written.update(device_id=device_id, value=value) or (True, ""))
-    ok, reason = pm.set_power_management("PCI\\VEN_1234&DEV_5678\\0", allow_off=False)
-    assert ok is True
-    assert written["value"] == pm._DISABLED_VALUE
-
-
-def test_set_power_management_reports_a_write_failure(monkeypatch):
-    monkeypatch.setattr(pm, "_write_registry_value", lambda device_id, value: (False, "access denied"))
-    ok, reason = pm.set_power_management("PCI\\VEN_1234&DEV_5678\\0", allow_off=True)
-    assert ok is False
-    assert "access denied" in reason.lower()
-```
-
-- [ ] **Step 3: Run tests to verify they fail**
-
-Run: `.venv\Scripts\python.exe -m pytest tests/test_power_management.py -v`
-Expected: FAIL — `ModuleNotFoundError`.
-
-- [ ] **Step 4: Implement, using Step 1's real observed values**
-
-```python
-# src/modules/driver_manager/vendor_updates/power_management.py
-"""Per-device 'allow the computer to turn off this device to save power',
-the same setting Device Manager's own Power Management tab shows.
-
-The value name and numbers below (PnPCapabilities, 0=allowed, 24=disabled)
-are this codebase's best answer from real community documentation of this
-exact mechanism, checked against this machine's own registry showing the
-value absent on a device at its default (consistent with, though not
-independent proof of, this reading). Task 7's Step 1 is a real-machine
-registry-diff experiment that either confirms these values or corrects
-them -- run it and update the three constants below to match what it
-actually shows before this file is done.
-"""
-import logging
-import winreg
-from typing import Optional, Tuple
-
-logger = logging.getLogger(__name__)
-
-_VALUE_NAME = "PnPCapabilities"
-_ALLOWED_VALUE = 0
-_DISABLED_VALUE = 24
-
-
-def _driver_key_for(device_id: str) -> Optional[str]:
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                            f"SYSTEM\\CurrentControlSet\\Enum\\{device_id}") as key:
-            return winreg.QueryValueEx(key, "Driver")[0]
-    except OSError as exc:
-        logger.warning("power_management: could not read Driver value for %s: %s",
-                       device_id, exc)
-        return None
-
-
-def _read_registry_value(device_id: str) -> Optional[int]:
-    driver_key = _driver_key_for(device_id)
-    if driver_key is None:
-        return None
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                            f"SYSTEM\\CurrentControlSet\\Control\\Class\\{driver_key}") as key:
-            return winreg.QueryValueEx(key, _VALUE_NAME)[0]
-    except FileNotFoundError:
-        return None  # value absent -- device doesn't expose this setting, or is at default
-    except OSError as exc:
-        logger.warning("power_management: could not read %s for %s: %s",
-                       _VALUE_NAME, device_id, exc)
-        return None
-
-
-def _write_registry_value(device_id: str, value: int) -> Tuple[bool, str]:
-    driver_key = _driver_key_for(device_id)
-    if driver_key is None:
-        return False, "could not resolve this device's driver registry key"
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                            f"SYSTEM\\CurrentControlSet\\Control\\Class\\{driver_key}",
-                            0, winreg.KEY_SET_VALUE) as key:
-            winreg.SetValueEx(key, _VALUE_NAME, 0, winreg.REG_DWORD, value)
-        return True, ""
-    except OSError as exc:
-        logger.warning("power_management: could not write %s for %s: %s",
-                       _VALUE_NAME, device_id, exc)
-        return False, str(exc)
-
-
-def get_power_management(device_id: str) -> Optional[bool]:
-    """True if the device is allowed to be powered off, False if disabled,
-    None if this device doesn't expose the setting at all (most devices --
-    that's a real 'not applicable', not a refusal)."""
-    value = _read_registry_value(device_id)
-    if value is None:
-        return None
-    return value == _ALLOWED_VALUE
-
-
-def set_power_management(device_id: str, allow_off: bool) -> Tuple[bool, str]:
-    """Writes the setting; (False, reason) on any failure. Never silently
-    no-ops -- a caller that gets (True, "") knows the write actually
-    happened."""
-    value = _ALLOWED_VALUE if allow_off else _DISABLED_VALUE
-    return _write_registry_value(device_id, value)
-```
-
-- [ ] **Step 5: Run tests to verify they pass**
-
-Run: `.venv\Scripts\python.exe -m pytest tests/test_power_management.py -v`
-Expected: PASS (5 passed).
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/modules/driver_manager/vendor_updates/power_management.py tests/test_power_management.py
-git commit -m "feat(driver manager): per-device power-management toggle, registry mechanism confirmed live
-
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
-```
+Task 8 (already implemented, reviewed, and merged) never depended on this
+file — the "Power Management..." context-menu action was Task 10's job,
+not Task 8's. No rework needed there.
 
 ---
 
@@ -2126,137 +1985,15 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 ---
 
-### Task 10: Power-management UI
+### Task 10: Power-management UI — DEFERRED, not built this phase
 
-**Files:**
-- Modify: `src/modules/driver_manager/driver_module.py`
-- Test: `tests/test_driver_module.py`
-
-**Interfaces:**
-- Consumes: `power_management.get_power_management(device_id) -> Optional[bool]`,
-  `power_management.set_power_management(device_id, allow_off) -> Tuple[bool, str]`
-  (Task 7).
-
-- [ ] **Step 1: Write the failing tests**
-
-```python
-# tests/test_driver_module.py -- add these
-def test_power_management_action_disabled_when_device_has_no_setting(monkeypatch):
-    mod = _module()
-    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
-                        date="", publisher="V", signed=True, error_code=0,
-                        flags="", device_id="PCI\\VEN_1234&DEV_5678\\0")
-    monkeypatch.setattr(dmod, "get_power_management", lambda device_id: None)
-    assert mod._has_power_management_setting(driver) is False
-
-
-def test_power_management_dialog_shows_current_state_and_toggles(monkeypatch):
-    mod = _module()
-    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
-                        date="", publisher="V", signed=True, error_code=0,
-                        flags="", device_id="PCI\\VEN_1234&DEV_5678\\0")
-    monkeypatch.setattr(dmod, "get_power_management", lambda device_id: True)
-    written = []
-    monkeypatch.setattr(dmod, "set_power_management",
-                        lambda device_id, allow_off: written.append((device_id, allow_off)) or (True, ""))
-    # Simulate the user choosing "No" (disallow power-off) in the confirm dialog.
-    monkeypatch.setattr(dmod.QMessageBox, "question",
-                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
-    shown = []
-    monkeypatch.setattr(dmod.QMessageBox, "information",
-                        lambda *a, **k: shown.append(a[2]))
-    mod._toggle_power_management(driver)
-    assert written == [("PCI\\VEN_1234&DEV_5678\\0", False)]  # was True (allowed), toggled off
-    assert shown
-
-
-def test_power_management_write_failure_is_reported(monkeypatch):
-    mod = _module()
-    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
-                        date="", publisher="V", signed=True, error_code=0,
-                        flags="", device_id="PCI\\VEN_1234&DEV_5678\\0")
-    monkeypatch.setattr(dmod, "get_power_management", lambda device_id: False)
-    monkeypatch.setattr(dmod, "set_power_management",
-                        lambda device_id, allow_off: (False, "access denied"))
-    monkeypatch.setattr(dmod.QMessageBox, "question",
-                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
-    shown = []
-    monkeypatch.setattr(dmod.QMessageBox, "warning",
-                        lambda *a, **k: shown.append(a[2]))
-    mod._toggle_power_management(driver)
-    assert shown
-    assert "access denied" in shown[0]
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `.venv\Scripts\python.exe -m pytest tests/test_driver_module.py -k "power_management" -v`
-Expected: FAIL — `AttributeError`.
-
-- [ ] **Step 3: Implement**
-
-Add to the import block:
-```python
-from modules.driver_manager.vendor_updates.power_management import (
-    get_power_management, set_power_management,
-)
-```
-
-In `_on_context_menu`, after the undo-update action added in Task 9:
-```python
-        act_power_mgmt = menu.addAction("Power Management...")
-        act_power_mgmt.setEnabled(bool(driver) and self._has_power_management_setting(driver))
-        act_power_mgmt.triggered.connect(
-            lambda: self._toggle_power_management(driver) if driver else None)
-```
-
-New methods on `DriverModule`:
-```python
-    def _has_power_management_setting(self, driver: DriverInfo) -> bool:
-        if not driver.device_id:
-            return False
-        return get_power_management(driver.device_id) is not None
-
-    def _toggle_power_management(self, driver: DriverInfo) -> None:
-        current = get_power_management(driver.device_id)
-        if current is None:
-            return  # shouldn't be reachable -- action is disabled in this case
-        new_value = not current
-        verb = "allow" if new_value else "prevent"
-        confirm = QMessageBox.question(
-            self._widget, "Power Management",
-            f"Currently: the computer {'is allowed' if current else 'is NOT allowed'} "
-            f"to turn off {driver.device_name} to save power.\n\n"
-            f"{verb.capitalize()} the computer to turn off this device?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if confirm != QMessageBox.StandardButton.Yes:
-            return
-        ok, reason = set_power_management(driver.device_id, new_value)
-        if ok:
-            QMessageBox.information(self._widget, "Power Management",
-                                   f"Updated {driver.device_name}'s power "
-                                   f"management setting.")
-        else:
-            QMessageBox.warning(self._widget, "Power Management",
-                               f"Could not change this setting: {reason}")
-```
-
-- [ ] **Step 4: Run tests to verify they pass**
-
-Run: `.venv\Scripts\python.exe -m pytest tests/test_driver_module.py -k "power_management" -v`
-Expected: PASS (3 passed).
-
-- [ ] **Step 5: Run the full driver_manager suite, then commit**
-
-Run: `.venv\Scripts\python.exe -m pytest tests/test_driver_reader.py tests/test_driver_module.py tests/test_driver_baselines.py tests/test_driver_detail_dialog.py tests/test_driver_diagnostics.py tests/test_vendor_id.py tests/test_vendor_provider.py tests/test_nvidia_provider.py tests/test_vendor_update_pipeline.py tests/test_vendor_update_rollback.py tests/test_power_management.py -v`
-
-```bash
-git add src/modules/driver_manager/driver_module.py tests/test_driver_module.py
-git commit -m "feat(driver manager): per-device power-management toggle in the context menu
-
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
-```
+**Status as of 2026-09-13: dropped, same reason as Task 7.** This task
+had no independent content beyond wiring Task 7's `get_power_management`/
+`set_power_management` into a context-menu action — with Task 7 deferred,
+there's nothing here to build. No context-menu action, no dialog, no new
+`driver_module.py` code from this task landed. `driver_module.py`'s
+context menu ends, for this phase, with Task 9's "Undo This Update"
+action.
 
 ---
 

@@ -997,6 +997,7 @@ class QuickCleanupTab(QWidget):
             ("clear_font_cache", "Clear Font Cache", self._clear_font_cache),
             ("flush_wu_store", "Flush WinUpdate", self._flush_wu_store),
             ("reset_tcpip", "Reset TCP/IP", self._reset_tcpip),
+            ("resize_hibernation", "Right-size Hibernation", self._resize_hibernation),
         ]
 
         self._action_buttons: Dict[str, QPushButton] = {}
@@ -1309,6 +1310,37 @@ class QuickCleanupTab(QWidget):
         self._run_action_command(
             "reset_tcpip", "netsh int ip reset", "TCP/IP stack reset", need_confirm=False
         )
+
+    def _resize_hibernation(self):
+        # Gate on hibernation actually being enabled -- powercfg refuses
+        # /hibernate /size on a machine where it's off, and the raw
+        # error text is not obviously "hibernation is off" to a fresh
+        # user reading a one-line status label.
+        check = subprocess.run(
+            "powercfg /a", capture_output=True, text=True,
+            encoding="utf-8", errors="replace", shell=True,
+            creationflags=CREATE_NO_WINDOW, timeout=10)
+        if "has not been enabled" in (check.stdout or "").lower():
+            self._action_status["resize_hibernation"].setText(
+                "Hibernation is off on this machine — nothing to resize")
+            return
+
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Right-size Hibernation File")
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setText(
+            "This shrinks hiberfil.sys to 50% of RAM (Windows' own "
+            "default since Windows 10) without disabling hibernation. "
+            "Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        self._run_action_command(
+            "resize_hibernation", "powercfg /hibernate /size 50",
+            "Hibernation file resized", need_confirm=False)
 
     # ── Clean All Safe ─────────────────────────────────────────────────────
 

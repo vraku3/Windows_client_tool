@@ -9,6 +9,7 @@ age filter per tab, running-process guard, >500 MB confirmation,
 error panel, freed-session counter, DISM button on Large Items.
 """
 import logging
+from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
@@ -21,8 +22,8 @@ from modules.cleanup.tabs import (
     _ScanTab,
     _BrowserCleanupTab,
     _LargeItemsTab,
-    _OverviewTab,
 )
+from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab, ADVANCED_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,22 @@ LARGE_EXTRA = {
 }
 
 
+# Quick Cleanup's 10 main category ids -> the tab name each one's own
+# deep-dive lives on. Only the main categories map cleanly onto one tab
+# each; the ~90 advanced categories don't (see quick_cleanup_tab.py's
+# own _handle_category_clicked wiring, which only connects these 10).
+_CATEGORY_TAB_NAMES = {
+    "temp": "System Junk", "prefetch": "System Junk",
+    "thumb": "System Junk", "crash": "System Junk",
+    "browser": "Browser Caches",
+    "app": "App & Game Caches",
+    "logs": "Logs & Reports",
+    "wu": "Windows Update",
+    "large": "Large Items",
+    "dev": "Dev Tools",
+}
+
+
 def _with_catalog(curated: dict, *categories: str) -> dict:
     """The hand-picked scanners, then everything else in `categories`.
 
@@ -193,9 +210,12 @@ class CleanupModule(BaseModule):
         self._tabs = QTabWidget()
         main_lay.addWidget(self._tabs, 1)
 
-        # 1. Overview
-        self._overview = _OverviewTab()
-        self._tabs.addTab(self._overview, "Overview")
+        # 1. Quick Cleanup (merged from the former standalone
+        # QuickCleanupModule -- see docs/superpowers/specs/
+        # 2026-09-14-cleanup-quick-cleanup-merge-design.md)
+        self._quick = QuickCleanupTab(on_category_clicked=self._on_category_clicked)
+        self._quick.build(advanced_categories=ADVANCED_CATEGORIES)
+        self._tabs.addTab(self._quick, "Quick Cleanup")
 
         # 2. System Junk
         sys_scanners = {
@@ -268,7 +288,7 @@ class CleanupModule(BaseModule):
 
         # ── Wire signals ──
         for tab in (
-            self._overview, self._sys_tab, self._browser, self._app_tab,
+            self._quick, self._sys_tab, self._browser, self._app_tab,
             self._wu_tab, self._logs_tab, self._large, self._dev_tab,
         ):
             tab.freed_bytes.connect(self._on_freed)
@@ -290,6 +310,15 @@ class CleanupModule(BaseModule):
         if hasattr(tab, "auto_scan"):
             tab.auto_scan()
 
+    def _on_category_clicked(self, category_id: str) -> None:
+        tab_name = _CATEGORY_TAB_NAMES.get(category_id)
+        if tab_name is None:
+            return
+        for i in range(self._tabs.count()):
+            if self._tabs.tabText(i) == tab_name:
+                self._tabs.setCurrentIndex(i)
+                return
+
     # ── BaseModule lifecycle ──
 
     def on_start(self, app) -> None:
@@ -300,10 +329,24 @@ class CleanupModule(BaseModule):
         self.cancel_all_workers()
 
     def on_activate(self) -> None:
-        """Auto-scan the overview when the module is first opened."""
-        if getattr(self, "_overview", None) is None:
+        """Auto-scan the Quick Cleanup tab when the module is first opened."""
+        if getattr(self, "_quick", None) is None:
             return
-        self._overview.auto_scan()
+        self._quick.auto_scan()
+
+    def get_refresh_interval(self) -> Optional[int]:
+        return 60_000
+
+    def refresh_data(self) -> None:
+        """Only the Quick Cleanup tab auto-refreshes, and only while it's
+        the one actually visible -- every other tab in this module has
+        never auto-refreshed on a timer, and blindly rescanning whichever
+        tab happens to be open would silently re-run something like Large
+        Items' full-machine scan every 60s while someone is reading it."""
+        if getattr(self, "_quick", None) is None:
+            return
+        if self._tabs.currentWidget() is self._quick:
+            self._quick.scan()
 
     def on_deactivate(self) -> None:
         self._cancel_all_tabs()
@@ -312,12 +355,14 @@ class CleanupModule(BaseModule):
         # Every one of these is created in create_widget(), and on_stop() runs
         # even for a module whose widget was never built.
         for name in (
-            "_overview", "_sys_tab", "_browser", "_app_tab",
+            "_quick", "_sys_tab", "_browser", "_app_tab",
             "_wu_tab", "_logs_tab", "_large", "_dev_tab",
         ):
             tab = getattr(self, name, None)
             if hasattr(tab, "_cancel_all"):
                 tab._cancel_all()
+            elif hasattr(tab, "cancel"):
+                tab.cancel()
 
     def get_status_info(self) -> str:
         return "Cleanup"

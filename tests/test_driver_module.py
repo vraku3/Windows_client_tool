@@ -1668,3 +1668,84 @@ def test_bulk_install_reports_a_failed_device_without_stopping_the_batch(monkeyp
     assert shown
     assert "signature invalid" in shown[0]
     assert mod._applied_update_tokens == {}
+
+
+# ----------------------------------------------------------------------
+# manual_download_only (e.g. Realtek: real update, no automated download)
+# ----------------------------------------------------------------------
+
+def _fake_manual_only_provider():
+    class _P:
+        vendor_name = "Realtek"
+
+        def check_for_update(self, driver):
+            from modules.driver_manager.vendor_updates.provider import UpdateInfo
+            return UpdateInfo(vendor="Realtek", current_version="10.74.1128.2024",
+                              latest_version="10.80.50",
+                              download_url="https://www.realtek.com/Download/List?cate_id=584",
+                              installer_signer="Realtek Semiconductor Corp.",
+                              manual_download_only=True)
+    return _P()
+
+
+def test_check_for_vendor_update_shows_an_informational_message_for_manual_download_only(monkeypatch):
+    driver = DriverInfo(device_name="Realtek PCIe 5GbE Family Controller", driver_class="Net",
+                        version="10.74.1128.2024", date="", publisher="Realtek", signed=True,
+                        error_code=0, flags="", hardware_id="PCI\\VEN_10EC&DEV_8126",
+                        device_id="PCI\\DEV1")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _fake_manual_only_provider())
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    asked = []
+    monkeypatch.setattr(dmod.DriverModule, "_ask_install_mode",
+                        lambda self, driver, update: asked.append(1))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    mod = _module()
+    mod._check_for_vendor_update(driver)
+
+    assert not asked  # never offered a LIGHT/FULL choice for this update
+    assert shown
+    assert "10.80.50" in shown[0]
+    assert "cate_id=584" in shown[0]
+
+
+def test_check_all_for_updates_separates_manual_only_from_auto_installable(monkeypatch):
+    d1 = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_10DE&DEV_2684", device_id="PCI\\DEV1")
+    d2 = DriverInfo(device_name="Realtek PCIe 5GbE Family Controller", driver_class="Net",
+                    version="10.74.1128.2024", date="", publisher="Realtek", signed=True,
+                    error_code=0, flags="", hardware_id="PCI\\VEN_10EC&DEV_8126",
+                    device_id="PCI\\DEV2")
+
+    class _AutoP:
+        vendor_name = "NVIDIA"
+        def check_for_update(self, driver):
+            return _fake_update()
+
+    def fake_provider_for(d):
+        return _AutoP() if d is d1 else _fake_manual_only_provider()
+
+    mod = _module()
+    mod._drivers_ref[0] = [d1, d2]
+    monkeypatch.setattr(dmod, "provider_for", fake_provider_for)
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    asked = []
+
+    def fake_ask_bulk(self, found, checked_count):
+        asked.append(found)
+        return None  # skip installing
+
+    monkeypatch.setattr(dmod.DriverModule, "_ask_bulk_install_mode", fake_ask_bulk)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    mod._check_all_for_updates()
+
+    assert len(asked) == 1
+    assert len(asked[0]) == 1
+    assert asked[0][0][0] is d1  # only the auto-installable one reaches the bulk-mode choice
+    assert any("manual download" in s.lower() for s in shown)

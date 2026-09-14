@@ -22,6 +22,17 @@ class UpdateInfo:
     latest_version: str
     download_url: str
     installer_signer: str
+    # True for a vendor whose actual FILE download is gated behind
+    # something this app will not automate around (verified live for
+    # Realtek: the real file lives behind /Download/ToDownload, which
+    # requires solving a CAPTCHA regardless of referer/cookies -- a
+    # deliberate anti-bot measure, not a technicality to defeat). When
+    # True, download_url points at an INFORMATIONAL page for a person to
+    # open themselves, never at something download_and_verify should be
+    # handed -- the UI shows it as a plain "here's what's available, go
+    # get it yourself" message and skips the LIGHT/FULL install flow
+    # entirely, rather than attempting a download guaranteed to fail.
+    manual_download_only: bool = False
 
 
 class VendorProvider(Protocol):

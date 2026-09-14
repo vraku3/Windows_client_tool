@@ -39,6 +39,7 @@ from modules.driver_manager.vendor_updates.provider import (
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
 from modules.driver_manager.vendor_updates.amd_provider import AmdProvider  # noqa: F401 -- import registers the provider
+from modules.driver_manager.vendor_updates.realtek_provider import RealtekProvider  # noqa: F401 -- import registers the provider
 from modules.driver_manager.vendor_updates.rollback import (
     rollback as rollback_one, bulk_rollback as bulk_rollback_all,
 )
@@ -839,6 +840,18 @@ class DriverModule(BaseModule):
                     f"No update available for {driver.device_name} "
                     f"(currently {driver.version}).")
                 return
+            if update.manual_download_only:
+                # e.g. Realtek: the real file is real, but its download
+                # step is captcha-gated -- never attempt it, never offer
+                # the LIGHT/FULL choice for a download guaranteed to fail.
+                QMessageBox.information(
+                    self._widget, "Check for Vendor Update",
+                    f"{update.vendor} shows version {update.latest_version} "
+                    f"for {driver.device_name} (currently "
+                    f"{update.current_version}), but automated download "
+                    f"isn't available for this vendor.\n\nVisit "
+                    f"{update.download_url} to download it yourself.")
+                return
             if not is_admin():
                 QMessageBox.information(
                     self._widget, "Check for Vendor Update",
@@ -1026,17 +1039,39 @@ class DriverModule(BaseModule):
                     self._widget, "Check All for Updates",
                     f"Checked {len(checkable)} device(s). No updates found.")
                 return
-            if not is_admin():
-                names = "\n".join(f"- {d.device_name}: {u.latest_version}" for d, _, u in found)
+            # e.g. Realtek: found for real, but never auto-installable
+            # (see UpdateInfo.manual_download_only) -- these never enter
+            # the LIGHT/FULL batch choice, only an informational note.
+            auto_installable = [(d, p, u) for d, p, u in found if not u.manual_download_only]
+            manual_only = [(d, p, u) for d, p, u in found if u.manual_download_only]
+            manual_note = ""
+            if manual_only:
+                manual_names = "\n".join(
+                    f"- {d.device_name}: {u.latest_version} ({u.download_url})"
+                    for d, _, u in manual_only)
+                manual_note = (f"{len(manual_only)} update(s) need manual download "
+                               f"(no automated download available for that vendor):\n"
+                               f"{manual_names}\n\n")
+            if not auto_installable:
                 QMessageBox.information(
                     self._widget, "Check All for Updates",
-                    f"{len(found)} update(s) found, but installing needs "
-                    f"administrator rights:\n\n{names}\n\nRestart this app "
-                    f"as administrator to install them.")
+                    f"Checked {len(checkable)} device(s).\n\n{manual_note}"
+                    f"No auto-installable updates found.")
                 return
-            mode = self._ask_bulk_install_mode(found, len(checkable))
+            if not is_admin():
+                names = "\n".join(f"- {d.device_name}: {u.latest_version}"
+                                  for d, _, u in auto_installable)
+                QMessageBox.information(
+                    self._widget, "Check All for Updates",
+                    f"{manual_note}{len(auto_installable)} update(s) found, but "
+                    f"installing needs administrator rights:\n\n{names}\n\n"
+                    f"Restart this app as administrator to install them.")
+                return
+            mode = self._ask_bulk_install_mode(auto_installable, len(checkable))
             if mode is not None:
-                self._bulk_install(found, mode)
+                self._bulk_install(auto_installable, mode)
+            if manual_only:
+                QMessageBox.information(self._widget, "Check All for Updates", manual_note.strip())
 
         def on_sweep_error(err_str: str) -> None:
             if self._progress:

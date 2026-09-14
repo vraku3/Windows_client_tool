@@ -32,6 +32,20 @@ MediaTek WiFi7+Bluetooth combo (RZ717) all reporting UNRECOGNIZED_VENDOR
 -- recognized here even before either has a registered provider (see
 provider.py), so the UI can say "Realtek detected, no update source yet"
 rather than "unknown vendor" for hardware this table now knows about.
+
+That first pass only added PCI-SIG ids, though, and both of this
+machine's two USB Realtek NICs are USB devices
+("USB\\VID_0BDA&PID_8153&REV_3100") -- confirmed by testing against the
+REAL update-check harness after the PCI fix, not assumed. USB vendor ids
+are a genuinely separate registry (USB-IF's, not PCI-SIG's) -- 0x0BDA
+happens to also be Realtek's, by coincidence of two different standards
+bodies both assigning them an id, not because the two registries share
+numbering. Kept as its own table and regex, matched only against a
+USB\\ prefix, specifically so it's never confused with or merged into
+the PCI table (a prior edit to this file briefly widened the PCI regex
+to also match USB\\, then reverted it for exactly this reason -- USB and
+PCI vendor ids for the SAME company are not guaranteed or even likely to
+share a numeric value in general, 0x0BDA/0x10EC being coincidental).
 """
 import re
 from typing import Optional
@@ -43,13 +57,27 @@ _PCI_VENDOR_IDS = {
     "1002": "AMD",   # ATI heritage ID: GPUs, GPU-attached audio
     "1022": "AMD",   # AMD's own ID: platform security processor, SMBUS, chipset
     "8086": "Intel",
-    "10EC": "Realtek",   # real machine data: onboard/USB 2.5GbE/5GbE NICs
+    "10EC": "Realtek",   # real machine data: onboard 5GbE NIC
     "14C3": "MediaTek",  # real machine data: RZ717 WiFi 7 + Bluetooth combo
 }
 
-_VEN_RE = re.compile(r"PCI\\VEN_([0-9A-Fa-f]{4})", re.IGNORECASE)
+# USB-IF vendor ids -- a SEPARATE registry from PCI-SIG's (see this
+# module's docstring). Only ever matched against a USB\ prefix.
+_USB_VENDOR_IDS = {
+    "0BDA": "Realtek",   # real machine data: both USB NIC dongles report this
+                         # (also several unrelated "Generic USB Hub"
+                         # entries -- Realtek makes hub controller chips
+                         # too; that's a device-TYPE question for the
+                         # provider to gate on, not a vendor-id question)
+    "0E8D": "MediaTek",  # real machine data: RZ717 Bluetooth adapter
+                         # (publisher field independently confirms
+                         # "Mediatek Inc." for this exact device)
+}
 
-# Last-resort fallback for devices with no PCI vendor ID to read at
+_PCI_VEN_RE = re.compile(r"PCI\\VEN_([0-9A-Fa-f]{4})", re.IGNORECASE)
+_USB_VID_RE = re.compile(r"USB\\VID_([0-9A-Fa-f]{4})", re.IGNORECASE)
+
+# Last-resort fallback for devices with no PCI/USB vendor id to read at
 # all (ACPI-enumerated ones, chiefly the CPU itself) -- ordered so a name
 # containing more than one of these (unlikely) resolves to the first
 # match, not last-write-wins from a dict.
@@ -57,20 +85,24 @@ _DEVICE_NAME_FALLBACKS = (
     ("amd", "AMD"),
     ("nvidia", "NVIDIA"),
     ("intel", "Intel"),
+    ("realtek", "Realtek"),
+    ("mediatek", "MediaTek"),
 )
 
 
 def vendor_for_hardware_id(hardware_id: str, device_name: str = "") -> Optional[str]:
-    """The company name for hardware_id's PCI vendor prefix, or --
-    only when hardware_id carries no such prefix at all -- a name-based
-    guess from device_name (see this module's docstring for why that's
-    sometimes the only signal that exists). None if hardware_id is empty,
-    neither approach recognizes anything, or the vendor isn't in the
-    table yet."""
+    """The company name for hardware_id's PCI or USB vendor prefix, or --
+    only when hardware_id carries neither -- a name-based guess from
+    device_name (see this module's docstring for why that's sometimes
+    the only signal that exists). None if hardware_id is empty, none of
+    the above recognizes anything, or the vendor isn't in a table yet."""
     if hardware_id:
-        match = _VEN_RE.match(hardware_id)
-        if match:
-            return _PCI_VENDOR_IDS.get(match.group(1).upper())
+        pci_match = _PCI_VEN_RE.match(hardware_id)
+        if pci_match:
+            return _PCI_VENDOR_IDS.get(pci_match.group(1).upper())
+        usb_match = _USB_VID_RE.match(hardware_id)
+        if usb_match:
+            return _USB_VENDOR_IDS.get(usb_match.group(1).upper())
     name_lower = device_name.lower()
     for needle, vendor in _DEVICE_NAME_FALLBACKS:
         if needle in name_lower:

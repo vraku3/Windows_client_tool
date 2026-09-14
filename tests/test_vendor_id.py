@@ -33,6 +33,20 @@ def test_recognizes_mediatek_from_a_pci_hardware_id():
     assert vendor_for_hardware_id("PCI\\VEN_14C3&DEV_0717&SUBSYS_071714C3&REV_00") == "MediaTek"
 
 
+def test_recognizes_realtek_from_a_usb_hardware_id():
+    # Real machine data: "Realtek USB GbE Family Controller" reports
+    # hardware_id "USB\VID_0BDA&PID_8153&REV_3100" -- a USB device, with
+    # no PCI vendor id to read at all. USB-IF's registry, not PCI-SIG's.
+    assert vendor_for_hardware_id("USB\\VID_0BDA&PID_8153&REV_3100") == "Realtek"
+
+
+def test_usb_vendor_id_table_is_never_consulted_for_a_pci_hardware_id():
+    # 0x0BDA is Realtek's USB-IF id, coincidentally not assigned to
+    # anyone in the PCI-SIG table -- a PCI hardware_id happening to carry
+    # that same hex value must not match through the USB table.
+    assert vendor_for_hardware_id("PCI\\VEN_0BDA&DEV_0000") is None
+
+
 def test_unrecognized_vendor_id_returns_none():
     assert vendor_for_hardware_id("PCI\\VEN_FFFF&DEV_0000") is None
 
@@ -77,3 +91,11 @@ def test_device_name_fallback_never_fires_when_a_real_pci_vendor_id_matched():
 def test_no_fallback_match_still_returns_none():
     assert vendor_for_hardware_id("ACPI\\VEN_ACPI&DEV_0007", "Some Unrelated Device") is None
     assert vendor_for_hardware_id("", "") is None
+
+
+def test_recognizes_mediatek_from_a_usb_hardware_id():
+    # Real machine data: "RZ717 Bluetooth(R) Adapter" reports hardware_id
+    # "USB\VID_0E8D&PID_0717&REV_0100&MI_00" -- a different USB-IF id
+    # than MediaTek's own PCI-SIG one (0x14C3), independently confirmed
+    # by this exact device's own publisher field ("Mediatek Inc.").
+    assert vendor_for_hardware_id("USB\\VID_0E8D&PID_0717&REV_0100&MI_00") == "MediaTek"

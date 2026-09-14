@@ -18,6 +18,7 @@ from modules.driver_manager.driver_reader import fetch_drivers
 from modules.driver_manager.vendor_updates.provider import provider_for, no_provider_reason
 from modules.driver_manager.vendor_updates import nvidia_provider  # noqa: F401 -- registers NVIDIA
 from modules.driver_manager.vendor_updates import amd_provider  # noqa: F401 -- registers AMD
+from modules.driver_manager.vendor_updates import realtek_provider  # noqa: F401 -- registers Realtek
 from modules.driver_manager.vendor_updates.pipeline import download_and_verify
 
 

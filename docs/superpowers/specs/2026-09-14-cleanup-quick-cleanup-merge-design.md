@@ -40,7 +40,9 @@ one.
 | Three near-duplicate "clean all safe" implementations | `_overview_tab.py:_do_clean_safe` (re-scans live, skips browser, size-gated confirm), `quick_cleanup_tab.py:_do_clean_all_safe` (uses cached `_results`, includes browser, always confirms), `_scan_tab.py:_do_clean` (per-tab scanner dict, size-gated confirm). All three end by calling the same `cs.delete_items(...)`, then hand-roll the same confirm/disable-buttons/progress/status/`freed_bytes`/re-scan sequence around it. |
 | Quick Cleanup has no scan-watchdog backstop | `_overview_tab.py` and `_scan_tab.py` both carry a `SCAN_WATCHDOG_MS` `QTimer` backstop (a cancelled `Worker` emits `cancelled`, never `result`/`error` — CLAUDE.md records this as a real, previously-shipped bug). `quick_cleanup_tab.py` has no such timer at all. |
 | One-click actions are hidden by default | `_build_one_click_panel` is called from inside `_adv_widget`, which starts `setVisible(False)` (`_setup_ui`, `quick_cleanup_tab.py:613`) — Flush DNS, Compact WinSxS, Reset TCP/IP etc. are all one click away only after "Show Advanced ▼". |
+| One-click actions share ONE status label with no per-action busy-guard | `_run_action_command` (quick_cleanup_tab.py:887) neither disables its own triggering button nor tracks a per-action "already running" state, and every one of the 12 actions writes to the same `self._action_status_lbl`. Two actions clicked in quick succession clobber each other's result with no way to tell which is which. Promoting these to always-visible (this spec) makes this more likely to actually happen, so it's fixed here, not deferred. |
 | No config/search coupling to the module name | Confirmed: neither module registers a search provider, and nothing outside `src/modules/cleanup/` imports `QuickCleanupModule`/`QuickCleanupTab`. The merge is isolated. |
+| `_OV_GROUPS` has a hidden external consumer | `stage_runners.py:run_cleanup_safe_stage` — the engine behind this app's existing `--unattended --stages cleanup` and the scheduled `WinClientTool_UnattendedMaintenance` task — imports `_OV_GROUPS` directly from `_overview_tab.py`. Deleting that file without relocating `_OV_GROUPS` first breaks unattended cleanup silently; it would keep "working" (no import error until the next `--unattended` run) and only surface as a scheduled task quietly failing. |
 
 ### 1.2 Recorded decisions
 
@@ -50,9 +52,12 @@ Settled during brainstorming; not open questions.
 |---|---|
 | Merge depth | Quick Cleanup's tab replaces Overview outright, not a combined layout |
 | Auto-refresh | Kept (60s), but scoped to fire only while the Quick tab is the visible one |
-| One-click actions | Promoted out of the "Advanced" collapsed section, always visible |
-| `Clean All Safe` duplication | Consolidated into one shared helper, used by the merged tab and (where practical) `_ScanTab` |
-| Missing watchdog | Added to the merged tab's scan loop, matching `_OverviewTab`/`_ScanTab`'s existing one |
+| One-click actions | Promoted out of the "Advanced" collapsed section, always visible; gain a per-action busy-guard and per-action status text |
+| `Clean All Safe` duplication | Consolidated into one shared helper, used by the merged tab and (where practical) `_ScanTab`; the merged tab always confirms (matching Quick Cleanup's current behavior) rather than size-gating, since it's the highest-blast-radius action in the module |
+| Missing watchdog | Added to the merged tab's scan loop, matching `_OverviewTab`/`_ScanTab`'s existing one; the exact timeout constant is set from a real measured scan time on this machine, not copied from Overview's own 300,000ms figure |
+| Category cards | Each becomes clickable, jumping to that category's own deep-dive tab (e.g. clicking the "Browser Caches" card switches to the Browser Caches tab) — a real navigation flow the merge specifically makes possible, since both were previously separate, unreachable-from-each-other destinations |
+| "Show Advanced ▼" toggle | Reconsidered at implementation time: once one-click actions move out, only a handful of extra category cards remain behind it — may not be worth keeping as a separate collapsed section at all (candidate for removal, showing all categories by default) |
+| `_OV_GROUPS` | Extracted out of `_overview_tab.py` into `cleanup_scanner.py` (alongside `delete_items`, `run_clean_safe`) BEFORE `_overview_tab.py` is deleted, so `run_cleanup_safe_stage` (and anything else importing it) keeps working unchanged |
 
 ---
 
@@ -108,13 +113,37 @@ Settled during brainstorming; not open questions.
   (which stays for the additional per-category advanced legend cards) and
   into the always-visible dashboard area, so it's not gated behind "Show
   Advanced ▼" any more. `_build_one_click_panel` itself is unchanged, only
-  where it's attached.
+  where it's attached. At implementation time, reconsider whether
+  `_adv_widget`'s toggle is worth keeping at all once one-click actions no
+  longer live inside it (see 1.2) — if not, the remaining advanced cards
+  can just render inline with the regular ones and the toggle goes away.
+- `_run_action_command` gains a per-action busy-guard (each of the 12
+  one-click buttons disables itself for the duration of its own command,
+  not the whole panel) and a per-action status target instead of the one
+  shared `_action_status_lbl` — each button gets its own small status
+  text next to it, so two actions run back to back never clobber each
+  other's result.
+- Category cards (`_SliceCard` / the legend list) gain a click handler
+  that switches `CleanupModule`'s `QTabWidget` to that category's tab.
+  Since `QuickCleanupTab` itself doesn't own a reference to the parent
+  `QTabWidget`, this is a small callback `CleanupModule` passes in at
+  construction time (e.g. `QuickCleanupTab(on_category_clicked=...)`),
+  not `QuickCleanupTab` reaching upward into its parent.
+- `_OV_GROUPS` (currently defined in `_overview_tab.py`) moves to
+  `cleanup_scanner.py`. `QuickCleanupTab`'s own category list and
+  `run_cleanup_safe_stage` both import it from there afterward — one
+  definition, two consumers, instead of one definition and a consumer
+  that would otherwise go missing.
 
 ### 2.3 Deleted
 
+Order matters here: `_OV_GROUPS` must be extracted to `cleanup_scanner.py`
+(2.2) and `run_cleanup_safe_stage` repointed at the new location BEFORE
+`_overview_tab.py` is deleted, or the unattended stage breaks.
+
 - `quick_cleanup_module.py` — the whole file.
 - `_OverviewTab` (`tabs/_overview_tab.py`) and its export from
-  `tabs/__init__.py`.
+  `tabs/__init__.py` — only after `_OV_GROUPS` no longer lives there.
 - `main.py`: the `QuickCleanupModule` import and
   `app.module_registry.register(QuickCleanupModule())` line.
 
@@ -202,6 +231,12 @@ same fix, applied to the one tab that was missing it.
   pie chart, one-click actions, and `Clean All Safe` all still work
   end-to-end on this real machine, the same way prior cleanup work in
   this codebase was verified live rather than only through mocks.
+- **`run_cleanup_safe_stage` regression check**: after moving
+  `_OV_GROUPS`, run `python src/main.py --unattended --stages cleanup`
+  (or the equivalent existing test coverage for `stage_runners.py`, if
+  any) and confirm it still finds and cleans the same categories as
+  before — this is the one consumer outside `src/modules/cleanup/` this
+  merge touches, and it has no UI to notice a silent break in.
 
 ## 6. Non-goals
 
@@ -214,3 +249,48 @@ same fix, applied to the one tab that was missing it.
 - No change to `Debloat`, `TreeSize`, or any other module's own
   Clean-All-style action, even though some share a similar shape —
   out of scope for this merge.
+
+## 7. Related work (separate specs, not this one)
+
+A broader "slim the OS down, keep it fully stable" pass grew out of this
+merge and was deliberately split into its own sequence rather than folded
+in here, per brainstorming's own guidance for a project too large for one
+spec:
+
+1. **This spec** — the merge itself. Build first: smallest, blocks
+   nothing else, but the `_OV_GROUPS` extraction it requires is a real
+   prerequisite for anything that touches `CleanupModule` afterward.
+2. **New cleanup targets** — Windows.old (via the official DISM path
+   only), hibernation-file right-sizing, print spooler stuck-job
+   cleanup, NGEN native image cache, Recycle Bin per-drive reservation
+   audit, orphaned user profiles, OneDrive "always keep on this device"
+   pin audit. Mostly additive to the existing Large Items/System Junk
+   tabs.
+3. **A preset system** (Light / Thorough / Aggressive / Custom),
+   mirroring Debloat's already-shipped pattern, governing what the whole
+   module's "Clean" action includes across all 8 tabs at once — the
+   single highest-leverage piece for serving both a fresh user (one
+   button) and a senior engineer (full per-category control) with the
+   same UI.
+4. **A new, separate "System Health" sidebar module** — DISM
+   `/ScanHealth` (run after aggressive cleanup, not just before), VSS
+   shadow-storage floor management, pending servicing-transaction
+   (`WinSxS\pending.xml`) detection, plain WinSxS
+   `/StartComponentCleanup` (moved out of Large Items' "Analyze WinSxS"
+   — it's a servicing operation, not a file to delete), a heavily-gated
+   `/ResetBase` action (typed confirmation, forced fresh restore point,
+   never bundled into "select all"), a free-space/next-upgrade-headroom
+   indicator, read-only findings (orphaned services/scheduled tasks,
+   pending-vs-archived WER reports), command transparency in every
+   confirmation dialog, a dry-run toggle, an HTML audit log reusing the
+   Updates module's own `history_writer.py` pattern, and a new read-only
+   `--unattended --stages health` stage scheduled the same way
+   `WinClientTool_UnattendedMaintenance` already is. Admin model matches
+   Driver Manager's (`requires_admin` + `read_only_unelevated` — findings
+   readable unelevated, servicing writes gated). Explicitly does NOT
+   include: pagefile deletion/disable, Windows Search service disable,
+   Defender quarantine handling, or telemetry *service* toggling — see
+   that spec's own non-goals when it's written.
+
+Each of 2-4 gets its own design spec, written and approved separately,
+before its own implementation plan.

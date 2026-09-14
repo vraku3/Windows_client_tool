@@ -19,7 +19,7 @@ from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QScrollArea, QFrame,
-    QSizePolicy, QMessageBox,
+    QSizePolicy, QMessageBox, QComboBox,
 )
 
 from core.long_op_pool import get_long_op_pool
@@ -490,6 +490,12 @@ class QuickCleanupTab(QWidget):
             fn_safety = _id_map.get(cid, (None, "safe"))
             self._adv_scanner_map[cid] = (fn_safety[0], clabel, ccolor)
 
+        self._id_to_scanner_name = {
+            cid: (fn.__name__ if fn else None)
+            for cid, (fn, _label, _color) in
+            {**self._scanner_map, **self._adv_scanner_map}.items()
+        }
+
         self._setup_ui()
 
     def start_auto_refresh(self, interval_ms: int = 30_000) -> None:
@@ -526,7 +532,21 @@ class QuickCleanupTab(QWidget):
         toolbar = QHBoxLayout()
         self._scan_all_btn = QPushButton("🔍  Scan All")
         self._scan_all_btn.clicked.connect(self.scan)
-        self._clean_all_btn = QPushButton("🗑️  Clean All Safe")
+
+        from modules.cleanup.cleanup_presets import PRESETS, preset_names
+        self._preset_combo = QComboBox()
+        self._preset_combo.setToolTip(
+            "Which items \"Clean\" includes when you click it -- Light is "
+            "the original behavior, Aggressive includes danger-level items "
+            "(except orphaned profiles/virtual disks, never included by any preset)."
+        )
+        for pid in preset_names():
+            label = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
+            self._preset_combo.addItem(label, pid)
+        self._preset_combo.setCurrentIndex(self._preset_combo.findData("light"))
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+
+        self._clean_all_btn = QPushButton("🗑️  Clean (Light)")
         self._clean_all_btn.setEnabled(False)
         self._clean_all_btn.clicked.connect(self._do_clean_all_safe)
         self._status_lbl = QLabel("Click Scan All to analyze your system")
@@ -536,6 +556,7 @@ class QuickCleanupTab(QWidget):
         self._show_adv_btn.clicked.connect(self._toggle_advanced)
         self._adv_shown = False
         toolbar.addWidget(self._scan_all_btn)
+        toolbar.addWidget(self._preset_combo)
         toolbar.addWidget(self._clean_all_btn)
         toolbar.addWidget(self._show_adv_btn)
         toolbar.addStretch()
@@ -650,6 +671,12 @@ class QuickCleanupTab(QWidget):
 
         self._adv_widget.setVisible(False)
         layout.addWidget(self._adv_widget)
+
+    def _on_preset_changed(self, _index: int) -> None:
+        from modules.cleanup.cleanup_presets import PRESETS
+        pid = self._preset_combo.currentData()
+        label = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
+        self._clean_all_btn.setText(f"🗑️  Clean ({label})")
 
     # ── Auto-refresh ────────────────────────────────────────────────────────
 

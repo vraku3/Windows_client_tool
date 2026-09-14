@@ -481,10 +481,22 @@ def adapter_facts() -> List[AdapterFacts]:
         if date is None:
             unavailable["driver_date"] = "no matching Win32_VideoController entry"
 
+        name = _text(values.get("Description"))
+        if name is None:
+            # A real, if rare, shape: a DirectX registry entry with
+            # literally no Description, VendorId, or DeviceId at all --
+            # measured on a real machine (a stale/orphaned adapter
+            # subkey, distinct from a genuine software adapter, which
+            # always carries SOFTWARE_ADAPTER's known vendor+device
+            # pair). Disclosed the same way as the other unreadable
+            # fields above, never silently defaulted to a name that
+            # looks real.
+            unavailable["name"] = "the adapter records no description"
+
         dedicated = _int(values.get("DedicatedVideoMemory"))
         facts.append(AdapterFacts(
             luid=_int(values.get("AdapterLuid")) or 0,
-            name=_text(values.get("Description")),
+            name=name,
             driver_version=driver,
             driver_date=date,
             directx_version=(f"{directx} (FL {level})" if directx else None),

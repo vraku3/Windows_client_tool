@@ -170,12 +170,23 @@ def test_the_machine_has_at_least_one_display_adapter():
 
 
 def test_every_adapter_is_named():
+    # A real, measured shape: a DirectX registry entry can carry
+    # literally no Description at all (a stale/orphaned adapter subkey,
+    # distinct from software=True's known WARP/Basic-Render identity) --
+    # gpuinfo.py discloses that via unavailable["name"] rather than
+    # inventing a name, so a disclosed-unavailable one is not a bug here.
     for facts in adapter_facts():
+        if "name" in facts.unavailable:
+            continue
         assert facts.name
 
 
 def test_a_real_adapter_reports_its_driver_version():
-    real = [f for f in adapter_facts() if not f.software]
+    # Same real shape as above: an adapter with no driver_version at all
+    # discloses it via unavailable["driver_version"] -- distinct from a
+    # hardware adapter that should have one and silently doesn't.
+    real = [f for f in adapter_facts()
+           if not f.software and "driver_version" not in f.unavailable]
     assert real, "no hardware adapter was found"
     for facts in real:
         assert facts.driver_version

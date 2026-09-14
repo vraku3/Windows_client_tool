@@ -9,6 +9,7 @@ Provides:
 - Background scanning via Worker threads
 - Auto-refresh (external control via start/stop)
 """
+import logging
 import subprocess
 from typing import Dict, List, Tuple
 
@@ -27,6 +28,8 @@ from modules.cleanup.components.category_group import CategoryGroup
 from core.semantic_colors import semantic
 
 CREATE_NO_WINDOW = 0x08000000
+
+logger = logging.getLogger(__name__)
 
 
 # A worker's result can land after this tab is gone. Qt auto-disconnects a
@@ -303,6 +306,17 @@ class QuickCleanupTab(QWidget):
     # Emitted when all scans complete: (total_items, total_size)
     scan_done = pyqtSignal(int, int)
 
+    # Emitted after a successful Clean All Safe -- feeds CleanupModule's
+    # shared "Freed this session" counter, the same signal every other
+    # tab in the module already emits.
+    freed_bytes = pyqtSignal(int)
+
+    #: See _OverviewTab.SCAN_WATCHDOG_MS (tabs/_overview_tab.py) -- this
+    #: sweep covers MORE categories than Overview's, so give it real
+    #: headroom above whatever this machine's own scan measures, not a
+    #: number copied from a different, smaller sweep.
+    SCAN_WATCHDOG_MS = 300_000
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._categories: List[tuple] = []   # (id, label, color, scanner_fn)
@@ -313,6 +327,10 @@ class QuickCleanupTab(QWidget):
         self._refresh_timer.timeout.connect(self._on_timer_refresh)
         self._refresh_interval_ms = 30_000
         self._workers: List[Worker] = []
+        self._scanned = False
+        self._watchdog = QTimer(self)
+        self._watchdog.setSingleShot(True)
+        self._watchdog.timeout.connect(self._on_scan_watchdog)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -471,14 +489,15 @@ class QuickCleanupTab(QWidget):
             return
         self._do_scan_all()
 
+    def auto_scan(self) -> None:
+        """Scan once, the first time this tab is shown -- CleanupModule's
+        _on_tab_changed calls this on every tab switch, the same as every
+        other tab in the module (_ScanTab, _OverviewTab before it)."""
+        if not self._scanned:
+            self._do_scan_all()
+
     def cancel(self) -> None:
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
-        self._scanning = False
-        if hasattr(self, "_scan_all_btn"):
-            self._scan_all_btn.setEnabled(True)
-            self._clean_all_btn.setEnabled(True)
+        self._reset_after_cancel()
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -626,6 +645,7 @@ class QuickCleanupTab(QWidget):
         if self._scanning:
             return
         self._scanning = True
+        self._watchdog.start(self.SCAN_WATCHDOG_MS)
         self._scan_all_btn.setEnabled(False)
         self._clean_all_btn.setEnabled(False)
         self._progress.setText("🔍  Scanning all categories...")
@@ -689,6 +709,8 @@ class QuickCleanupTab(QWidget):
             scanner_fn = fn_info[0]
             _start_worker(cid, scanner_fn, self._advanced_categories)
 
+        self._scan_targets = scan_targets
+
         # Browser as separate worker
         if browser_target:
             def _run_browser(_worker):
@@ -717,6 +739,8 @@ class QuickCleanupTab(QWidget):
             QThreadPool.globalInstance().start(wb)
 
     def _on_all_scanned(self):
+        self._watchdog.stop()
+        self._scanned = True
         self._scanning = False
         self._scan_all_btn.setEnabled(True)
         self._progress.hide()
@@ -803,6 +827,43 @@ class QuickCleanupTab(QWidget):
             else "No reclaimable space found"
         )
         self.scan_done.emit(total_items, total_size)
+
+    def _on_scan_watchdog(self) -> None:
+        if not self._scanning:
+            return
+        label_by_id = {cid: label for cid, label, _ in self._categories + self._advanced_categories}
+        missing = [label_by_id.get(cid, cid) for cid in self._scan_targets
+                  if cid not in self._results]
+        stuck_desc = ", ".join(missing) if missing else "unknown"
+        logger.warning(
+            "Quick Cleanup scan timed out after %.0fs with %d/%d "
+            "categories reported; still waiting on: %s",
+            self.SCAN_WATCHDOG_MS / 1000, self._total_scanned,
+            len(self._scan_targets), stuck_desc)
+        self._reset_after_cancel(
+            message=f"Scan timed out — stuck on: {stuck_desc} (click Scan All to retry)")
+
+    def _reset_after_cancel(self, message: str = None) -> None:
+        """Put the tab back in a state the user can act on -- shared by
+        the watchdog above and cancel() below. A cancelled Worker emits
+        `cancelled`, never `result` or `error` (core/worker.py), so
+        _total_scanned would never reach the target count and
+        _on_all_scanned would never run on its own."""
+        self._watchdog.stop()
+        for w in self._workers:
+            w.cancel()
+        self._workers.clear()
+        self._scanning = False
+        # Nothing was measured, so the tab has NOT been scanned: let
+        # auto_scan() run again the next time the module is activated.
+        self._scanned = False
+        if hasattr(self, "_scan_all_btn"):
+            self._scan_all_btn.setEnabled(True)
+            self._clean_all_btn.setEnabled(True)
+        if hasattr(self, "_progress"):
+            self._progress.hide()
+        if hasattr(self, "_status_lbl") and message:
+            self._status_lbl.setText(message)
 
     def _deduplicate_across_categories(self, results: dict) -> dict:
         """Drop items already claimed by an earlier category.
@@ -1163,6 +1224,21 @@ class QuickCleanupTab(QWidget):
 
     # ── Clean All Safe ─────────────────────────────────────────────────────
 
+    def _confirm_clean_all(self, total_bytes: int, item_count: int) -> bool:
+        from modules.cleanup import cleanup_scanner as cs
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Confirm Bulk Clean")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText(
+            f"Clean <b>{cs.format_size(total_bytes)}</b> of safe items across "
+            f"{item_count} item(s)?<br>This cannot be undone."
+        )
+        mb.setStandardButtons(
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
+        )
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return mb.exec() == QMessageBox.StandardButton.Ok
+
     def _do_clean_all_safe(self):
         if self._scanning:
             return
@@ -1196,18 +1272,7 @@ class QuickCleanupTab(QWidget):
         if not all_safe and not browser_cats:
             return
 
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Confirm Bulk Clean")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            f"Clean <b>{cs.format_size(total)}</b> of safe items across "
-            f"{len(all_safe) + len(browser_cats)} item(s)?<br>This cannot be undone."
-        )
-        mb.setStandardButtons(
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
-        )
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
+        if not self._confirm_clean_all(total, len(all_safe) + len(browser_cats)):
             return
 
         self._scanning = True
@@ -1236,6 +1301,7 @@ class QuickCleanupTab(QWidget):
             if errors:
                 msg += f" — {errors} could not be deleted"
             self._status_lbl.setText(msg)
+            self.freed_bytes.emit(total)
             self.scan()
 
         def _err(e: str):

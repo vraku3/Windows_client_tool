@@ -998,6 +998,7 @@ class QuickCleanupTab(QWidget):
             ("flush_wu_store", "Flush WinUpdate", self._flush_wu_store),
             ("reset_tcpip", "Reset TCP/IP", self._reset_tcpip),
             ("resize_hibernation", "Right-size Hibernation", self._resize_hibernation),
+            ("clear_print_queue", "Clear Stuck Print Jobs", self._clear_print_queue),
         ]
 
         self._action_buttons: Dict[str, QPushButton] = {}
@@ -1341,6 +1342,26 @@ class QuickCleanupTab(QWidget):
         self._run_action_command(
             "resize_hibernation", "powercfg /hibernate /size 50",
             "Hibernation file resized", need_confirm=False)
+
+    def _clear_print_queue(self):
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Clear Stuck Print Jobs")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText(
+            "This will <b>stop the Print Spooler</b>, clear all queued "
+            "print jobs, and restart it. Any job currently printing or "
+            "queued will be lost. Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+        cmd = (
+            "net stop spooler && "
+            "del /q /f %SystemRoot%\\System32\\spool\\PRINTERS\\* 2>nul && "
+            "net start spooler"
+        )
+        self._run_action_command("clear_print_queue", cmd, "Print queue cleared", need_confirm=False)
 
     # ── Clean All Safe ─────────────────────────────────────────────────────
 

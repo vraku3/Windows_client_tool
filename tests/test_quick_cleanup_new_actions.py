@@ -97,3 +97,58 @@ def test_resize_hibernation_does_nothing_when_confirm_declined(qapp, monkeypatch
     # The FIRST call (the "powercfg /a" status check) is expected; a
     # SECOND call containing "/hibernate /size" must not happen.
     assert not any("/hibernate" in c and "/size" in c for c in calls if isinstance(c, str))
+
+
+def test_clear_print_queue_is_wired_into_the_action_panel(qapp):
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+
+    assert "clear_print_queue" in tab._action_buttons
+    assert "clear_print_queue" in tab._action_status
+
+
+def test_clear_print_queue_runs_the_stop_clear_restart_sequence(qapp, monkeypatch):
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+
+    calls = []
+
+    class _R:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+
+    tab._clear_print_queue()
+    _settle(qapp)
+
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert "net stop spooler" in cmd
+    assert "spool\\PRINTERS" in cmd or "spool\\\\PRINTERS" in cmd
+    assert "net start spooler" in cmd
+
+
+def test_clear_print_queue_does_nothing_when_confirm_declined(qapp, monkeypatch):
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+
+    calls = []
+    monkeypatch.setattr("subprocess.run", lambda cmd, **k: calls.append(cmd))
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Cancel)
+
+    tab._clear_print_queue()
+
+    assert calls == []

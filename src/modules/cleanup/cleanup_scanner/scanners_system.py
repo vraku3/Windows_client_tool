@@ -73,9 +73,19 @@ def scan_windows_logs(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_windows_old(min_age_days: int = 0) -> ScanResult:
-    """Windows.old folder left after an in-place upgrade (often 10-30 GB)."""
+    """Windows.old folder left after an in-place upgrade (often 10-30 GB).
+
+    safety="caution", not "safe": Microsoft does not support deleting
+    this manually (it shares hardlinked files with the live OS); the
+    documented removal path is Disk Cleanup / Storage Sense. Reported
+    and selectable here, but QuickCleanupTab's dashboard-level "Clean
+    All Safe" only sweeps safety=="safe" items, so this is never
+    silently deleted by that one button anymore.
+    """
     result = ScanResult()
-    item = _make_item(r"C:\Windows.old", safety="safe", min_age_days=min_age_days)
+    system_drive = os.environ.get("SystemDrive", "C:")
+    path = os.path.join(system_drive + "\\", "Windows.old")
+    item = _make_item(path, safety="caution", min_age_days=min_age_days)
     if item:
         result.items.append(item)
         result.total_size = item.size

@@ -104,6 +104,70 @@ def test_browser_cats_are_combined_with_regular_items(qapp, widget, monkeypatch)
     assert done == [(2, 1)]  # 1 (regular) + 1 (browser) deleted, 0 + 1 errors
 
 
+def test_a_result_landing_after_the_widget_is_deleted_is_dropped(qapp, widget, monkeypatch):
+    """run_clean_safe connects CLOSURES to the worker's signals, not bound
+    methods, so Qt cannot auto-disconnect them when `widget` is destroyed --
+    unlike the bound-method connection _ScanTab used before this helper
+    consolidated three near-identical implementations into one. Mirrors
+    tests/test_cleanup_late_signal.py's pattern for the same shape of bug
+    elsewhere in this module."""
+    import threading
+
+    from PyQt6 import sip
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocking_delete(items, stop_wuauserv=False):
+        started.set()
+        release.wait(10)
+        return (1, 0)
+
+    monkeypatch.setattr(cs, "delete_items", _blocking_delete)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
+
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
+    done = []
+    csr.run_clean_safe(widget, [item], confirm="always",
+                       on_done=lambda d, e: done.append((d, e)))
+
+    assert started.wait(5), "delete_items was never called"
+    sip.delete(widget)
+    release.set()
+    _settle(qapp)
+
+    assert done == [], "on_done fired for a result delivered after the widget was deleted"
+
+
+def test_an_error_landing_after_the_widget_is_deleted_is_dropped(qapp, widget, monkeypatch):
+    import threading
+
+    from PyQt6 import sip
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def _blocking_raise(items, stop_wuauserv=False):
+        started.set()
+        release.wait(10)
+        raise RuntimeError("disk went away")
+
+    monkeypatch.setattr(cs, "delete_items", _blocking_raise)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
+
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
+    errors = []
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None,
+                       on_error=errors.append)
+
+    assert started.wait(5), "delete_items was never called"
+    sip.delete(widget)
+    release.set()
+    _settle(qapp)
+
+    assert errors == [], "on_error fired for an error delivered after the widget was deleted"
+
+
 def test_on_error_fires_when_the_worker_raises(qapp, widget, monkeypatch):
     def _raise(items, stop_wuauserv=False):
         raise RuntimeError("disk went away")

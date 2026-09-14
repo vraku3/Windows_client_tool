@@ -1,7 +1,7 @@
 """
 Cleanup module — 8-tab overhaul.
 
-Tabs: Overview · System Junk · Browser Caches · App & Game Caches ·
+Tabs: Quick Cleanup · System Junk · Browser Caches · App & Game Caches ·
       Windows Update · Logs & Reports · Large Items · Dev Tools
 
 Cross-cutting: auto-scan on first tab switch, safety colour-coding,

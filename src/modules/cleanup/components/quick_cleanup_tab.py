@@ -227,14 +227,20 @@ class _SliceCard(QFrame):
 
     clicked = pyqtSignal()
 
-    def __init__(self, label: str, size_bytes: int, color: str, parent=None):
+    def __init__(self, label: str, size_bytes: int, color: str, parent=None,
+                 clickable: bool = True):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         # QLabel derives from QFrame, so an unscoped `QFrame { ... }` rule set
         # on this card also styled every label inside it -- each one drew its
         # own copy of the accent stripe. The rule has to name the card.
         self.setObjectName("sliceCard")
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        # The ~91 advanced cards can emit `clicked` but nothing ever
+        # connects to it (they don't map 1:1 onto a single tab) -- giving
+        # them a pointing-hand cursor advertised a click that did nothing.
+        self._clickable = clickable
+        if clickable:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._color = color
         self._update_style(size_bytes)
         lay = QHBoxLayout(self)
@@ -277,7 +283,8 @@ class _SliceCard(QFrame):
         self.setVisible(size_bytes > 0)
 
     def mousePressEvent(self, event) -> None:
-        self.clicked.emit()
+        if self._clickable:
+            self.clicked.emit()
         super().mousePressEvent(event)
 
 
@@ -318,10 +325,10 @@ class QuickCleanupTab(QWidget):
     # tab in the module already emits.
     freed_bytes = pyqtSignal(int)
 
-    #: See _OverviewTab.SCAN_WATCHDOG_MS (tabs/_overview_tab.py) -- this
-    #: sweep covers MORE categories than Overview's, so give it real
-    #: headroom above whatever this machine's own scan measures, not a
-    #: number copied from a different, smaller sweep.
+    #: _OverviewTab used to have the same constant, before it was deleted
+    #: in this merge. This sweep covers MORE categories than Overview's
+    #: did, so give it real headroom above whatever this machine's own
+    #: scan measures, not a number copied from a different, smaller sweep.
     SCAN_WATCHDOG_MS = 300_000
 
     def __init__(self, parent=None, on_category_clicked=None):
@@ -556,7 +563,7 @@ class QuickCleanupTab(QWidget):
         self._legend_layout.setSpacing(4)
         self._legend_cards: List[_SliceCard] = []
         for cid, clabel, ccolor in self._categories:
-            card = _SliceCard(clabel, 0, ccolor)
+            card = _SliceCard(clabel, 0, ccolor, clickable=True)
             card.clicked.connect(lambda cid=cid: self._handle_category_clicked(cid))
             self._legend_cards.append(card)
             self._legend_layout.addWidget(card)
@@ -632,7 +639,7 @@ class QuickCleanupTab(QWidget):
         self._adv_legend_layout.setSpacing(6)
         self._adv_cards: List[_SliceCard] = []
         for idx, (cid, clabel, ccolor) in enumerate(self._advanced_categories):
-            card = _SliceCard(clabel, 0, ccolor)
+            card = _SliceCard(clabel, 0, ccolor, clickable=False)
             card.setVisible(False)
             self._adv_cards.append(card)
             row = idx // 3
@@ -859,7 +866,16 @@ class QuickCleanupTab(QWidget):
         the watchdog above and cancel() below. A cancelled Worker emits
         `cancelled`, never `result` or `error` (core/worker.py), so
         _total_scanned would never reach the target count and
-        _on_all_scanned would never run on its own."""
+        _on_all_scanned would never run on its own.
+
+        `self._workers` also holds one-click-action workers (they are
+        appended to this same list by `_run_action_command`/
+        `_compact_winsxs`), so cancelling every worker here can cancel one
+        of THOSE mid-run too -- and a cancelled Worker never fires the
+        `_done`/`_err` closure that is the only thing that re-enables that
+        action's own button. Without the loop below, switching away from
+        Cleanup while e.g. "Compact WinSxS" was running left that button
+        disabled for the rest of the process."""
         self._watchdog.stop()
         for w in self._workers:
             w.cancel()
@@ -870,11 +886,50 @@ class QuickCleanupTab(QWidget):
         self._scanned = False
         if hasattr(self, "_scan_all_btn"):
             self._scan_all_btn.setEnabled(True)
-            self._clean_all_btn.setEnabled(True)
+            # Gated the same way _on_all_scanned gates it: nothing to
+            # clean (a fresh tab, or a scan that never produced a result)
+            # must not leave this button looking clickable.
+            self._clean_all_btn.setEnabled(self._has_safe_items())
         if hasattr(self, "_progress"):
             self._progress.hide()
         if hasattr(self, "_status_lbl") and message:
             self._status_lbl.setText(message)
+        if hasattr(self, "_action_buttons"):
+            # Worker.cancel() only sets a flag the subprocess call never
+            # checks, so the command may genuinely still be running --
+            # this re-enables the button without claiming the action
+            # actually stopped.
+            for action_id, btn in self._action_buttons.items():
+                if btn.isEnabled():
+                    continue
+                btn.setEnabled(True)
+                status_lbl = self._action_status.get(action_id)
+                if status_lbl is not None:
+                    status_lbl.setText(
+                        "cancelled — may still be running in the background")
+                    status_lbl.setStyleSheet(
+                        f"color: {semantic('warning')}; font-size: 11px;")
+
+    def _has_safe_items(self) -> bool:
+        """Is there at least one "safe" item anywhere in the last scan
+        results? Mirrors the condition _on_all_scanned uses to enable
+        _clean_all_btn, so a cancelled/timed-out scan and a completed one
+        agree on when there is actually something to clean."""
+        from modules.cleanup import cleanup_scanner as cs
+        from modules.cleanup import browser_scanner as bs
+
+        for cid, result in self._results.items():
+            if cid == "browser":
+                browser_results: List[bs.BrowserResult] = result or []
+                for r in browser_results:
+                    for profile in r.profiles:
+                        for cat in profile.categories:
+                            if cat.size_bytes > 0:
+                                return True
+            elif isinstance(result, cs.ScanResult):
+                if any(item.safety == "safe" for item in result.items):
+                    return True
+        return False
 
     def _deduplicate_across_categories(self, results: dict) -> dict:
         """Drop items already claimed by an earlier category.

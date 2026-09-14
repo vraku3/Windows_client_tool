@@ -7,9 +7,18 @@ import time
 
 from PyQt6.QtCore import QThreadPool
 
+from core.long_op_pool import get_long_op_pool
+
 
 def _settle(qapp, timeout_ms: int = 5_000) -> None:
     QThreadPool.globalInstance().waitForDone(timeout_ms)
+    # _compact_winsxs (and the busy-guard test below that drives it) runs
+    # its worker on get_long_op_pool(), a SEPARATE bounded pool from the
+    # global one -- waiting on only the global pool let that test pass on
+    # its trailing processEvents loop rather than on a real wait for the
+    # worker to actually finish. get_long_op_pool() returns a real
+    # QThreadPool, so it has the same waitForDone(timeout_ms) API.
+    get_long_op_pool().waitForDone(timeout_ms)
     deadline = time.time() + 1
     while time.time() < deadline:
         qapp.processEvents()
@@ -70,6 +79,60 @@ def test_two_actions_running_at_once_do_not_clobber_each_others_status(qapp, mon
     clip_status = tab._action_status["clear_clipboard"].text()
     assert "DNS" in dns_status or "flush" in dns_status.lower()
     assert dns_status != clip_status, "both actions ended up showing the same text"
+
+
+def test_a_cancelled_one_click_action_re_enables_its_button(qapp, monkeypatch):
+    """QuickCleanupTab.cancel() -> _reset_after_cancel() used to cancel
+    EVERY worker in self._workers, including one-click-action workers (they
+    are appended to that same list) -- and a cancelled Worker emits
+    `cancelled`, never `result`/`error` (core/worker.py), so the action's
+    own `_done`/`_err` closure -- the only code that re-enabled its
+    button -- never ran. Real impact: switch away from Cleanup while
+    "Compact WinSxS" or any other one-click action is running, and that
+    button is dead for the rest of the process."""
+    import threading
+
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def fake_run(cmd, **kwargs):
+        started.set()
+        release.wait(10)
+        class _R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    btn = tab._action_buttons["flush_dns"]
+    tab._flush_dns()
+
+    deadline = time.time() + 5
+    while not started.is_set() and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert started.is_set(), "the action's worker never started"
+    assert not btn.isEnabled(), "button should be disabled while the action runs"
+
+    tab.cancel()  # e.g. CleanupModule.on_deactivate() while the action is running
+    assert btn.isEnabled(), "cancel() left a running one-click action's button disabled"
+    status_text = tab._action_status["flush_dns"].text()
+    assert "cancel" in status_text.lower(), (
+        f"status did not say the action was cancelled: {status_text!r}")
+
+    release.set()
+    _settle(qapp)
+    # The underlying subprocess call was never actually interrupted
+    # (Worker.cancel() only sets a flag the worker function never checks),
+    # but its result was dropped -- the button must stay enabled and not
+    # be flipped back and forth by a stale, cancelled worker's callback.
+    assert btn.isEnabled()
 
 
 def test_compact_winsxs_also_guards_against_a_second_click(qapp, monkeypatch):

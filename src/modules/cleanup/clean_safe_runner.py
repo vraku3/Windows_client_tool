@@ -14,6 +14,7 @@ from typing import Callable, List, Optional
 from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
+from core.widget_life import widget_is_valid
 from core.worker import Worker
 from modules.cleanup import cleanup_scanner as cs
 
@@ -69,12 +70,28 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
         deleted, errors = cs.delete_items(items, stop_wuauserv=stop_wuauserv) if items else (0, 0)
         return deleted + browser_freed, errors + browser_errors
 
+    # These are CLOSURES, not bound methods -- Qt auto-disconnects a bound
+    # method when its receiving QObject is destroyed, but it cannot do that
+    # here because nothing tells it what the closure's receiver is. Before
+    # this consolidation, _ScanTab connected a bound method
+    # (self._on_clean_done) and got that protection for free; guard it
+    # explicitly here instead, or a delete finishing after `widget` is torn
+    # down reaches into a deleted C++ object.
+    def _deliver_done(result):
+        if not widget_is_valid(widget):
+            return
+        on_done(*result)
+
+    def _deliver_error(e):
+        if not widget_is_valid(widget):
+            return
+        if on_error is not None:
+            on_error(e)
+        else:
+            logger.error("run_clean_safe: background delete failed: %s", e)
+
     worker = Worker(_run)
-    worker.signals.result.connect(lambda result: on_done(*result))
-    if on_error is not None:
-        worker.signals.error.connect(on_error)
-    else:
-        worker.signals.error.connect(
-            lambda e: logger.error("run_clean_safe: background delete failed: %s", e))
+    worker.signals.result.connect(_deliver_done)
+    worker.signals.error.connect(_deliver_error)
     QThreadPool.globalInstance().start(worker)
     return worker

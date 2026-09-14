@@ -10,6 +10,7 @@ from modules.cleanup.cleanup_scanner.scanners_comms import *  # noqa: F401,F403
 from modules.cleanup.cleanup_scanner.scanners_dev import *  # noqa: F401,F403
 from modules.cleanup.cleanup_scanner.scanners_games import *  # noqa: F401,F403
 from modules.cleanup.cleanup_scanner.scanners_media import *  # noqa: F401,F403
+from modules.cleanup.cleanup_scanner.scanners_profiles import *  # noqa: F401,F403
 from modules.cleanup.cleanup_scanner.scanners_system import *  # noqa: F401,F403
 
 # ── Catalog-defined scanners ───────────────────────────────────────────

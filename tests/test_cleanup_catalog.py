@@ -272,7 +272,10 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: Windows servicing lock, to produce something the Large Items "Analyze
 #: WinSxS" button already produces on purpose. See
 #: tests/test_cleanup_no_servicing_lock.py.
-REACHABLE_SCANNERS = 542
+#:
+#: 543 after scan_orphaned_user_profiles landed (Sub-project 2, Task 4) —
+#: a new hand-written scanner, not a catalog entry.
+REACHABLE_SCANNERS = 543
 
 
 def _scanners_the_tabs_offer():

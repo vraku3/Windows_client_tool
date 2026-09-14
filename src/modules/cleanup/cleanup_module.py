@@ -131,6 +131,8 @@ LARGE_EXTRA = {
     cs.scan_old_files: ('Old Files', 'caution'),
     cs.scan_usb_shadow_copies: ('Usb Shadow Copies', 'safe'),
     cs.scan_virtual_drives: ('Virtual Drives', 'caution'),
+    cs.scan_orphaned_user_profiles: (
+        'Orphaned User Profiles (no matching Windows account)', 'danger'),
 }
 
 

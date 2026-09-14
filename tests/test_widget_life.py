@@ -97,7 +97,6 @@ def test_nobody_imports_the_bare_sip_module():
     "modules/wifi_analyzer/wifi_module.py",
     "ui/log_table_widget.py",
     "modules/cleanup/tabs/_scan_tab.py",
-    "modules/cleanup/tabs/_overview_tab.py",
     "modules/cleanup/components/quick_cleanup_tab.py",
 ])
 def test_every_guarding_module_uses_the_shared_helper(module_path):

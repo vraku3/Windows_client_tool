@@ -132,23 +132,3 @@ def test_the_stop_button_is_live_only_while_a_scan_is_running(
     blocking_scanner.release.set()
     _settle(qapp)
     assert not tab._stop_btn.isEnabled(), "Stop is still live after the scan"
-
-
-def test_the_overview_can_be_stopped_too(qapp, monkeypatch, blocking_scanner):
-    from modules.cleanup.tabs import _overview_tab as ov
-
-    monkeypatch.setattr(ov, "_OV_GROUPS", [("Slow Group", [blocking_scanner])])
-    tab = ov._OverviewTab()
-    tab._build_table()
-    tab._do_scan_all()
-    assert blocking_scanner.started.wait(10)
-    _pump(qapp, 0.3)
-    assert tab._stop_btn.isEnabled()
-
-    tab._stop_scan()
-    blocking_scanner.release.set()
-    _settle(qapp)
-
-    assert tab._scanning is False
-    assert tab._scan_btn.isEnabled()
-    assert not tab._stop_btn.isEnabled()

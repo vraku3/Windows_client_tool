@@ -288,8 +288,6 @@ def _scanners_the_tabs_offer():
 
     from app import App
     from modules.cleanup.cleanup_module import CleanupModule
-
-    from modules.cleanup.quick_cleanup_module import QuickCleanupModule
     from modules.cleanup.cleanup_scanner import _OV_GROUPS
 
     App.instance = None
@@ -303,11 +301,11 @@ def _scanners_the_tabs_offer():
             if fns:
                 offered |= {fn.__name__ for fn in fns}
 
-        # Both panes that show scanners: Cleanup's eight tabs, and Quick
-        # Cleanup's one-page dashboard. Counting only the first reported
-        # 509 of 537 and blamed the wiring, when the missing 17 were simply
-        # on the other pane.
-        for factory in (CleanupModule, QuickCleanupModule):
+        # Quick Cleanup's dashboard is now CleanupModule's own first tab
+        # (the Cleanup/Quick Cleanup merge) -- reached by the same
+        # dir(module) scan below as every one of the module's other 7
+        # tabs, not a second factory to construct.
+        for factory in (CleanupModule,):
             module = factory()
             module.on_start(app)
             # Held, not discarded: dropping the returned widget lets Qt

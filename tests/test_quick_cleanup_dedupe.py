@@ -29,20 +29,14 @@ def _result(*paths, size=100):
 @pytest.fixture
 def tab(qapp):
     from app import App
-    from modules.cleanup.quick_cleanup_module import QuickCleanupModule
+    from modules.cleanup.cleanup_module import CleanupModule
 
     App.instance = None
     app = App(app_data_dir=tempfile.mkdtemp())
-    module = QuickCleanupModule()
+    module = CleanupModule()
     module.on_start(app)
     widget = module.create_widget()          # held, or Qt destroys the tree
-    found = None
-    for name in dir(module):
-        candidate = getattr(module, name, None)
-        if hasattr(candidate, "_deduplicate_across_categories"):
-            found = candidate
-            break
-    assert found is not None, "could not reach the Quick Cleanup tab"
+    found = module._quick
     found._keep_alive = widget
     yield found
     try:

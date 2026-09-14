@@ -88,24 +88,25 @@ def test_the_watchdog_does_not_fire_on_a_healthy_scan(qapp):
     assert tab._watchdog.isActive() is False, "watchdog left armed after a scan"
 
 
-def test_the_overview_watchdog_names_the_groups_that_never_reported(
-        qapp, monkeypatch, blocking_scanner):
-    from modules.cleanup.tabs import _overview_tab as ov
+def test_the_quick_cleanup_watchdog_recovers_a_wedged_scan(
+        qapp, blocking_scanner):
+    # QuickCleanupTab's own dedicated watchdog tests (naming which
+    # category is stuck, not just that it recovers) live in
+    # tests/test_quick_cleanup_watchdog.py, migrated there directly
+    # rather than duplicated here -- this file's remaining coverage is
+    # _ScanTab's watchdog, above.
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
 
-    monkeypatch.setattr(
-        ov, "_OV_GROUPS", [("Wedged Group", [blocking_scanner])])
-    tab = ov._OverviewTab()
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+    tab._scanner_map["temp"] = (blocking_scanner, "Temp Files", "#4caf50")
     tab.SCAN_WATCHDOG_MS = 300
-    tab._build_table()
     tab._do_scan_all()
     assert blocking_scanner.started.wait(10)
 
     recovered = _pump_until(qapp, lambda: not tab._scanning)
-    status = tab._status.text()
     blocking_scanner.release.set()
     _settle(qapp)
 
     assert recovered, "the watchdog never fired"
-    assert tab._scan_btn.isEnabled()
-    assert "Wedged Group" in status, (
-        f"the watchdog did not name the stuck group: {status!r}")
+    assert tab._scan_all_btn.isEnabled()

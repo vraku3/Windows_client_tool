@@ -48,35 +48,34 @@ def blocking_scanner():
     return _scan
 
 
-def test_overview_is_usable_again_after_a_scan_is_cancelled(
-        qapp, monkeypatch, blocking_scanner):
-    from modules.cleanup.tabs import _overview_tab as ov
+def test_quick_cleanup_is_usable_again_after_a_scan_is_cancelled(
+        qapp, blocking_scanner):
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
 
-    monkeypatch.setattr(ov, "_OV_GROUPS", [("Slow Group", [blocking_scanner])])
-    tab = ov._OverviewTab()
-    tab._build_table()
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+    tab._scanner_map["temp"] = (blocking_scanner, "Temp Files", "#4caf50")
     tab._do_scan_all()
     assert blocking_scanner.started.wait(10), "scan never started"
 
-    tab._cancel_all()               # what switching modules does
+    tab.cancel()                    # what switching modules does
     blocking_scanner.release.set()
     _settle(qapp)
 
-    assert tab._pending == 0, "cancelled workers never resolved the counter"
     assert tab._scanning is False
-    assert tab._scan_btn.isEnabled(), "Scan button left disabled forever"
+    assert tab._scan_all_btn.isEnabled(), "Scan button left disabled forever"
 
 
-def test_a_cancelled_overview_scan_can_be_started_again(
-        qapp, monkeypatch, blocking_scanner):
-    from modules.cleanup.tabs import _overview_tab as ov
+def test_a_cancelled_quick_cleanup_scan_can_be_started_again(
+        qapp, blocking_scanner):
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
 
-    monkeypatch.setattr(ov, "_OV_GROUPS", [("Slow Group", [blocking_scanner])])
-    tab = ov._OverviewTab()
-    tab._build_table()
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+    tab._scanner_map["temp"] = (blocking_scanner, "Temp Files", "#4caf50")
     tab._do_scan_all()
     assert blocking_scanner.started.wait(10)
-    tab._cancel_all()
+    tab.cancel()
     blocking_scanner.release.set()
     _settle(qapp)
 
@@ -89,9 +88,8 @@ def test_a_cancelled_overview_scan_can_be_started_again(
     # stuck `_scanning`, and that it reached a finished state.
     assert tab._scanning is True, "Scan did nothing after a cancel"
     _settle(qapp)
-    assert tab._pending == 0
     assert tab._scanning is False
-    assert tab._scan_btn.isEnabled()
+    assert tab._scan_all_btn.isEnabled()
 
 
 def test_scan_tab_is_usable_again_after_a_scan_is_cancelled(

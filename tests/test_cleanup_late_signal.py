@@ -1,6 +1,6 @@
 r"""A scan finishing after its tab is gone must not take the app down.
 
-_OverviewTab and QuickCleanupTab connect **closures** to their workers'
+QuickCleanupTab and _ScanTab connect **closures** to their workers'
 signals, not bound methods. Qt auto-disconnects a bound method when its
 receiver QObject is destroyed; it cannot do that for a closure, because
 nothing tells it what the receiver is. So the connection outlives the
@@ -44,24 +44,6 @@ def blocking_scanner():
     scan_slow.started = started
     scan_slow.release = release
     return scan_slow
-
-
-def test_an_overview_result_landing_after_teardown_is_dropped(
-        qapp, monkeypatch, blocking_scanner):
-    from PyQt6 import sip
-    from modules.cleanup.tabs import _overview_tab as ov
-
-    monkeypatch.setattr(ov, "_OV_GROUPS", [("Doomed Group", [blocking_scanner])])
-    tab = ov._OverviewTab()
-    tab._build_table()
-    tab._do_scan_all()
-    assert blocking_scanner.started.wait(10)
-
-    sip.delete(tab)                 # what Qt teardown does to the widget
-    blocking_scanner.release.set()
-    _settle(qapp)                   # the queued result is delivered here
-
-    assert True                     # reaching this line is the assertion
 
 
 def test_a_quick_cleanup_result_landing_after_teardown_is_dropped(

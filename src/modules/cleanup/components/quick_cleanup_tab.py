@@ -11,7 +11,7 @@ Provides:
 """
 import logging
 import subprocess
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 from PyQt6.QtCore import Qt, QTimer, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
@@ -603,6 +603,11 @@ class QuickCleanupTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
 
+        # ── One-click actions (always visible -- moved out of the
+        # Advanced section during the Cleanup/Quick Cleanup merge, so a
+        # fresh user reaches these without ever clicking "Show Advanced") ──
+        self._build_one_click_panel(layout)
+
         # ── Advanced panel (hidden by default) ──
         self._adv_widget = QWidget()
         adv_lay = QVBoxLayout(self._adv_widget)
@@ -625,9 +630,6 @@ class QuickCleanupTab(QWidget):
             col = idx % 3
             self._adv_legend_layout.addWidget(card, row, col)
         adv_lay.addLayout(self._adv_legend_layout)
-
-        # One-click actions
-        self._build_one_click_panel(adv_lay)
 
         self._adv_widget.setVisible(False)
         layout.addWidget(self._adv_widget)
@@ -906,50 +908,54 @@ class QuickCleanupTab(QWidget):
         self._show_adv_btn.setText("Hide Advanced ▲" if self._adv_shown else "Show Advanced ▼")
 
     def _build_one_click_panel(self, parent_lay: QVBoxLayout):
-        """Build the one-click maintenance actions button strip."""
+        """One row per action: its own button, its own status label, its
+        own busy-guard. Before this, all 12 actions shared one QLabel and
+        none of them disabled their own button while running."""
         sep = QLabel("One-Click Maintenance")
         sep.setObjectName("muted")
         sep.setStyleSheet("font-size: 13px; font-weight: bold; padding-top: 8px;")
         parent_lay.addWidget(sep)
 
-        btn_bar = QHBoxLayout()
-        btn_bar.setSpacing(6)
-
         actions = [
-            ("Flush DNS",          self._flush_dns,          None,                           False),
-            ("Clear Event Logs",   self._clear_event_logs,  None,                           True),
-            ("Compact WinSxS",     self._compact_winsxs,     None,                           False),
-            ("Rebuild Icons",      self._rebuild_icon_cache, None,                           False),
-            ("WU Deep Clean",     self._wu_deep_clean,      None,                           False),
-            ("Network Repair",     self._network_repair,     None,                           True),
-            ("Clear Thumbnails",   self._clear_thumbnails,  None,                           False),
-            ("Clear Clipboard",    self._clear_clipboard,    None,                           False),
-            ("Reset Search",       self._reset_search,       None,                           False),
-            ("Clear Font Cache",   self._clear_font_cache,  None,                           False),
-            ("Flush WinUpdate",   self._flush_wu_store,    None,                           True),
-            ("Reset TCP/IP",       self._reset_tcpip,        None,                           True),
+            ("flush_dns", "Flush DNS", self._flush_dns),
+            ("clear_event_logs", "Clear Event Logs", self._clear_event_logs),
+            ("compact_winsxs", "Compact WinSxS", self._compact_winsxs),
+            ("rebuild_icon_cache", "Rebuild Icons", self._rebuild_icon_cache),
+            ("wu_deep_clean", "WU Deep Clean", self._wu_deep_clean),
+            ("network_repair", "Network Repair", self._network_repair),
+            ("clear_thumbnails", "Clear Thumbnails", self._clear_thumbnails),
+            ("clear_clipboard", "Clear Clipboard", self._clear_clipboard),
+            ("reset_search", "Reset Search", self._reset_search),
+            ("clear_font_cache", "Clear Font Cache", self._clear_font_cache),
+            ("flush_wu_store", "Flush WinUpdate", self._flush_wu_store),
+            ("reset_tcpip", "Reset TCP/IP", self._reset_tcpip),
         ]
 
-        self._action_btns: List[Tuple[QPushButton, str, bool]] = []
-        for label, handler, cmd, need_confirm in actions:
+        self._action_buttons: Dict[str, QPushButton] = {}
+        self._action_status: Dict[str, QLabel] = {}
+        for action_id, label, handler in actions:
+            row = QHBoxLayout()
             btn = QPushButton(label)
             btn.setStyleSheet("font-size: 11px; padding: 4px 8px;")
             btn.clicked.connect(handler)
-            btn_bar.addWidget(btn)
-            self._action_btns.append((btn, cmd, need_confirm))
+            status = QLabel("")
+            status.setObjectName("muted")
+            status.setStyleSheet("font-size: 11px;")
+            row.addWidget(btn)
+            row.addWidget(status, 1)
+            parent_lay.addLayout(row)
+            self._action_buttons[action_id] = btn
+            self._action_status[action_id] = status
 
-        parent_lay.addLayout(btn_bar)
-
-        self._action_status_lbl = QLabel("")
-        self._action_status_lbl.setObjectName("muted")
-        self._action_status_lbl.setStyleSheet("font-size: 11px;")
-        parent_lay.addWidget(self._action_status_lbl)
-
-    def _run_action_command(self, cmd: str, status_prefix: str,
+    def _run_action_command(self, action_id: str, cmd: str, status_prefix: str,
                               need_confirm: bool = False,
                               long_running: bool = False,
                               confirm_text: str = ""):
         """Run a system command as a one-click action."""
+        btn = self._action_buttons.get(action_id)
+        if btn is not None and not btn.isEnabled():
+            return  # already running
+        status_lbl = self._action_status[action_id]
         if need_confirm:
             mb = QMessageBox(self)
             mb.setWindowTitle("Confirm Action")
@@ -961,8 +967,8 @@ class QuickCleanupTab(QWidget):
             if mb.exec() != QMessageBox.StandardButton.Ok:
                 return
 
-        self._action_status_lbl.setText(f"{status_prefix}...")
-        self._action_status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+        status_lbl.setText(f"{status_prefix}...")
+        status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
 
         def _run(_worker):
             try:
@@ -1001,21 +1007,27 @@ class QuickCleanupTab(QWidget):
             return "ok" if success else "error", output
 
         def _done(result):
+            if btn is not None:
+                btn.setEnabled(True)
             status, msg = result
             if status == "ok":
-                self._action_status_lbl.setText(f"✅ {status_prefix}: {msg}")
-                self._action_status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
+                status_lbl.setText(f"✅ {status_prefix}: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
             elif status == "timeout":
-                self._action_status_lbl.setText(f"⏱ {status_prefix}: {msg}")
-                self._action_status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+                status_lbl.setText(f"⏱ {status_prefix}: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
             else:
-                self._action_status_lbl.setText(f"❌ {status_prefix}: {msg}")
-                self._action_status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
+                status_lbl.setText(f"❌ {status_prefix}: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
 
         def _err(e: str):
-            self._action_status_lbl.setText(f"❌ {status_prefix}: {e}")
-            self._action_status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
+            if btn is not None:
+                btn.setEnabled(True)
+            status_lbl.setText(f"❌ {status_prefix}: {e}")
+            status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
 
+        if btn is not None:
+            btn.setEnabled(False)
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
@@ -1028,10 +1040,11 @@ class QuickCleanupTab(QWidget):
             QThreadPool.globalInstance().start(w)
 
     def _flush_dns(self):
-        self._run_action_command("ipconfig /flushdns", "DNS cache flushed", need_confirm=False)
+        self._run_action_command("flush_dns", "ipconfig /flushdns", "DNS cache flushed", need_confirm=False)
 
     def _clear_event_logs(self):
         self._run_action_command(
+            "clear_event_logs",
             "wevtutil cl System && wevtutil cl Application && wevtutil cl Security",
             "Event logs cleared",
             need_confirm=True,
@@ -1039,6 +1052,10 @@ class QuickCleanupTab(QWidget):
         )
 
     def _compact_winsxs(self):
+        btn = self._action_buttons.get("compact_winsxs")
+        if btn is not None and not btn.isEnabled():
+            return  # already running
+
         mb = QMessageBox(self)
         mb.setWindowTitle("Compact WinSxS")
         mb.setIcon(QMessageBox.Icon.Information)
@@ -1051,8 +1068,11 @@ class QuickCleanupTab(QWidget):
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return
 
-        self._action_status_lbl.setText("⏳ WinSxS cleanup running (may take 10–30 min)...")
-        self._action_status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+        status_lbl = self._action_status["compact_winsxs"]
+        status_lbl.setText("⏳ WinSxS cleanup running (may take 10–30 min)...")
+        status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+        if btn is not None:
+            btn.setEnabled(False)
 
         def _run(_worker):
             try:
@@ -1074,20 +1094,24 @@ class QuickCleanupTab(QWidget):
             return "ok" if success else "error", output
 
         def _done(result):
-            status, msg = result
-            if status == "ok":
-                self._action_status_lbl.setText("✅ WinSxS cleanup complete")
-                self._action_status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
-            elif status == "timeout":
-                self._action_status_lbl.setText(f"⏱ WinSxS cleanup: {msg}")
-                self._action_status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+            if btn is not None:
+                btn.setEnabled(True)
+            outcome, msg = result
+            if outcome == "ok":
+                status_lbl.setText("✅ WinSxS cleanup complete")
+                status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
+            elif outcome == "timeout":
+                status_lbl.setText(f"⏱ WinSxS cleanup: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
             else:
-                self._action_status_lbl.setText(f"❌ WinSxS cleanup: {msg[:100]}")
-                self._action_status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
+                status_lbl.setText(f"❌ WinSxS cleanup: {msg[:100]}")
+                status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
 
         def _err(e: str):
-            self._action_status_lbl.setText(f"❌ WinSxS cleanup: {e}")
-            self._action_status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
+            if btn is not None:
+                btn.setEnabled(True)
+            status_lbl.setText(f"❌ WinSxS cleanup: {e}")
+            status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
 
         w = Worker(_run)
         w.signals.result.connect(_done)
@@ -1098,6 +1122,7 @@ class QuickCleanupTab(QWidget):
 
     def _rebuild_icon_cache(self):
         self._run_action_command(
+            "rebuild_icon_cache",
             "taskkill /f /im explorer.exe && timeout /t 2 /nobreak >nul && del /q \"%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\iconcache_*\" 2>nul && start explorer",
             "Icon cache rebuilt",
             need_confirm=False
@@ -1105,6 +1130,7 @@ class QuickCleanupTab(QWidget):
 
     def _wu_deep_clean(self):
         self._run_action_command(
+            "wu_deep_clean",
             "dism /Online /Cleanup-Image /StartComponentCleanup /SuppressDefaultActions",
             "WU deep clean started",
             need_confirm=True,
@@ -1126,14 +1152,14 @@ class QuickCleanupTab(QWidget):
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return
         self._run_action_command(
-            "netsh winsock reset && netsh int ip reset",
-            "Network stack reset",
-            need_confirm=False
+            "network_repair", "netsh winsock reset && netsh int ip reset",
+            "Network stack reset", need_confirm=False
         )
 
     def _clear_thumbnails(self):
         """Delete all thumbnail cache files (.db) in Explorer thumbnail directories."""
         self._run_action_command(
+            "clear_thumbnails",
             'del /q /f "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\thumbcache_*.db" 2>nul',
             "Thumbnail cache cleared",
             need_confirm=False
@@ -1142,9 +1168,7 @@ class QuickCleanupTab(QWidget):
     def _clear_clipboard(self):
         """Clear the Windows clipboard content."""
         self._run_action_command(
-            "cmd /c echo off | clip",
-            "Clipboard cleared",
-            need_confirm=False
+            "clear_clipboard", "cmd /c echo off | clip", "Clipboard cleared", need_confirm=False
         )
 
     def _reset_search(self):
@@ -1160,9 +1184,8 @@ class QuickCleanupTab(QWidget):
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return
         self._run_action_command(
-            "net stop WSearch && net start WSearch",
-            "Windows Search reset",
-            need_confirm=False
+            "reset_search", "net stop WSearch && net start WSearch",
+            "Windows Search reset", need_confirm=False
         )
 
     def _clear_font_cache(self):
@@ -1179,9 +1202,8 @@ class QuickCleanupTab(QWidget):
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return
         self._run_action_command(
-            "net stop FontCache && net start FontCache",
-            "Font cache cleared",
-            need_confirm=False
+            "clear_font_cache", "net stop FontCache && net start FontCache",
+            "Font cache cleared", need_confirm=False
         )
 
     def _flush_wu_store(self):
@@ -1202,7 +1224,7 @@ class QuickCleanupTab(QWidget):
             "del /q /f %SystemRoot%\\SoftwareDistribution\\Download\\* 2>nul && "
             "net start wuauserv"
         )
-        self._run_action_command(cmd, "Windows Update store flushed", need_confirm=False)
+        self._run_action_command("flush_wu_store", cmd, "Windows Update store flushed", need_confirm=False)
 
     def _reset_tcpip(self):
         mb = QMessageBox(self)
@@ -1217,9 +1239,7 @@ class QuickCleanupTab(QWidget):
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return
         self._run_action_command(
-            "netsh int ip reset",
-            "TCP/IP stack reset",
-            need_confirm=False
+            "reset_tcpip", "netsh int ip reset", "TCP/IP stack reset", need_confirm=False
         )
 
     # ── Clean All Safe ─────────────────────────────────────────────────────

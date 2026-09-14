@@ -2034,6 +2034,41 @@ def test_run_bulk_sweep_only_offers_windows_update_to_devices_the_vendor_pass_mi
     assert wu_found == {"PCI\\DEV2": wu_found["PCI\\DEV2"]}
 
 
+def test_run_bulk_sweep_still_offers_windows_update_for_a_manual_download_only_vendor_match(monkeypatch):
+    # Real case, Realtek: the vendor's OWN check finds a real update but
+    # can't auto-install it (CAPTCHA-gated download). Windows Update
+    # might have an installable alternative -- must still be tried.
+    d1 = DriverInfo(device_name="Realtek PCIe 5GbE Family Controller", driver_class="Net",
+                    version="1.0", date="", publisher="Realtek", signed=True,
+                    error_code=0, flags="", hardware_id="PCI\\VEN_10EC&DEV_8126",
+                    device_id="PCI\\DEV1")
+
+    class _ManualOnlyP:
+        vendor_name = "Realtek"
+        def check_for_update(self, driver):
+            from modules.driver_manager.vendor_updates.provider import UpdateInfo
+            return UpdateInfo(vendor="Realtek", current_version="1.0", latest_version="2.0",
+                              download_url="https://example.com", installer_signer="X",
+                              manual_download_only=True)
+
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _ManualOnlyP())
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    seen_remaining = []
+
+    def fake_find_many(drivers):
+        seen_remaining.extend(drivers)
+        return {}
+
+    monkeypatch.setattr(wudc_mod, "find_windows_update_drivers_for_many", fake_find_many)
+
+    mod = _module()
+    vendor_found, wu_found = mod._run_bulk_sweep(_FakeSweepWorker(), [d1])
+
+    assert len(vendor_found) == 1
+    assert vendor_found[0][2].manual_download_only is True
+    assert seen_remaining == [d1]  # still offered to WU despite the vendor match
+
+
 def test_run_bulk_sweep_survives_the_windows_update_pass_raising(monkeypatch, caplog):
     d1 = DriverInfo(device_name="Something", driver_class="System", version="1.0",
                     date="", publisher="V", signed=True, error_code=0, flags="",

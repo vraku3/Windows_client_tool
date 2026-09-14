@@ -1201,10 +1201,16 @@ class DriverModule(BaseModule):
         (vendor_found, wu_found): vendor_found is (driver, provider,
         update) tuples from each device's own vendor-specific provider;
         wu_found is a device_id-keyed dict of WindowsUpdateDriverMatch
-        for whatever's left over -- no vendor provider at all, or one
-        that found nothing -- checked via ONE shared Windows Update
+        for whatever's left over, checked via ONE shared Windows Update
         search (see windows_update_driver_check.find_windows_update_drivers_for_many),
-        never one search per device."""
+        never one search per device.
+
+        "Left over" means no vendor provider at all, the provider found
+        nothing, OR -- real case, Realtek -- the provider found a real
+        update it can't auto-install (UpdateInfo.manual_download_only,
+        e.g. a vendor site gated behind a CAPTCHA). Windows Update is
+        still worth trying for those: it might have an installable
+        alternative even though the vendor's own site doesn't."""
         from modules.driver_manager.vendor_updates.windows_update_driver_check import (
             find_windows_update_drivers_for_many,
         )
@@ -1235,7 +1241,8 @@ class DriverModule(BaseModule):
                     seen_vendor_version=update.latest_version if update is not None else None)
                 if update is not None:
                     vendor_found.append((d, provider, update))
-                    vendor_matched_ids.add(d.device_id)
+                    if not update.manual_download_only:
+                        vendor_matched_ids.add(d.device_id)
             worker.signals.progress.emit(i + 1)
 
         wu_found = {}

@@ -866,7 +866,7 @@ class QuickCleanupTab(QWidget):
         self._safe_lbl.setText(f"Safe to clean: {cs.format_size(total_safe)}")
         self._item_lbl.setText(f"Items found: {total_items}")
         self._cat_lbl.setText(f"Categories: {len(self._categories)} + {len(self._advanced_categories)} advanced")
-        self._clean_all_btn.setEnabled(total_safe > 0)
+        self._clean_all_btn.setEnabled(self._has_cleanable_items())
         self._status_lbl.setText(
             f"Found {total_items} item(s) across {categories_with_data} categories"
             if categories_with_data
@@ -917,7 +917,7 @@ class QuickCleanupTab(QWidget):
             # Gated the same way _on_all_scanned gates it: nothing to
             # clean (a fresh tab, or a scan that never produced a result)
             # must not leave this button looking clickable.
-            self._clean_all_btn.setEnabled(self._has_safe_items())
+            self._clean_all_btn.setEnabled(self._has_cleanable_items())
         if hasattr(self, "_progress"):
             self._progress.hide()
         if hasattr(self, "_status_lbl") and message:
@@ -938,13 +938,16 @@ class QuickCleanupTab(QWidget):
                     status_lbl.setStyleSheet(
                         f"color: {semantic('warning')}; font-size: 11px;")
 
-    def _has_safe_items(self) -> bool:
-        """Is there at least one "safe" item anywhere in the last scan
-        results? Mirrors the condition _on_all_scanned uses to enable
-        _clean_all_btn, so a cancelled/timed-out scan and a completed one
-        agree on when there is actually something to clean."""
+    def _has_cleanable_items(self) -> bool:
+        """Is there at least one item the CURRENT preset would clean?
+        Mirrors what _do_clean_all_safe actually does, so a cancelled/
+        timed-out scan and a completed one agree on when there is
+        genuinely something to clean under whatever preset is selected."""
         from modules.cleanup import cleanup_scanner as cs
         from modules.cleanup import browser_scanner as bs
+        from modules.cleanup import cleanup_presets
+
+        preset_id = self._preset_combo.currentData() if hasattr(self, "_preset_combo") else "light"
 
         for cid, result in self._results.items():
             if cid == "browser":
@@ -955,8 +958,14 @@ class QuickCleanupTab(QWidget):
                             if cat.size_bytes > 0:
                                 return True
             elif isinstance(result, cs.ScanResult):
-                if any(item.safety == "safe" for item in result.items):
-                    return True
+                if preset_id == "custom":
+                    if any(item.safety == "safe" for item in result.items):
+                        return True
+                else:
+                    items = cleanup_presets.items_for_preset(
+                        preset_id, {cid: result}, self._id_to_scanner_name)
+                    if items:
+                        return True
         return False
 
     def _deduplicate_across_categories(self, results: dict) -> dict:
@@ -1417,6 +1426,9 @@ class QuickCleanupTab(QWidget):
         total = 0
         browser_cats: List[bs.CacheCategory] = []
 
+        from modules.cleanup import cleanup_presets
+        preset_id = self._preset_combo.currentData()
+
         for cid in self._results:
             if cid == "browser":
                 browser_results: List[bs.BrowserResult] = self._results.get(cid, [])
@@ -1426,15 +1438,26 @@ class QuickCleanupTab(QWidget):
                             if cat.size_bytes > 0:
                                 browser_cats.append(cat)
                                 total += cat.size_bytes
-            else:
-                result: cs.ScanResult = self._results.get(cid, cs.ScanResult())
+            elif cid == "wu" and cid in self._results:
+                needs_wu = True
+
+        if preset_id == "custom":
+            for cid, result in self._results.items():
+                if cid == "browser":
+                    continue
                 for item in result.items:
                     if item.safety == "safe":
                         item.selected = True
                         all_safe.append(item)
                         total += item.size
-                if cid == "wu":
-                    needs_wu = True
+        else:
+            selected_items = cleanup_presets.items_for_preset(
+                preset_id, {k: v for k, v in self._results.items() if k != "browser"},
+                self._id_to_scanner_name)
+            for item in selected_items:
+                item.selected = True
+                all_safe.append(item)
+                total += item.size
 
         if not all_safe and not browser_cats:
             return

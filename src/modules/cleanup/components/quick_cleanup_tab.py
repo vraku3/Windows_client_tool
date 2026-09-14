@@ -225,6 +225,8 @@ class _PieChart(QWidget):
 class _SliceCard(QFrame):
     """Small legend card shown below the pie chart for each category."""
 
+    clicked = pyqtSignal()
+
     def __init__(self, label: str, size_bytes: int, color: str, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
@@ -232,6 +234,7 @@ class _SliceCard(QFrame):
         # on this card also styled every label inside it -- each one drew its
         # own copy of the accent stripe. The rule has to name the card.
         self.setObjectName("sliceCard")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._color = color
         self._update_style(size_bytes)
         lay = QHBoxLayout(self)
@@ -272,6 +275,10 @@ class _SliceCard(QFrame):
         self._sz.setText(f"<span style='font-size:11px'>{format_size(size_bytes)}</span>")
         self._update_style(size_bytes)
         self.setVisible(size_bytes > 0)
+
+    def mousePressEvent(self, event) -> None:
+        self.clicked.emit()
+        super().mousePressEvent(event)
 
 
 # ── QuickCleanupTab ──────────────────────────────────────────────────────────
@@ -317,8 +324,9 @@ class QuickCleanupTab(QWidget):
     #: number copied from a different, smaller sweep.
     SCAN_WATCHDOG_MS = 300_000
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, on_category_clicked=None):
         super().__init__(parent)
+        self._on_category_clicked = on_category_clicked
         self._categories: List[tuple] = []   # (id, label, color, scanner_fn)
         self._group_widgets: Dict[str, CategoryGroup] = {}
         self._results: Dict[str, object] = {}   # id -> ScanResult
@@ -549,6 +557,7 @@ class QuickCleanupTab(QWidget):
         self._legend_cards: List[_SliceCard] = []
         for cid, clabel, ccolor in self._categories:
             card = _SliceCard(clabel, 0, ccolor)
+            card.clicked.connect(lambda cid=cid: self._handle_category_clicked(cid))
             self._legend_cards.append(card)
             self._legend_layout.addWidget(card)
         self._legend_layout.addStretch()
@@ -900,6 +909,10 @@ class QuickCleanupTab(QWidget):
     def _on_group_scan_done(self, item_count: int, total_size: int):
         """Forward from individual category groups."""
         pass  # Individual group scans don't update the dashboard summary
+
+    def _handle_category_clicked(self, cid: str) -> None:
+        if self._on_category_clicked is not None:
+            self._on_category_clicked(cid)
 
     def _toggle_advanced(self):
         """Show/hide the advanced cleanup section."""

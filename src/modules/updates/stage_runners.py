@@ -115,7 +115,7 @@ def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """Scan and delete every 'safe'-tagged item across the cleanup module's
     category groups — reuses the exact same logic as Cleanup's Overview tab
     'Clean All Safe' rather than re-implementing it."""
-    from modules.cleanup.tabs._overview_tab import _OV_GROUPS
+    from modules.cleanup.cleanup_scanner import _OV_GROUPS
     from modules.cleanup import cleanup_scanner as cs
 
     log("Cleanup: scanning safe categories...")

@@ -290,7 +290,7 @@ def _scanners_the_tabs_offer():
     from modules.cleanup.cleanup_module import CleanupModule
 
     from modules.cleanup.quick_cleanup_module import QuickCleanupModule
-    from modules.cleanup.tabs._overview_tab import _OV_GROUPS
+    from modules.cleanup.cleanup_scanner import _OV_GROUPS
 
     App.instance = None
     app = App(app_data_dir=tempfile.mkdtemp())

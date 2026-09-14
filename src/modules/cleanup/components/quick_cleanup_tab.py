@@ -1257,26 +1257,12 @@ class QuickCleanupTab(QWidget):
 
     # ── Clean All Safe ─────────────────────────────────────────────────────
 
-    def _confirm_clean_all(self, total_bytes: int, item_count: int) -> bool:
-        from modules.cleanup import cleanup_scanner as cs
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Confirm Bulk Clean")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            f"Clean <b>{cs.format_size(total_bytes)}</b> of safe items across "
-            f"{item_count} item(s)?<br>This cannot be undone."
-        )
-        mb.setStandardButtons(
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
-        )
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        return mb.exec() == QMessageBox.StandardButton.Ok
-
     def _do_clean_all_safe(self):
         if self._scanning:
             return
         from modules.cleanup import cleanup_scanner as cs
         from modules.cleanup import browser_scanner as bs
+        from modules.cleanup import clean_safe_runner as csr
 
         all_safe: List[cs.ScanItem] = []
         needs_wu = False
@@ -1305,28 +1291,7 @@ class QuickCleanupTab(QWidget):
         if not all_safe and not browser_cats:
             return
 
-        if not self._confirm_clean_all(total, len(all_safe) + len(browser_cats)):
-            return
-
-        self._scanning = True
-        self._scan_all_btn.setEnabled(False)
-        self._clean_all_btn.setEnabled(False)
-        self._progress.setText("🗑️  Cleaning safe items...")
-        self._progress.show()
-
-        def _run(_worker):
-            browser_freed = 0
-            browser_errors = 0
-            if browser_cats:
-                browser_freed, browser_errors = bs.delete_selected(browser_cats)
-            cs_freed = 0
-            cs_errors = 0
-            if all_safe:
-                cs_freed, cs_errors = cs.delete_items(all_safe, stop_wuauserv=needs_wu)
-            return (browser_freed + cs_freed), (browser_errors + cs_errors)
-
-        def _done(result):
-            deleted, errors = result
+        def _on_done(deleted, errors):
             self._scanning = False
             self._scan_all_btn.setEnabled(True)
             self._progress.hide()
@@ -1337,14 +1302,21 @@ class QuickCleanupTab(QWidget):
             self.freed_bytes.emit(total)
             self.scan()
 
-        def _err(e: str):
+        def _on_error(e: str):
             self._scanning = False
             self._scan_all_btn.setEnabled(True)
             self._progress.hide()
             self._status_lbl.setText(f"Clean error: {e}")
 
-        w = Worker(_run)
-        w.signals.result.connect(_done)
-        w.signals.error.connect(_err)
-        self._workers.append(w)
-        QThreadPool.globalInstance().start(w)
+        worker = csr.run_clean_safe(
+            self, all_safe, browser_cats=browser_cats, stop_wuauserv=needs_wu,
+            confirm="always", on_done=_on_done, on_error=_on_error)
+        if worker is None:
+            return  # user declined the confirm -- nothing was disabled yet
+
+        self._scanning = True
+        self._scan_all_btn.setEnabled(False)
+        self._clean_all_btn.setEnabled(False)
+        self._progress.setText("🗑️  Cleaning safe items...")
+        self._progress.show()
+        self._workers.append(worker)

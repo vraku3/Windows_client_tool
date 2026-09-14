@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from core.widget_life import widget_is_valid
 from core.worker import Worker
 from modules.cleanup import cleanup_scanner as cs
+from modules.cleanup import clean_safe_runner as csr
 from modules.cleanup.cleanup_scanner import breakdown, scan_cache
 
 logger = logging.getLogger(__name__)
@@ -483,8 +484,15 @@ class _ScanTab(QWidget):
             return
 
         total = sum(i.size for i in to_delete)
-        if not _confirm_large(self, total):
-            return
+
+        def _on_done(deleted, errors):
+            self._on_clean_done((deleted, errors))
+
+        worker = csr.run_clean_safe(
+            self, selected, stop_wuauserv=self._wu_cache, confirm="size_gated",
+            on_done=_on_done, on_error=self._on_clean_error)
+        if worker is None:
+            return  # user declined the confirm -- nothing was disabled yet
 
         self._cleaning = True
         self._pending_freed = total
@@ -495,17 +503,8 @@ class _ScanTab(QWidget):
         self._err_lbl.hide()
         self._progress.setRange(0, 0)
         self._progress.show()
-
-        wu = self._wu_cache
-
-        def _run(_w):
-            return cs.delete_items(selected, stop_wuauserv=wu)
-
-        self._clean_worker = Worker(_run)
-        self._clean_worker.signals.result.connect(self._on_clean_done)
-        self._clean_worker.signals.error.connect(self._on_clean_error)
-        self._workers.append(self._clean_worker)
-        self._thread_pool.start(self._clean_worker)
+        self._clean_worker = worker
+        self._workers.append(worker)
 
     def _on_clean_done(self, result: tuple):
         deleted, errors = result

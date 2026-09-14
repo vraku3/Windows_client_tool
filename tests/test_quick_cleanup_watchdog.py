@@ -118,6 +118,7 @@ def test_auto_scan_is_a_no_op_once_already_scanned(qapp):
 def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
     from modules.cleanup import cleanup_scanner as cs
+    from modules.cleanup import clean_safe_runner as csr
 
     tab = QuickCleanupTab()
     tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
@@ -127,10 +128,7 @@ def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     tab._results = {"temp": result}
 
     monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
-    # _confirm_clean_all(self, total_bytes, item_count) -- the extra
-    # item_count parameter is accepted (and ignored) here since this stub
-    # only needs to control the yes/no outcome, not the dialog's wording.
-    monkeypatch.setattr(QuickCleanupTab, "_confirm_clean_all", lambda self, total, item_count=None: True)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
 
     emitted = []
     tab.freed_bytes.connect(emitted.append)

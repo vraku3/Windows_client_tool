@@ -1013,6 +1013,131 @@ class DriverModule(BaseModule):
         else:
             QThreadPool.globalInstance().start(worker)
 
+    def _check_windows_update_for_device(self, driver: DriverInfo) -> None:
+        """Windows Update's own driver channel -- vendor-agnostic, a real
+        COM search+match (see windows_update_driver_check.py), not a
+        scrape. Runs alongside "Check for Vendor Update...", never
+        instead of it: a device can have both a vendor-specific check
+        AND something newer/different sitting in Windows Update's own
+        queue, and this app has no way to know which is more current."""
+        if self._status_lbl:
+            self._status_lbl.setText("Checking Windows Update for a driver...")
+
+        def do_check(worker):
+            from modules.driver_manager.vendor_updates.windows_update_driver_check import (
+                find_windows_update_driver,
+            )
+            return find_windows_update_driver(driver)
+
+        worker = COMWorker(do_check)
+
+        def on_result(match) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if match is None:
+                QMessageBox.information(
+                    self._widget, "Check Windows Update",
+                    f"No driver for {driver.device_name} was found in "
+                    f"Windows Update's own queue.")
+                return
+            if not is_admin():
+                QMessageBox.information(
+                    self._widget, "Check Windows Update",
+                    f"Windows Update has a driver for {driver.device_name} "
+                    f"({match.title}, from {match.manufacturer}), but "
+                    f"installing it needs administrator rights. Restart "
+                    f"this app as administrator to install it.")
+                return
+            confirm = QMessageBox.question(
+                self._widget, "Check Windows Update",
+                f"Windows Update has a driver for {driver.device_name}:\n\n"
+                f"{match.title}\nManufacturer: {match.manufacturer}\n"
+                f"Class: {match.driver_class}\n\nInstall it now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+            self._install_windows_update_driver(driver, match)
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check Windows Update",
+                               f"Could not check Windows Update: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _install_windows_update_driver(self, driver: DriverInfo, match) -> None:
+        """Reuses modules.updates.windows_updater.install_updates_iter
+        verbatim for the actual download+install -- that function
+        already handles EULA acceptance, per-item download/install, and
+        WU HRESULT decoding correctly; duplicating any of that here
+        would be the same bug class this codebase's own gotchas list
+        warns about (re-deriving safety/correctness logic instead of
+        reusing the already-proven version)."""
+        if self._status_lbl:
+            self._status_lbl.setText(
+                f"Installing Windows Update driver for {driver.device_name}...")
+
+        def do_install(worker):
+            from modules.updates.windows_updater import WindowsUpdate, install_updates_iter
+            wu = WindowsUpdate(kb="N/A", title=match.title, classification=match.driver_class,
+                               size_mb=0.0, release_date="", identity=match.identity)
+            results = install_updates_iter([wu], is_cancelled=lambda: worker.is_cancelled)
+            fresh_version = None
+            if results and results[0].success:
+                fresh_version = self._reread_driver_version(driver)
+            return (results, fresh_version)
+
+        worker = COMWorker(do_install)
+
+        def on_result(payload) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            results, fresh_version = payload
+            if not results or not results[0].success:
+                reason = results[0].message if results else "no result returned"
+                QMessageBox.warning(self._widget, "Check Windows Update",
+                                   f"Install failed: {reason}")
+                return
+            update_history.record_applied(
+                driver.device_id, driver.device_name,
+                f"Windows Update ({match.manufacturer})",
+                match.title, fresh_version, "windows_update")
+            self._refresh_status_cell_for_device(driver.device_id, driver)
+            QMessageBox.information(
+                self._widget, "Check Windows Update",
+                f"{driver.device_name} updated via Windows Update. Click "
+                f"Refresh to see the change.")
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check Windows Update",
+                               f"Install failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
     def _check_all_for_updates(self) -> None:
         """Sweeps every device with a recognized vendor AND a registered
         provider -- devices with neither get no meaningful check, the
@@ -1562,6 +1687,15 @@ class DriverModule(BaseModule):
         act_check_update = menu.addAction("Check for Vendor Update...")
         act_check_update.triggered.connect(
             lambda: self._check_for_vendor_update(driver) if driver else None)
+        act_check_wu = menu.addAction("Check Windows Update for this Device...")
+        act_check_wu.setEnabled(bool(driver and driver.hardware_id))
+        act_check_wu.setToolTip(
+            "Windows Update's own driver channel -- vendor-agnostic, "
+            "covers hardware no vendor-specific check above exists for "
+            "yet (Intel in particular distributes most of its consumer "
+            "driver updates this way rather than via its own website).")
+        act_check_wu.triggered.connect(
+            lambda: self._check_windows_update_for_device(driver) if driver else None)
         act_undo_update = menu.addAction("Undo This Update")
         act_undo_update.setEnabled(bool(driver) and self._can_undo_update(driver))
         act_undo_update.triggered.connect(

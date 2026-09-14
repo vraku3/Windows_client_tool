@@ -1000,6 +1000,36 @@ permission-restricted folder do.
     `monitor_control/`'s territory: firmware/DDC, not a driver package).
     Deliberately NOT added to `vendor_id.py` — recognizing them would
     imply a driver-update concept that doesn't apply here.
+- **`windows_update_driver_check.py` — a genuinely vendor-agnostic
+  check, and the real answer for "regardless of the PC".** Every other
+  provider here is built against ONE company's own site; this one uses
+  Windows Update's OWN driver channel instead (`IWindowsDriverUpdate`'s
+  `DriverHardwareID`/`DriverManufacturer`/`DriverClass` — a real,
+  documented WUA COM interface present since Windows XP/2000, matched
+  against a device's own `hardware_id` by prefix either direction).
+  Built specifically because **intel.com's entire download-center site
+  is broadly Akamai-blocked** — even its homepage 403s to a non-browser
+  request (confirmed live 2026-09-14), a stronger block than ASRock's,
+  Lenovo's, or any other vendor site hit so far (those blocked only
+  specific pages, not the whole domain). This isn't a workaround: Intel
+  itself distributes most consumer graphics/WiFi/chipset driver updates
+  through Windows Update rather than direct downloads. The actual
+  install reuses `modules.updates.windows_updater.install_updates_iter`
+  verbatim (already-shipped, already-tested code) rather than
+  duplicating WUA download/install/EULA logic a second time. **Not
+  empirically tested end to end** — this dev machine has zero pending
+  updates of any kind right now (confirmed live, both a plain search
+  and a `Type='Driver'` one return 0 results), so there is nothing real
+  to install-test against; the search mechanism and property access are
+  real and documented, not guessed.
+- **Windows' own downloadmirror.intel.com (Amazon S3/CloudFront) has NO
+  bot protection at all** — only `www.intel.com` itself does. Confirmed
+  live: a real Intel release-notes file on that CDN returned a clean
+  200 with real content. Not currently usable as a discovery mechanism
+  (still need `www.intel.com`'s blocked pages to learn the right
+  download ID per device), but worth remembering if a different
+  discovery path is ever found — the FILE hosting itself is not the
+  obstacle.
 
 ### Debloat (`src/modules/debloat/`)
 

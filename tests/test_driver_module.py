@@ -1836,3 +1836,123 @@ def test_refresh_status_cells_for_devices_reenables_sorting_even_if_a_call_raise
         mod._refresh_status_cells_for_devices([d1])
 
     assert mod._table.isSortingEnabled() is True
+
+
+# ----------------------------------------------------------------------
+# Windows Update's own driver channel -- vendor-agnostic check/install
+# ----------------------------------------------------------------------
+
+def _fake_wu_match():
+    from modules.driver_manager.vendor_updates.windows_update_driver_check import WindowsUpdateDriverMatch
+    return WindowsUpdateDriverMatch(title="Intel Graphics Driver Update",
+                                    manufacturer="Intel Corporation",
+                                    driver_class="DISPLAY", identity=object())
+
+
+def test_check_windows_update_for_device_shows_no_match_message(monkeypatch):
+    driver = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                        date="", publisher="Intel", signed=True, error_code=0, flags="",
+                        hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\DEV1")
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    monkeypatch.setattr(wudc_mod, "find_windows_update_driver", lambda d: None)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    mod = _module()
+    mod._check_windows_update_for_device(driver)
+
+    assert shown
+    assert "no driver" in shown[0].lower()
+
+
+def test_check_windows_update_for_device_asks_to_confirm_when_a_match_is_found(monkeypatch):
+    driver = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                        date="", publisher="Intel", signed=True, error_code=0, flags="",
+                        hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\DEV1")
+    match = _fake_wu_match()
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    monkeypatch.setattr(wudc_mod, "find_windows_update_driver", lambda d: match)
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    confirmed = []
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: confirmed.append(a[2]) or dmod.QMessageBox.StandardButton.No)
+
+    mod = _module()
+    mod._check_windows_update_for_device(driver)
+
+    assert confirmed
+    assert "Intel Graphics Driver Update" in confirmed[0]
+    assert "Intel Corporation" in confirmed[0]
+
+
+def test_check_windows_update_for_device_requires_admin_to_install(monkeypatch):
+    driver = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                        date="", publisher="Intel", signed=True, error_code=0, flags="",
+                        hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\DEV1")
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    monkeypatch.setattr(wudc_mod, "find_windows_update_driver", lambda d: _fake_wu_match())
+    monkeypatch.setattr(dmod, "is_admin", lambda: False)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    asked_to_confirm = []
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: asked_to_confirm.append(a))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    mod = _module()
+    mod._check_windows_update_for_device(driver)
+
+    assert not asked_to_confirm
+    assert shown
+    assert "administrator" in shown[0].lower()
+
+
+def test_install_windows_update_driver_records_history_on_success(monkeypatch):
+    driver = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                        date="", publisher="Intel", signed=True, error_code=0, flags="",
+                        hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\DEV1")
+    match = _fake_wu_match()
+
+    from modules.updates.windows_updater import InstallResult
+    fake_result = InstallResult(kb="N/A", title=match.title, success=True,
+                                hresult=0, message="")
+    import modules.updates.windows_updater as wu_mod
+    monkeypatch.setattr(wu_mod, "install_updates_iter", lambda updates, is_cancelled=None: [fake_result])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_version", lambda self, driver: "2.0")
+
+    mod = _module()
+    mod._populate([driver])
+    mod._install_windows_update_driver(driver, match)
+
+    history = uh.get("PCI\\DEV1")
+    assert history is not None
+    assert history.last_applied_mode == "windows_update"
+    assert history.last_applied_vendor_version == match.title
+    assert "Intel Corporation" in history.vendor
+
+
+def test_install_windows_update_driver_reports_failure(monkeypatch):
+    driver = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                        date="", publisher="Intel", signed=True, error_code=0, flags="",
+                        hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\DEV1")
+    match = _fake_wu_match()
+
+    from modules.updates.windows_updater import InstallResult
+    fake_result = InstallResult(kb="N/A", title=match.title, success=False,
+                                hresult=-1, message="download failed")
+    import modules.updates.windows_updater as wu_mod
+    monkeypatch.setattr(wu_mod, "install_updates_iter", lambda updates, is_cancelled=None: [fake_result])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    warned = []
+    monkeypatch.setattr(dmod.QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+
+    mod = _module()
+    mod._install_windows_update_driver(driver, match)
+
+    assert warned
+    assert "download failed" in warned[0]
+    assert uh.get("PCI\\DEV1") is None

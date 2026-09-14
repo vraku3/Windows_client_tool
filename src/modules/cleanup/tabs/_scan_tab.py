@@ -390,12 +390,21 @@ class _ScanTab(QWidget):
             parent = QTreeWidgetItem(
                 [f"{label}  ({len(items)} item(s))", cs.format_size(total)]
             )
-            parent.setCheckState(0, Qt.CheckState.Checked)
             parent.setFlags(
                 parent.flags()
                 | Qt.ItemFlag.ItemIsAutoTristate
                 | Qt.ItemFlag.ItemIsUserCheckable
             )
+            # A group's initial check state must reflect its children's
+            # ScanItem.selected values, not force everything to Checked --
+            # a group can hold a mix (e.g. an orphaned-profile "danger" item
+            # that arrives with selected=False alongside items that don't).
+            if all(i.selected for i in items):
+                parent.setCheckState(0, Qt.CheckState.Checked)
+            elif not any(i.selected for i in items):
+                parent.setCheckState(0, Qt.CheckState.Unchecked)
+            else:
+                parent.setCheckState(0, Qt.CheckState.PartiallyChecked)
             parent.setForeground(0, QBrush(QColor(color)))
             parent.setForeground(1, QBrush(QColor(color)))
             parent.setTextAlignment(1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -404,7 +413,8 @@ class _ScanTab(QWidget):
 
             for item in items:
                 child = QTreeWidgetItem([item.path, cs.format_size(item.size)])
-                child.setCheckState(0, Qt.CheckState.Checked)
+                child.setCheckState(
+                    0, Qt.CheckState.Checked if item.selected else Qt.CheckState.Unchecked)
                 child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 child.setData(0, Qt.ItemDataRole.UserRole, item)
                 child.setForeground(0, QBrush(QColor(color)))

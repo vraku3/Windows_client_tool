@@ -10,6 +10,7 @@ Provides:
 - Auto-refresh (external control via start/stop)
 """
 import logging
+import os
 import subprocess
 from typing import Dict, List
 
@@ -1314,14 +1315,20 @@ class QuickCleanupTab(QWidget):
 
     def _resize_hibernation(self):
         # Gate on hibernation actually being enabled -- powercfg refuses
-        # /hibernate /size on a machine where it's off, and the raw
-        # error text is not obviously "hibernation is off" to a fresh
-        # user reading a one-line status label.
-        check = subprocess.run(
-            "powercfg /a", capture_output=True, text=True,
-            encoding="utf-8", errors="replace", shell=True,
-            creationflags=CREATE_NO_WINDOW, timeout=10)
-        if "has not been enabled" in (check.stdout or "").lower():
+        # /hibernate /size on a machine where it's off, and the raw error
+        # text is not obviously "hibernation is off" to a fresh user
+        # reading a one-line status label.
+        #
+        # This used to parse "has not been enabled" out of `powercfg /a`'s
+        # stdout, which only matches on English Windows and fails open (a
+        # confusing raw-command status) on any other locale. hiberfil.sys
+        # existing or not is the locale-independent, and more direct,
+        # signal: it is literally the file this whole action resizes, and
+        # a plain os.path.exists() call cannot raise the way a subprocess
+        # call can, so there is nothing here left needing a try/except.
+        system_drive = os.environ.get("SystemDrive", "C:")
+        hiberfil = os.path.join(system_drive + "\\", "hiberfil.sys")
+        if not os.path.exists(hiberfil):
             self._action_status["resize_hibernation"].setText(
                 "Hibernation is off on this machine — nothing to resize")
             return
@@ -1356,10 +1363,16 @@ class QuickCleanupTab(QWidget):
         mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return
+        # `net start spooler` must run even when the `del` fails (e.g. a
+        # spool file is locked) -- an all-&& chain would leave the spooler
+        # stopped and printing broken with just a generic error status.
+        # `&` between del and the restart makes that step unconditional;
+        # the parens keep it grouped so the leading `&&` still gates the
+        # whole group on `net stop spooler` actually succeeding.
         cmd = (
             "net stop spooler && "
-            "del /q /f %SystemRoot%\\System32\\spool\\PRINTERS\\* 2>nul && "
-            "net start spooler"
+            "(del /q /f %SystemRoot%\\System32\\spool\\PRINTERS\\* 2>nul & "
+            "net start spooler)"
         )
         self._run_action_command("clear_print_queue", cmd, "Print queue cleared", need_confirm=False)
 

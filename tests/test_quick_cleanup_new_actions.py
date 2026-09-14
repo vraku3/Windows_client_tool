@@ -29,20 +29,21 @@ def test_resize_hibernation_is_wired_into_the_action_panel(qapp):
 
 
 def test_resize_hibernation_reports_when_hibernation_is_off(qapp, monkeypatch):
+    """M1: the gate is now hiberfil.sys's existence, not an English-only
+    substring match on powercfg /a's output."""
     from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
 
     tab = QuickCleanupTab()
     tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
 
-    class _Off:
-        returncode = 0
-        stdout = "Hibernation has not been enabled."
-        stderr = ""
+    monkeypatch.setattr("os.path.exists", lambda path: False)
+    run_calls = []
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: run_calls.append(a) or None)
 
-    monkeypatch.setattr("subprocess.run", lambda *a, **k: _Off())
     tab._resize_hibernation()
 
     assert "off" in tab._action_status["resize_hibernation"].text().lower()
+    assert run_calls == [], "no subprocess call is needed for a file-existence check"
 
 
 def test_resize_hibernation_runs_powercfg_when_enabled_and_confirmed(qapp, monkeypatch):
@@ -55,13 +56,14 @@ def test_resize_hibernation_runs_powercfg_when_enabled_and_confirmed(qapp, monke
 
     class _On:
         returncode = 0
-        stdout = "Hibernate is enabled."
+        stdout = "ok"
         stderr = ""
 
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         return _On()
 
+    monkeypatch.setattr("os.path.exists", lambda path: True)
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
 
@@ -79,24 +81,24 @@ def test_resize_hibernation_does_nothing_when_confirm_declined(qapp, monkeypatch
 
     calls = []
 
-    class _On:
-        returncode = 0
-        stdout = "Hibernate is enabled."
-        stderr = ""
-
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
-        return _On()
+        class _R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        return _R()
 
+    monkeypatch.setattr("os.path.exists", lambda path: True)
     monkeypatch.setattr("subprocess.run", fake_run)
     monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Cancel)
 
     tab._resize_hibernation()
     _settle(qapp)
 
-    # The FIRST call (the "powercfg /a" status check) is expected; a
-    # SECOND call containing "/hibernate /size" must not happen.
-    assert not any("/hibernate" in c and "/size" in c for c in calls if isinstance(c, str))
+    # The gate is a plain file-existence check now (no subprocess call at
+    # all), so declining the confirm must leave subprocess.run uncalled.
+    assert calls == []
 
 
 def test_clear_print_queue_is_wired_into_the_action_panel(qapp):
@@ -152,3 +154,83 @@ def test_clear_print_queue_does_nothing_when_confirm_declined(qapp, monkeypatch)
     tab._clear_print_queue()
 
     assert calls == []
+
+
+def test_clear_print_queue_restarts_spooler_even_when_del_fails(qapp, monkeypatch):
+    """I2: `del` failing (a locked spool file, nonzero exit) must not
+    prevent `net start spooler` from running -- an all-&& chain would
+    leave the spooler stopped and printing broken. The fix uses `&`
+    (unconditional) between del and the restart, grouped in parens so the
+    leading `&&` still gates the whole group on `net stop spooler`
+    succeeding. This is verified by inspecting the constructed command
+    string's shape, since a real shell isn't invoked in this test."""
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        class _R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+
+    tab._clear_print_queue()
+    _settle(qapp)
+
+    assert len(calls) == 1
+    cmd = calls[0]
+    # "net start spooler" must be in the SAME command string, joined to
+    # the del step by a plain `&` (unconditional), not `&&` (gated on
+    # success) -- so it always runs regardless of whether del succeeded.
+    assert "net start spooler" in cmd
+    del_and_restart = cmd.split("net stop spooler && ", 1)[1]
+    assert "&&" not in del_and_restart, (
+        f"del and the restart must be joined unconditionally (&), not "
+        f"gated (&&): {del_and_restart!r}")
+    assert " & " in del_and_restart or del_and_restart.count("&") >= 1
+
+
+def test_resize_hibernations_own_button_is_disabled_until_it_finishes(qapp, monkeypatch):
+    """M7: the new actions must follow the same busy-guard/status pattern
+    as the established ones -- see
+    test_quick_cleanup_one_click_actions.py::
+    test_a_running_actions_own_button_is_disabled_until_it_finishes."""
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+
+    release = []
+
+    def fake_run(cmd, **kwargs):
+        while not release:
+            qapp.processEvents()
+            time.sleep(0.01)
+        class _R:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+        return _R()
+
+    monkeypatch.setattr("os.path.exists", lambda path: True)
+    monkeypatch.setattr("subprocess.run", fake_run)
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+
+    btn = tab._action_buttons["resize_hibernation"]
+    assert btn.isEnabled()
+
+    tab._resize_hibernation()
+    qapp.processEvents()
+    assert not btn.isEnabled(), "button stayed enabled while its own action was running"
+
+    release.append(1)
+    _settle(qapp)
+    assert btn.isEnabled(), "button never re-enabled after finishing"

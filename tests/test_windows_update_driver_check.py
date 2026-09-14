@@ -110,6 +110,57 @@ def test_skips_one_bad_update_without_aborting_the_whole_scan(monkeypatch, caplo
     assert result.title == good.Title
 
 
+def test_find_many_searches_once_and_matches_multiple_devices(monkeypatch):
+    calls = []
+
+    def counting_search(criteria):
+        calls.append(criteria)
+        return type("R", (), {"Updates": _Coll([
+            _DriverUpdate("PCI\\VEN_8086&DEV_A780", title="Intel Graphics Update"),
+            _DriverUpdate("PCI\\VEN_10EC&DEV_8126", title="Realtek Update",
+                         manufacturer="Realtek"),
+        ])})()
+
+    import win32com.client
+
+    class _Searcher:
+        Search = staticmethod(counting_search)
+
+    class _Session:
+        def CreateUpdateSearcher(self):
+            return _Searcher()
+
+    monkeypatch.setattr(win32com.client, "Dispatch", lambda progid: _Session())
+
+    d1 = _driver("PCI\\VEN_8086&DEV_A780&SUBSYS_1")
+    d1.device_id = "PCI\\D1"
+    d2 = _driver("PCI\\VEN_10EC&DEV_8126&SUBSYS_2")
+    d2.device_id = "PCI\\D2"
+    d3 = _driver("PCI\\VEN_FFFF&DEV_0000")  # no match
+    d3.device_id = "PCI\\D3"
+
+    result = wudc.find_windows_update_drivers_for_many([d1, d2, d3])
+
+    assert len(calls) == 1  # ONE search for all three devices, not three
+    assert set(result.keys()) == {"PCI\\D1", "PCI\\D2"}
+    assert result["PCI\\D1"].title == "Intel Graphics Update"
+    assert result["PCI\\D2"].manufacturer == "Realtek"
+
+
+def test_find_many_returns_empty_dict_when_search_fails(monkeypatch):
+    _install_fake_search(monkeypatch, [], raise_on_search=OSError("no WU service"))
+    d1 = _driver()
+    d1.device_id = "PCI\\D1"
+    assert wudc.find_windows_update_drivers_for_many([d1]) == {}
+
+
+def test_find_many_skips_devices_with_no_hardware_id_or_device_id(monkeypatch):
+    _install_fake_search(monkeypatch, [_DriverUpdate("PCI\\VEN_8086&DEV_A780")])
+    d1 = _driver(hardware_id="")
+    d1.device_id = "PCI\\D1"
+    assert wudc.find_windows_update_drivers_for_many([d1]) == {}
+
+
 def test_handles_missing_manufacturer_or_class_gracefully(monkeypatch):
     class _SparseUpdate:
         DriverHardwareID = "PCI\\VEN_8086&DEV_A780"

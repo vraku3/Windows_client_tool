@@ -1141,16 +1141,22 @@ class DriverModule(BaseModule):
     def _check_all_for_updates(self) -> None:
         """Sweeps every device with a recognized vendor AND a registered
         provider -- devices with neither get no meaningful check, the
-        same "-" the Update Status column already shows them. Sequential,
-        not parallel: one vendor's slow response must not block another's
-        result, but hammering every vendor's site at once from one click
-        is worse citizenship than a slightly longer sweep."""
+        same "-" the Update Status column already shows them. A device
+        with NO vendor-specific provider (or one whose provider found
+        nothing) still gets checked against Windows Update's own driver
+        channel -- see _run_bulk_sweep -- so "checkable" here is nearly
+        every device with a hardware_id, not just the vendor-matched
+        ones. Sequential vendor checks, not parallel: one vendor's slow
+        response must not block another's result, but hammering every
+        vendor's site at once from one click is worse citizenship than a
+        slightly longer sweep. The Windows Update pass is a single
+        shared search regardless of how many devices fall into it."""
         drivers = list(self._drivers_ref[0])
-        checkable = [d for d in drivers if provider_for(d) is not None]
+        checkable = [d for d in drivers if provider_for(d) is not None or d.hardware_id]
         if not checkable:
             QMessageBox.information(
                 self._widget, "Check All for Updates",
-                "No devices with a configured update source were found.")
+                "No devices with a hardware ID to check were found.")
             return
         if self._status_lbl:
             self._status_lbl.setText(f"Checking {len(checkable)} device(s) for updates...")
@@ -1159,12 +1165,56 @@ class DriverModule(BaseModule):
             self._progress.setValue(0)
             self._progress.show()
 
-        def do_sweep(worker):
-            found = []
-            for i, d in enumerate(checkable):
-                if worker.is_cancelled:
-                    break
-                provider = provider_for(d)
+        # COMWorker, not Worker -- the Windows Update pass this sweep
+        # now includes needs CoInitialize on this thread.
+        worker = COMWorker(lambda w: self._run_bulk_sweep(w, checkable))
+
+        def on_progress(n: int) -> None:
+            if self._progress:
+                self._progress.setValue(n)
+
+        def on_sweep_error(err_str: str) -> None:
+            if self._progress:
+                self._progress.hide()
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check All for Updates",
+                               f"Bulk check failed unexpectedly: {err_str}")
+
+        worker.signals.progress.connect(on_progress)
+        worker.signals.result.connect(
+            lambda payload: self._on_sweep_finished(payload[0], payload[1], checkable))
+        worker.signals.error.connect(on_sweep_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
+    def _run_bulk_sweep(self, worker, checkable: list) -> tuple:
+        """The "Check All for Updates" worker body -- a real, named
+        method (not a nested closure) both to keep _check_all_for_updates
+        itself under this codebase's function-length budget and because
+        it is independently testable this way. Returns
+        (vendor_found, wu_found): vendor_found is (driver, provider,
+        update) tuples from each device's own vendor-specific provider;
+        wu_found is a device_id-keyed dict of WindowsUpdateDriverMatch
+        for whatever's left over -- no vendor provider at all, or one
+        that found nothing -- checked via ONE shared Windows Update
+        search (see windows_update_driver_check.find_windows_update_drivers_for_many),
+        never one search per device."""
+        from modules.driver_manager.vendor_updates.windows_update_driver_check import (
+            find_windows_update_drivers_for_many,
+        )
+        vendor_found = []
+        vendor_matched_ids = set()
+        for i, d in enumerate(checkable):
+            if worker.is_cancelled:
+                break
+            provider = provider_for(d)
+            if provider is not None:
                 try:
                     update = provider.check_for_update(d)
                 except Exception as exc:  # noqa: BLE001 -- one bad vendor
@@ -1184,42 +1234,31 @@ class DriverModule(BaseModule):
                     else update_history.OUTCOME_NO_UPDATE,
                     seen_vendor_version=update.latest_version if update is not None else None)
                 if update is not None:
-                    found.append((d, provider, update))
-                worker.signals.progress.emit(i + 1)
-            return found
+                    vendor_found.append((d, provider, update))
+                    vendor_matched_ids.add(d.device_id)
+            worker.signals.progress.emit(i + 1)
 
-        worker = Worker(do_sweep)
+        wu_found = {}
+        if not worker.is_cancelled:
+            remaining = [d for d in checkable if d.device_id not in vendor_matched_ids]
+            try:
+                wu_found = find_windows_update_drivers_for_many(remaining)
+            except Exception as exc:  # noqa: BLE001 -- same "one bad
+                # source must not blank the whole sweep" rule as above.
+                logger.warning("driver_module: bulk Windows Update driver "
+                               "check failed: %s", exc)
+        return vendor_found, wu_found
 
-        def on_progress(n: int) -> None:
-            if self._progress:
-                self._progress.setValue(n)
-
-        def on_sweep_error(err_str: str) -> None:
-            if self._progress:
-                self._progress.hide()
-            if not widget_is_valid(self._widget):
-                return
-            if self._status_lbl:
-                self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check All for Updates",
-                               f"Bulk check failed unexpectedly: {err_str}")
-
-        worker.signals.progress.connect(on_progress)
-        worker.signals.result.connect(lambda found: self._on_sweep_finished(found, checkable))
-        worker.signals.error.connect(on_sweep_error)
-        self._workers.append(worker)
-        if self.app and getattr(self.app, "thread_pool", None) is not None:
-            self.app.thread_pool.start(worker)
-        else:
-            QThreadPool.globalInstance().start(worker)
-
-    def _on_sweep_finished(self, found: list, checkable: list) -> None:
+    def _on_sweep_finished(self, found: list, wu_found: dict, checkable: list) -> None:
         """The "Check All for Updates" sweep's result handler -- a real,
         named method rather than a closure nested inside
         _check_all_for_updates, so the latter stays under this
         codebase's two-screen function-length budget
         (tests/test_function_lengths.py) and this handler is directly
-        testable on its own."""
+        testable on its own. wu_found (device_id -> WindowsUpdateDriverMatch)
+        is handled separately, via _handle_wu_found_after_sweep, for the
+        same length-budget reason -- it has its own install path
+        entirely (Windows Update's, not LIGHT/FULL)."""
         if self._progress:
             self._progress.hide()
         if not widget_is_valid(self._widget):
@@ -1227,7 +1266,7 @@ class DriverModule(BaseModule):
         self._refresh_status_cells_for_devices(checkable)
         if self._status_lbl:
             self._status_lbl.setText("Click Refresh to load drivers.")
-        if not found:
+        if not found and not wu_found:
             QMessageBox.information(
                 self._widget, "Check All for Updates",
                 f"Checked {len(checkable)} device(s). No updates found.")
@@ -1249,13 +1288,11 @@ class DriverModule(BaseModule):
             manual_note_html = (f"{len(manual_only)} update(s) need manual download "
                                 f"(no automated download available for that vendor):"
                                 f"<br>{manual_lines}<br><br>")
-        if not auto_installable:
-            self._show_info_with_link(
-                "Check All for Updates",
-                f"Checked {len(checkable)} device(s).<br><br>{manual_note_html}"
-                f"No auto-installable updates found.")
-            return
-        if not is_admin():
+        if auto_installable and is_admin():
+            mode = self._ask_bulk_install_mode(auto_installable, len(checkable))
+            if mode is not None:
+                self._bulk_install(auto_installable, mode)
+        elif auto_installable:
             names = "<br>".join(f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)}"
                                 for d, _, u in auto_installable)
             self._show_info_with_link(
@@ -1263,12 +1300,119 @@ class DriverModule(BaseModule):
                 f"{manual_note_html}{len(auto_installable)} update(s) found, but "
                 f"installing needs administrator rights:<br><br>{names}<br><br>"
                 f"Restart this app as administrator to install them.")
-            return
-        mode = self._ask_bulk_install_mode(auto_installable, len(checkable))
-        if mode is not None:
-            self._bulk_install(auto_installable, mode)
-        if manual_only:
+            manual_note_html = ""  # already shown above -- don't show it twice below
+        if manual_note_html:
             self._show_info_with_link("Check All for Updates", manual_note_html.strip())
+        self._handle_wu_found_after_sweep(wu_found, checkable)
+
+    def _handle_wu_found_after_sweep(self, wu_found: dict, checkable: list) -> None:
+        """wu_found's own confirm+install path -- entirely separate from
+        LIGHT/FULL, since a Windows-Update-sourced driver installs via
+        install_updates_iter, not vendor_pipeline. Devices here already
+        had no vendor-specific update (see _run_bulk_sweep), so this is
+        pure ADDED coverage, never a duplicate offer for something the
+        vendor path already found."""
+        if not wu_found:
+            return
+        if not is_admin():
+            self._show_info_with_link(
+                "Check All for Updates",
+                f"Windows Update also has {len(wu_found)} driver(s) queued for "
+                f"device(s) with no vendor-specific update, but installing "
+                f"needs administrator rights. Restart this app as "
+                f"administrator to install them.")
+            return
+        id_to_driver = {d.device_id: d for d in checkable}
+        # Plain text, not HTML -- this goes through QMessageBox.question,
+        # unlike _show_info_with_link's rich-text messages elsewhere here.
+        names = "\n".join(
+            f"- {id_to_driver[device_id].device_name}: {match.title}"
+            for device_id, match in wu_found.items() if device_id in id_to_driver)
+        confirm = QMessageBox.question(
+            self._widget, "Check All for Updates",
+            f"Windows Update also has {len(wu_found)} driver(s) queued for "
+            f"device(s) with no vendor-specific update:\n\n{names}\n\n"
+            f"Install them now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self._bulk_install_via_windows_update(wu_found, id_to_driver)
+
+    def _bulk_install_via_windows_update(self, wu_found: dict, id_to_driver: dict) -> None:
+        """Installs every wu_found match in ONE install_updates_iter call
+        -- that function already batches multiple updates natively (its
+        own per-item downloader/installer loop), so there is no need for
+        this app to wrap it in a device-by-device loop of its own the
+        way the vendor LIGHT/FULL bulk path needs (each of THOSE is a
+        separate HTTP download + restore point; these are all one
+        Windows Update transaction)."""
+        if self._status_lbl:
+            self._status_lbl.setText(f"Installing {len(wu_found)} Windows Update driver(s)...")
+
+        def do_install(worker):
+            from modules.updates.windows_updater import WindowsUpdate, install_updates_iter
+            device_ids = list(wu_found.keys())
+            updates = [
+                WindowsUpdate(kb="N/A", title=wu_found[did].title,
+                              classification=wu_found[did].driver_class,
+                              size_mb=0.0, release_date="", identity=wu_found[did].identity)
+                for did in device_ids
+            ]
+            results = install_updates_iter(updates, is_cancelled=lambda: worker.is_cancelled)
+            # Fresh versions read here, still on this worker thread --
+            # _reread_driver_version shells out and must never run from
+            # a result/error callback (those are UI-thread).
+            fresh_versions = {}
+            for device_id, result in zip(device_ids, results):
+                driver = id_to_driver.get(device_id)
+                if driver is not None and result.success:
+                    fresh_versions[device_id] = self._reread_driver_version(driver)
+            return device_ids, results, fresh_versions
+
+        worker = COMWorker(do_install)
+
+        def on_result(payload) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            device_ids, results, fresh_versions = payload
+            succeeded_devices = []
+            failed_lines = []
+            for device_id, result in zip(device_ids, results):
+                driver = id_to_driver.get(device_id)
+                if driver is None:
+                    continue
+                if not result.success:
+                    failed_lines.append(f"- {driver.device_name}: {result.message}")
+                    continue
+                update_history.record_applied(
+                    device_id, driver.device_name,
+                    f"Windows Update ({wu_found[device_id].manufacturer})",
+                    wu_found[device_id].title, fresh_versions.get(device_id), "windows_update")
+                succeeded_devices.append(driver)
+            self._refresh_status_cells_for_devices(succeeded_devices)
+            summary = f"Installed {len(succeeded_devices)} of {len(results)} update(s) via Windows Update."
+            if failed_lines:
+                summary += "\n\nNot installed:\n" + "\n".join(failed_lines)
+            QMessageBox.information(self._widget, "Check All for Updates", summary)
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            QMessageBox.warning(self._widget, "Check All for Updates",
+                               f"Windows Update install failed unexpectedly: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
 
     def _bulk_install(self, found: list, mode: str) -> None:
         """found: (driver, provider, update) tuples, already confirmed

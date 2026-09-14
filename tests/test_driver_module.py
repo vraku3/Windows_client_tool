@@ -1552,6 +1552,10 @@ def test_check_all_for_updates_finds_updates_and_offers_bulk_install(monkeypatch
     monkeypatch.setattr(dmod, "provider_for", fake_provider_for)
     monkeypatch.setattr(dmod, "is_admin", lambda: True)
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    # d2 has no vendor provider, so it falls to the Windows Update pass
+    # -- mocked here so this test never makes a real COM call.
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    monkeypatch.setattr(wudc_mod, "find_windows_update_drivers_for_many", lambda drivers: {})
     asked = []
 
     def fake_ask_bulk(self, found, checked_count):
@@ -1566,7 +1570,9 @@ def test_check_all_for_updates_finds_updates_and_offers_bulk_install(monkeypatch
     mod._check_all_for_updates()
 
     assert len(asked) == 1
-    assert asked[0][1] == 1  # only d1 has a provider -- d2 is filtered out before the sweep
+    # both d1 and d2 have a hardware_id, so both are "checkable" now --
+    # d2 has no vendor provider, but still gets a Windows Update pass.
+    assert asked[0][1] == 2
     assert len(bulk_calls) == 1
     found, mode = bulk_calls[0]
     assert mode == "light"
@@ -1610,10 +1616,34 @@ def test_check_all_for_updates_reports_nothing_found_and_still_no_ops_cleanly(mo
     mod = _module()
     mod._drivers_ref[0] = [d1]
     monkeypatch.setattr(dmod, "provider_for", lambda d: None)
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    # d1 has no vendor provider, so it falls to the Windows Update pass
+    # -- mocked here so this test never makes a real COM call.
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    monkeypatch.setattr(wudc_mod, "find_windows_update_drivers_for_many", lambda drivers: {})
     shown = []
     monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
     mod._check_all_for_updates()
     assert shown
+    assert "no updates found" in shown[0].lower()
+
+
+def test_check_all_for_updates_reports_nothing_checkable_when_no_device_has_a_hardware_id(monkeypatch):
+    # Distinct from the "swept and found nothing" case above: a device
+    # with no hardware_id at all (and no vendor provider) can't even be
+    # offered to Windows Update's driver channel -- there's nothing to
+    # match on -- so this is the genuine early-return, before any
+    # worker is even created.
+    d1 = DriverInfo(device_name="Something With No HWID", driver_class="System", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="", hardware_id="")
+    mod = _module()
+    mod._drivers_ref[0] = [d1]
+    monkeypatch.setattr(dmod, "provider_for", lambda d: None)
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    mod._check_all_for_updates()
+    assert shown
+    assert "hardware id" in shown[0].lower()
     assert "no devices" in shown[0].lower()
 
 
@@ -1955,4 +1985,159 @@ def test_install_windows_update_driver_reports_failure(monkeypatch):
 
     assert warned
     assert "download failed" in warned[0]
+    assert uh.get("PCI\\DEV1") is None
+
+
+# ----------------------------------------------------------------------
+# _run_bulk_sweep -- vendor pass + a single shared Windows Update pass
+# ----------------------------------------------------------------------
+
+class _FakeSweepWorker:
+    is_cancelled = False
+
+    class signals:
+        class progress:
+            @staticmethod
+            def emit(n):
+                pass
+
+
+def test_run_bulk_sweep_only_offers_windows_update_to_devices_the_vendor_pass_missed(monkeypatch):
+    d1 = DriverInfo(device_name="GeForce RTX 4090", driver_class="Display", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_10DE&DEV_2684", device_id="PCI\\DEV1")
+    d2 = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                    date="", publisher="Intel", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_8086&DEV_A780", device_id="PCI\\DEV2")
+
+    class _P:
+        vendor_name = "NVIDIA"
+        def check_for_update(self, driver):
+            return _fake_update()
+
+    monkeypatch.setattr(dmod, "provider_for", lambda d: _P() if d is d1 else None)
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    seen_remaining = []
+
+    def fake_find_many(drivers):
+        seen_remaining.extend(drivers)
+        return {"PCI\\DEV2": _fake_wu_match()}
+
+    monkeypatch.setattr(wudc_mod, "find_windows_update_drivers_for_many", fake_find_many)
+
+    mod = _module()
+    vendor_found, wu_found = mod._run_bulk_sweep(_FakeSweepWorker(), [d1, d2])
+
+    assert len(vendor_found) == 1
+    assert vendor_found[0][0] is d1
+    assert seen_remaining == [d2]  # d1 already matched -- never offered to WU
+    assert wu_found == {"PCI\\DEV2": wu_found["PCI\\DEV2"]}
+
+
+def test_run_bulk_sweep_survives_the_windows_update_pass_raising(monkeypatch, caplog):
+    d1 = DriverInfo(device_name="Something", driver_class="System", version="1.0",
+                    date="", publisher="V", signed=True, error_code=0, flags="",
+                    hardware_id="PCI\\VEN_FFFF&DEV_0000", device_id="PCI\\DEV1")
+    monkeypatch.setattr(dmod, "provider_for", lambda d: None)
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+
+    def raising(drivers):
+        raise OSError("WU service unavailable")
+
+    monkeypatch.setattr(wudc_mod, "find_windows_update_drivers_for_many", raising)
+    mod = _module()
+    with caplog.at_level("WARNING"):
+        vendor_found, wu_found = mod._run_bulk_sweep(_FakeSweepWorker(), [d1])
+    assert vendor_found == []
+    assert wu_found == {}
+
+
+# ----------------------------------------------------------------------
+# _handle_wu_found_after_sweep / _bulk_install_via_windows_update
+# ----------------------------------------------------------------------
+
+def test_handle_wu_found_after_sweep_is_a_no_op_when_nothing_found():
+    mod = _module()
+    mod._handle_wu_found_after_sweep({}, [])  # must not raise or prompt anything
+
+
+def test_handle_wu_found_after_sweep_requires_admin(monkeypatch):
+    d1 = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                    date="", publisher="Intel", signed=True, error_code=0, flags="",
+                    device_id="PCI\\DEV1")
+    monkeypatch.setattr(dmod, "is_admin", lambda: False)
+    shown = []
+    monkeypatch.setattr(dmod.DriverModule, "_show_info_with_link",
+                        lambda self, title, html: shown.append(html))
+    mod = _module()
+    mod._handle_wu_found_after_sweep({"PCI\\DEV1": _fake_wu_match()}, [d1])
+    assert shown
+    assert "administrator" in shown[0].lower()
+
+
+def test_handle_wu_found_after_sweep_installs_on_confirmation(monkeypatch):
+    d1 = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                    date="", publisher="Intel", signed=True, error_code=0, flags="",
+                    device_id="PCI\\DEV1")
+    monkeypatch.setattr(dmod, "is_admin", lambda: True)
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    installed = []
+    monkeypatch.setattr(dmod.DriverModule, "_bulk_install_via_windows_update",
+                        lambda self, wu_found, id_to_driver: installed.append((wu_found, id_to_driver)))
+    mod = _module()
+    match = _fake_wu_match()
+    mod._handle_wu_found_after_sweep({"PCI\\DEV1": match}, [d1])
+    assert len(installed) == 1
+    wu_found, id_to_driver = installed[0]
+    assert wu_found == {"PCI\\DEV1": match}
+    assert id_to_driver == {"PCI\\DEV1": d1}
+
+
+def test_bulk_install_via_windows_update_records_history_for_each_success(monkeypatch):
+    d1 = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                    date="", publisher="Intel", signed=True, error_code=0, flags="",
+                    device_id="PCI\\DEV1")
+    match = _fake_wu_match()
+
+    from modules.updates.windows_updater import InstallResult
+    fake_result = InstallResult(kb="N/A", title=match.title, success=True, hresult=0, message="")
+    import modules.updates.windows_updater as wu_mod
+    monkeypatch.setattr(wu_mod, "install_updates_iter",
+                        lambda updates, is_cancelled=None: [fake_result])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: None)
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_version", lambda self, driver: "2.0")
+
+    mod = _module()
+    mod._populate([d1])
+    mod._bulk_install_via_windows_update({"PCI\\DEV1": match}, {"PCI\\DEV1": d1})
+
+    history = uh.get("PCI\\DEV1")
+    assert history is not None
+    assert history.last_applied_mode == "windows_update"
+    assert history.last_applied_windows_version == "2.0"
+
+
+def test_bulk_install_via_windows_update_reports_a_failure_without_recording_history(monkeypatch):
+    d1 = DriverInfo(device_name="Intel Graphics", driver_class="Display", version="1.0",
+                    date="", publisher="Intel", signed=True, error_code=0, flags="",
+                    device_id="PCI\\DEV1")
+    match = _fake_wu_match()
+
+    from modules.updates.windows_updater import InstallResult
+    fake_result = InstallResult(kb="N/A", title=match.title, success=False,
+                                hresult=-1, message="install failed")
+    import modules.updates.windows_updater as wu_mod
+    monkeypatch.setattr(wu_mod, "install_updates_iter",
+                        lambda updates, is_cancelled=None: [fake_result])
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    shown = []
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+
+    mod = _module()
+    mod._bulk_install_via_windows_update({"PCI\\DEV1": match}, {"PCI\\DEV1": d1})
+
+    assert shown
+    assert "install failed" in shown[0]
     assert uh.get("PCI\\DEV1") is None

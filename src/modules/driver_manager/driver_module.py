@@ -726,6 +726,27 @@ class DriverModule(BaseModule):
             label.setOpenExternalLinks(True)
         box.exec()
 
+    def _refresh_status_cells_for_devices(self, devices: List[DriverInfo]) -> None:
+        """The bulk-check/bulk-install equivalent of
+        _refresh_status_cell_for_device -- calling that once per device
+        in a loop (as both the check-all and bulk-install completion
+        handlers originally did) is what the user reported as "keeps
+        refreshing": QTableWidget re-sorts itself on EVERY setItem() call
+        while sorting is enabled, so 100+ back-to-back single-cell
+        updates visibly reshuffled and re-sorted the whole table that
+        many times in a row. Disabling sorting for the duration of the
+        whole batch (a well-known Qt pattern for exactly this) and
+        re-enabling it once at the end fixes it -- the final
+        setSortingEnabled(True) re-sorts ONCE, not once per row."""
+        if self._table is None:
+            return
+        self._table.setSortingEnabled(False)
+        try:
+            for driver in devices:
+                self._refresh_status_cell_for_device(driver.device_id, driver)
+        finally:
+            self._table.setSortingEnabled(True)
+
     def _refresh_status_cell_for_device(self, device_id: str, driver: DriverInfo) -> None:
         """Updates just the Update Status cell for one row, right after a
         check or install completes -- never a full _populate() rebuild
@@ -1048,59 +1069,6 @@ class DriverModule(BaseModule):
             if self._progress:
                 self._progress.setValue(n)
 
-        def on_sweep_done(found) -> None:
-            if self._progress:
-                self._progress.hide()
-            if not widget_is_valid(self._widget):
-                return
-            for d in checkable:
-                self._refresh_status_cell_for_device(d.device_id, d)
-            if self._status_lbl:
-                self._status_lbl.setText("Click Refresh to load drivers.")
-            if not found:
-                QMessageBox.information(
-                    self._widget, "Check All for Updates",
-                    f"Checked {len(checkable)} device(s). No updates found.")
-                return
-            # e.g. Realtek: found for real, but never auto-installable
-            # (see UpdateInfo.manual_download_only) -- these never enter
-            # the LIGHT/FULL batch choice, only an informational note
-            # with a REAL clickable link (see _show_info_with_link --
-            # QMessageBox.information's plain text can't be clicked or
-            # even selected, which is worthless for a "go get it
-            # yourself" URL).
-            auto_installable = [(d, p, u) for d, p, u in found if not u.manual_download_only]
-            manual_only = [(d, p, u) for d, p, u in found if u.manual_download_only]
-            manual_note_html = ""
-            if manual_only:
-                manual_lines = "<br>".join(
-                    f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)} "
-                    f"(<a href=\"{_html_escape(u.download_url)}\">{_html_escape(u.download_url)}</a>)"
-                    for d, _, u in manual_only)
-                manual_note_html = (f"{len(manual_only)} update(s) need manual download "
-                                    f"(no automated download available for that vendor):"
-                                    f"<br>{manual_lines}<br><br>")
-            if not auto_installable:
-                self._show_info_with_link(
-                    "Check All for Updates",
-                    f"Checked {len(checkable)} device(s).<br><br>{manual_note_html}"
-                    f"No auto-installable updates found.")
-                return
-            if not is_admin():
-                names = "<br>".join(f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)}"
-                                    for d, _, u in auto_installable)
-                self._show_info_with_link(
-                    "Check All for Updates",
-                    f"{manual_note_html}{len(auto_installable)} update(s) found, but "
-                    f"installing needs administrator rights:<br><br>{names}<br><br>"
-                    f"Restart this app as administrator to install them.")
-                return
-            mode = self._ask_bulk_install_mode(auto_installable, len(checkable))
-            if mode is not None:
-                self._bulk_install(auto_installable, mode)
-            if manual_only:
-                self._show_info_with_link("Check All for Updates", manual_note_html.strip())
-
         def on_sweep_error(err_str: str) -> None:
             if self._progress:
                 self._progress.hide()
@@ -1112,13 +1080,70 @@ class DriverModule(BaseModule):
                                f"Bulk check failed unexpectedly: {err_str}")
 
         worker.signals.progress.connect(on_progress)
-        worker.signals.result.connect(on_sweep_done)
+        worker.signals.result.connect(lambda found: self._on_sweep_finished(found, checkable))
         worker.signals.error.connect(on_sweep_error)
         self._workers.append(worker)
         if self.app and getattr(self.app, "thread_pool", None) is not None:
             self.app.thread_pool.start(worker)
         else:
             QThreadPool.globalInstance().start(worker)
+
+    def _on_sweep_finished(self, found: list, checkable: list) -> None:
+        """The "Check All for Updates" sweep's result handler -- a real,
+        named method rather than a closure nested inside
+        _check_all_for_updates, so the latter stays under this
+        codebase's two-screen function-length budget
+        (tests/test_function_lengths.py) and this handler is directly
+        testable on its own."""
+        if self._progress:
+            self._progress.hide()
+        if not widget_is_valid(self._widget):
+            return
+        self._refresh_status_cells_for_devices(checkable)
+        if self._status_lbl:
+            self._status_lbl.setText("Click Refresh to load drivers.")
+        if not found:
+            QMessageBox.information(
+                self._widget, "Check All for Updates",
+                f"Checked {len(checkable)} device(s). No updates found.")
+            return
+        # e.g. Realtek: found for real, but never auto-installable (see
+        # UpdateInfo.manual_download_only) -- these never enter the
+        # LIGHT/FULL batch choice, only an informational note with a
+        # REAL clickable link (see _show_info_with_link --
+        # QMessageBox.information's plain text can't be clicked or even
+        # selected, which is worthless for a "go get it yourself" URL).
+        auto_installable = [(d, p, u) for d, p, u in found if not u.manual_download_only]
+        manual_only = [(d, p, u) for d, p, u in found if u.manual_download_only]
+        manual_note_html = ""
+        if manual_only:
+            manual_lines = "<br>".join(
+                f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)} "
+                f"(<a href=\"{_html_escape(u.download_url)}\">{_html_escape(u.download_url)}</a>)"
+                for d, _, u in manual_only)
+            manual_note_html = (f"{len(manual_only)} update(s) need manual download "
+                                f"(no automated download available for that vendor):"
+                                f"<br>{manual_lines}<br><br>")
+        if not auto_installable:
+            self._show_info_with_link(
+                "Check All for Updates",
+                f"Checked {len(checkable)} device(s).<br><br>{manual_note_html}"
+                f"No auto-installable updates found.")
+            return
+        if not is_admin():
+            names = "<br>".join(f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)}"
+                                for d, _, u in auto_installable)
+            self._show_info_with_link(
+                "Check All for Updates",
+                f"{manual_note_html}{len(auto_installable)} update(s) found, but "
+                f"installing needs administrator rights:<br><br>{names}<br><br>"
+                f"Restart this app as administrator to install them.")
+            return
+        mode = self._ask_bulk_install_mode(auto_installable, len(checkable))
+        if mode is not None:
+            self._bulk_install(auto_installable, mode)
+        if manual_only:
+            self._show_info_with_link("Check All for Updates", manual_note_html.strip())
 
     def _bulk_install(self, found: list, mode: str) -> None:
         """found: (driver, provider, update) tuples, already confirmed
@@ -1187,6 +1212,7 @@ class DriverModule(BaseModule):
                 self._status_lbl.setText("Click Refresh to load drivers.")
             succeeded = 0
             failed_lines = []
+            updated_devices = []
             for driver, provider, update, install_result, token, fresh_version, dl_reason in results:
                 if install_result is None:
                     failed_lines.append(f"- {driver.device_name}: download failed -- {dl_reason}")
@@ -1200,7 +1226,11 @@ class DriverModule(BaseModule):
                 update_history.record_applied(
                     driver.device_id, driver.device_name, update.vendor,
                     update.latest_version, fresh_version, mode)
-                self._refresh_status_cell_for_device(driver.device_id, driver)
+                updated_devices.append(driver)
+            # One sorting-disabled batch, not one setItem() (and one
+            # re-sort of the whole table) per device -- see
+            # _refresh_status_cells_for_devices.
+            self._refresh_status_cells_for_devices(updated_devices)
             if self._applied_update_tokens:
                 self._refresh_undo_all_button_state()
             summary = f"Installed {succeeded} of {len(results)} update(s)."

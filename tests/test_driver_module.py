@@ -1788,3 +1788,51 @@ def test_show_info_with_link_makes_its_url_actually_clickable_and_selectable(mon
     assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
     assert flags & Qt.TextInteractionFlag.LinksAccessibleByMouse
     assert label.openExternalLinks() is True
+
+
+def test_refresh_status_cells_for_devices_disables_sorting_for_the_whole_batch():
+    # Real user report: the driver table "keeps refreshing" -- root
+    # cause was one setItem() per device (100+ devices after a bulk
+    # check), and QTableWidget re-sorts itself on EVERY setItem() call
+    # while sorting is enabled, visibly reshuffling the whole table that
+    # many times in a row. Sorting must be off for the whole batch and
+    # back on exactly once at the end, not toggled per row.
+    d1 = DriverInfo(device_name="A", driver_class="Net", version="1.0", date="",
+                    publisher="V", signed=True, error_code=0, flags="", device_id="D1")
+    d2 = DriverInfo(device_name="B", driver_class="Net", version="1.0", date="",
+                    publisher="V", signed=True, error_code=0, flags="", device_id="D2")
+    mod = _module()
+    mod._populate([d1, d2])
+    assert mod._table.isSortingEnabled() is True  # precondition
+
+    seen_during_loop = []
+
+    def fake_refresh_one(self, device_id, driver):
+        seen_during_loop.append(self._table.isSortingEnabled())
+
+    import types
+    mod._refresh_status_cell_for_device = types.MethodType(fake_refresh_one, mod)
+
+    mod._refresh_status_cells_for_devices([d1, d2])
+
+    assert seen_during_loop == [False, False]  # off for every call in the batch
+    assert mod._table.isSortingEnabled() is True  # back on once, at the end
+
+
+def test_refresh_status_cells_for_devices_reenables_sorting_even_if_a_call_raises():
+    d1 = DriverInfo(device_name="A", driver_class="Net", version="1.0", date="",
+                    publisher="V", signed=True, error_code=0, flags="", device_id="D1")
+    mod = _module()
+    mod._populate([d1])
+
+    import types
+
+    def raising(self, device_id, driver):
+        raise RuntimeError("boom")
+
+    mod._refresh_status_cell_for_device = types.MethodType(raising, mod)
+
+    with pytest.raises(RuntimeError):
+        mod._refresh_status_cells_for_devices([d1])
+
+    assert mod._table.isSortingEnabled() is True

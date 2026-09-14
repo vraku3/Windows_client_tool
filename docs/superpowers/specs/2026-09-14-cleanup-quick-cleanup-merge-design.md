@@ -249,6 +249,19 @@ same fix, applied to the one tab that was missing it.
 - No change to `Debloat`, `TreeSize`, or any other module's own
   Clean-All-style action, even though some share a similar shape —
   out of scope for this merge.
+- **No Stop button on the merged tab, even though `_OverviewTab` (which
+  it replaces) had one.** Considered explicitly during implementation
+  (final whole-branch review raised it): Quick Cleanup's sweep spans
+  more categories than Overview's did (10 main + ~91 advanced vs. 9
+  groups), so the case for a way to bail out early is if anything
+  stronger, not weaker. The chosen backstop is the watchdog
+  (`SCAN_WATCHDOG_MS`, added in implementation Task 2) instead — it
+  recovers a genuinely stuck scan automatically rather than requiring
+  the user to notice and click Stop. A real Stop button (cancel +
+  keep whatever was measured, matching `_OverviewTab`'s old behavior)
+  is a reasonable follow-on if the watchdog's 5-minute window proves
+  too coarse in practice; deliberately not built here to avoid scope
+  creep on an already 8-task merge.
 
 ## 7. Related work (separate specs, not this one)
 

@@ -100,3 +100,6 @@ scratchpad/
 # Test-run transcripts written into the repo root by a background pytest.
 suite*.txt
 full_suite.txt
+
+# Superpowers git worktree fallback (isolated per-plan workspaces)
+.worktrees/

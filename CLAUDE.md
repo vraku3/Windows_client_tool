@@ -935,18 +935,71 @@ permission-restricted folder do.
   extraction relies on the same system install), not something new to
   vendor updates — worth knowing before assuming LIGHT install is
   broken when it's really just this.
-- **Realtek (`0x10EC`) and MediaTek (`0x14C3`) are recognized vendors
-  (`vendor_id.py`) with no registered provider yet** — a real-machine
-  sweep found three Realtek NICs and a MediaTek WiFi7+Bluetooth combo
-  all reporting `UNRECOGNIZED_VENDOR` before this. ASRock's own support
-  site (a real motherboard vendor, for chipset/network re-hosts) sits
-  behind Incapsula bot-protection and returns a JS challenge page to a
-  plain HTTP fetch, not real content — not viable for the same
-  curl-with-a-UA approach that works against AMD's and NVIDIA's pages.
-  Realtek's own download page loads its list client-side (Kendo grid)
-  with no API endpoint visible in the page's own raw HTML — reaching it
-  needs more research (finding the JS bundle's real API calls) before a
-  provider can be built the same verified way NVIDIA's and AMD's were.
+- **`realtek_provider.py` is real and live-verified, but never attempts a
+  download.** Realtek's category-listing pages (`cate_id=584` PCIe,
+  `585` USB — one page per controller FAMILY, not per exact chip) are
+  plain server-rendered HTML with real version/date data. The actual
+  file (`/Download/ToDownload?...`) requires solving a CAPTCHA
+  unconditionally — confirmed live with a real cookie jar and referer,
+  still gated. This app does not automate around that (same judgment as
+  ASRock's bot-protection below). `provider.UpdateInfo.manual_download_only`
+  exists for exactly this: true means the UI shows an informational
+  "here's the real version, go get it yourself" message with a genuine
+  clickable link and skips LIGHT/FULL entirely, rather than attempting a
+  download guaranteed to fail signature verification.
+- **A vendor id identifies the COMPANY, not a product line — gate the
+  PROVIDER on device type too.** 0x0BDA (Realtek's USB-IF id) also
+  turned up on several real "Generic USB Hub" entries on this machine
+  (Realtek makes hub controller chips, unrelated to networking) —
+  `realtek_provider.py` was routing them to NIC download pages and
+  claiming a fake update, caught by re-running
+  `tools/driver_vendor_update_check.py` after wiring the USB id in.
+  Fixed by gating on `driver.driver_class == "NET"` before anything
+  else. `vendor_id.py` recognizing a vendor and a provider deciding it
+  applies to a specific device are two different questions.
+- **USB vendor ids are a separate registry from PCI-SIG's — a real gap a
+  prior pass of `vendor_id.py` left half-fixed.** `_USB_VENDOR_IDS` is
+  its own table, matched only against a `USB\` prefix, confirmed against
+  real devices for Realtek (`0x0BDA`), MediaTek (`0x0E8D` — a DIFFERENT
+  id than MediaTek's own PCI one, `0x14C3`), Razer (`0x1532`), and Lenovo
+  (`0x17EF`, for a Lenovo-branded USB accessory whose WMI `publisher`
+  field says "SunplusIT" — the OEM chip maker, not the real distribution
+  channel).
+- **A full real-machine vendor sweep found three more real, verified dead
+  ends — not left unexplored, checked and ruled out:**
+  - **ASRock's own support site** (the motherboard vendor, for
+    chipset/network re-hosts) sits behind Incapsula bot-protection and
+    returns a JS challenge page to a plain HTTP fetch, not real content.
+  - **Lenovo's driver-detail/download pages return 403 Access Denied**
+    (bot-blocked) even though the general product page loads fine —
+    confirmed for a real "Lenovo 500 IR Camera" accessory on this
+    machine.
+  - **MediaTek has no official consumer driver portal at all** for the
+    RZ717 WiFi7/Bluetooth combo — every source found is an unofficial
+    third-party aggregator (DriverPack, Treexy, station-drivers);
+    pointing an auto-installer at one would be a real trust/security
+    downgrade versus every other provider here, so this was deliberately
+    left unadapted rather than reached for anyway.
+- **Not every recognized vendor gets (or needs) a provider, because not
+  every device has a "driver update" to check for at all** — confirmed,
+  not assumed, for three more real devices this sweep found:
+  - **Razer Naga Pro** (`USB\VID_1532`): Windows' own generic HID driver
+    is what's installed and it's already correct/complete for a mouse.
+    Razer discontinued discrete per-model driver packages after 2019;
+    updates now route through Synapse's own closed, undocumented,
+    app-only channel with no public API to hook into.
+  - **SteelSeries GG Component Device** (`SWC\VEN_SSGG&IID_0100`): not a
+    physical device at all — a software placeholder their own GG app
+    registers itself under. Recognized via the device-name fallback
+    (there is no PCI/USB id to read), but there is nothing for a
+    provider to check.
+  - **Dell/LG monitors** (`MONITOR\DELD0E6`, `MONITOR\GSM59F1`,
+    version `1.0.0.0` on both): standard EDID-derived Monitor.inf
+    entries, not a downloadable-driver scenario — monitors don't have
+    "drivers" in the sense this feature operates on at all (this is
+    `monitor_control/`'s territory: firmware/DDC, not a driver package).
+    Deliberately NOT added to `vendor_id.py` — recognizing them would
+    imply a driver-update concept that doesn't apply here.
 
 ### Debloat (`src/modules/debloat/`)
 

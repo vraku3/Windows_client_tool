@@ -705,6 +705,27 @@ class DriverModule(BaseModule):
         QMessageBox.information(self._widget, "Why does this matter?",
                                 self._explain_flags(flags))
 
+    def _show_info_with_link(self, title: str, html_text: str) -> None:
+        """QMessageBox.information's plain text is neither clickable nor
+        selectable -- a URL inside it is inert pixels a user can't open
+        OR copy, which defeats the entire point of a "go download it
+        yourself" message. Builds the box directly instead (rather than
+        the static convenience method) as rich text, with its internal
+        label set to actually open links and allow selection. html_text
+        must already be HTML-safe -- callers html.escape() any dynamic
+        text (device names, versions) before embedding it."""
+        box = QMessageBox(self._widget)
+        box.setWindowTitle(title)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setText(html_text)
+        label = box.findChild(QLabel)
+        if label is not None:
+            label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+            label.setOpenExternalLinks(True)
+        box.exec()
+
     def _refresh_status_cell_for_device(self, device_id: str, driver: DriverInfo) -> None:
         """Updates just the Update Status cell for one row, right after a
         check or install completes -- never a full _populate() rebuild
@@ -844,13 +865,15 @@ class DriverModule(BaseModule):
                 # e.g. Realtek: the real file is real, but its download
                 # step is captcha-gated -- never attempt it, never offer
                 # the LIGHT/FULL choice for a download guaranteed to fail.
-                QMessageBox.information(
-                    self._widget, "Check for Vendor Update",
-                    f"{update.vendor} shows version {update.latest_version} "
-                    f"for {driver.device_name} (currently "
-                    f"{update.current_version}), but automated download "
-                    f"isn't available for this vendor.\n\nVisit "
-                    f"{update.download_url} to download it yourself.")
+                url = _html_escape(update.download_url)
+                self._show_info_with_link(
+                    "Check for Vendor Update",
+                    f"{_html_escape(update.vendor)} shows version "
+                    f"{_html_escape(update.latest_version)} for "
+                    f"{_html_escape(driver.device_name)} (currently "
+                    f"{_html_escape(update.current_version)}), but "
+                    f"automated download isn't available for this vendor."
+                    f"<br><br>Visit <a href=\"{url}\">{url}</a> to download it yourself.")
                 return
             if not is_admin():
                 QMessageBox.information(
@@ -1041,37 +1064,42 @@ class DriverModule(BaseModule):
                 return
             # e.g. Realtek: found for real, but never auto-installable
             # (see UpdateInfo.manual_download_only) -- these never enter
-            # the LIGHT/FULL batch choice, only an informational note.
+            # the LIGHT/FULL batch choice, only an informational note
+            # with a REAL clickable link (see _show_info_with_link --
+            # QMessageBox.information's plain text can't be clicked or
+            # even selected, which is worthless for a "go get it
+            # yourself" URL).
             auto_installable = [(d, p, u) for d, p, u in found if not u.manual_download_only]
             manual_only = [(d, p, u) for d, p, u in found if u.manual_download_only]
-            manual_note = ""
+            manual_note_html = ""
             if manual_only:
-                manual_names = "\n".join(
-                    f"- {d.device_name}: {u.latest_version} ({u.download_url})"
+                manual_lines = "<br>".join(
+                    f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)} "
+                    f"(<a href=\"{_html_escape(u.download_url)}\">{_html_escape(u.download_url)}</a>)"
                     for d, _, u in manual_only)
-                manual_note = (f"{len(manual_only)} update(s) need manual download "
-                               f"(no automated download available for that vendor):\n"
-                               f"{manual_names}\n\n")
+                manual_note_html = (f"{len(manual_only)} update(s) need manual download "
+                                    f"(no automated download available for that vendor):"
+                                    f"<br>{manual_lines}<br><br>")
             if not auto_installable:
-                QMessageBox.information(
-                    self._widget, "Check All for Updates",
-                    f"Checked {len(checkable)} device(s).\n\n{manual_note}"
+                self._show_info_with_link(
+                    "Check All for Updates",
+                    f"Checked {len(checkable)} device(s).<br><br>{manual_note_html}"
                     f"No auto-installable updates found.")
                 return
             if not is_admin():
-                names = "\n".join(f"- {d.device_name}: {u.latest_version}"
-                                  for d, _, u in auto_installable)
-                QMessageBox.information(
-                    self._widget, "Check All for Updates",
-                    f"{manual_note}{len(auto_installable)} update(s) found, but "
-                    f"installing needs administrator rights:\n\n{names}\n\n"
+                names = "<br>".join(f"- {_html_escape(d.device_name)}: {_html_escape(u.latest_version)}"
+                                    for d, _, u in auto_installable)
+                self._show_info_with_link(
+                    "Check All for Updates",
+                    f"{manual_note_html}{len(auto_installable)} update(s) found, but "
+                    f"installing needs administrator rights:<br><br>{names}<br><br>"
                     f"Restart this app as administrator to install them.")
                 return
             mode = self._ask_bulk_install_mode(auto_installable, len(checkable))
             if mode is not None:
                 self._bulk_install(auto_installable, mode)
             if manual_only:
-                QMessageBox.information(self._widget, "Check All for Updates", manual_note.strip())
+                self._show_info_with_link("Check All for Updates", manual_note_html.strip())
 
         def on_sweep_error(err_str: str) -> None:
             if self._progress:

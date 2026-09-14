@@ -99,3 +99,27 @@ def test_recognizes_mediatek_from_a_usb_hardware_id():
     # than MediaTek's own PCI-SIG one (0x14C3), independently confirmed
     # by this exact device's own publisher field ("Mediatek Inc.").
     assert vendor_for_hardware_id("USB\\VID_0E8D&PID_0717&REV_0100&MI_00") == "MediaTek"
+
+
+def test_recognizes_razer_from_a_usb_hardware_id():
+    # Real machine data: "Razer Naga Pro" reports hardware_id
+    # "USB\VID_1532&PID_0090&REV_0100&MI_02".
+    assert vendor_for_hardware_id("USB\\VID_1532&PID_0090&REV_0100&MI_02") == "Razer"
+
+
+def test_recognizes_lenovo_from_a_usb_hardware_id_even_though_publisher_says_sunplusit():
+    # Real machine data: "Lenovo 500 IR Camera" reports hardware_id
+    # "USB\VID_17EF&PID_482F&REV_0021&MI_02" and WMI's publisher field
+    # says "SunplusIT" (the OEM chip maker) -- but 0x17EF is Lenovo's OWN
+    # USB-IF id, and Lenovo (not the obscure chip maker) is the real
+    # distribution channel for this accessory.
+    assert vendor_for_hardware_id("USB\\VID_17EF&PID_482F&REV_0021&MI_02") == "Lenovo"
+
+
+def test_recognizes_steelseries_from_its_device_name():
+    # Real machine data: "SteelSeries GG Component Device" reports
+    # hardware_id "SWC\VEN_SSGG&IID_0100" -- not a PCI or USB device at
+    # all ("SWC" is a software-component pseudo-bus their GG app
+    # registers itself under), so the device-name fallback is the only
+    # signal, the same shape as the ACPI-only CPU case.
+    assert vendor_for_hardware_id("SWC\\VEN_SSGG&IID_0100", "SteelSeries GG Component Device") == "SteelSeries"

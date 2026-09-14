@@ -1700,7 +1700,11 @@ def test_check_for_vendor_update_shows_an_informational_message_for_manual_downl
     monkeypatch.setattr(dmod.DriverModule, "_ask_install_mode",
                         lambda self, driver, update: asked.append(1))
     shown = []
-    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    # A plain QMessageBox.information() call's text can't be clicked or
+    # selected -- this message carries a URL, so it must go through
+    # _show_info_with_link (a real clickable <a href> anchor) instead.
+    monkeypatch.setattr(dmod.DriverModule, "_show_info_with_link",
+                        lambda self, title, html: shown.append(html))
 
     mod = _module()
     mod._check_for_vendor_update(driver)
@@ -1708,7 +1712,7 @@ def test_check_for_vendor_update_shows_an_informational_message_for_manual_downl
     assert not asked  # never offered a LIGHT/FULL choice for this update
     assert shown
     assert "10.80.50" in shown[0]
-    assert "cate_id=584" in shown[0]
+    assert 'href="https://www.realtek.com/Download/List?cate_id=584"' in shown[0]
 
 
 def test_check_all_for_updates_separates_manual_only_from_auto_installable(monkeypatch):
@@ -1741,7 +1745,8 @@ def test_check_all_for_updates_separates_manual_only_from_auto_installable(monke
 
     monkeypatch.setattr(dmod.DriverModule, "_ask_bulk_install_mode", fake_ask_bulk)
     shown = []
-    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    monkeypatch.setattr(dmod.DriverModule, "_show_info_with_link",
+                        lambda self, title, html: shown.append(html))
 
     mod._check_all_for_updates()
 
@@ -1749,3 +1754,37 @@ def test_check_all_for_updates_separates_manual_only_from_auto_installable(monke
     assert len(asked[0]) == 1
     assert asked[0][0][0] is d1  # only the auto-installable one reaches the bulk-mode choice
     assert any("manual download" in s.lower() for s in shown)
+    assert any("href=" in s for s in shown)  # a real clickable link, not inert text
+
+
+def test_show_info_with_link_makes_its_url_actually_clickable_and_selectable(monkeypatch):
+    # The real bug report: QMessageBox.information's plain text can't be
+    # clicked OR selected -- "what good is a link in a picture". Fake the
+    # box construction/exec (avoids a real modal loop) but use the REAL
+    # PyQt6 QLabel/QMessageBox classes so the actual flags being set are
+    # what's under test, not a test double's promise that they would be.
+    from PyQt6.QtWidgets import QLabel as RealQLabel
+    from PyQt6.QtCore import Qt
+
+    mod = _module()
+    boxes = []
+    original_init = dmod.QMessageBox.__init__
+
+    class _CapturedBox(dmod.QMessageBox):
+        def __init__(self, *a, **k):
+            original_init(self, *a, **k)
+            boxes.append(self)
+
+        def exec(self):
+            return 0  # never actually block on a modal loop
+
+    monkeypatch.setattr(dmod, "QMessageBox", _CapturedBox)
+    mod._show_info_with_link("Title", 'Visit <a href="https://example.com/x">https://example.com/x</a>')
+
+    assert len(boxes) == 1
+    label = boxes[0].findChild(RealQLabel)
+    assert label is not None
+    flags = label.textInteractionFlags()
+    assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
+    assert flags & Qt.TextInteractionFlag.LinksAccessibleByMouse
+    assert label.openExternalLinks() is True

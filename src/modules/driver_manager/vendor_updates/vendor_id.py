@@ -46,6 +46,15 @@ the PCI table (a prior edit to this file briefly widened the PCI regex
 to also match USB\\, then reverted it for exactly this reason -- USB and
 PCI vendor ids for the SAME company are not guaranteed or even likely to
 share a numeric value in general, 0x0BDA/0x10EC being coincidental).
+
+A full real-machine sweep (every distinct vendor `fetch_drivers()`
+returns here, 2026-09-14) found five more real, non-generic vendors:
+Razer, SteelSeries, Dell, LG, and a SunplusIT-made Lenovo accessory.
+Razer and Lenovo are recognized here (see the tables below); Dell and
+LG deliberately are NOT, and SteelSeries is recognized but will never
+get a provider -- see provider.py's module docstring or the relevant
+git commit for why each of those three is a genuine dead end rather
+than something left unexplored.
 """
 import re
 from typing import Optional
@@ -72,6 +81,15 @@ _USB_VENDOR_IDS = {
     "0E8D": "MediaTek",  # real machine data: RZ717 Bluetooth adapter
                          # (publisher field independently confirms
                          # "Mediatek Inc." for this exact device)
+    "1532": "Razer",     # real machine data: Razer Naga Pro
+    "17EF": "Lenovo",    # real machine data: "Lenovo 500 IR/RGB Camera" --
+                         # this is LENOVO'S OWN USB-IF id, not the camera
+                         # chip maker's (WMI's publisher field says
+                         # "SunplusIT", the OEM silicon vendor, but 0x17EF
+                         # belongs to Lenovo -- the real distribution
+                         # channel for this accessory is Lenovo's own
+                         # support site, never a chip maker with no
+                         # direct-to-consumer presence at all).
 }
 
 _PCI_VEN_RE = re.compile(r"PCI\\VEN_([0-9A-Fa-f]{4})", re.IGNORECASE)
@@ -87,6 +105,12 @@ _DEVICE_NAME_FALLBACKS = (
     ("intel", "Intel"),
     ("realtek", "Realtek"),
     ("mediatek", "MediaTek"),
+    # "SteelSeries GG Component Device" (hardware_id "SWC\VEN_SSGG&IID_0100")
+    # is not a PCI or USB device at all -- "SWC" is a software-component
+    # pseudo-bus their own GG app registers itself under, real machine
+    # data confirmed. No new bus-prefix table for one non-hardware case;
+    # the name fallback already exists for exactly this shape.
+    ("steelseries", "SteelSeries"),
 )
 
 

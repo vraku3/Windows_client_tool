@@ -100,7 +100,6 @@ def register_all_modules(app) -> None:
     from modules.tweaks.tweaks_module import TweaksModule
     from modules.cleanup.cleanup_module import CleanupModule
     from modules.monitor_control.monitor_module import MonitorControlModule
-    from modules.cleanup.quick_cleanup_module import QuickCleanupModule
     from modules.debloat.debloat_module import DebloatModule
     from modules.treesize.treesize_module import TreeSizeModule
     from modules.quick_fix.quick_fix_module import QuickFixModule
@@ -142,7 +141,6 @@ def register_all_modules(app) -> None:
     # live performance picture. See modules/dashboard/dashboard_module.py.
     app.module_registry.register(TweaksModule())
     app.module_registry.register(CleanupModule())
-    app.module_registry.register(QuickCleanupModule())
     app.module_registry.register(DebloatModule())
     app.module_registry.register(TreeSizeModule())
     app.module_registry.register(QuickFixModule())

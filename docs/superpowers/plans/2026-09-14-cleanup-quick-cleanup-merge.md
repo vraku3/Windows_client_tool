@@ -23,19 +23,21 @@
 ## Task 1: Move `_OV_GROUPS` into the `cleanup_scanner` package
 
 **Files:**
-- Modify: `src/modules/cleanup/cleanup_scanner/scanners_system.py`
+- Modify: `src/modules/cleanup/cleanup_scanner/__init__.py`
 - Modify: `src/modules/cleanup/tabs/_overview_tab.py:36-81` (the `_OV_GROUPS` definition)
 - Modify: `src/modules/updates/stage_runners.py:118`
 - Test: `tests/test_cleanup_catalog.py` (import path only, not the factory-tuple change — that's Task 7)
 
 **Interfaces:**
-- Produces: `modules.cleanup.cleanup_scanner.scanners_system._OV_GROUPS` — a `List[Tuple[str, Optional[List[Callable]]]]`, identical value to today's `_overview_tab._OV_GROUPS`. Every later task that needs the group list imports it from here.
+- Produces: `modules.cleanup.cleanup_scanner._OV_GROUPS` — a `List[Tuple[str, Optional[List[Callable]]]]`, identical value to today's `_overview_tab._OV_GROUPS`. Every later task that needs the group list imports it from here.
+
+**Why the package root, not `scanners_system.py`:** `_OV_GROUPS`' "App & Game Caches" / "Cloud Storage" / "Media Production" / "Dev Tools" groups reference scanners that live in `scanners_apps.py`, `scanners_cloud.py`, `scanners_media.py` and `scanners_dev.py` — NOT `scanners_system.py` (confirmed by reading `_overview_tab.py`'s real `_OV_GROUPS` and cross-checking against the package's submodule split). `cleanup_scanner/__init__.py` already star-imports every submodule and then does `globals().update(all_scanners())` — by the line right after that, every scanner name from every submodule (hand-written and catalog-defined alike) is already bound, unprefixed, in ITS namespace. Defining `_OV_GROUPS` there needs no new imports and cannot hit a `NameError`; defining it in one submodule would need explicit cross-submodule imports for most of its own entries.
 
 This is a pure relocation — the list's contents don't change, and `_overview_tab.py` keeps working via a re-export, so no other test needs to change in this task.
 
-- [ ] **Step 1: Copy `_OV_GROUPS` into `scanners_system.py`**
+- [ ] **Step 1: Add `_OV_GROUPS` to `cleanup_scanner/__init__.py`**
 
-Add this at the very end of `src/modules/cleanup/cleanup_scanner/scanners_system.py`, after the `__all__` list:
+In `src/modules/cleanup/cleanup_scanner/__init__.py`, add this right after `globals().update(all_scanners())` (line 31) and before the `__all__` computation:
 
 ```python
 
@@ -45,7 +47,11 @@ Add this at the very end of `src/modules/cleanup/cleanup_scanner/scanners_system
 # Moved here from modules/cleanup/tabs/_overview_tab.py during the
 # Cleanup/Quick Cleanup merge — that file is going away, but
 # run_cleanup_safe_stage's import of this exact list is not something
-# this merge may break silently.
+# this merge may break silently. Placed at the PACKAGE ROOT rather than
+# in one submodule: its scanners span scanners_apps, scanners_cloud,
+# scanners_media, scanners_dev and scanners_system, and by this point in
+# this file every one of them is already bound above via the star-imports
+# and all_scanners(), unprefixed.
 _OV_GROUPS = [
     ("System Junk", [
         scan_temp_files, scan_prefetch, scan_thumbnail_cache, scan_user_crash_dumps,
@@ -94,36 +100,21 @@ _OV_GROUPS = [
 ]
 ```
 
-Note every `cs.scan_*` reference from the original has its `cs.` prefix dropped — this file defines those functions itself (or imports them un-prefixed already), so `cs.scan_temp_files` becomes plain `scan_temp_files`.
+Every `cs.scan_*` reference from the original (`_overview_tab.py`) has its `cs.` prefix dropped, since this is now the module those names live in directly rather than being accessed through the `cs` alias.
 
-Then add `'_OV_GROUPS'` to the `__all__` list already at line 1956 (anywhere in the list; alphabetical-ish order is already loosely followed, so add it near the top):
+`_OV_GROUPS` starts with an underscore, so it is automatically excluded from the `__all__` list computed right below it (`name for name in dict(globals()) if not name.startswith("_")...`) — no change needed to that computation. It stays importable by its explicit name (`from modules.cleanup.cleanup_scanner import _OV_GROUPS`) regardless of `__all__`, which only governs `import *`.
 
-```python
-__all__ = [
-    '_OV_GROUPS',
-    'scan_orphaned_virtual_disks',
-    ...
-```
+- [ ] **Step 2: Verify every scanner name in `_OV_GROUPS` resolves**
 
-- [ ] **Step 2: Verify every scanner name in `_OV_GROUPS` actually resolves in this file's namespace**
-
-Run: `cd src && python -c "from modules.cleanup.cleanup_scanner.scanners_system import _OV_GROUPS; print(len(_OV_GROUPS))"`
-Expected: prints `8` (the number of groups), no `NameError`.
-
-If any name raises `NameError`, that scanner is defined in a *different* submodule of the `cleanup_scanner` package (e.g. `scanners_apps.py`) and was reachable in the original only via the package facade's star-imports. Fix by importing it explicitly at the top of `scanners_system.py`, e.g.:
-
-```python
-from modules.cleanup.cleanup_scanner.scanners_apps import scan_discord_cache
-```
-
-Re-run until the import succeeds cleanly.
+Run: `cd src && python -c "from modules.cleanup.cleanup_scanner import _OV_GROUPS; print(len(_OV_GROUPS))"`
+Expected: prints `8` (the number of groups), no `NameError`. Since every name in the list is already bound in this module's namespace by the time `_OV_GROUPS` is defined (Step 1's placement, after `globals().update(all_scanners())`), this should succeed on the first try — this step exists to confirm that, not to fix anything.
 
 - [ ] **Step 3: Point `_overview_tab.py` at the new location instead of defining it locally**
 
 In `src/modules/cleanup/tabs/_overview_tab.py`, replace the entire `_OV_GROUPS = [ ... ]` block (lines 36-81) with:
 
 ```python
-from modules.cleanup.cleanup_scanner.scanners_system import _OV_GROUPS
+from modules.cleanup.cleanup_scanner import _OV_GROUPS
 ```
 
 Place this import alongside the other `from modules.cleanup...` imports near the top of the file (after `from modules.cleanup import browser_scanner as bs`), not down where the list used to live — it's an import statement now, not data.
@@ -139,7 +130,7 @@ In `src/modules/updates/stage_runners.py:118`, change:
 to:
 
 ```python
-    from modules.cleanup.cleanup_scanner.scanners_system import _OV_GROUPS
+    from modules.cleanup.cleanup_scanner import _OV_GROUPS
 ```
 
 - [ ] **Step 5: Update `test_cleanup_catalog.py`'s import (not its factory tuple yet)**
@@ -153,7 +144,7 @@ In `tests/test_cleanup_catalog.py:293`, change:
 to:
 
 ```python
-    from modules.cleanup.cleanup_scanner.scanners_system import _OV_GROUPS
+    from modules.cleanup.cleanup_scanner import _OV_GROUPS
 ```
 
 - [ ] **Step 6: Run the full existing cleanup test suite — must be unchanged (all green)**
@@ -164,7 +155,7 @@ Expected: PASS, same tests as before this task — this is a pure relocation, `o
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/modules/cleanup/cleanup_scanner/scanners_system.py src/modules/cleanup/tabs/_overview_tab.py src/modules/updates/stage_runners.py tests/test_cleanup_catalog.py
+git add src/modules/cleanup/cleanup_scanner/__init__.py src/modules/cleanup/tabs/_overview_tab.py src/modules/updates/stage_runners.py tests/test_cleanup_catalog.py
 git commit -m "refactor(cleanup): move _OV_GROUPS into cleanup_scanner, ahead of deleting _overview_tab.py
 
 stage_runners.py's run_cleanup_safe_stage (the engine behind this app's
@@ -242,19 +233,30 @@ def test_a_scan_that_never_finishes_gives_the_tab_back(qapp, blocking_scanner):
     from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
 
     tab = QuickCleanupTab()
-    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+    tab.build(categories=[("temp", "Temp Files", "#4caf50"), ("prefetch", "Prefetch", "#ffb74d")],
+             advanced_categories=[])
+
+    def scan_fast_prefetch(min_age_days: int = 0) -> ScanResult:
+        return ScanResult()
+
     tab._scanner_map["temp"] = (blocking_scanner, "Temp Files", "#4caf50")
+    tab._scanner_map["prefetch"] = (scan_fast_prefetch, "Prefetch", "#ffb74d")
     tab.SCAN_WATCHDOG_MS = 300
     tab._do_scan_all()
     assert blocking_scanner.started.wait(10)
 
     recovered = _pump_until(qapp, lambda: not tab._scanning)
+    status = tab._status_lbl.text()
     blocking_scanner.release.set()
     _settle(qapp)
 
     assert recovered, "the watchdog never fired"
     assert tab._scan_all_btn.isEnabled()
     assert tab._scanned is False, "a scan that never finished must not count as scanned"
+    assert "Temp Files" in status, (
+        f"the watchdog did not name what it was stuck on: {status!r}")
+    assert "Prefetch" not in status, (
+        f"a category that DID finish was named as stuck too: {status!r}")
 
 
 def test_the_watchdog_does_not_fire_on_a_healthy_scan(qapp):
@@ -369,6 +371,14 @@ In `_do_scan_all` (line 625), add right after `self._scanning = True`:
         self._watchdog.start(self.SCAN_WATCHDOG_MS)
 ```
 
+`_do_scan_all` builds `scan_targets` as a local list, mutating it (via `.remove(cid)`) in both the main- and advanced-category loops for any category with no scanner function on this machine — by the end of the "Advanced categories" loop it is final. Right after that loop (immediately before the `# Browser as separate worker` comment), add:
+
+```python
+        self._scan_targets = scan_targets
+```
+
+This is what lets the watchdog name which categories never reported, the same way `_OverviewTab`'s watchdog already names the stuck GROUP — `_ScanTab`'s and `_OverviewTab`'s watchdogs both name what they are stuck on (see `tests/test_cleanup_scan_watchdog.py`), and Quick Cleanup's dashboard runs MORE categories in parallel than either, so naming matters more here, not less.
+
 In `_on_all_scanned` (line 719), add at the top, before `self._scanning = False`:
 
 ```python
@@ -382,13 +392,17 @@ Add the watchdog handler and a shared reset helper right after `_on_all_scanned`
     def _on_scan_watchdog(self) -> None:
         if not self._scanning:
             return
+        label_by_id = {cid: label for cid, label, _ in self._categories + self._advanced_categories}
+        missing = [label_by_id.get(cid, cid) for cid in self._scan_targets
+                  if cid not in self._results]
+        stuck_desc = ", ".join(missing) if missing else "unknown"
         logger.warning(
             "Quick Cleanup scan timed out after %.0fs with %d/%d "
-            "categories reported",
+            "categories reported; still waiting on: %s",
             self.SCAN_WATCHDOG_MS / 1000, self._total_scanned,
-            len(self._categories) + len(self._advanced_categories))
+            len(self._scan_targets), stuck_desc)
         self._reset_after_cancel(
-            message="Scan timed out — click Scan All to run it again")
+            message=f"Scan timed out — stuck on: {stuck_desc} (click Scan All to retry)")
 
     def _reset_after_cancel(self, message: str = None) -> None:
         """Put the tab back in a state the user can act on -- shared by
@@ -527,7 +541,7 @@ patterns in Task 6."
 
 ---
 
-## Task 3: Fix the one-click actions' shared status label and missing busy-guard
+## Task 3: Fix the one-click actions' shared status label and missing busy-guard; promote the panel out of Advanced
 
 **Files:**
 - Modify: `src/modules/cleanup/components/quick_cleanup_tab.py`
@@ -535,7 +549,9 @@ patterns in Task 6."
 
 **Interfaces:**
 - Consumes: nothing from other tasks.
-- Produces: each one-click action button gets its own `QLabel` status target and disables itself while running — `_run_action_command`'s signature changes from taking a shared label implicitly to taking the specific button/label pair for its own action.
+- Produces: each one-click action button gets its own `QLabel` status target and disables itself while running. `QuickCleanupTab._action_buttons: Dict[str, QPushButton]` and `._action_status: Dict[str, QLabel]`, keyed by action id (`"flush_dns"`, `"clear_event_logs"`, `"compact_winsxs"`, `"rebuild_icon_cache"`, `"wu_deep_clean"`, `"network_repair"`, `"clear_thumbnails"`, `"clear_clipboard"`, `"reset_search"`, `"clear_font_cache"`, `"flush_wu_store"`, `"reset_tcpip"`).
+
+**Two real shapes in the existing code that matter here** (confirmed by reading the file, not assumed): 11 of the 12 actions call the shared `_run_action_command` helper; `_compact_winsxs` does not — it has its own inline confirm dialog, its own `Worker`, and its own direct `self._action_status_lbl` writes, because its DISM run needs the long-op thread pool and a longer timeout than the shared helper's `long_running` path gives it. Both paths need the busy-guard/per-action-status fix, but by different means.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -614,6 +630,45 @@ def test_two_actions_running_at_once_do_not_clobber_each_others_status(qapp, mon
     clip_status = tab._action_status["clear_clipboard"].text()
     assert "DNS" in dns_status or "flush" in dns_status.lower()
     assert dns_status != clip_status, "both actions ended up showing the same text"
+
+
+def test_compact_winsxs_also_guards_against_a_second_click(qapp, monkeypatch):
+    """_compact_winsxs bypasses _run_action_command entirely -- it needs
+    its own busy-guard, separately."""
+    from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
+    from PyQt6.QtWidgets import QMessageBox
+
+    tab = QuickCleanupTab()
+    tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+
+    release = []
+    started = []
+
+    class _FakeProc:
+        returncode = 0
+        def communicate(self, timeout=None):
+            started.append(1)
+            while not release:
+                time.sleep(0.01)
+            return "ok", ""
+
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: _FakeProc())
+
+    btn = tab._action_buttons["compact_winsxs"]
+    tab._compact_winsxs()
+    deadline = time.time() + 5
+    while not started and time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    assert not btn.isEnabled(), "button stayed enabled while WinSxS compaction was running"
+
+    tab._compact_winsxs()  # second click while running -- must be a no-op
+    qapp.processEvents()
+
+    release.append(1)
+    _settle(qapp)
+    assert btn.isEnabled()
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -621,35 +676,75 @@ def test_two_actions_running_at_once_do_not_clobber_each_others_status(qapp, mon
 Run: `pytest tests/test_quick_cleanup_one_click_actions.py -v`
 Expected: FAIL — `AttributeError: 'QuickCleanupTab' object has no attribute '_action_buttons'`.
 
-- [ ] **Step 3: Read `_build_one_click_panel` and give each action its own button + status label**
+- [ ] **Step 3: Replace `_build_one_click_panel` — one row per action, its own button and status**
 
-In `src/modules/cleanup/components/quick_cleanup_tab.py`, `_build_one_click_panel` (line 847) currently builds 12 buttons all wired to the shared `self._action_status_lbl`. Replace the method so each action gets a small `QHBoxLayout` row: button + its own status `QLabel`, tracked in two new dicts.
-
-Add near the top of `_build_one_click_panel`, before building any buttons:
+In `src/modules/cleanup/components/quick_cleanup_tab.py`, replace the entire `_build_one_click_panel` method (currently lines 847-885: the `sep` header, the single `btn_bar` row of 12 buttons built from the `actions` list, the dead `self._action_btns` tracking, and the one shared `self._action_status_lbl`) with:
 
 ```python
+    def _build_one_click_panel(self, parent_lay: QVBoxLayout):
+        """One row per action: its own button, its own status label, its
+        own busy-guard. Before this, all 12 actions shared one QLabel and
+        none of them disabled their own button while running."""
+        sep = QLabel("One-Click Maintenance")
+        sep.setObjectName("muted")
+        sep.setStyleSheet("font-size: 13px; font-weight: bold; padding-top: 8px;")
+        parent_lay.addWidget(sep)
+
+        actions = [
+            ("flush_dns", "Flush DNS", self._flush_dns),
+            ("clear_event_logs", "Clear Event Logs", self._clear_event_logs),
+            ("compact_winsxs", "Compact WinSxS", self._compact_winsxs),
+            ("rebuild_icon_cache", "Rebuild Icons", self._rebuild_icon_cache),
+            ("wu_deep_clean", "WU Deep Clean", self._wu_deep_clean),
+            ("network_repair", "Network Repair", self._network_repair),
+            ("clear_thumbnails", "Clear Thumbnails", self._clear_thumbnails),
+            ("clear_clipboard", "Clear Clipboard", self._clear_clipboard),
+            ("reset_search", "Reset Search", self._reset_search),
+            ("clear_font_cache", "Clear Font Cache", self._clear_font_cache),
+            ("flush_wu_store", "Flush WinUpdate", self._flush_wu_store),
+            ("reset_tcpip", "Reset TCP/IP", self._reset_tcpip),
+        ]
+
         self._action_buttons: Dict[str, QPushButton] = {}
         self._action_status: Dict[str, QLabel] = {}
+        for action_id, label, handler in actions:
+            row = QHBoxLayout()
+            btn = QPushButton(label)
+            btn.setStyleSheet("font-size: 11px; padding: 4px 8px;")
+            btn.clicked.connect(handler)
+            status = QLabel("")
+            status.setObjectName("muted")
+            status.setStyleSheet("font-size: 11px;")
+            row.addWidget(btn)
+            row.addWidget(status, 1)
+            parent_lay.addLayout(row)
+            self._action_buttons[action_id] = btn
+            self._action_status[action_id] = status
 ```
 
-For each of the 12 actions currently added as `parent_lay.addWidget(btn)` (or similar), change the pattern from a bare button to a row. Example for Flush DNS (apply the same shape to all 12 — `spooler`/`dns`/`icons`/`wu`/`net`/`thumb`/`clip`/`search`/`font`/`wustore`/`tcpip` each get the same treatment, keyed by a short action id):
+This drops the dead `self._action_btns` list (written in the old method, never read anywhere else in the file or its tests — confirmed via `grep -rn "_action_btns"`) along with the `Tuple` import it was the only user of. Remove `Tuple` from this file's `from typing import Dict, List, Tuple` line at the top, leaving `from typing import Dict, List`.
+
+- [ ] **Step 4: Move the panel out of the hidden Advanced section**
+
+In `_setup_ui` (same file), the call site `self._build_one_click_panel(adv_lay)` sits inside the `_adv_widget` block (currently right before `self._adv_widget.setVisible(False)`). Move the call out, to right after `layout.addWidget(scroll, 1)` and before the `# ── Advanced panel (hidden by default) ──` comment:
 
 ```python
-        row = QHBoxLayout()
-        btn = QPushButton("Flush DNS Cache")
-        btn.clicked.connect(self._flush_dns)
-        status = QLabel("")
-        status.setStyleSheet("font-size: 11px;")
-        row.addWidget(btn)
-        row.addWidget(status, 1)
-        parent_lay.addLayout(row)
-        self._action_buttons["flush_dns"] = btn
-        self._action_status["flush_dns"] = status
+        content_lay.addStretch()
+        scroll.setWidget(content)
+        layout.addWidget(scroll, 1)
+
+        # ── One-click actions (always visible -- moved out of the
+        # Advanced section during the Cleanup/Quick Cleanup merge, so a
+        # fresh user reaches these without ever clicking "Show Advanced") ──
+        self._build_one_click_panel(layout)
+
+        # ── Advanced panel (hidden by default) ──
+        self._adv_widget = QWidget()
 ```
 
-Repeat for every action currently in this method, using its existing button label text and a short, stable dict key (`"flush_dns"`, `"clear_event_logs"`, `"compact_winsxs"`, `"rebuild_icons"`, `"wu_deep_clean"`, `"network_repair"`, `"clear_thumbnails"`, `"clear_clipboard"`, `"reset_search"`, `"clear_font_cache"`, `"flush_wu_store"`, `"reset_tcpip"` — one per existing method name with the leading underscore dropped).
+And delete the old call site and its `# One-click actions` comment from inside the advanced block, leaving that block ending at `adv_lay.addLayout(self._adv_legend_layout)` followed directly by `self._adv_widget.setVisible(False)` / `layout.addWidget(self._adv_widget)`.
 
-- [ ] **Step 4: Thread the action id through `_run_action_command` so it can target the right button/label**
+- [ ] **Step 5: Thread the action id through `_run_action_command` so it can target the right button/label**
 
 Change `_run_action_command`'s signature (line 887) from:
 
@@ -667,59 +762,269 @@ to:
                               need_confirm: bool = False,
                               long_running: bool = False,
                               confirm_text: str = ""):
-```
-
-Replace every reference to `self._action_status_lbl` inside this method with `self._action_status[action_id]`. Add a busy-guard at the very top of the method, right after the docstring:
-
-```python
+        """Run a system command as a one-click action."""
         btn = self._action_buttons.get(action_id)
         if btn is not None and not btn.isEnabled():
             return  # already running
+        status_lbl = self._action_status[action_id]
 ```
 
-Right before `w = Worker(_run)` near the end of the method, disable the button:
+Replace every remaining reference to `self._action_status_lbl` inside this method with `status_lbl`. Immediately before `w = Worker(_run)` near the end of the method, disable the button:
 
 ```python
         if btn is not None:
             btn.setEnabled(False)
 ```
 
-In both `_done` and `_err` closures inside `_run_action_command`, re-enable it at the top:
+In both the `_done` and `_err` closures inside this method, re-enable it as their first line:
 
 ```python
         def _done(result):
             if btn is not None:
                 btn.setEnabled(True)
             status, msg = result
-            ...  # existing body unchanged, but self._action_status_lbl -> self._action_status[action_id]
+            if status == "ok":
+                status_lbl.setText(f"✅ {status_prefix}: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
+            elif status == "timeout":
+                status_lbl.setText(f"⏱ {status_prefix}: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+            else:
+                status_lbl.setText(f"❌ {status_prefix}: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
 
         def _err(e: str):
             if btn is not None:
                 btn.setEnabled(True)
-            ...  # existing body unchanged, same substitution
+            status_lbl.setText(f"❌ {status_prefix}: {e}")
+            status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
 ```
 
-- [ ] **Step 5: Update every one-click method to pass its own action id**
+The `_run`/inner-Worker body and the `if long_running:` dispatch at the end of the method are unchanged (still reference `cmd`, unaffected by the new `action_id` parameter).
 
-Each of the 12 methods below `_run_action_command` (`_flush_dns`, `_clear_event_logs`, `_compact_winsxs`, `_rebuild_icon_cache`, `_wu_deep_clean`, `_network_repair`, `_clear_thumbnails`, `_clear_clipboard`, `_reset_search`, `_clear_font_cache`, `_flush_wu_store`, `_reset_tcpip`) currently calls `self._run_action_command(cmd, status_prefix, ...)`. Add the matching action id as the new first argument to each call, e.g.:
+- [ ] **Step 6: Update the 11 call sites that use `_run_action_command`**
+
+Each of these methods gets its matching action id inserted as the new first positional argument — every other argument stays exactly as it is today:
 
 ```python
     def _flush_dns(self):
         self._run_action_command("flush_dns", "ipconfig /flushdns", "DNS cache flushed", need_confirm=False)
+
+    def _clear_event_logs(self):
+        self._run_action_command(
+            "clear_event_logs",
+            "wevtutil cl System && wevtutil cl Application && wevtutil cl Security",
+            "Event logs cleared",
+            need_confirm=True,
+            confirm_text="This will clear System, Application, and Security event logs. They cannot be recovered. Continue?"
+        )
+
+    def _rebuild_icon_cache(self):
+        self._run_action_command(
+            "rebuild_icon_cache",
+            "taskkill /f /im explorer.exe && timeout /t 2 /nobreak >nul && del /q \"%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\iconcache_*\" 2>nul && start explorer",
+            "Icon cache rebuilt",
+            need_confirm=False
+        )
+
+    def _wu_deep_clean(self):
+        self._run_action_command(
+            "wu_deep_clean",
+            "dism /Online /Cleanup-Image /StartComponentCleanup /SuppressDefaultActions",
+            "WU deep clean started",
+            need_confirm=True,
+            long_running=True,  # confirm text says 10-20 min; the default path's 60s timeout would kill it early
+            confirm_text="This runs a deep Windows Update cleanup which may take 10–20 minutes. Continue?"
+        )
+
+    def _network_repair(self):
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Network Repair")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText(
+            "This will <b>reset Winsock and TCP/IP stack</b>. "
+            "Your network connection will briefly drop. "
+            "<b>This cannot be undone.</b> Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+        self._run_action_command(
+            "network_repair", "netsh winsock reset && netsh int ip reset",
+            "Network stack reset", need_confirm=False
+        )
+
+    def _clear_thumbnails(self):
+        """Delete all thumbnail cache files (.db) in Explorer thumbnail directories."""
+        self._run_action_command(
+            "clear_thumbnails",
+            'del /q /f "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\thumbcache_*.db" 2>nul',
+            "Thumbnail cache cleared",
+            need_confirm=False
+        )
+
+    def _clear_clipboard(self):
+        """Clear the Windows clipboard content."""
+        self._run_action_command(
+            "clear_clipboard", "cmd /c echo off | clip", "Clipboard cleared", need_confirm=False
+        )
+
+    def _reset_search(self):
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Reset Windows Search")
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setText(
+            "This will <b>restart the Windows Search service</b> and clear its database. "
+            "Search may be briefly unavailable. Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+        self._run_action_command(
+            "reset_search", "net stop WSearch && net start WSearch",
+            "Windows Search reset", need_confirm=False
+        )
+
+    def _clear_font_cache(self):
+        """Flush the Windows Font Cache service (FNTCACHE.DAT)."""
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Clear Font Cache")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText(
+            "This will <b>flush the Windows Font Cache</b> by stopping the FontCache service. "
+            "Applications may briefly re-render text. Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+        self._run_action_command(
+            "clear_font_cache", "net stop FontCache && net start FontCache",
+            "Font cache cleared", need_confirm=False
+        )
+
+    def _flush_wu_store(self):
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Flush Windows Update Store")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText(
+            "This will <b>reset the Windows Update client</b>, clear the SoftwareDistribution\\Download "
+            "folder, and restart the WUAUSERV service. "
+            "<b>This cannot be undone.</b> Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+        cmd = (
+            "net stop wuauserv && "
+            "del /q /f %SystemRoot%\\SoftwareDistribution\\Download\\* 2>nul && "
+            "net start wuauserv"
+        )
+        self._run_action_command("flush_wu_store", cmd, "Windows Update store flushed", need_confirm=False)
+
+    def _reset_tcpip(self):
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Reset TCP/IP Stack")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText(
+            "This will <b>reset all network adapter TCP/IP configurations</b>. "
+            "Network adapters may briefly disconnect. <b>This cannot be undone.</b> Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+        self._run_action_command(
+            "reset_tcpip", "netsh int ip reset", "TCP/IP stack reset", need_confirm=False
+        )
 ```
 
-Apply the same pattern (action id string matching Step 3's dict keys, inserted as the new first positional argument) to the other 11 methods, keeping every other argument exactly as it is today.
+- [ ] **Step 7: Give `_compact_winsxs` its own busy-guard**
 
-- [ ] **Step 6: Remove the now-unused shared `_action_status_lbl`**
+This method bypasses `_run_action_command` entirely (its own confirm dialog, its own `Worker`, its own long-op pool dispatch), so Step 5's guard does not cover it. Replace the whole method:
 
-Delete the line in `_setup_ui` (or wherever it's currently constructed) that creates `self._action_status_lbl` — every consumer now uses `self._action_status[action_id]` instead. Search the file for `_action_status_lbl` to confirm no references remain.
+```python
+    def _compact_winsxs(self):
+        btn = self._action_buttons.get("compact_winsxs")
+        if btn is not None and not btn.isEnabled():
+            return  # already running
 
-- [ ] **Step 7: Run the tests to verify they pass**
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Compact WinSxS")
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setText(
+            "This runs <b>DISM /StartComponentCleanup /ResetBase</b> which can take "
+            "<b>10–30 minutes</b>. The system will remain usable. Continue?"
+        )
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        status_lbl = self._action_status["compact_winsxs"]
+        status_lbl.setText("⏳ WinSxS cleanup running (may take 10–30 min)...")
+        status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+        if btn is not None:
+            btn.setEnabled(False)
+
+        def _run(_worker):
+            try:
+                proc = subprocess.Popen(
+                    ["Dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup", "/ResetBase"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                stdout, stderr = proc.communicate(timeout=3600)
+                success = proc.returncode == 0
+                output = stdout if success else (stderr or "Command failed")
+            except subprocess.TimeoutExpired:
+                return "timeout", "Operation timed out after 60 minutes"
+            except Exception as e:
+                return "error", str(e)
+            return "ok" if success else "error", output
+
+        def _done(result):
+            if btn is not None:
+                btn.setEnabled(True)
+            outcome, msg = result
+            if outcome == "ok":
+                status_lbl.setText("✅ WinSxS cleanup complete")
+                status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
+            elif outcome == "timeout":
+                status_lbl.setText(f"⏱ WinSxS cleanup: {msg}")
+                status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
+            else:
+                status_lbl.setText(f"❌ WinSxS cleanup: {msg[:100]}")
+                status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
+
+        def _err(e: str):
+            if btn is not None:
+                btn.setEnabled(True)
+            status_lbl.setText(f"❌ WinSxS cleanup: {e}")
+            status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
+
+        w = Worker(_run)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._workers.append(w)
+        # 10-30 min DISM run — bounded pool, not the global one everything else shares.
+        get_long_op_pool().start(w)
+```
+
+Note the result-tuple unpack is renamed `outcome, msg = result` (was `status, msg = result`) — the outer `status_lbl` variable is a `QLabel` captured from the enclosing scope, and the original code's local `status` would otherwise shadow it inside `_done`, breaking `status_lbl.setText(...)` if it had been renamed to reuse that name.
+
+- [ ] **Step 8: Run the tests to verify they pass**
 
 Run: `pytest tests/test_quick_cleanup_one_click_actions.py -v`
-Expected: PASS, both tests.
+Expected: PASS, all 3 tests.
 
-- [ ] **Step 8: Manual sanity check — run every one-click action once on the real machine**
+- [ ] **Step 9: Manual sanity check — run every one-click action once on the real machine**
 
 This module shells out to real system commands (`ipconfig /flushdns`, DISM, `netsh`, etc.). Run:
 
@@ -727,9 +1032,9 @@ This module shells out to real system commands (`ipconfig /flushdns`, DISM, `net
 python src/main.py
 ```
 
-Navigate to Cleanup → Quick Cleanup → Show Advanced, and click each of the 12 one-click actions once. Confirm each one's OWN status label updates independently and its button re-enables afterward. This is a real, deliberate manual step — these commands are exactly the kind of thing this codebase insists on verifying live rather than only through mocks.
+Navigate to Cleanup → Quick Cleanup. Confirm the "One-Click Maintenance" section is now visible WITHOUT clicking "Show Advanced ▼", and click each of the 12 actions once. Confirm each one's OWN status label updates independently and its button re-enables afterward. This is a real, deliberate manual step — these commands are exactly the kind of thing this codebase insists on verifying live rather than only through mocks.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add src/modules/cleanup/components/quick_cleanup_tab.py tests/test_quick_cleanup_one_click_actions.py
@@ -737,9 +1042,9 @@ git commit -m "fix(cleanup): give each one-click action its own busy-guard and s
 
 All 12 actions shared one QLabel and none disabled their own button --
 two actions clicked in quick succession clobbered each other's result
-with no way to tell which was which. Real gap, found while planning to
-promote these out of the hidden 'Advanced' section (Task 4), which
-makes it more likely someone actually does this."
+with no way to tell which was which. Also moves the whole panel out of
+the hidden 'Advanced' section, which makes it more likely someone
+actually triggers this now."
 ```
 
 ---
@@ -916,14 +1221,16 @@ category id."
 ## Task 5: `run_clean_safe` shared helper, adopted by both Quick Cleanup and `_ScanTab`
 
 **Files:**
-- Modify: `src/modules/cleanup/cleanup_scanner/scanners_system.py`
+- Create: `src/modules/cleanup/clean_safe_runner.py`
 - Modify: `src/modules/cleanup/components/quick_cleanup_tab.py`
 - Modify: `src/modules/cleanup/tabs/_scan_tab.py`
 - Test: `tests/test_cleanup_run_clean_safe.py` (new)
 
 **Interfaces:**
-- Consumes: `cs.delete_items` (existing), `bs.delete_selected` (existing), `_confirm_large` (existing, `_scan_tab.py`).
-- Produces: `cleanup_scanner.run_clean_safe(widget, items, *, browser_cats=None, stop_wuauserv=False, confirm="always" | "size_gated", on_done) -> Worker`. `on_done` is `Callable[[int, int], None]` — `(deleted_count, error_count)`, called on the Qt main thread once the worker completes successfully. On a refused confirm, `run_clean_safe` returns `None` and `on_done` is never called.
+- Consumes: `cs.delete_items`, `cs.format_size`, `cs.ScanItem` (existing, via `from modules.cleanup import cleanup_scanner as cs`), `bs.delete_selected` (existing, `browser_scanner.py`), `_confirm_large` (existing, `_scan_tab.py`, imported lazily inside the function to avoid a circular import — `_scan_tab.py` itself imports this new module at top level).
+- Produces: `clean_safe_runner.run_clean_safe(widget, items, *, browser_cats=None, stop_wuauserv=False, confirm="always" | "size_gated", on_done, on_error=None) -> Optional[Worker]`. `on_done` is `Callable[[int, int], None]` — `(deleted_count, error_count)`, called on the Qt main thread once the worker's background delete finishes. `on_error` is `Callable[[str], None]`, called if the worker's delete raises; when omitted, the failure is logged rather than silently swallowed (CLAUDE.md: "Silent exception swallowing is forbidden"). On a refused confirm, `run_clean_safe` returns `None` and neither callback fires.
+
+**Note on placement:** `cleanup_scanner` imports no PyQt6 anywhere today — the same Qt-free "engine" split this codebase already keeps in TreeSize's `scan/`+`store/`, Monitor Control, and GPResult (verified via `grep -rn "PyQt6" src/modules/cleanup/cleanup_scanner/*.py` — zero matches). `run_clean_safe` needs `QMessageBox` and `QThreadPool`, so it lives in its own new file rather than inside that package, keeping the boundary intact.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -941,6 +1248,7 @@ from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QWidget
 
 from modules.cleanup import cleanup_scanner as cs
+from modules.cleanup import clean_safe_runner as csr
 
 
 def _settle(qapp, timeout_ms: int = 5_000) -> None:
@@ -958,24 +1266,24 @@ def widget(qapp):
 
 
 def test_always_confirm_runs_the_delete_when_accepted(qapp, widget, monkeypatch):
-    monkeypatch.setattr(cs.QMessageBox, "exec", lambda self: cs.QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
     monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (2, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
-    cs.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: done.append((d, e)))
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: done.append((d, e)))
     _settle(qapp)
 
     assert done == [(2, 0)]
 
 
 def test_always_confirm_does_nothing_when_cancelled(qapp, widget, monkeypatch):
-    monkeypatch.setattr(cs.QMessageBox, "exec", lambda self: cs.QMessageBox.StandardButton.Cancel)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Cancel)
     called = []
     monkeypatch.setattr(cs, "delete_items", lambda *a, **k: called.append(1))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
-    result = cs.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None)
+    result = csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None)
 
     assert result is None
     assert called == []
@@ -986,65 +1294,129 @@ def test_size_gated_confirm_skips_the_dialog_for_small_totals(qapp, widget, monk
     # is always under it, so no dialog should even be constructed.
     def _fail_if_called(self):
         raise AssertionError("confirm dialog should not have been shown")
-    monkeypatch.setattr(cs.QMessageBox, "exec", _fail_if_called)
+    monkeypatch.setattr(csr.QMessageBox, "exec", _fail_if_called)
     monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
-    cs.run_clean_safe(widget, [item], confirm="size_gated", on_done=lambda d, e: done.append((d, e)))
+    csr.run_clean_safe(widget, [item], confirm="size_gated", on_done=lambda d, e: done.append((d, e)))
     _settle(qapp)
 
     assert done == [(1, 0)]
 
 
+def test_only_selected_items_count_toward_the_confirmed_total(qapp, widget, monkeypatch):
+    # _ScanTab passes its FULL item list (mixed selected/unselected) and
+    # relies on filtering happening downstream, same as cs.delete_items
+    # itself does -- an unselected item must not inflate the confirm total.
+    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    seen_totals = []
+
+    def _fake_exec(self):
+        seen_totals.append(self.text())
+        return csr.QMessageBox.StandardButton.Ok
+    monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
+
+    selected_item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe", selected=True)
+    unselected_item = cs.ScanItem(path=r"C:\y", size=999_000_000, is_dir=False, safety="safe", selected=False)
+    done = []
+    csr.run_clean_safe(widget, [selected_item, unselected_item], confirm="always",
+                       on_done=lambda d, e: done.append((d, e)))
+    _settle(qapp)
+
+    assert len(seen_totals) == 1
+    assert cs.format_size(100) in seen_totals[0]
+    assert cs.format_size(999_000_000) not in seen_totals[0]
+
+
 def test_browser_cats_are_combined_with_regular_items(qapp, widget, monkeypatch):
-    monkeypatch.setattr(cs.QMessageBox, "exec", lambda self: cs.QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
     monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
     monkeypatch.setattr("modules.cleanup.browser_scanner.delete_selected", lambda cats, progress_cb=None: (500, 1))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
-    cs.run_clean_safe(widget, [item], browser_cats=["fake_cat"], confirm="always",
-                      on_done=lambda d, e: done.append((d, e)))
+    csr.run_clean_safe(widget, [item], browser_cats=["fake_cat"], confirm="always",
+                       on_done=lambda d, e: done.append((d, e)))
     _settle(qapp)
 
     assert done == [(2, 1)]  # 1 (regular) + 1 (browser) deleted, 0 + 1 errors
+
+
+def test_on_error_fires_when_the_worker_raises(qapp, widget, monkeypatch):
+    def _raise(items, stop_wuauserv=False):
+        raise RuntimeError("disk went away")
+    monkeypatch.setattr(cs, "delete_items", _raise)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
+
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
+    errors = []
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None,
+                       on_error=errors.append)
+    _settle(qapp)
+
+    assert len(errors) == 1
+    assert "disk went away" in errors[0]
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `pytest tests/test_cleanup_run_clean_safe.py -v`
-Expected: FAIL — `AttributeError: module 'modules.cleanup.cleanup_scanner' has no attribute 'run_clean_safe'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'modules.cleanup.clean_safe_runner'`.
 
 - [ ] **Step 3: Implement `run_clean_safe`**
 
-Add to `src/modules/cleanup/cleanup_scanner/scanners_system.py`, right after `delete_items` (after its closing `return deleted, errors` around line 1750 — find the end of that function):
+Create `src/modules/cleanup/clean_safe_runner.py`:
 
 ```python
-def run_clean_safe(widget, items: List[ScanItem], *,
+"""Shared confirm -> worker -> delete -> combine sequence for "Clean All
+Safe" actions.
+
+Consolidated out of three near-identical implementations that used to live
+one apiece in _OverviewTab, QuickCleanupTab and _ScanTab. Lives outside the
+cleanup_scanner package on purpose: that package imports no PyQt6 anywhere
+today (the same Qt-free "engine" split this codebase keeps in TreeSize's
+scan/+store/, Monitor Control and GPResult), and this helper needs
+QMessageBox and QThreadPool.
+"""
+import logging
+from typing import Callable, List, Optional
+
+from PyQt6.QtCore import QThreadPool
+from PyQt6.QtWidgets import QMessageBox, QWidget
+
+from core.worker import Worker
+from modules.cleanup import cleanup_scanner as cs
+
+logger = logging.getLogger(__name__)
+
+
+def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
                    browser_cats: Optional[list] = None,
                    stop_wuauserv: bool = False,
                    confirm: str = "always",
-                   on_done: Callable[[int, int], None]):
-    """The shared confirm -> worker -> delete -> combine sequence every
-    "Clean All Safe" action needs -- consolidated out of three near-
-    identical implementations (_OverviewTab, QuickCleanupTab, _ScanTab
-    each had their own). Caller-specific bits (which buttons to disable,
-    what status text to show, whether to re-scan afterward) stay in the
-    caller's own on_done, since those genuinely differ per widget.
-
-    confirm="always": always asks, via a QMessageBox Ok/Cancel dialog.
+                   on_done: Callable[[int, int], None],
+                   on_error: Optional[Callable[[str], None]] = None) -> Optional[Worker]:
+    """confirm="always": always asks, via a QMessageBox Ok/Cancel dialog.
     confirm="size_gated": only asks above _scan_tab.CONFIRM_BYTES.
 
+    `items` may be a caller's FULL item list (selected and unselected
+    mixed) -- only `.selected` ones count toward the confirmed total and
+    toward what actually gets deleted, matching cs.delete_items' own
+    filtering (_ScanTab relies on exactly this: it passes every row in
+    the tree, not just the checked ones).
+
     Returns the Worker it started, or None if the user declined the
-    confirm dialog (on_done is never called in that case).
+    confirm dialog -- neither on_done nor on_error fires in that case.
     """
-    from core.worker import Worker
-    total = sum(i.size for i in items)
+    total = sum(i.size for i in items if i.selected)
     if browser_cats:
         total += sum(getattr(c, "size_bytes", 0) for c in browser_cats)
+    item_count = len([i for i in items if i.selected]) + len(browser_cats or [])
 
     if confirm == "size_gated":
+        # Imported lazily: _scan_tab.py imports THIS module at top level,
+        # so importing it back here at module load time would be circular.
         from modules.cleanup.tabs._scan_tab import _confirm_large
         if not _confirm_large(widget, total):
             return None
@@ -1053,8 +1425,8 @@ def run_clean_safe(widget, items: List[ScanItem], *,
         mb.setWindowTitle("Confirm Bulk Clean")
         mb.setIcon(QMessageBox.Icon.Warning)
         mb.setText(
-            f"Clean <b>{format_size(total)}</b> across "
-            f"{len(items) + len(browser_cats or [])} item(s)?<br>This cannot be undone.")
+            f"Clean <b>{cs.format_size(total)}</b> of safe items across "
+            f"{item_count} item(s)?<br>This cannot be undone.")
         mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
         if mb.exec() != QMessageBox.StandardButton.Ok:
@@ -1065,23 +1437,16 @@ def run_clean_safe(widget, items: List[ScanItem], *,
         if browser_cats:
             from modules.cleanup import browser_scanner as bs
             browser_freed, browser_errors = bs.delete_selected(browser_cats)
-        deleted, errors = delete_items(items, stop_wuauserv=stop_wuauserv) if items else (0, 0)
+        deleted, errors = cs.delete_items(items, stop_wuauserv=stop_wuauserv) if items else (0, 0)
         return deleted + browser_freed, errors + browser_errors
 
     worker = Worker(_run)
     worker.signals.result.connect(lambda result: on_done(*result))
-    QThreadPool_globalInstance = __import__("PyQt6.QtCore", fromlist=["QThreadPool"]).QThreadPool.globalInstance
-    QThreadPool_globalInstance().start(worker)
-    return worker
-```
-
-Note: `QMessageBox` needs to be importable as `cs.QMessageBox` for the tests' `monkeypatch.setattr(cs.QMessageBox, ...)` calls to work. Add `from PyQt6.QtWidgets import QMessageBox` to this file's imports (near the top, alongside the existing `typing` import), and add `'QMessageBox'` and `'run_clean_safe'` to the `__all__` list.
-
-Replace the awkward `QThreadPool_globalInstance` line above with a normal import instead — add `from PyQt6.QtCore import QThreadPool` to this file's top-level imports and simplify the last two lines of `run_clean_safe` to:
-
-```python
-    worker = Worker(_run)
-    worker.signals.result.connect(lambda result: on_done(*result))
+    if on_error is not None:
+        worker.signals.error.connect(on_error)
+    else:
+        worker.signals.error.connect(
+            lambda e: logger.error("run_clean_safe: background delete failed: %s", e))
     QThreadPool.globalInstance().start(worker)
     return worker
 ```
@@ -1089,19 +1454,13 @@ Replace the awkward `QThreadPool_globalInstance` line above with a normal import
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `pytest tests/test_cleanup_run_clean_safe.py -v`
-Expected: PASS, all 4 tests.
+Expected: PASS, all 6 tests.
 
 - [ ] **Step 5: Adopt it in `QuickCleanupTab._do_clean_all_safe`**
 
-In `src/modules/cleanup/components/quick_cleanup_tab.py`, `_do_clean_all_safe` (line 1166) currently builds `all_safe`/`browser_cats`/`total`, then confirms, then runs its own `Worker`. Replace everything from `self._scanning = True` (the button-disabling block) through the end of the method with:
+In `src/modules/cleanup/components/quick_cleanup_tab.py`, `_do_clean_all_safe` (line 1166) currently builds `all_safe`/`browser_cats`/`total`, shows its own confirm dialog (`mb = QMessageBox(self)` through `if mb.exec() != QMessageBox.StandardButton.Ok: return`), then starts its own `Worker`. Replace everything from that `mb = QMessageBox(self)` line through the end of the method (the confirm block, the `_run`/`_done`/`_err` closures, and the final `w = Worker(_run)` / `QThreadPool.globalInstance().start(w)` lines) with:
 
 ```python
-        self._scanning = True
-        self._scan_all_btn.setEnabled(False)
-        self._clean_all_btn.setEnabled(False)
-        self._progress.setText("🗑️  Cleaning safe items...")
-        self._progress.show()
-
         def _on_done(deleted, errors):
             self._scanning = False
             self._scan_all_btn.setEnabled(True)
@@ -1113,19 +1472,43 @@ In `src/modules/cleanup/components/quick_cleanup_tab.py`, `_do_clean_all_safe` (
             self.freed_bytes.emit(total)
             self.scan()
 
-        worker = cs.run_clean_safe(
-            self, all_safe, browser_cats=browser_cats, stop_wuauserv=needs_wu,
-            confirm="always", on_done=_on_done)
-        if worker is None:
+        def _on_error(e: str):
             self._scanning = False
+            self._scan_all_btn.setEnabled(True)
+            self._progress.hide()
+            self._status_lbl.setText(f"Clean error: {e}")
+
+        worker = csr.run_clean_safe(
+            self, all_safe, browser_cats=browser_cats, stop_wuauserv=needs_wu,
+            confirm="always", on_done=_on_done, on_error=_on_error)
+        if worker is None:
+            return  # user declined the confirm -- nothing was disabled yet
+
+        self._scanning = True
+        self._scan_all_btn.setEnabled(False)
+        self._clean_all_btn.setEnabled(False)
+        self._progress.setText("🗑️  Cleaning safe items...")
+        self._progress.show()
+        self._workers.append(worker)
 ```
 
-Keep everything ABOVE that point in the method unchanged (the loop building `all_safe`/`browser_cats`/`total`/`needs_wu`, and the `if not all_safe and not browser_cats: return` guard) — only the confirm dialog and worker construction are replaced. Remove the now-unused `_confirm_clean_all` method added in Task 2 Step 6, since `run_clean_safe`'s own `confirm="always"` path replaces it — but first check `tests/test_quick_cleanup_watchdog.py::test_freed_bytes_is_emitted_after_a_successful_clean` (Task 2), which monkeypatches `_confirm_clean_all`; update that test to monkeypatch `cs.QMessageBox.exec` instead (matching this task's own test style):
+Note the reordering versus the original: the confirm now happens (inside `run_clean_safe`) BEFORE any button is disabled, matching the original method's own order (its `mb.exec()` ran before its `self._scanning = True` block) — disabling buttons before a confirm the user can still cancel would leave them stuck disabled with nothing left to re-enable them.
+
+Add the import at the top of the method, alongside the existing `from modules.cleanup import cleanup_scanner as cs` / `from modules.cleanup import browser_scanner as bs` lines:
+
+```python
+        from modules.cleanup import clean_safe_runner as csr
+```
+
+- [ ] **Step 6: Fix the Task 2 test that exercises this method for the new confirm mechanism**
+
+`tests/test_quick_cleanup_watchdog.py::test_freed_bytes_is_emitted_after_a_successful_clean` (written in Task 2) monkeypatches `QuickCleanupTab._confirm_clean_all`, which Step 5's replacement no longer calls at all. Update it:
 
 ```python
 def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab
     from modules.cleanup import cleanup_scanner as cs
+    from modules.cleanup import clean_safe_runner as csr
 
     tab = QuickCleanupTab()
     tab.build(categories=[("temp", "Temp Files", "#4caf50")], advanced_categories=[])
@@ -1135,7 +1518,7 @@ def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     tab._results = {"temp": result}
 
     monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
-    monkeypatch.setattr(cs.QMessageBox, "exec", lambda self: cs.QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
 
     emitted = []
     tab.freed_bytes.connect(emitted.append)
@@ -1145,46 +1528,64 @@ def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     assert emitted == [500]
 ```
 
-- [ ] **Step 6: Adopt it in `_ScanTab._do_clean`**
+`QuickCleanupTab._confirm_clean_all` (added in Task 2 Step 6) is now dead code — remove the method entirely; `run_clean_safe`'s own `confirm="always"` path replaced it.
 
-In `src/modules/cleanup/tabs/_scan_tab.py`, `_do_clean` (line 477) currently builds its own `Worker` around `cs.delete_items(selected, stop_wuauserv=wu)`. Replace the block from `wu = self._wu_cache` through `self._thread_pool.start(self._clean_worker)` with:
+Run: `pytest tests/test_quick_cleanup_watchdog.py -v`
+Expected: PASS, all 4 tests (the 3 written in Task 2 plus this updated one).
+
+- [ ] **Step 7: Adopt it in `_ScanTab._do_clean`**
+
+In `src/modules/cleanup/tabs/_scan_tab.py`, `_do_clean` (line 477) currently confirms via `_confirm_large(self, total)`, then disables buttons, then builds its own `Worker`. Replace the method body from `if not _confirm_large(self, total): return` through the end of the method (`self._thread_pool.start(self._clean_worker)`) with:
 
 ```python
         def _on_done(deleted, errors):
             self._on_clean_done((deleted, errors))
 
-        worker = cs.run_clean_safe(
+        worker = csr.run_clean_safe(
             self, selected, stop_wuauserv=self._wu_cache, confirm="size_gated",
-            on_done=_on_done)
-        if worker is not None:
-            self._clean_worker = worker
-            self._workers.append(worker)
-        else:
-            self._cleaning = False
-            self._clean_btn.setEnabled(True)
-            self._quick_btn.setEnabled(True)
-            self._scan_btn.setEnabled(True)
+            on_done=_on_done, on_error=self._on_clean_error)
+        if worker is None:
+            return  # user declined the confirm -- nothing was disabled yet
+
+        self._cleaning = True
+        self._pending_freed = total
+        self._clean_btn.setEnabled(False)
+        self._quick_btn.setEnabled(False)
+        self._scan_btn.setEnabled(False)
+        self._status.setText("Cleaning…")
+        self._err_lbl.hide()
+        self._progress.setRange(0, 0)
+        self._progress.show()
+        self._clean_worker = worker
+        self._workers.append(worker)
 ```
 
-Leave `_on_clean_done` itself completely unchanged — it already does the right per-tab bookkeeping (`freed_bytes.emit`, `_do_scan()`, error label) and `run_clean_safe`'s `on_done` contract matches its existing `(deleted, errors)` tuple signature exactly (`_on_clean_done` currently takes one tuple argument, hence the small `_on_done` shim above that repacks it).
+Leave the method's first five lines unchanged (`if self._cleaning or self._result is None: return`, `selected = self._get_selected_items()`, `to_delete = [...]`, `if not to_delete: return`, `total = sum(...)`) — only the confirm-through-worker-start tail is replaced. Same reordering rationale as Step 5: the original confirmed before disabling buttons, so this keeps that order via `run_clean_safe`'s own internal confirm.
 
-Note this drops `_ScanTab`'s own inline confirm dialog entirely (the one built via `_confirm_large(self, total)`), since `run_clean_safe(..., confirm="size_gated", ...)` now does exactly that check internally.
+Leave `_on_clean_done` itself completely unchanged — it already does the right per-tab bookkeeping (`freed_bytes.emit`, `_do_scan()`, error label) and `run_clean_safe`'s `on_done` contract matches its existing `(deleted, errors)` tuple signature exactly (`_on_clean_done` currently takes one tuple argument, hence the small `_on_done` shim above that repacks it). Leave `_on_clean_error` itself unchanged too — it now gets passed directly as `on_error`.
 
-- [ ] **Step 7: Run the full Cleanup test suite**
+Add the import at the top of the file, alongside the existing `from modules.cleanup import cleanup_scanner as cs` line:
+
+```python
+from modules.cleanup import clean_safe_runner as csr
+```
+
+- [ ] **Step 8: Run the full Cleanup test suite**
 
 Run: `pytest tests/test_cleanup_run_clean_safe.py tests/test_quick_cleanup_watchdog.py tests/test_quick_cleanup_dedupe.py tests/test_quick_cleanup_legend_theme.py tests/test_cleanup_cancel_recovery.py tests/test_cleanup_scan_progress.py tests/test_cleanup_scan_watchdog.py tests/test_cleanup_late_signal.py -v`
 Expected: PASS. (`test_cleanup_cancel_recovery.py::test_scan_tab_is_usable_again_after_a_scan_is_cancelled` and `test_a_cancelled_scan_tab_rescans_on_next_activation` exercise `_ScanTab`'s scan path, not its clean path, so they're unaffected by this task.)
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add src/modules/cleanup/cleanup_scanner/scanners_system.py src/modules/cleanup/components/quick_cleanup_tab.py src/modules/cleanup/tabs/_scan_tab.py tests/test_cleanup_run_clean_safe.py tests/test_quick_cleanup_watchdog.py
+git add src/modules/cleanup/clean_safe_runner.py src/modules/cleanup/components/quick_cleanup_tab.py src/modules/cleanup/tabs/_scan_tab.py tests/test_cleanup_run_clean_safe.py tests/test_quick_cleanup_watchdog.py
 git commit -m "refactor(cleanup): consolidate three clean-all-safe implementations into run_clean_safe
 
 _OverviewTab, QuickCleanupTab, and _ScanTab each hand-rolled the same
 confirm/worker/delete/combine sequence around the same cs.delete_items
-call. One shared function now, with each caller keeping only its own
-button-disable specifics and re-scan trigger."
+call. One shared function now, in its own module rather than inside the
+Qt-free cleanup_scanner package, with each caller keeping only its own
+button-disable specifics, error handling and re-scan trigger."
 ```
 
 ---
@@ -1892,27 +2293,7 @@ See docs/superpowers/specs/2026-09-14-cleanup-quick-cleanup-merge-design.md"
 **Spec coverage:**
 - Merge depth (Quick replaces Overview outright) — Task 6. ✓
 - Auto-refresh kept, scoped to visible tab — Task 6 Step 6. ✓
-- One-click actions promoted + busy-guard fix — Task 3 (fix), Task 6 doesn't need to touch visibility since Task 3 already moves them out of `_adv_widget`. Confirmed no separate step was needed: re-checking, Task 3 only added busy-guards/per-action status — the actual "move out of `_adv_widget`" UI relocation was described in the spec's 2.2 but I did not add an explicit step for it above.
-
-**Gap found and fixed during self-review:** Task 3 fixes the busy-guard/shared-label bug but never actually moves `_build_one_click_panel`'s call site out of `_adv_widget` into the always-visible area, which the spec's decision table (§1.2) and Global Constraints both require. Adding that as Task 3 Step 3.5:
-
-- [ ] **Step 3.5 (Task 3): Move the one-click actions panel out of the hidden Advanced section**
-
-In `_setup_ui` (`quick_cleanup_tab.py`), find where `_build_one_click_panel(adv_lay)` is currently called (inside the `_adv_widget` construction block, per the file's own section comment `# One-click actions`). Move that call out of `_adv_widget` entirely: add a new `QVBoxLayout` section in the always-visible part of `_setup_ui` (right after the "Scrollable category groups" `scroll` widget is added to `layout`, before the `_adv_widget` block begins), and call `_build_one_click_panel` there instead:
-
-```python
-        # ── One-click actions (always visible -- moved out of Advanced,
-        # see the Cleanup/Quick Cleanup merge spec) ──
-        one_click_header = QLabel("Quick Actions")
-        one_click_header.setStyleSheet("font-size: 14px; font-weight: bold; padding: 4px 0;")
-        layout.addWidget(one_click_header)
-        self._build_one_click_panel(layout)
-```
-
-Remove the old call site and its now-empty surrounding comment from inside the `_adv_widget` block, leaving `_adv_widget` holding only the extra advanced category legend cards (`self._adv_legend_layout`).
-
-Re-run Task 3's own test suite (`pytest tests/test_quick_cleanup_one_click_actions.py -v`) plus a quick manual check that the buttons render above the "Show Advanced ▼" toggle, not below it, to confirm this didn't silently get left inside the hidden widget.
-
+- One-click actions promoted out of Advanced + busy-guard fix — Task 3 Steps 3-7 (panel relocation in Step 4, busy-guards in Steps 5-7). ✓
 - Confirm style = always for the merged tab — Task 5 Step 5 (`confirm="always"`). ✓
 - Watchdog with a real measured constant, not copied — Task 2 gives it `300_000` with a comment explaining the reasoning (more categories than Overview's own sweep), rather than a literal fresh measurement on this machine. **Judgment call, stated plainly**: getting a real measurement requires running the full scan once in a controlled way and is better done as a follow-up manual tuning pass after Task 8's manual real-machine check (Step 8 already has the person opening the tab and watching a real scan) — noting the actual observed time there and adjusting `SCAN_WATCHDOG_MS` if it's wildly off from 300s is a reasonable one-line follow-up, not a blocking step in this plan.
 - Category cards clickable — Task 4. ✓

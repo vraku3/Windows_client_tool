@@ -5,6 +5,7 @@ additions to this same file.
 import tempfile
 
 import pytest
+from PyQt6.QtWidgets import QMessageBox
 
 
 def _module(qapp):
@@ -185,5 +186,138 @@ def test_reset_base_creates_a_restore_point_before_running_dism(qapp, monkeypatc
 
         assert len(restore_calls) == 1
         assert len(dism_calls) == 1
+    finally:
+        app.shutdown()
+
+
+def _settle(qapp):
+    from PyQt6.QtCore import QThreadPool
+    import time
+    QThreadPool.globalInstance().waitForDone(5000)
+    deadline = time.time() + 1
+    while time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
+def test_sfc_scan_cancelled_confirmation_does_not_run(qapp, monkeypatch):
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Cancel)
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_sfc_scan",
+            lambda: (_ for _ in ()).throw(AssertionError("must not run when cancelled")))
+
+        module._run_sfc_scan()
+
+        assert module._sfc_btn.isEnabled() is True
+    finally:
+        app.shutdown()
+
+
+def test_sfc_scan_confirmed_disables_button_and_logs_history(qapp, monkeypatch):
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_sfc_scan",
+            lambda: DismResult("sfc /scannow", 0, "No integrity violations found."))
+        history_calls = []
+        monkeypatch.setattr(
+            "modules.system_health.history.append_run",
+            lambda app_data_dir, **kw: history_calls.append(kw))
+
+        module._run_sfc_scan()
+        assert module._sfc_btn.isEnabled() is False, "button should disable while the scan runs"
+
+        _settle(qapp)
+
+        assert module._sfc_btn.isEnabled() is True
+        assert len(history_calls) == 1
+        assert history_calls[0]["action"] == "sfc_scan"
+    finally:
+        app.shutdown()
+
+
+def test_restore_health_cancelled_confirmation_does_not_run(qapp, monkeypatch):
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Cancel)
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_restore_health",
+            lambda: (_ for _ in ()).throw(AssertionError("must not run when cancelled")))
+
+        module._run_restore_health()
+
+        assert module._restore_health_btn.isEnabled() is True
+    finally:
+        app.shutdown()
+
+
+def test_restore_health_confirmed_disables_button_and_logs_history(qapp, monkeypatch):
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_restore_health",
+            lambda: DismResult("dism /online /cleanup-image /restorehealth", 0, "Repaired."))
+        history_calls = []
+        monkeypatch.setattr(
+            "modules.system_health.history.append_run",
+            lambda app_data_dir, **kw: history_calls.append(kw))
+
+        module._run_restore_health()
+        assert module._restore_health_btn.isEnabled() is False, "button should disable while running"
+
+        _settle(qapp)
+
+        assert module._restore_health_btn.isEnabled() is True
+        assert len(history_calls) == 1
+        assert history_calls[0]["action"] == "restore_health"
+    finally:
+        app.shutdown()
+
+
+def test_chkdsk_schedule_cancelled_confirmation_does_not_run(qapp, monkeypatch):
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Cancel)
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_chkdsk_schedule",
+            lambda: (_ for _ in ()).throw(AssertionError("must not run when cancelled")))
+
+        module._run_chkdsk_schedule()
+
+        assert module._chkdsk_btn.isEnabled() is True
+    finally:
+        app.shutdown()
+
+
+def test_chkdsk_schedule_confirmed_disables_button_and_logs_history(qapp, monkeypatch):
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Ok)
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_chkdsk_schedule",
+            lambda: DismResult("chkdsk C: /f /r /x", 0, "Scheduled."))
+        history_calls = []
+        monkeypatch.setattr(
+            "modules.system_health.history.append_run",
+            lambda app_data_dir, **kw: history_calls.append(kw))
+
+        module._run_chkdsk_schedule()
+        assert module._chkdsk_btn.isEnabled() is False, "button should disable while scheduling runs"
+
+        _settle(qapp)
+
+        assert module._chkdsk_btn.isEnabled() is True
+        assert len(history_calls) == 1
+        assert history_calls[0]["action"] == "chkdsk_schedule"
     finally:
         app.shutdown()

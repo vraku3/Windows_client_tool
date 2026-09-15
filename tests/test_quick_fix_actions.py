@@ -41,7 +41,6 @@ def output():
 # ── the commands are the commands intended ─────────────────────────────
 
 @pytest.mark.parametrize("action,expected", [
-    (fix_actions.run_sfc, ["sfc", "/scannow"]),
     (fix_actions.flush_dns, ["ipconfig", "/flushdns"]),
     (fix_actions.reset_winsock, ["netsh", "winsock", "reset"]),
 ])
@@ -49,45 +48,6 @@ def test_the_repair_runs_the_command_it_says_it_does(action, expected, ran, outp
     lines, cb = output
     action(cb)
     assert expected in ran, f"ran {ran} instead"
-
-
-def test_dism_asks_for_restorehealth_not_just_a_scan():
-    """CheckHealth and ScanHealth only report; RestoreHealth is the one that
-    repairs, and the action's own description promises a repair."""
-    calls = []
-    import modules.quick_fix.fix_actions as fa
-    original = fa._run_cmd
-    fa._run_cmd = lambda cmd, cb, input_bytes=None: (calls.append(list(cmd)), 0)[1]
-    try:
-        fa.run_dism(lambda _line: None)
-    finally:
-        fa._run_cmd = original
-    flat = " ".join(calls[0]).lower()
-    assert "/restorehealth" in flat
-
-
-def test_chkdsk_is_scheduled_not_run_now(ran, output):
-    """chkdsk on the system volume cannot run live; it answers a Y/N prompt
-    and schedules itself. Sending that answer is the whole trick, and
-    without it the action hangs on a prompt nobody can see."""
-    lines, cb = output
-    captured = {}
-
-    def fake_run_cmd(cmd, output_cb, input_bytes=None):
-        captured["cmd"] = list(cmd)
-        captured["input"] = input_bytes
-        return 0
-
-    import modules.quick_fix.fix_actions as fa
-    original = fa._run_cmd
-    fa._run_cmd = fake_run_cmd
-    try:
-        fa.run_chkdsk(cb)
-    finally:
-        fa._run_cmd = original
-
-    assert "chkdsk" in captured["cmd"]
-    assert captured["input"], "no answer sent to chkdsk's Y/N prompt"
 
 
 # ── failures are reported, not swallowed ───────────────────────────────

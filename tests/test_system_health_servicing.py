@@ -6,6 +6,7 @@ import subprocess
 
 from modules.system_health.servicing import (
     DismResult, run_scan_health, run_component_cleanup, run_reset_base,
+    run_sfc_scan, run_restore_health, run_chkdsk_schedule,
 )
 
 
@@ -74,3 +75,39 @@ def test_every_call_passes_create_no_window(monkeypatch):
     run_scan_health()
 
     assert captured["kwargs"].get("creationflags") == 0x08000000
+
+
+def test_run_sfc_scan_builds_the_documented_command(monkeypatch):
+    fake, captured = _fake_run(returncode=0, stdout="clean")
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    result = run_sfc_scan()
+
+    assert captured["cmd"] == ["sfc", "/scannow"]
+    assert isinstance(result, DismResult)
+    assert result.output == "clean"
+
+
+def test_run_restore_health_asks_for_restorehealth_not_just_a_scan(monkeypatch):
+    """CheckHealth/ScanHealth only report; RestoreHealth is the one that
+    repairs -- ported from the Quick Fix test this replaces."""
+    fake, captured = _fake_run(returncode=0, stdout="restored")
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    result = run_restore_health()
+
+    assert "/restorehealth" in " ".join(captured["cmd"]).lower()
+    assert result.output == "restored"
+
+
+def test_run_chkdsk_schedule_answers_the_yn_prompt(monkeypatch):
+    """chkdsk on the system volume cannot run live; it must be sent the
+    Y answer or it hangs on a prompt nobody can see -- ported from the
+    Quick Fix test this replaces."""
+    fake, captured = _fake_run(returncode=0, stdout="scheduled")
+    monkeypatch.setattr(subprocess, "run", fake)
+
+    run_chkdsk_schedule()
+
+    assert "chkdsk" in captured["cmd"]
+    assert captured["kwargs"].get("input"), "no answer sent to chkdsk's Y/N prompt"

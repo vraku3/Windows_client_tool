@@ -78,20 +78,6 @@ def _start_service(name: str, output_cb: Callable[[str], None]) -> None:
         output_cb(f"Could not start {name}: {e}")
 
 
-def run_sfc(output_cb: Callable[[str], None]) -> None:
-    _run_cmd(["sfc", "/scannow"], output_cb)
-
-
-def run_dism(output_cb: Callable[[str], None]) -> None:
-    _run_cmd(["dism", "/online", "/cleanup-image", "/restorehealth"], output_cb)
-
-
-def run_chkdsk(output_cb: Callable[[str], None]) -> None:
-    output_cb("Scheduling CHKDSK for next reboot...")
-    _run_cmd(["chkdsk", "C:", "/f", "/r", "/x"], output_cb, input_bytes=b"Y\n")
-    output_cb("CHKDSK scheduled. Reboot to run.")
-
-
 def rebuild_icon_cache(output_cb: Callable[[str], None]) -> None:
     output_cb("Stopping Explorer...")
     subprocess.run(
@@ -400,12 +386,6 @@ def _hibernation_precondition() -> Optional[str]:
 
 ALL_ACTIONS: List[FixAction] = [
     # System Repairs
-    FixAction("sfc", "SFC Scan", "Scan and repair protected Windows files",
-              "System Repairs", fn=run_sfc),
-    FixAction("dism", "DISM RestoreHealth", "Repair the Windows component store",
-              "System Repairs", fn=run_dism),
-    FixAction("chkdsk", "CHKDSK Schedule", "Schedule disk check for next reboot",
-              "System Repairs", reboot_required=True, fn=run_chkdsk),
     FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup on C: drive",
               "System Repairs", fn=run_disk_cleanup),
     FixAction("perf_reset", "Reset Performance Counters",

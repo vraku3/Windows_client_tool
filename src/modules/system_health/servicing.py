@@ -17,11 +17,45 @@ class DismResult:
 
 def run_scan_health(timeout: int = 600) -> DismResult:
     """DISM /Online /Cleanup-Image /ScanHealth -- checks the component
-    store for corruption. Does not repair anything (that's /RestoreHealth,
-    not offered here -- repairing corruption this module merely detects
-    is real scope beyond "system health findings")."""
+    store for corruption. Does not repair anything itself; see
+    `run_restore_health` for the repair action."""
     cmd = ["dism", "/Online", "/Cleanup-Image", "/ScanHealth"]
     proc = subprocess.run(cmd, capture_output=True, text=True,
+                          timeout=timeout, creationflags=CREATE_NO_WINDOW)
+    return DismResult(" ".join(cmd), proc.returncode,
+                      (proc.stdout or "") + (proc.stderr or ""))
+
+
+def run_sfc_scan(timeout: int = 900) -> DismResult:
+    """sfc /scannow -- scans and repairs protected Windows system files.
+    Moved from Quick Fix (fix_actions.run_sfc) -- same command, same
+    shape, relocated alongside the other servicing/repair operations."""
+    cmd = ["sfc", "/scannow"]
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          timeout=timeout, creationflags=CREATE_NO_WINDOW)
+    return DismResult(" ".join(cmd), proc.returncode,
+                      (proc.stdout or "") + (proc.stderr or ""))
+
+
+def run_restore_health(timeout: int = 1800) -> DismResult:
+    """DISM /Online /Cleanup-Image /RestoreHealth -- repairs component
+    store corruption ScanHealth detects. Moved from Quick Fix
+    (fix_actions.run_dism); this module's ScanHealth previously
+    explicitly deferred offering a repair action -- this is that
+    deferred action, now added."""
+    cmd = ["dism", "/online", "/cleanup-image", "/restorehealth"]
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          timeout=timeout, creationflags=CREATE_NO_WINDOW)
+    return DismResult(" ".join(cmd), proc.returncode,
+                      (proc.stdout or "") + (proc.stderr or ""))
+
+
+def run_chkdsk_schedule(timeout: int = 60) -> DismResult:
+    """Schedules CHKDSK C: /f /r /x for next reboot by answering the
+    Y/N prompt. Moved from Quick Fix (fix_actions.run_chkdsk) -- same
+    command and same answered-prompt trick, relocated."""
+    cmd = ["chkdsk", "C:", "/f", "/r", "/x"]
+    proc = subprocess.run(cmd, input="Y\n", capture_output=True, text=True,
                           timeout=timeout, creationflags=CREATE_NO_WINDOW)
     return DismResult(" ".join(cmd), proc.returncode,
                       (proc.stdout or "") + (proc.stderr or ""))

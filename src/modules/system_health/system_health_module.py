@@ -174,6 +174,32 @@ class SystemHealthModule(BaseModule):
         self._reset_base_btn.clicked.connect(self._on_reset_base_clicked)
         lay.addWidget(self._reset_base_btn)
 
+        self._sfc_btn = QPushButton("🩹  SFC Scan")
+        self._sfc_btn.setToolTip(
+            "Runs: sfc /scannow\n"
+            "Scans and repairs protected Windows system files. "
+            "Can take 10-15 minutes."
+        )
+        self._sfc_btn.clicked.connect(self._run_sfc_scan)
+        lay.addWidget(self._sfc_btn)
+
+        self._restore_health_btn = QPushButton("🩹  DISM RestoreHealth")
+        self._restore_health_btn.setToolTip(
+            "Runs: dism /Online /Cleanup-Image /RestoreHealth\n"
+            "Repairs component-store corruption ScanHealth detects. "
+            "Can take 10-30 minutes."
+        )
+        self._restore_health_btn.clicked.connect(self._run_restore_health)
+        lay.addWidget(self._restore_health_btn)
+
+        self._chkdsk_btn = QPushButton("🩹  Schedule CHKDSK")
+        self._chkdsk_btn.setToolTip(
+            "Runs: chkdsk C: /f /r /x\n"
+            "Schedules a full disk check and repair for the next reboot."
+        )
+        self._chkdsk_btn.clicked.connect(self._run_chkdsk_schedule)
+        lay.addWidget(self._chkdsk_btn)
+
         lay.addWidget(self._servicing_out)
         lay.addStretch()
 
@@ -242,6 +268,115 @@ class SystemHealthModule(BaseModule):
 
         def _err(e: str):
             self._component_cleanup_btn.setEnabled(True)
+            self._servicing_out.setText(f"Error: {e}")
+
+        w = Worker(_run)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._servicing_pool.start(w)
+
+    def _run_sfc_scan(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        mb = QMessageBox(self._tabs)
+        mb.setWindowTitle("SFC Scan")
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setText("Runs: sfc /scannow\n\nScans and repairs protected Windows "
+                   "system files. Can take 10-15 minutes. Continue?")
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        self._sfc_btn.setEnabled(False)
+        self._servicing_out.setText("Running SFC scan (can take 10-15 minutes)...")
+
+        def _run(_worker):
+            from modules.system_health import servicing
+            return servicing.run_sfc_scan()
+
+        def _done(result):
+            self._sfc_btn.setEnabled(True)
+            self._servicing_out.setText(
+                f"SFC scan finished (exit {result.returncode})\n{result.output[:500]}")
+            from modules.system_health import history
+            history.append_run(self.app.app_data_dir, action="sfc_scan",
+                               command=result.command, returncode=result.returncode)
+
+        def _err(e: str):
+            self._sfc_btn.setEnabled(True)
+            self._servicing_out.setText(f"Error: {e}")
+
+        w = Worker(_run)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._servicing_pool.start(w)
+
+    def _run_restore_health(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        mb = QMessageBox(self._tabs)
+        mb.setWindowTitle("DISM RestoreHealth")
+        mb.setIcon(QMessageBox.Icon.Information)
+        mb.setText("Runs: dism /Online /Cleanup-Image /RestoreHealth\n\n"
+                   "Repairs component-store corruption. Can take 10-30 minutes. Continue?")
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        self._restore_health_btn.setEnabled(False)
+        self._servicing_out.setText("Running DISM RestoreHealth (can take 10-30 minutes)...")
+
+        def _run(_worker):
+            from modules.system_health import servicing
+            return servicing.run_restore_health()
+
+        def _done(result):
+            self._restore_health_btn.setEnabled(True)
+            self._servicing_out.setText(
+                f"RestoreHealth finished (exit {result.returncode})\n{result.output[:500]}")
+            from modules.system_health import history
+            history.append_run(self.app.app_data_dir, action="restore_health",
+                               command=result.command, returncode=result.returncode)
+
+        def _err(e: str):
+            self._restore_health_btn.setEnabled(True)
+            self._servicing_out.setText(f"Error: {e}")
+
+        w = Worker(_run)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._servicing_pool.start(w)
+
+    def _run_chkdsk_schedule(self) -> None:
+        from PyQt6.QtWidgets import QMessageBox
+        mb = QMessageBox(self._tabs)
+        mb.setWindowTitle("Schedule CHKDSK")
+        mb.setIcon(QMessageBox.Icon.Warning)
+        mb.setText("Runs: chkdsk C: /f /r /x\n\n"
+                   "Schedules a full disk check and repair for the NEXT REBOOT. "
+                   "Continue?")
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        if mb.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        self._chkdsk_btn.setEnabled(False)
+        self._servicing_out.setText("Scheduling CHKDSK for next reboot...")
+
+        def _run(_worker):
+            from modules.system_health import servicing
+            return servicing.run_chkdsk_schedule()
+
+        def _done(result):
+            self._chkdsk_btn.setEnabled(True)
+            self._servicing_out.setText(
+                f"CHKDSK scheduled (exit {result.returncode}). Reboot to run.\n{result.output[:500]}")
+            from modules.system_health import history
+            history.append_run(self.app.app_data_dir, action="chkdsk_schedule",
+                               command=result.command, returncode=result.returncode)
+
+        def _err(e: str):
+            self._chkdsk_btn.setEnabled(True)
             self._servicing_out.setText(f"Error: {e}")
 
         w = Worker(_run)

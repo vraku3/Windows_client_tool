@@ -307,6 +307,61 @@ untouched.
 - Full suite + a manual grep sweep (`grep -rn "_build_one_click_panel\|_action_buttons"`)
   confirming no dangling references survive the panel deletion.
 
+### §3.5 Additional improvements (approved alongside Part B)
+
+Three follow-up suggestions, raised after the design above was approved,
+are folded into this same round since they touch the same files:
+
+1. **Search/filter bar for Quick Fix.** Post-merge it holds ~23 actions
+   across 5 categories (System, Network, Windows Update, Print, Cleanup)
+   — too many to scan visually without a filter, the same reasoning that
+   already gave Debloat, Tweaks, and Store Apps a search box. Add a
+   `QLineEdit` above the scroll area in `QuickFixModule.create_widget()`;
+   `textChanged` filters on `action.title`/`action.description`
+   substring match (case-insensitive) by hiding non-matching `_FixCard`
+   widgets, and hides a category's header label too when every card
+   under it is hidden (never removes/rebuilds the grid — same "hide,
+   don't rebuild" principle Store Apps' `_apply_apps_filter` already
+   uses for its table rows).
+
+2. **Run-history log for Quick Fix.** Every other "runs things" module
+   (Debloat, Cleanup, Updates, System Health) logs what ran and when to
+   its own capped JSON file; Quick Fix is the one that doesn't. Add
+   `src/modules/quick_fix/quick_fix_history.py`, mirroring
+   `debloat_history.py`'s exact shape: `record(action: str, outcome:
+   str) -> None` (appends `{"at": isoformat, "action": title, "outcome":
+   "ok"|"error"|"cancelled"}`, caps at 200, writes to
+   `%APPDATA%/WindowsTweaker/quick_fix_history.json`) and `recent(limit:
+   int = 20) -> List[dict]`. `_FixCard._on_done`/`_on_error`/`cancel()`
+   each call `record()` with the right outcome. Add a "View History"
+   toolbar button next to the existing reboot-pending banner, opening a
+   `QuickFixHistoryDialog` that lists `recent(20)` — a direct copy of
+   `DebloatHistoryDialog`'s structure (`QListWidget` + Close button).
+
+3. **Discoverability nudge for the retired Performance Tuner.** Someone
+   who used to click "Performance Tuner" in the sidebar has no obvious
+   replacement once it's gone. Add one `QLabel` under the Tweaks module's
+   existing preset toolbar (`_build_preset_toolbar()`), muted styling,
+   shown only when the preset combo's current selection is not already
+   "Performance": `"Looking for what used to be Performance Tuner? Try
+   the Performance preset above."` No first-run/dismissal state to
+   track — it is just always there when a different preset (or none) is
+   selected, and disappears once the user has the Performance preset
+   loaded, which reads as confirmation rather than nagging.
+
+### §3.6 Testing (additional improvements)
+
+- Quick Fix search: a test that typing a substring hides non-matching
+  cards and their category header stays/hides correctly when partially
+  vs fully filtered out.
+- Quick Fix history: `record`/`recent` round-trip test (mirrors
+  `test_debloat_history.py` if one exists, else a fresh small test file);
+  a test that running a card (mocked success/error/cancel) calls
+  `record()` with the right outcome string.
+- Tweaks nudge label: a test that the label is visible when the preset
+  combo is on anything other than "Performance" and hidden when it is on
+  "Performance".
+
 ## §4. Out of scope (deferred, not part of this spec)
 
 Two weaker candidates surfaced during brainstorming but were explicitly

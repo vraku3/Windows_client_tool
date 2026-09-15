@@ -1,8 +1,8 @@
 """debloat_scanner — detects installed bloatware apps and tweak states."""
 import logging
-from typing import Dict
+from typing import Dict, Optional
 
-from core.appx_service import installed_names
+from core.appx_service import installed_names, installed_names_or_none
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,18 @@ def get_installed_packages() -> Dict[str, str]:
         if name in KNOWN_PACKAGES:
             installed[name] = name
     return installed
+
+
+def get_installed_packages_or_none() -> Optional[Dict[str, str]]:
+    """Same as `get_installed_packages()`, but returns `None` when the
+    underlying AppX enumeration could not be completed at all, instead of
+    silently reporting that as "0 bloatware apps installed" -- a query that
+    is refused, times out, or is killed after being wedged is a failed
+    scan, not a clean one."""
+    names = installed_names_or_none()
+    if names is None:
+        return None
+    return {name: name for name in names if name in KNOWN_PACKAGES}
 
 
 PROTECTED_APPS = {

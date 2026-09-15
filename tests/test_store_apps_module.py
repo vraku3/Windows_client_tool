@@ -216,6 +216,32 @@ def test_module_creates_widget_and_sorts(qapp, tmp_path):
     assert removable == ["✅ Yes", "❌ System", "✅ Yes"]
 
 
+def test_on_activate_loads_apps_on_first_activation_only(qapp, tmp_path):
+    """Regression test: the tab used to sit on its "Click Refresh" empty
+    state until a manual click or the 120s auto-refresh's first tick --
+    reported as "we have to hit refresh, it should autorefresh". The
+    first-load guard (core/base_module.py's documented pattern, already
+    used elsewhere in this codebase) must fire exactly once."""
+    from modules.store_apps.store_apps_module import StoreAppsModule
+
+    mod = StoreAppsModule()
+    mod.on_start(_make_fake_app(tmp_path))
+    mod.create_widget()
+
+    calls = []
+    mod._load_apps = lambda: calls.append(1)
+
+    mod.on_activate()
+    assert calls == [1]
+
+    # Leaving and returning to the tab must not re-trigger a load -- the
+    # 120s get_refresh_interval() timer and the manual Refresh button
+    # already cover subsequent loads.
+    mod.on_deactivate()
+    mod.on_activate()
+    assert calls == [1]
+
+
 def test_module_empty_state(qapp, tmp_path):
     from modules.store_apps.store_apps_module import StoreAppsModule
 

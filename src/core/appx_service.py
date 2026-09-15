@@ -78,6 +78,66 @@ def _clean(data) -> List[dict]:
     ]
 
 
+#: Hard ceiling on the PowerShell query itself. Kept well short of the
+#: watchdogs above it (Debloat/Store Apps show no other timeout at all) so a
+#: stuck query surfaces as a failed scan, never an indefinite "Scanning...".
+_ENUMERATE_TIMEOUT_SECONDS = 60
+
+
+def _run_ps_bounded(cmd: str, timeout: float = _ENUMERATE_TIMEOUT_SECONDS
+                     ) -> Optional[Tuple[int, str, str]]:
+    """Run a PowerShell command and guarantee return within `timeout` (plus a
+    short grace period), or `None` if it could not be reaped in time.
+
+    `subprocess.run(..., timeout=...)` does NOT guarantee this on Windows:
+    on a timeout it calls `Popen.kill()` -- which only signals the immediate
+    `powershell.exe` process, not any descendant it spawned -- and then
+    (`subprocess.py`'s own Windows path) calls `communicate()` a SECOND time
+    with no timeout at all, to drain leftover output. If a descendant is
+    still alive and holding the inherited stdout/stderr pipe handles open
+    (observed on this machine: Smart App Control intercepting a spawned
+    child of an unsigned/unreputable exe under elevation -- see
+    driver-manager-vendor-updates memory), that second read blocks on EOF
+    forever, turning a declared 60s timeout into the exact "stuck on
+    Scanning... for 20+ minutes" symptom reported against Debloat's Apps
+    tab, with the code never reaching a `except` block that could report it.
+
+    Fix: kill the WHOLE process tree (`taskkill /T /F`, not just the one
+    PID) before ever attempting to drain output, and cap that drain itself
+    with its own short timeout -- so a wedged descendant costs a few
+    seconds, never forever.
+    """
+    proc = subprocess.Popen(
+        ["powershell", "-NoProfile", "-Command", cmd],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        return proc.returncode, stdout, stderr
+    except subprocess.TimeoutExpired:
+        logger.warning("AppxPackage query exceeded %ss -- killing process tree (pid %s)",
+                       timeout, proc.pid)
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        try:
+            # Bounded drain only -- never the unbounded second read that
+            # causes the real hang. A tree-kill that still can't be reaped
+            # this quickly means something is holding a handle open no
+            # matter what; give up and report the query as failed instead
+            # of blocking the caller further.
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "AppxPackage query's process tree (pid %s) still held its "
+                "output pipe open %ss after taskkill /T /F -- giving up on "
+                "the drain and reporting the query as failed",
+                proc.pid, 5)
+        return None
+
+
 def _enumerate() -> Optional[List[dict]]:
     """Every installed AppX package, or `None` when every attempt was
     refused, errored, or produced unparseable output -- NEVER collapsed
@@ -94,18 +154,16 @@ def _enumerate() -> Optional[List[dict]]:
     for all_users in attempts:
         cmd = ("Get-AppxPackage -AllUsers | " if all_users
                else "Get-AppxPackage | ") + _SELECT
-        result = subprocess.run(
-            ["powershell", "-Command", cmd],
-            capture_output=True, text=True, timeout=60,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
+        outcome = _run_ps_bounded(cmd)
+        if outcome is None:
             continue
-        if any(marker in (result.stderr + result.stdout).lower()
-               for marker in refused):
+        returncode, stdout, stderr = outcome
+        if returncode != 0 or not stdout.strip():
+            continue
+        if any(marker in (stderr + stdout).lower() for marker in refused):
             continue
         try:
-            return _clean(json.loads(result.stdout))
+            return _clean(json.loads(stdout))
         except json.JSONDecodeError:
             logger.warning("Failed to parse AppxPackage output")
     logger.warning("AppxPackage enumeration failed -- every attempt was "
@@ -135,6 +193,17 @@ def installed_names() -> List[str]:
     uninstall decision.
     """
     return [a.get("Name", "") for a in dedupe_by_name(fetch_packages())]
+
+
+def installed_names_or_none() -> Optional[List[str]]:
+    """Same as `installed_names()`, but preserves a failed enumeration
+    instead of collapsing it to an empty list -- Debloat's scan uses this
+    so a query that could not complete is reported as a failed scan, never
+    as "0 bloatware apps installed"."""
+    packages = fetch_packages_or_none()
+    if packages is None:
+        return None
+    return [a.get("Name", "") for a in dedupe_by_name(packages)]
 
 
 def dir_size(path: str, max_entries: int = 30000) -> int:

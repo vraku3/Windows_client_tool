@@ -29,7 +29,7 @@ from modules.debloat import debloat_presets as dp
 from modules.debloat import debloat_scanner
 from modules.debloat.debloat_session import DebloatSession
 from modules.debloat.debloat_scanner import (
-    get_installed_packages, PROTECTED_APPS, PROTECTED_REASONS,
+    get_installed_packages_or_none, PROTECTED_APPS, PROTECTED_REASONS,
 )
 from modules.debloat.debloat_search_provider import DebloatSearchProvider
 from modules.debloat.run_all_tab import RunAllTab, apply_app_entries
@@ -477,11 +477,23 @@ class DebloatToolsModule(BaseModule):
         self.app.thread_pool.start(w)
 
     def _do_scan(self, worker: Worker) -> Dict:
-        installed = get_installed_packages()
+        # `_or_none` distinguishes a query that failed outright (refused,
+        # timed out, or its process tree had to be killed after wedging --
+        # see appx_service._run_ps_bounded) from one that genuinely found
+        # zero bloatware apps. Collapsing the two used to mean a failed
+        # scan quietly rendered as "Scan complete -- 0 bloatware app(s)
+        # detected", which reads as a clean machine rather than a scan
+        # that never actually ran.
+        installed = get_installed_packages_or_none()
+        if installed is None:
+            raise RuntimeError(
+                "Could not enumerate installed apps (query was refused, "
+                "timed out, or was killed after not responding)")
         return {"installed": list(installed.keys())}
 
     def _on_scanned(self, result: Dict) -> None:
         self._scan_btn.setEnabled(True)
+        self._apps_status.setStyleSheet("font-size: 13px; padding: 4px;")
         installed: List[str] = result.get("installed", [])
         self._installed_apps = installed
         logger.info("Debloat scan complete \u2014 %d bloatware app(s) detected", len(installed))
@@ -740,6 +752,8 @@ class DebloatToolsModule(BaseModule):
     def _on_scan_error(self, err: str) -> None:
         self._scan_btn.setEnabled(True)
         self._apps_status.setText(f"Scan failed: {err}")
+        self._apps_status.setStyleSheet(
+            f"font-size: 13px; padding: 4px; color: {semantic('error')};")
         logger.error("Debloat scan error: %s", err)
 
     def _on_apply_error(self, err: str) -> None:

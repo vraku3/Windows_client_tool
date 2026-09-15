@@ -400,6 +400,18 @@ def test_first_activation_triggers_a_scan(monkeypatch):
     assert scanned == [1]
 
 
+def test_a_failed_enumeration_reports_a_failed_scan_not_zero_apps(monkeypatch):
+    """Regression test: a query that could not complete (refused, timed
+    out, or its process tree killed after wedging -- see
+    appx_service._run_ps_bounded) must surface as "Scan failed", never as
+    a misleadingly clean "Scan complete -- 0 bloatware app(s) detected"."""
+    mod = _module()
+    monkeypatch.setattr(dm, "get_installed_packages_or_none", lambda: None)
+    import pytest
+    with pytest.raises(RuntimeError):
+        mod._do_scan(worker=None)
+
+
 def test_status_line_breaks_down_by_category(monkeypatch):
     mod = _module()
     monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {

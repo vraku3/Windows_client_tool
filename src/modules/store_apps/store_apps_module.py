@@ -246,6 +246,12 @@ class StoreAppsModule(BaseModule):
         self._size_signals.size_ready.connect(self._on_size_ready)
         self._debloat_packages: Set[str] = set()
         self._row_index: Dict[str, int] = {}
+        #: First-load guard (core/base_module.py's documented pattern) --
+        #: without this the table stayed on its "Click Refresh" empty state
+        #: until either a manual click or the 120s auto-refresh's first
+        #: tick, which read as "auto-refresh doesn't work" to a user opening
+        #: the tab fresh.
+        self._loaded = False
         #: C07 follow-up: has `_on_apps_loaded()` already run its one-time
         #: resizeColumnsToContents() fit this session? See `_on_apps_loaded`.
         self._columns_fitted_this_session = False
@@ -410,6 +416,11 @@ class StoreAppsModule(BaseModule):
 
     def get_refresh_interval(self) -> Optional[int]:
         return 120_000
+
+    def on_activate(self) -> None:
+        if not self._loaded:
+            self._loaded = True
+            self._load_apps()
 
     def refresh_data(self) -> None:
         self._load_apps()

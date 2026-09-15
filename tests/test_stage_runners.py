@@ -3,7 +3,7 @@ from modules.updates.stage_runners import STAGE_LABELS, STAGE_RUNNERS, normalize
 
 def test_stage_runners_has_entry_for_every_label():
     assert set(STAGE_RUNNERS.keys()) == set(STAGE_LABELS.keys())
-    assert set(STAGE_RUNNERS.keys()) == {"wu", "winget", "store", "cleanup", "dism"}
+    assert set(STAGE_RUNNERS.keys()) == {"wu", "winget", "store", "cleanup", "dism", "health"}
 
 
 def test_normalize_stage_data_empty_input():
@@ -44,3 +44,43 @@ def test_normalize_stage_data_tolerates_none_stage_values():
     assert result["wu_results"] == []
     assert result["winget_results"] == []
     assert result["cleanup_freed"] == 0
+
+
+def test_run_health_stage_calls_findings_not_servicing(monkeypatch):
+    from modules.updates.stage_runners import run_health_stage
+
+    calls = []
+    monkeypatch.setattr(
+        "modules.system_health.findings.all_findings",
+        lambda: calls.append("findings") or [])
+    # If run_health_stage ever imports/calls anything from servicing.py,
+    # this makes it fail loudly rather than silently running real DISM.
+    import modules.system_health.servicing as servicing_module
+    def _forbidden(*a, **k):
+        raise AssertionError("run_health_stage must never call servicing.py")
+    monkeypatch.setattr(servicing_module, "run_scan_health", _forbidden)
+    monkeypatch.setattr(servicing_module, "run_component_cleanup", _forbidden)
+    monkeypatch.setattr(servicing_module, "run_reset_base", _forbidden)
+
+    class _FakeApp:
+        app_data_dir = "."
+
+    import tempfile
+    fake_app = _FakeApp()
+    fake_app.app_data_dir = tempfile.mkdtemp()
+
+    result = run_health_stage(fake_app, lambda msg: None, lambda: False)
+
+    assert calls == ["findings"]
+    assert isinstance(result, dict)
+
+
+def test_health_is_a_valid_unattended_stage():
+    from modules.updates.unattended_runner import VALID_STAGES
+    assert "health" in VALID_STAGES
+
+
+def test_health_stage_is_registered():
+    from modules.updates.stage_runners import STAGE_RUNNERS, STAGE_LABELS
+    assert "health" in STAGE_RUNNERS
+    assert "health" in STAGE_LABELS

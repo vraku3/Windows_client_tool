@@ -167,12 +167,30 @@ def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     return {"output": output}
 
 
+def run_health_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
+    """Read-only System Health findings only -- never ScanHealth,
+    Component Cleanup, or Reset Base. Writes its own result to
+    System Health's own history file (a separate stream from Update
+    Center's, per that module's own design), not into this function's
+    return dict, which stays a plain {findings_count} for STAGE_RUNNERS'
+    homogeneous -> dict contract."""
+    from modules.system_health import findings, history
+    log("System Health: checking for pending servicing, orphaned tasks, and upgrade headroom...")
+    results = findings.all_findings()
+    for finding in results:
+        log(f"  [{finding.severity}] {finding.title}")
+    history.append_run(app.app_data_dir, action="unattended_findings",
+                       command="", returncode=0, findings_count=len(results))
+    return {"findings_count": len(results)}
+
+
 STAGE_RUNNERS = {
     "wu": run_wu_stage,
     "winget": run_winget_stage,
     "store": run_store_stage,
     "cleanup": run_cleanup_safe_stage,
     "dism": run_dism_stage,
+    "health": run_health_stage,
 }
 
 STAGE_LABELS = {
@@ -181,6 +199,7 @@ STAGE_LABELS = {
     "store": "Microsoft Store",
     "cleanup": "Cleanup (safe)",
     "dism": "DISM WinSxS cleanup",
+    "health": "System Health findings",
 }
 
 

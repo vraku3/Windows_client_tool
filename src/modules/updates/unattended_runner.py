@@ -13,7 +13,7 @@ from typing import List
 
 logger = logging.getLogger(__name__)
 
-VALID_STAGES = ("wu", "winget", "store", "cleanup", "dism")
+VALID_STAGES = ("wu", "winget", "store", "cleanup", "dism", "health")
 
 
 def run_unattended(stages: List[str]) -> int:

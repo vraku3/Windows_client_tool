@@ -109,6 +109,7 @@ def register_all_modules(app) -> None:
     from modules.network_diagnostics.network_module import NetworkDiagnosticsModule
     from modules.security_dashboard.security_module import SecurityDashboardModule
     from modules.driver_manager.driver_module import DriverModule
+    from modules.system_health.system_health_module import SystemHealthModule
     # Batch B — Manage group
     from modules.startup_manager.startup_module import StartupBootModule
     from modules.scheduled_tasks.tasks_module import TasksModule
@@ -147,6 +148,7 @@ def register_all_modules(app) -> None:
     app.module_registry.register(UpdatesModule())
     app.module_registry.register(HardwareModule())
     app.module_registry.register(MonitorControlModule())
+    app.module_registry.register(SystemHealthModule())
     app.module_registry.register(NetworkDiagnosticsModule())
     app.module_registry.register(SecurityDashboardModule())
     app.module_registry.register(DriverModule())

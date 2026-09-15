@@ -77,9 +77,19 @@ def check_orphaned_scheduled_tasks() -> List[Finding]:
                 ["schtasks", "/query", "/tn", name, "/xml"],
                 capture_output=True, text=True, timeout=15,
                 creationflags=0x08000000)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, subprocess.TimeoutExpired) as e:
+            findings.append(Finding(
+                id=f"orphaned_task_check_refused:{name}",
+                title=f"Could not check scheduled task {name!r}",
+                detail=str(e), severity="warning"))
             continue
         if xml_result.returncode != 0:
+            findings.append(Finding(
+                id=f"orphaned_task_check_refused:{name}",
+                title=f"Could not check scheduled task {name!r}",
+                detail=(xml_result.stderr or xml_result.stdout
+                        or "schtasks refused").strip(),
+                severity="warning"))
             continue
         program = _extract_command_path(xml_result.stdout)
         if program and not _program_exists(program):

@@ -97,6 +97,47 @@ def test_task_pointing_at_a_bare_command_resolved_via_path_is_not_flagged(monkey
     assert check_orphaned_scheduled_tasks() == []
 
 
+def test_a_refused_per_task_xml_query_is_reported_not_swallowed(tmp_path, monkeypatch):
+    # Two tasks in the listing: one whose per-task XML query is refused
+    # (Access denied), one that succeeds and points at a real program. The
+    # refusal must surface as its own Finding naming that task -- not be
+    # silently dropped, and must not suppress the other task's own result.
+    real_exe = tmp_path / "real.exe"
+    real_exe.write_text("x")
+    csv_output = '"BadTask","Ready","N/A"\r\n"GoodTask","Ready","N/A"\r\n'
+    good_xml = f"<Task><Actions><Exec><Command>{real_exe}</Command></Exec></Actions></Task>"
+
+    def fake_run(cmd, **kwargs):
+        class _R:
+            pass
+        r = _R()
+        if "/xml" not in cmd:
+            r.returncode = 0
+            r.stdout = csv_output
+            r.stderr = ""
+            return r
+        if "BadTask" in cmd:
+            r.returncode = 1
+            r.stdout = ""
+            r.stderr = "Access is denied."
+            return r
+        # GoodTask
+        r.returncode = 0
+        r.stdout = good_xml
+        r.stderr = ""
+        return r
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    findings = check_orphaned_scheduled_tasks()
+
+    assert len(findings) == 1
+    assert findings[0].id == "orphaned_task_check_refused:BadTask"
+    assert "BadTask" in findings[0].title
+    assert "denied" in findings[0].detail.lower()
+    assert findings[0].severity == "warning"
+
+
 def test_a_refused_schtasks_call_is_reported_not_swallowed(monkeypatch):
     def fake_run(cmd, **kwargs):
         class _R:

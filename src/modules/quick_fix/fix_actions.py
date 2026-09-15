@@ -211,8 +211,9 @@ def clear_print_queue(output_cb: Callable[[str], None]) -> None:
     """Stop the spooler, clear queued jobs, and ALWAYS restart the
     spooler even if a spool file was locked and could not be deleted --
     an all-or-nothing chain here would leave printing broken with just a
-    generic error. (Ported from Quick Cleanup's _clear_print_queue,
-    which carries this fix; Quick Fix's own prior version did not.)"""
+    generic error. (Matches Quick Cleanup's _clear_print_queue, which
+    has the same unconditional restart; this file already had it — no
+    fix was ported, both implementations always worked this way.)"""
     _stop_service("Spooler", output_cb)
     spool_dir = r"C:\Windows\System32\spool\PRINTERS"
     if os.path.isdir(spool_dir):

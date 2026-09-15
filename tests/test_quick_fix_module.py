@@ -110,6 +110,29 @@ def test_search_hides_non_matching_cards_and_their_category_header(qapp):
         assert not mod._category_headers[cat].isVisible()
 
 
+def test_on_done_records_ok_outcome(card):
+    c, _calls = card
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c._on_done()
+    mock_record.assert_called_once_with(c._action.title, "ok")
+
+
+def test_on_error_records_error_outcome(card):
+    c, _calls = card
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c._on_error("boom")
+    mock_record.assert_called_once_with(c._action.title, "error")
+
+
+def test_cancel_records_cancelled_outcome_only_while_running(qapp):
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None)
+    c = _FixCard(action)
+    c._run()
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c.cancel()
+    mock_record.assert_called_once_with(c._action.title, "cancelled")
+
+
 def test_clearing_the_search_shows_everything_again(qapp):
     from modules.quick_fix.quick_fix_module import QuickFixModule
 

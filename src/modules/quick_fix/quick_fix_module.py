@@ -3,7 +3,8 @@ from typing import Dict
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QPlainTextEdit,
-    QFrame, QScrollArea, QGridLayout, QMessageBox, QLineEdit,
+    QFrame, QScrollArea, QGridLayout, QMessageBox, QLineEdit, QDialog,
+    QListWidget,
 )
 from PyQt6.QtCore import QThreadPool, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -121,6 +122,8 @@ class _FixCard(QFrame):
         self._worker = None
         self._run_btn.setEnabled(True)
         self._status.setText("")
+        from modules.quick_fix import quick_fix_history
+        quick_fix_history.record(self._action.title, "ok")
 
     def _on_error(self, error_str: str):
         self._running = False
@@ -128,6 +131,8 @@ class _FixCard(QFrame):
         self._run_btn.setEnabled(True)
         self._status.setText("")
         self._output.appendPlainText(f"ERROR: {error_str}")
+        from modules.quick_fix import quick_fix_history
+        quick_fix_history.record(self._action.title, "error")
 
     def cancel(self) -> None:
         """Cancel the running worker if any."""
@@ -137,6 +142,36 @@ class _FixCard(QFrame):
             self._worker = None
             self._run_btn.setEnabled(True)
             self._output.appendPlainText("Cancelled.")
+            from modules.quick_fix import quick_fix_history
+            quick_fix_history.record(self._action.title, "cancelled")
+
+
+class QuickFixHistoryDialog(QDialog):
+    """Read-only browser over the local Quick Fix run history."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Quick Fix History")
+        self.resize(520, 420)
+        root = QVBoxLayout(self)
+
+        self._list = QListWidget()
+        from modules.quick_fix import quick_fix_history
+        entries = quick_fix_history.recent(limit=20)
+        if entries:
+            for entry in entries:
+                self._list.addItem(
+                    f"{entry['at']} — {entry['action']}: {entry['outcome']}")
+        else:
+            self._list.addItem("No actions run yet.")
+        root.addWidget(self._list)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
 
 
 class QuickFixModule(BaseModule):
@@ -154,8 +189,17 @@ class QuickFixModule(BaseModule):
 
     def create_widget(self) -> QWidget:
         outer = QWidget()
+        self._widget = outer
         outer_layout = QVBoxLayout(outer)
         outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        # View History row
+        history_row = QHBoxLayout()
+        history_row.addStretch()
+        history_btn = QPushButton("View History")
+        history_btn.clicked.connect(self._show_history)
+        history_row.addWidget(history_btn)
+        outer_layout.addLayout(history_row)
 
         # Reboot banner (hidden by default)
         self._reboot_banner = QLabel("⚠ A system reboot is pending.")
@@ -221,6 +265,9 @@ class QuickFixModule(BaseModule):
 
     def on_activate(self) -> None:
         pass
+
+    def _show_history(self) -> None:
+        QuickFixHistoryDialog(self._widget).exec()
 
     def _apply_filter(self, text: str) -> None:
         query = text.strip().lower()

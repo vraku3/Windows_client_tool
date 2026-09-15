@@ -5,13 +5,16 @@ Provides:
 - Per-category expandable group cards with scan/clean
 - Batch "Clean All" across all categories
 - Advanced expandable section with additional categories
-- One-click system maintenance actions
 - Background scanning via Worker threads
 - Auto-refresh (external control via start/stop)
+
+One-click system maintenance actions used to live here too; they moved to
+Quick Fix's card catalog (`modules/quick_fix/fix_actions.py`, "Cleanup"
+category) during the module-consolidation merge, and this tab's one-click
+panel was deleted entirely.
 """
 import logging
 import os
-import subprocess
 from typing import Dict, List
 
 from PyQt6.QtCore import Qt, QTimer, QThreadPool, pyqtSignal
@@ -19,16 +22,13 @@ from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QScrollArea, QFrame,
-    QSizePolicy, QMessageBox, QComboBox,
+    QSizePolicy, QComboBox,
 )
 
-from core.long_op_pool import get_long_op_pool
 from core.widget_life import widget_is_valid
 from core.worker import Worker
 from modules.cleanup.components.category_group import CategoryGroup
 from core.semantic_colors import semantic
-
-CREATE_NO_WINDOW = 0x08000000
 
 logger = logging.getLogger(__name__)
 
@@ -643,11 +643,6 @@ class QuickCleanupTab(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll, 1)
 
-        # ── One-click actions (always visible -- moved out of the
-        # Advanced section during the Cleanup/Quick Cleanup merge, so a
-        # fresh user reaches these without ever clicking "Show Advanced") ──
-        self._build_one_click_panel(layout)
-
         # ── Advanced panel (hidden by default) ──
         self._adv_widget = QWidget()
         adv_lay = QVBoxLayout(self._adv_widget)
@@ -896,16 +891,7 @@ class QuickCleanupTab(QWidget):
         the watchdog above and cancel() below. A cancelled Worker emits
         `cancelled`, never `result` or `error` (core/worker.py), so
         _total_scanned would never reach the target count and
-        _on_all_scanned would never run on its own.
-
-        `self._workers` also holds one-click-action workers (they are
-        appended to this same list by `_run_action_command`/
-        `_compact_winsxs`), so cancelling every worker here can cancel one
-        of THOSE mid-run too -- and a cancelled Worker never fires the
-        `_done`/`_err` closure that is the only thing that re-enables that
-        action's own button. Without the loop below, switching away from
-        Cleanup while e.g. "Compact WinSxS" was running left that button
-        disabled for the rest of the process."""
+        _on_all_scanned would never run on its own."""
         self._watchdog.stop()
         for w in self._workers:
             w.cancel()
@@ -924,21 +910,6 @@ class QuickCleanupTab(QWidget):
             self._progress.hide()
         if hasattr(self, "_status_lbl") and message:
             self._status_lbl.setText(message)
-        if hasattr(self, "_action_buttons"):
-            # Worker.cancel() only sets a flag the subprocess call never
-            # checks, so the command may genuinely still be running --
-            # this re-enables the button without claiming the action
-            # actually stopped.
-            for action_id, btn in self._action_buttons.items():
-                if btn.isEnabled():
-                    continue
-                btn.setEnabled(True)
-                status_lbl = self._action_status.get(action_id)
-                if status_lbl is not None:
-                    status_lbl.setText(
-                        "cancelled — may still be running in the background")
-                    status_lbl.setStyleSheet(
-                        f"color: {semantic('warning')}; font-size: 11px;")
 
     def _has_cleanable_items(self) -> bool:
         """Is there at least one item the CURRENT preset would clean?
@@ -1015,406 +986,6 @@ class QuickCleanupTab(QWidget):
         self._adv_shown = not self._adv_shown
         self._adv_widget.setVisible(self._adv_shown)
         self._show_adv_btn.setText("Hide Advanced ▲" if self._adv_shown else "Show Advanced ▼")
-
-    def _build_one_click_panel(self, parent_lay: QVBoxLayout):
-        """One row per action: its own button, its own status label, its
-        own busy-guard. Before this, all 12 actions shared one QLabel and
-        none of them disabled their own button while running."""
-        sep = QLabel("One-Click Maintenance")
-        sep.setObjectName("muted")
-        sep.setStyleSheet("font-size: 13px; font-weight: bold; padding-top: 8px;")
-        parent_lay.addWidget(sep)
-
-        actions = [
-            ("flush_dns", "Flush DNS", self._flush_dns),
-            ("clear_event_logs", "Clear Event Logs", self._clear_event_logs),
-            ("compact_winsxs", "Compact WinSxS", self._compact_winsxs),
-            ("rebuild_icon_cache", "Rebuild Icons", self._rebuild_icon_cache),
-            ("wu_deep_clean", "WU Deep Clean", self._wu_deep_clean),
-            ("network_repair", "Network Repair", self._network_repair),
-            ("clear_thumbnails", "Clear Thumbnails", self._clear_thumbnails),
-            ("clear_clipboard", "Clear Clipboard", self._clear_clipboard),
-            ("reset_search", "Reset Search", self._reset_search),
-            ("clear_font_cache", "Clear Font Cache", self._clear_font_cache),
-            ("flush_wu_store", "Flush WinUpdate", self._flush_wu_store),
-            ("reset_tcpip", "Reset TCP/IP", self._reset_tcpip),
-            ("resize_hibernation", "Right-size Hibernation", self._resize_hibernation),
-            ("clear_print_queue", "Clear Stuck Print Jobs", self._clear_print_queue),
-        ]
-
-        self._action_buttons: Dict[str, QPushButton] = {}
-        self._action_status: Dict[str, QLabel] = {}
-        for action_id, label, handler in actions:
-            row = QHBoxLayout()
-            btn = QPushButton(label)
-            btn.setStyleSheet("font-size: 11px; padding: 4px 8px;")
-            btn.clicked.connect(handler)
-            status = QLabel("")
-            status.setObjectName("muted")
-            status.setStyleSheet("font-size: 11px;")
-            row.addWidget(btn)
-            row.addWidget(status, 1)
-            parent_lay.addLayout(row)
-            self._action_buttons[action_id] = btn
-            self._action_status[action_id] = status
-
-    def _run_action_command(self, action_id: str, cmd: str, status_prefix: str,
-                              need_confirm: bool = False,
-                              long_running: bool = False,
-                              confirm_text: str = ""):
-        """Run a system command as a one-click action."""
-        btn = self._action_buttons.get(action_id)
-        if btn is not None and not btn.isEnabled():
-            return  # already running
-        status_lbl = self._action_status[action_id]
-        if need_confirm:
-            mb = QMessageBox(self)
-            mb.setWindowTitle("Confirm Action")
-            mb.setIcon(QMessageBox.Icon.Warning)
-            default_text = confirm_text or "This action cannot be undone. Continue?"
-            mb.setText(default_text)
-            mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-            mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-            if mb.exec() != QMessageBox.StandardButton.Ok:
-                return
-
-        status_lbl.setText(f"{status_prefix}...")
-        status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
-
-        def _run(_worker):
-            try:
-                if long_running:
-                    proc = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        shell=True,
-                        creationflags=CREATE_NO_WINDOW,
-                    )
-                    # Wait up to 5 minutes for long-running commands
-                    stdout, stderr = proc.communicate(timeout=300)
-                    success = proc.returncode == 0
-                    output = stdout if success else (stderr or "Command failed")
-                else:
-                    result = subprocess.run(
-                        cmd,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        errors="replace",
-                        shell=True,
-                        creationflags=CREATE_NO_WINDOW,
-                        timeout=60,
-                    )
-                    success = result.returncode == 0
-                    output = result.stdout.strip() if result.stdout else result.stderr.strip() or "Done"
-            except subprocess.TimeoutExpired:
-                return "timeout", "Command timed out after 5 minutes"
-            except Exception as e:
-                return "error", str(e)
-            return "ok" if success else "error", output
-
-        def _done(result):
-            if btn is not None:
-                btn.setEnabled(True)
-            status, msg = result
-            if status == "ok":
-                status_lbl.setText(f"✅ {status_prefix}: {msg}")
-                status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
-            elif status == "timeout":
-                status_lbl.setText(f"⏱ {status_prefix}: {msg}")
-                status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
-            else:
-                status_lbl.setText(f"❌ {status_prefix}: {msg}")
-                status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
-
-        def _err(e: str):
-            if btn is not None:
-                btn.setEnabled(True)
-            status_lbl.setText(f"❌ {status_prefix}: {e}")
-            status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
-
-        if btn is not None:
-            btn.setEnabled(False)
-        w = Worker(_run)
-        w.signals.result.connect(_done)
-        w.signals.error.connect(_err)
-        self._workers.append(w)
-        if long_running:
-            # Can run for minutes (e.g. WU deep clean) — bounded pool, not
-            # the global one everything else shares.
-            get_long_op_pool().start(w)
-        else:
-            QThreadPool.globalInstance().start(w)
-
-    def _flush_dns(self):
-        self._run_action_command("flush_dns", "ipconfig /flushdns", "DNS cache flushed", need_confirm=False)
-
-    def _clear_event_logs(self):
-        self._run_action_command(
-            "clear_event_logs",
-            "wevtutil cl System && wevtutil cl Application && wevtutil cl Security",
-            "Event logs cleared",
-            need_confirm=True,
-            confirm_text="This will clear System, Application, and Security event logs. They cannot be recovered. Continue?"
-        )
-
-    def _compact_winsxs(self):
-        btn = self._action_buttons.get("compact_winsxs")
-        if btn is not None and not btn.isEnabled():
-            return  # already running
-
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Compact WinSxS")
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText(
-            "This runs <b>DISM /StartComponentCleanup</b> which can take "
-            "<b>10–30 minutes</b>. The system will remain usable. Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-
-        status_lbl = self._action_status["compact_winsxs"]
-        status_lbl.setText("⏳ WinSxS cleanup running (may take 10–30 min)...")
-        status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
-        if btn is not None:
-            btn.setEnabled(False)
-
-        def _run(_worker):
-            try:
-                proc = subprocess.Popen(
-                    ["Dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                )
-                stdout, stderr = proc.communicate(timeout=3600)
-                success = proc.returncode == 0
-                output = stdout if success else (stderr or "Command failed")
-            except subprocess.TimeoutExpired:
-                return "timeout", "Operation timed out after 60 minutes"
-            except Exception as e:
-                return "error", str(e)
-            return "ok" if success else "error", output
-
-        def _done(result):
-            if btn is not None:
-                btn.setEnabled(True)
-            outcome, msg = result
-            if outcome == "ok":
-                status_lbl.setText("✅ WinSxS cleanup complete")
-                status_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 11px;")
-            elif outcome == "timeout":
-                status_lbl.setText(f"⏱ WinSxS cleanup: {msg}")
-                status_lbl.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
-            else:
-                status_lbl.setText(f"❌ WinSxS cleanup: {msg[:100]}")
-                status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
-
-        def _err(e: str):
-            if btn is not None:
-                btn.setEnabled(True)
-            status_lbl.setText(f"❌ WinSxS cleanup: {e}")
-            status_lbl.setStyleSheet(f"color: {semantic('error')}; font-size: 11px;")
-
-        w = Worker(_run)
-        w.signals.result.connect(_done)
-        w.signals.error.connect(_err)
-        self._workers.append(w)
-        # 10-30 min DISM run — bounded pool, not the global one everything else shares.
-        get_long_op_pool().start(w)
-
-    def _rebuild_icon_cache(self):
-        self._run_action_command(
-            "rebuild_icon_cache",
-            "taskkill /f /im explorer.exe && timeout /t 2 /nobreak >nul && del /q \"%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\iconcache_*\" 2>nul && start explorer",
-            "Icon cache rebuilt",
-            need_confirm=False
-        )
-
-    def _wu_deep_clean(self):
-        self._run_action_command(
-            "wu_deep_clean",
-            "dism /Online /Cleanup-Image /StartComponentCleanup /SuppressDefaultActions",
-            "WU deep clean started",
-            need_confirm=True,
-            long_running=True,  # confirm text says 10-20 min; the default path's 60s timeout would kill it early
-            confirm_text="This runs a deep Windows Update cleanup which may take 10–20 minutes. Continue?"
-        )
-
-    def _network_repair(self):
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Network Repair")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            "This will <b>reset Winsock and TCP/IP stack</b>. "
-            "Your network connection will briefly drop. "
-            "<b>This cannot be undone.</b> Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-        self._run_action_command(
-            "network_repair", "netsh winsock reset && netsh int ip reset",
-            "Network stack reset", need_confirm=False
-        )
-
-    def _clear_thumbnails(self):
-        """Delete all thumbnail cache files (.db) in Explorer thumbnail directories."""
-        self._run_action_command(
-            "clear_thumbnails",
-            'del /q /f "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\thumbcache_*.db" 2>nul',
-            "Thumbnail cache cleared",
-            need_confirm=False
-        )
-
-    def _clear_clipboard(self):
-        """Clear the Windows clipboard content."""
-        self._run_action_command(
-            "clear_clipboard", "cmd /c echo off | clip", "Clipboard cleared", need_confirm=False
-        )
-
-    def _reset_search(self):
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Reset Windows Search")
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText(
-            "This will <b>restart the Windows Search service</b> and clear its database. "
-            "Search may be briefly unavailable. Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-        self._run_action_command(
-            "reset_search", "net stop WSearch && net start WSearch",
-            "Windows Search reset", need_confirm=False
-        )
-
-    def _clear_font_cache(self):
-        """Flush the Windows Font Cache service (FNTCACHE.DAT)."""
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Clear Font Cache")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            "This will <b>flush the Windows Font Cache</b> by stopping the FontCache service. "
-            "Applications may briefly re-render text. Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-        self._run_action_command(
-            "clear_font_cache", "net stop FontCache && net start FontCache",
-            "Font cache cleared", need_confirm=False
-        )
-
-    def _flush_wu_store(self):
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Flush Windows Update Store")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            "This will <b>reset the Windows Update client</b>, clear the SoftwareDistribution\\Download "
-            "folder, and restart the WUAUSERV service. "
-            "<b>This cannot be undone.</b> Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-        cmd = (
-            "net stop wuauserv && "
-            "del /q /f %SystemRoot%\\SoftwareDistribution\\Download\\* 2>nul && "
-            "net start wuauserv"
-        )
-        self._run_action_command("flush_wu_store", cmd, "Windows Update store flushed", need_confirm=False)
-
-    def _reset_tcpip(self):
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Reset TCP/IP Stack")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            "This will <b>reset all network adapter TCP/IP configurations</b>. "
-            "Network adapters may briefly disconnect. <b>This cannot be undone.</b> Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-        self._run_action_command(
-            "reset_tcpip", "netsh int ip reset", "TCP/IP stack reset", need_confirm=False
-        )
-
-    def _resize_hibernation(self):
-        # Gate on hibernation actually being enabled -- powercfg refuses
-        # /hibernate /size on a machine where it's off, and the raw error
-        # text is not obviously "hibernation is off" to a fresh user
-        # reading a one-line status label.
-        #
-        # This used to parse "has not been enabled" out of `powercfg /a`'s
-        # stdout, which only matches on English Windows and fails open (a
-        # confusing raw-command status) on any other locale. hiberfil.sys
-        # existing or not is the locale-independent, and more direct,
-        # signal: it is literally the file this whole action resizes, and
-        # a plain os.path.exists() call cannot raise the way a subprocess
-        # call can, so there is nothing here left needing a try/except.
-        system_drive = os.environ.get("SystemDrive", "C:")
-        hiberfil = os.path.join(system_drive + "\\", "hiberfil.sys")
-        if not os.path.exists(hiberfil):
-            self._action_status["resize_hibernation"].setText(
-                "Hibernation is off on this machine — nothing to resize")
-            return
-
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Right-size Hibernation File")
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText(
-            "This shrinks hiberfil.sys to 50% of RAM (Windows' own "
-            "default since Windows 10) without disabling hibernation. "
-            "Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-
-        self._run_action_command(
-            "resize_hibernation", "powercfg /hibernate /size 50",
-            "Hibernation file resized", need_confirm=False)
-
-    def _clear_print_queue(self):
-        mb = QMessageBox(self)
-        mb.setWindowTitle("Clear Stuck Print Jobs")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            "This will <b>stop the Print Spooler</b>, clear all queued "
-            "print jobs, and restart it. Any job currently printing or "
-            "queued will be lost. Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
-            return
-        # `net start spooler` must run even when the `del` fails (e.g. a
-        # spool file is locked) -- an all-&& chain would leave the spooler
-        # stopped and printing broken with just a generic error status.
-        # `&` between del and the restart makes that step unconditional;
-        # the parens keep it grouped so the leading `&&` still gates the
-        # whole group on `net stop spooler` actually succeeding.
-        cmd = (
-            "net stop spooler && "
-            "(del /q /f %SystemRoot%\\System32\\spool\\PRINTERS\\* 2>nul & "
-            "net start spooler)"
-        )
-        self._run_action_command("clear_print_queue", cmd, "Print queue cleared", need_confirm=False)
 
     # ── Clean All Safe ─────────────────────────────────────────────────────
 

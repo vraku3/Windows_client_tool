@@ -337,6 +337,67 @@ def restart_print_spooler(output_cb: Callable[[str], None]) -> None:
     output_cb("Print Spooler restarted.")
 
 
+def clear_event_logs(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _clear_event_logs."""
+    for log in ("System", "Application", "Security"):
+        rc = _run_cmd(["wevtutil", "cl", log], output_cb)
+        output_cb(f"Cleared {log} log" if rc == 0 else f"Could not clear {log} log (exit {rc})")
+
+
+def compact_winsxs(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _compact_winsxs -- plain
+    /StartComponentCleanup only, deliberately NOT /ResetBase (that flag
+    lives solely in System Health's gated Reset Base, per the Sub-project
+    4 safety fix -- do not reintroduce it here)."""
+    _run_cmd(["Dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup"], output_cb)
+
+
+def wu_deep_clean(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _wu_deep_clean. Distinct from
+    System Health's plain Component Cleanup: this adds
+    /SuppressDefaultActions, and distinct from wu_reset above (that
+    clears the WU cache/services; this reclaims WinSxS space)."""
+    _run_cmd(["dism", "/Online", "/Cleanup-Image", "/StartComponentCleanup",
+              "/SuppressDefaultActions"], output_cb)
+
+
+def clear_clipboard(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _clear_clipboard."""
+    _run_cmd(["cmd", "/c", "echo off | clip"], output_cb)
+    output_cb("Clipboard cleared.")
+
+
+def reset_search(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _reset_search."""
+    _stop_service("WSearch", output_cb)
+    _start_service("WSearch", output_cb)
+    output_cb("Windows Search reset.")
+
+
+def clear_font_cache(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _clear_font_cache."""
+    _stop_service("FontCache", output_cb)
+    _start_service("FontCache", output_cb)
+    output_cb("Font cache cleared.")
+
+
+def resize_hibernation(output_cb: Callable[[str], None]) -> None:
+    """Ported from Quick Cleanup's _resize_hibernation. The hiberfil.sys
+    existence gate moves to a `precondition` on the FixAction entry
+    rather than living in this function, matching how every other
+    precondition in this file's catalog works."""
+    _run_cmd(["powercfg", "/hibernate", "/size", "50"], output_cb)
+    output_cb("Hibernation file resized to 50% of RAM.")
+
+
+def _hibernation_precondition() -> Optional[str]:
+    system_drive = os.environ.get("SystemDrive", "C:")
+    hiberfil = os.path.join(system_drive + "\\", "hiberfil.sys")
+    if not os.path.exists(hiberfil):
+        return "Hibernation is off on this machine — nothing to resize"
+    return None
+
+
 ALL_ACTIONS: List[FixAction] = [
     # System Repairs
     FixAction("sfc", "SFC Scan", "Scan and repair protected Windows files",
@@ -397,4 +458,37 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("print_spooler_restart", "Restart Print Spooler",
               "Stop and restart the Print Spooler service",
               "Print", reboot_required=False, fn=restart_print_spooler),
+    # Cleanup
+    FixAction("clear_event_logs", "Clear Event Logs",
+              "Clear System, Application, and Security event logs",
+              "Cleanup", fn=clear_event_logs,
+              confirm_text="This will clear System, Application, and Security event logs. "
+                           "They cannot be recovered. Continue?"),
+    FixAction("compact_winsxs", "Compact WinSxS",
+              "Run DISM component cleanup to reclaim WinSxS space",
+              "Cleanup", fn=compact_winsxs, long_running=True,
+              confirm_text="This runs DISM /StartComponentCleanup which can take "
+                           "10–30 minutes. The system will remain usable. Continue?"),
+    FixAction("wu_deep_clean", "WU Deep Clean",
+              "Deep Windows Update component-store cleanup",
+              "Cleanup", fn=wu_deep_clean, long_running=True,
+              confirm_text="This runs a deep Windows Update cleanup which may take "
+                           "10–20 minutes. Continue?"),
+    FixAction("clear_clipboard", "Clear Clipboard", "Clear the Windows clipboard content",
+              "Cleanup", fn=clear_clipboard),
+    FixAction("reset_search", "Reset Windows Search",
+              "Restart the Windows Search service and clear its database",
+              "Cleanup", fn=reset_search,
+              confirm_text="This will restart the Windows Search service and clear its "
+                           "database. Search may be briefly unavailable. Continue?"),
+    FixAction("clear_font_cache", "Clear Font Cache",
+              "Flush the Windows Font Cache service",
+              "Cleanup", fn=clear_font_cache,
+              confirm_text="This will flush the Windows Font Cache by stopping the "
+                           "FontCache service. Applications may briefly re-render text. Continue?"),
+    FixAction("resize_hibernation", "Right-size Hibernation File",
+              "Shrink hiberfil.sys to 50% of RAM without disabling hibernation",
+              "Cleanup", fn=resize_hibernation, precondition=_hibernation_precondition,
+              confirm_text="This shrinks hiberfil.sys to 50% of RAM (Windows' own default "
+                           "since Windows 10) without disabling hibernation. Continue?"),
 ]

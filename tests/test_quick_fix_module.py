@@ -76,3 +76,13 @@ def test_a_long_running_action_uses_the_long_op_pool(qapp):
     with patch.object(get_long_op_pool(), "start") as mock_start:
         c._run()
         assert mock_start.called
+
+
+def test_running_a_card_twice_while_busy_does_not_start_a_second_worker(qapp):
+    calls = []
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: calls.append(1))
+    c = _FixCard(action)
+    c._run()
+    first_worker = c._worker
+    c._run()  # second call while "running" -- must be a no-op
+    assert c._worker is first_worker

@@ -170,3 +170,40 @@ def test_no_two_fixes_share_a_key():
         for action in group:
             assert action.key not in seen, f"duplicate key {action.key!r}"
             seen.add(action.key)
+
+
+# ── the 7 actions migrated from Quick Cleanup's one-click panel ────────
+
+@pytest.mark.parametrize("action,expected_contains", [
+    (fix_actions.compact_winsxs, "StartComponentCleanup"),
+    (fix_actions.resize_hibernation, "hibernate"),
+])
+def test_the_migrated_cleanup_action_runs_the_expected_command(action, expected_contains, ran, output):
+    lines, cb = output
+    action(cb)
+    flat = " ".join(" ".join(c) for c in ran)
+    assert expected_contains in flat
+
+
+def test_compact_winsxs_never_passes_resetbase():
+    """The one remaining door to /ResetBase must stay System Health's
+    gated Reset Base -- see the Sub-project 4 safety fix this must not
+    reintroduce."""
+    calls = []
+    original = fix_actions._run_cmd
+    fix_actions._run_cmd = lambda cmd, cb, input_bytes=None: (calls.append(list(cmd)), 0)[1]
+    try:
+        fix_actions.compact_winsxs(lambda _line: None)
+    finally:
+        fix_actions._run_cmd = original
+    assert "/ResetBase" not in calls[0]
+
+
+def test_hibernation_precondition_blocks_when_hiberfil_is_absent(monkeypatch):
+    monkeypatch.setattr(fix_actions.os.path, "exists", lambda p: False)
+    assert fix_actions._hibernation_precondition() is not None
+
+
+def test_hibernation_precondition_allows_when_hiberfil_is_present(monkeypatch):
+    monkeypatch.setattr(fix_actions.os.path, "exists", lambda p: True)
+    assert fix_actions._hibernation_precondition() is None

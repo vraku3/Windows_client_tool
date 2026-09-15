@@ -26,7 +26,7 @@ generally; peer-to-peer SHARING -- which is what both descriptions promise to
 stop -- is the DODownloadMode policy, and this repo already turns it off that
 way in three other tweaks (disable_peer_updates,
 wu_disable_delivery_optimization_p2p, wu_delivery_optimization_lan_only). The
-ids stay put: six built-in presets and the Performance Tuner reference them.
+ids stay put: six built-in presets reference them.
 """
 import json
 import os
@@ -91,68 +91,3 @@ def test_no_definition_still_tries_to_disable_dosvc():
                     offenders.append(f"{filename}:{entry.get('id')}")
     assert offenders == [], (
         f"these can never succeed -- Windows refuses DoSvc: {offenders}")
-
-
-def test_the_performance_tuner_uses_the_policy_too():
-    """PerfTuner keeps its own copy of this check, and it is the one that
-    actually failed on 2026-08-29."""
-    from modules.performance_tuner.perf_checks import PERF_CHECKS
-
-    entry = next(c for c in PERF_CHECKS
-                 if c["id"] == "disable_delivery_optimization")
-    kinds = {step["type"] for step in entry["apply"]}
-    assert "service" not in kinds
-    targets = {(step.get("key"), step.get("value")) for step in entry["apply"]}
-    assert (_DO_POLICY_KEY, "DODownloadMode") in targets
-
-
-def test_the_performance_tuner_detector_reads_what_it_writes():
-    """It read DoSvc\\Start == 4 -- a value its own apply could never set, so
-    the row said "suboptimal" for ever."""
-    import winreg
-
-    from modules.performance_tuner import perf_checks
-
-    reads = []
-
-    def fake_reg_get(hive, path, name):
-        reads.append((hive, path, name))
-        return 0            # DODownloadMode = 0, peering off
-
-    original = perf_checks._reg_get
-    perf_checks._reg_get = fake_reg_get
-    try:
-        verdict = perf_checks._detect_delivery_opt()
-    finally:
-        perf_checks._reg_get = original
-
-    assert reads, "the detector read nothing at all"
-    hive, path, name = reads[0]
-    assert hive == winreg.HKEY_LOCAL_MACHINE
-    assert "DeliveryOptimization" in path
-    assert name == "DODownloadMode"
-    assert verdict == "optimal"
-
-
-def test_the_detector_calls_peering_suboptimal():
-    from modules.performance_tuner import perf_checks
-
-    original = perf_checks._reg_get
-    perf_checks._reg_get = lambda hive, path, name: 3   # internet peering
-    try:
-        assert perf_checks._detect_delivery_opt() == "suboptimal"
-    finally:
-        perf_checks._reg_get = original
-
-
-def test_an_unset_policy_is_suboptimal_not_unknown():
-    """Absent means Windows is at its default, which IS peer sharing --
-    a definite answer, not a failure to read."""
-    from modules.performance_tuner import perf_checks
-
-    original = perf_checks._reg_get
-    perf_checks._reg_get = lambda hive, path, name: None
-    try:
-        assert perf_checks._detect_delivery_opt() == "suboptimal"
-    finally:
-        perf_checks._reg_get = original

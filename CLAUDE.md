@@ -525,10 +525,6 @@ Single-page dashboard with pie chart and auto-refresh. Uses `QuickCleanupTab` fr
 
 Restore points created via `BackupService` before any apply operation. TweakEngine detects status for every step type, and for `command`/`script` tweaks that carry a `detect` block — see **Tweak System** below for the five-value status vocabulary.
 
-### PerfTunerModule UI Pattern (`src/modules/performance_tuner/perf_tuner_module.py`)
-
-Checklist-style table with 5 columns: ☑ Select | Name | Category | Risk | Status. Per-row Apply button. Preset buttons (Light, Aggressive, Custom) at top. This is the reference UI pattern for modules that present a list of togglable items.
-
 ### QuickFixModule (`src/modules/quick_fix/quick_fix_module.py`)
 
 Uses `_FixCard` widget subclasses for each fix. Cards run in background Workers. `QuickFixModule._workers` (plural, on the module) tracks all workers. Individual cards track `self._worker` (singular) for cancellation. `_FixCard` does NOT have a `_workers` list.

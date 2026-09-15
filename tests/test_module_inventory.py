@@ -166,17 +166,18 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_33_entries(registered):
-    """33, not 32: System Health is a genuinely new sidebar module (Sub-
-    project 4 of the Cleanup rework), so the count goes back up by one
-    from where the Cleanup/Quick Cleanup merge left it. That merge itself
-    is why the number isn't 34: Quick Cleanup stopped being its own
-    sidebar entry when it became Cleanup's first tab instead. Same
-    reasoning as the Process Explorer/Dashboard and PerfMon/Dashboard
-    merges below -- two doors to the same room is two places to do the
-    same cleanup from. Absorbed modules are still reachable -- as tabs,
-    which `_all_composite_children` covers."""
-    assert len(registered) == 33
+def test_the_sidebar_is_32_entries(registered):
+    """32, not 33: Performance Tuner is retired -- its functionality is
+    fully absorbed into the Tweaks module's "Performance" builtin preset,
+    expanded in this same round (see
+    docs/superpowers/specs/2026-09-15-module-consolidation-design.md) --
+    so the count drops back down by one from where System Health (Sub-
+    project 4 of the Cleanup rework) left it. Same reasoning as the
+    Process Explorer/Dashboard and PerfMon/Dashboard merges below -- two
+    doors to the same room is two places to do the same cleanup from.
+    Absorbed modules are still reachable -- as tabs, which
+    `_all_composite_children` covers."""
+    assert len(registered) == 32
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

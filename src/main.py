@@ -117,7 +117,6 @@ def register_all_modules(app) -> None:
     from modules.certificate_viewer.cert_module import CertModule
     from modules.gpresult.gpresult_module import GPResultModule
     # Batch C — Tools group
-    from modules.performance_tuner.perf_tuner_module import PerfTunerModule
     from modules.shared_resources.shares_module import SharesModule
     from modules.env_vars.env_vars_module import EnvVarsModule
     from modules.registry_explorer.registry_module import RegistryExplorerModule
@@ -158,7 +157,6 @@ def register_all_modules(app) -> None:
     app.module_registry.register(CertModule())
     app.module_registry.register(GPResultModule())
     # Batch C
-    app.module_registry.register(PerfTunerModule())
     app.module_registry.register(SharesModule())
     app.module_registry.register(EnvVarsModule())
     app.module_registry.register(RegistryExplorerModule())

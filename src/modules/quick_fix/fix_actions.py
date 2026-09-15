@@ -208,6 +208,11 @@ def reregister_wu_dlls(output_cb: Callable[[str], None]) -> None:
 
 
 def clear_print_queue(output_cb: Callable[[str], None]) -> None:
+    """Stop the spooler, clear queued jobs, and ALWAYS restart the
+    spooler even if a spool file was locked and could not be deleted --
+    an all-or-nothing chain here would leave printing broken with just a
+    generic error. (Ported from Quick Cleanup's _clear_print_queue,
+    which carries this fix; Quick Fix's own prior version did not.)"""
     _stop_service("Spooler", output_cb)
     spool_dir = r"C:\Windows\System32\spool\PRINTERS"
     if os.path.isdir(spool_dir):
@@ -357,17 +362,26 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("flush_dns", "Flush DNS", "Clear the DNS resolver cache",
               "Network", fn=flush_dns),
     FixAction("winsock", "Reset Winsock", "Reset network socket catalog (reboot required)",
-              "Network", reboot_required=True, fn=reset_winsock),
+              "Network", reboot_required=True, fn=reset_winsock,
+              confirm_text="This will reset the Winsock network socket catalog. "
+                           "A reboot is required to complete. Continue?"),
     FixAction("tcpip", "Reset TCP/IP", "Reset TCP/IP stack (reboot required)",
-              "Network", reboot_required=True, fn=reset_tcpip),
+              "Network", reboot_required=True, fn=reset_tcpip,
+              confirm_text="This will reset all network adapter TCP/IP configurations. "
+                           "Network adapters may briefly disconnect. This cannot be undone. Continue?"),
     FixAction("ip_renew", "IP Release/Renew", "Release and renew IP address",
               "Network", fn=ip_release_renew),
     FixAction("network_reset", "Network Reset", "Reset all network adapters to default (reboot required)",
-              "Network", reboot_required=True, fn=network_reset),
+              "Network", reboot_required=True, fn=network_reset,
+              confirm_text="This will reset Winsock and the TCP/IP stack. "
+                           "Your network connection will briefly drop. This cannot be undone. Continue?"),
     # Windows Update
     FixAction("wu_reset", "Reset Windows Update",
               "Stop WU services, clear caches, restart",
-              "Windows Update", fn=reset_windows_update),
+              "Windows Update", fn=reset_windows_update,
+              confirm_text="This will reset the Windows Update client, clear the "
+                           "SoftwareDistribution and catroot2 caches, and restart the "
+                           "affected services. This cannot be undone. Continue?"),
     FixAction("wu_dlls", "Re-register WU DLLs",
               "Re-register all Windows Update DLL files",
               "Windows Update", fn=reregister_wu_dlls),

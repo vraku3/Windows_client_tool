@@ -11,6 +11,8 @@ that a failure was reported rather than swallowed, or that output reached
 the pane at all. These tests substitute the process layer and assert on
 what would have been run.
 """
+import os
+
 import pytest
 
 from modules.quick_fix import fix_actions
@@ -118,6 +120,29 @@ def test_stopping_a_service_that_is_not_there_is_reported(output, monkeypatch):
     monkeypatch.setitem(__import__("sys").modules, "win32serviceutil", _Stub)
     fix_actions._stop_service("NoSuchService", cb)
     assert any("could not stop" in line.lower() for line in lines)
+
+
+def test_print_queue_restarts_the_spooler_even_if_a_delete_fails(monkeypatch, output):
+    """Ported from Quick Cleanup's own fix -- a locked spool file must
+    not leave the spooler stopped."""
+    lines, cb = output
+    calls = []
+
+    def fake_stop(name, output_cb):
+        calls.append(("stop", name))
+
+    def fake_start(name, output_cb):
+        calls.append(("start", name))
+
+    monkeypatch.setattr(fix_actions, "_stop_service", fake_stop)
+    monkeypatch.setattr(fix_actions, "_start_service", fake_start)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "listdir", lambda p: ["locked.spl"])
+    monkeypatch.setattr(os, "remove", lambda p: (_ for _ in ()).throw(OSError("locked")))
+
+    fix_actions.clear_print_queue(cb)
+
+    assert ("start", "Spooler") in calls, "spooler was not restarted after a failed delete"
 
 
 # ── every action is wired up ───────────────────────────────────────────

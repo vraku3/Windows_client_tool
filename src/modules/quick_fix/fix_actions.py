@@ -19,6 +19,21 @@ class FixAction:
     fn: Optional[Callable[[Callable[[str], None]], None]] = field(default=None, repr=False)
     # fn signature: fn(output_cb: Callable[[str], None]) -> None
     # output_cb is called with each line of output
+    confirm_text: Optional[str] = None
+    # When set, _FixCard shows an Ok/Cancel QMessageBox with this text
+    # (default button Cancel) before running -- ports over Quick
+    # Cleanup's per-action confirm dialogs during the Part B merge.
+    precondition: Optional[Callable[[], Optional[str]]] = field(default=None, repr=False)
+    # Called just before running (after any confirm). Returning None
+    # means proceed; returning a string shows it in the card's status
+    # label instead of running -- e.g. "hibernation is off, nothing to
+    # resize" for the migrated Resize Hibernation action.
+    long_running: bool = False
+    # True routes the worker to core.long_op_pool.get_long_op_pool()
+    # instead of the shared global QThreadPool -- for actions that can
+    # run 10-30 minutes (Compact WinSxS, WU Deep Clean), matching how
+    # Quick Cleanup and System Health already isolate their own
+    # long-running DISM calls from everything else's worker pool.
 
 
 def _run_cmd(cmd: List[str], output_cb: Callable[[str], None],

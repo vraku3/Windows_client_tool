@@ -2,7 +2,7 @@ from collections import OrderedDict
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QPlainTextEdit,
-    QFrame, QScrollArea, QGridLayout,
+    QFrame, QScrollArea, QGridLayout, QMessageBox, QLineEdit,
 )
 from PyQt6.QtCore import QThreadPool, pyqtSignal
 from PyQt6.QtGui import QFont
@@ -11,6 +11,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
 from core.windows_utils import is_reboot_pending
+from core.long_op_pool import get_long_op_pool
 from modules.quick_fix.fix_actions import ALL_ACTIONS, FixAction
 import logging
 logger = logging.getLogger(__name__)
@@ -77,13 +78,29 @@ class _FixCard(QFrame):
     def _run(self):
         if self._running:
             return
+        action = self._action
+
+        if action.precondition is not None:
+            msg = action.precondition()
+            if msg is not None:
+                self._status.setText(msg)
+                return
+
+        if action.confirm_text is not None:
+            mb = QMessageBox(self)
+            mb.setWindowTitle(action.title)
+            mb.setIcon(QMessageBox.Icon.Warning)
+            mb.setText(action.confirm_text)
+            mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+            mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+            if mb.exec() != QMessageBox.StandardButton.Ok:
+                return
+
         self._running = True
         self._run_btn.setEnabled(False)
         self._output.clear()
         self._output.show()
         self._status.setText("Running...")
-
-        action = self._action
 
         def append(line: str):
             self._line.emit(line)
@@ -95,7 +112,8 @@ class _FixCard(QFrame):
         self._worker = Worker(do_work)
         self._worker.signals.result.connect(lambda _r: self._on_done())
         self._worker.signals.error.connect(self._on_error)
-        self._thread_pool.start(self._worker)
+        pool = get_long_op_pool() if action.long_running else self._thread_pool
+        pool.start(self._worker)
 
     def _on_done(self):
         self._running = False

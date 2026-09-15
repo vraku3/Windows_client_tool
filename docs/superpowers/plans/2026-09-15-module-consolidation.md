@@ -38,58 +38,38 @@ infrastructure — no new libraries.
 
 ---
 
-### Task 1: Add the two missing tweak definitions
+### Task 1: Add the missing tweak definition
+
+**Correction (found during this task's own review, before Task 2
+started):** the plan originally called for TWO new tweaks. Task 1's
+reviewer found that "Disable Hibernation" already exists in the catalog
+as `power.json`'s `power_disable_hibernate_file` (identical `powercfg
+/hibernate off` command) — missed by the spec's original audit because
+it searched by registry value name, and this is a `command` step with no
+registry value to grep for. Only ONE new tweak is genuinely needed. See
+`docs/superpowers/specs/2026-09-15-module-consolidation-design.md` §2.2's
+corrected table.
 
 **Files:**
-- Modify: `src/modules/tweaks/definitions/performance.json`
 - Modify: `src/modules/tweaks/definitions/privacy.json`
 - Test: `tests/test_tweak_definitions.py` (existing, no changes needed —
   it validates every file structurally; this task just needs its
-  additions to pass that existing suite)
+  addition to pass that existing suite)
 
 **Interfaces:**
-- Consumes: nothing new — reuses `command` step type + `file_absent`
-  detect probe (already documented in CLAUDE.md's Tweak System section),
-  and plain `registry` step type.
-- Produces: two new tweak ids, `disable_hibernation` and
-  `disable_background_apps_global`, consumed by Task 2's expanded preset.
+- Consumes: nothing new — reuses the plain `registry` step type.
+- Produces: one new tweak id, `disable_background_apps_global`, and
+  confirms the pre-existing `power_disable_hibernate_file` id — both
+  consumed by Task 2's expanded preset.
 
-- [ ] **Step 1: Add `disable_hibernation` to `performance.json`**
-
-Open `src/modules/tweaks/definitions/performance.json` and add a new
-entry to its top-level list (match the existing entries' exact key
-ordering/style in that file):
-
-```json
-{
-  "id": "disable_hibernation",
-  "name": "Disable Hibernation",
-  "category": "performance",
-  "description": "Runs powercfg /hibernate off, removing hiberfil.sys and freeing disk space equal to installed RAM.",
-  "risk": "Low",
-  "steps": [
-    {"type": "command", "cmd": "powercfg /hibernate off"}
-  ],
-  "detect": {
-    "type": "file_absent",
-    "path": "%SystemDrive%\\hiberfil.sys"
-  }
-}
-```
-
-(If `performance.json`'s existing entries carry additional required
-fields such as `applies_to` or `reboot`, match whatever the file's other
-`command`-type entries already declare — read 2-3 neighboring entries
-first and mirror their shape exactly rather than guessing.)
-
-- [ ] **Step 2: Add `disable_background_apps_global` to `privacy.json`**
+- [ ] **Step 1: Add `disable_background_apps_global` to `privacy.json`**
 
 ```json
 {
   "id": "disable_background_apps_global",
-  "name": "Disable Background App Access (Global)",
+  "name": "Disable Background App Access (Per-User)",
   "category": "privacy",
-  "description": "Globally prevents UWP apps from running and using resources in the background.",
+  "description": "Globally prevents UWP apps from running and using resources in the background, for the current user.",
   "risk": "Low",
   "steps": [
     {"type": "registry",
@@ -99,9 +79,23 @@ first and mirror their shape exactly rather than guessing.)
 }
 ```
 
-Again, mirror `privacy.json`'s existing entry shape exactly (field
-ordering, whether `risk` is present on neighboring entries, etc.) rather
-than inventing a new shape.
+The `name` must NOT be "Disable Background App Access (Global)" verbatim
+— `privacy.json` already has a DIFFERENT entry (`disable_background_apps`,
+an `HKLM` Group Policy override, admin-required) with that exact name.
+Keeping both entries is correct (genuinely different mechanisms, this one
+is the `HKCU` per-user toggle PERF_CHECKS actually read), but they must
+not display identically in the same Privacy tab — hence "(Per-User)"
+instead of "(Global)" in this new entry's name.
+
+Mirror `privacy.json`'s existing entry shape exactly (field ordering,
+whether `risk` is present on neighboring entries, etc.) rather than
+inventing a new shape.
+
+- [ ] **Step 2: Confirm `power_disable_hibernate_file` is real and usable as-is**
+
+Run: `grep -n -A8 '"id": "power_disable_hibernate_file"' src/modules/tweaks/definitions/power.json`
+Expected: an existing, complete entry running `powercfg /hibernate off`.
+No edit needed here — Task 2 references this id directly.
 
 - [ ] **Step 3: Run the structural validator**
 
@@ -113,8 +107,8 @@ will catch a malformed addition here.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/modules/tweaks/definitions/performance.json src/modules/tweaks/definitions/privacy.json
-git commit -m "feat(tweaks): add disable_hibernation and disable_background_apps_global tweaks"
+git add src/modules/tweaks/definitions/privacy.json
+git commit -m "feat(tweaks): add disable_background_apps_global tweak"
 ```
 
 ---
@@ -161,10 +155,12 @@ looks like:
 
 - [ ] **Step 2: Add the 10 missing ids under the right category key**
 
-Add `disable_hibernation`, `disable_prefetch`, `keep_kernel_in_ram`
-(already present — do not duplicate), `disable_background_apps_global`,
+Add `power_disable_hibernate_file` (the existing hibernation tweak —
+NOT a newly-created `disable_hibernation`, see this plan's Task 1
+correction), `disable_prefetch`, `disable_background_apps_global`,
 `disable_error_reporting`→ use the real id found in `telemetry.json`
-(`disable_wersvc`) to the `performance` list; `taskbar_start.json`'s
+(`disable_wersvc`) to the `performance` list (`keep_kernel_in_ram` is
+already present — do not duplicate); `taskbar_start.json`'s
 animation-disable id and `ui_tweaks.json`'s aero-peek id to the
 `ui_tweaks` list; `power.json`'s power-throttling id to a new `power`
 list; `gaming.json`/`multimedia.json`'s network-throttling id to the
@@ -235,7 +231,7 @@ def test_the_preset_covers_every_mapped_performance_tuner_check():
     with open(os.path.join(_BUILTINS, "performance.json"), encoding="utf-8") as f:
         preset = json.load(f)
     named = {tid for ids in preset["tweaks"].values() for tid in ids}
-    assert "disable_hibernation" in named
+    assert "power_disable_hibernate_file" in named
     assert "disable_background_apps_global" in named
     assert "enable_game_mode" not in named
     assert "disable_game_dvr" not in named

@@ -89,7 +89,7 @@ files and `definitions/builtins/`):
 | disable_aero_peek | `ui_tweaks.json` (`DisablePreviewDesktop`) | no |
 | high_perf_power_plan | `performance.json` | yes |
 | disable_power_throttling | `gaming.json`, `performance.json`, `power.json` | no |
-| disable_hibernate | **NOT FOUND ANYWHERE** | — |
+| disable_hibernate | `power.json` (`power_disable_hibernate_file` — runs the identical `powercfg /hibernate off`; missed by the original audit because it was searched for by registry value name, and this is a `command` step with no registry value to grep for) | no |
 | hardware_gpu_scheduling | `gaming.json`, `multimedia.json`, `performance.json` (`enable_hags`) | yes |
 | boost_cpu_priority | `performance.json` (`boost_foreground_cpu_priority`) | yes |
 | disable_superfetch | `performance.json` | yes |
@@ -108,40 +108,56 @@ files and `definitions/builtins/`):
 | disable_startup_delay | `performance.json` | yes |
 | disable_edge_preload | `performance.json` | yes |
 | disable_error_reporting | `telemetry.json` (`disable_wersvc` — disables the WER service/scheduled task rather than setting the same `Disabled` registry policy value PERF_CHECKS uses, but reaches the same practical outcome) | no |
-| disable_background_apps | **NOT FOUND ANYWHERE** | — |
+| disable_background_apps | `privacy.json` (`disable_background_apps`, name "Disable Background App Access (Global)") — but this is an `HKLM` Group Policy override (`requires_admin: true`), a genuinely different mechanism from PERF_CHECKS' own `HKCU` per-user toggle, not a true duplicate | no |
 
-25 of 27 have a real, existing tweak id somewhere in the catalog; the
+**Correction, found during Task 1's review**: this table's original audit
+searched only by registry value name, which missed `power.json`'s
+`power_disable_hibernate_file` (a `command` step with no registry value
+to grep for) — a TRUE duplicate of PERF_CHECKS' "Disable Hibernation",
+same command, already in the catalog. Only ONE genuine gap remains:
+"Disable Background App Access (Global)" needs a new `HKCU`-scoped tweak
+(the existing `disable_background_apps` id is `HKLM` Group Policy, a
+different mechanism — keeping both is correct, but naming clash needs
+avoiding, see below).
+
+26 of 27 have a real, existing tweak id somewhere in the catalog; the
 builtin `definitions/builtins/performance.json` preset already bundles 14
 of them behind one click via the Tweaks module's existing preset toolbar
 (`_preset_combo`, load/apply/export — already built, already in the UI).
 
-**Two genuine gaps**: "Disable Hibernation" (`powercfg /hibernate off`)
-and "Disable Background App Access (Global)" (a single `HKCU` DWORD) have
-no existing tweak anywhere. These must be added as new tweak definitions
-before Performance Tuner can be retired without losing capability.
+**One genuine gap**: "Disable Background App Access (Global)" — the
+`HKCU` per-user toggle PERF_CHECKS reads — has no existing tweak; the
+`HKCU` mechanism is distinct from the existing `disable_background_apps`
+id's `HKLM` Group Policy override. This must be added as a new tweak
+definition before Performance Tuner can be retired without losing
+capability. "Disable Hibernation" needs no new tweak at all — reference
+the existing `power_disable_hibernate_file` id directly.
 
 ### §2.3 Changes
 
-1. **Add two new tweak definitions**:
-   - `disable_hibernation` in `performance.json`: a `command` step
-     (`powercfg /hibernate off`) with a `file_absent` detect probe on
-     `%SystemDrive%\hiberfil.sys` (mirrors the existing `file_exists`/
-     `file_absent` detect-probe pattern documented in CLAUDE.md's Tweak
-     System section).
-   - `disable_background_apps_global` in `privacy.json`: a `registry`
-     step (`HKCU\Software\Microsoft\Windows\CurrentVersion\
-     BackgroundAccessApplications`, value `GlobalUserDisabled`, DWORD 1).
-   Both go through `tests/test_tweak_definitions.py`'s existing structural
-   validation — no new test infrastructure needed.
+1. **Add one new tweak definition**: `disable_background_apps_global` in
+   `privacy.json`, a `registry` step
+   (`HKCU\Software\Microsoft\Windows\CurrentVersion\
+   BackgroundAccessApplications`, value `GlobalUserDisabled`, DWORD 1).
+   Its `name` field must NOT read "Disable Background App Access
+   (Global)" verbatim — that string is already the existing
+   `disable_background_apps` entry's name, and both would otherwise show
+   identically in the same Privacy tab with no way to tell them apart.
+   Use a name that discloses the real distinction, e.g. "Disable
+   Background App Access (Per-User)". Goes through
+   `tests/test_tweak_definitions.py`'s existing structural validation —
+   no new test infrastructure needed.
 
 2. **Expand `definitions/builtins/performance.json`** to include every
    mapped id from the table above marked "no" except the two gaming ones
    (8 ids: `disable_animations`, `disable_aero_peek`,
    `disable_power_throttling`, `disable_prefetch`,
    `remove_network_throttling`, `disable_remote_registry`,
-   `disable_diagtrack`, `disable_error_reporting`), plus the 2 new ones
-   from §2.3 item 1 — 10 additions total, joining the `performance`/
-   relevant sub-list. `enable_game_mode`/`disable_game_dvr` are
+   `disable_diagtrack`, `disable_error_reporting`), plus
+   `power_disable_hibernate_file` (the existing id, standing in for
+   PERF_CHECKS' "Disable Hibernation") and the 1 new one from §2.3 item 1
+   — 10 additions total, joining the `performance`/relevant sub-list.
+   `enable_game_mode`/`disable_game_dvr` are
    deliberately left OUT of the general "Performance" preset (gaming
    tweaks belong to gaming-specific choices, not a blanket performance
    pass) — these remain individually discoverable in the Gaming tab,
@@ -161,8 +177,8 @@ before Performance Tuner can be retired without losing capability.
 
 ### §2.4 Testing
 
-- `tests/test_tweak_definitions.py` (existing) validates the 2 new tweak
-  entries structurally.
+- `tests/test_tweak_definitions.py` (existing) validates the 1 new tweak
+  entry structurally.
 - New test: the expanded `performance.json` preset's tweak ids all
   resolve to real entries across the category files (a preset naming a
   dead id is a silent no-op when applied — this is exactly the kind of

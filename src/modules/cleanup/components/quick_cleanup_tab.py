@@ -538,7 +538,9 @@ class QuickCleanupTab(QWidget):
         self._preset_combo.setToolTip(
             "Which items \"Clean\" includes when you click it -- Light is "
             "the original behavior, Aggressive includes danger-level items "
-            "(except orphaned profiles/virtual disks, never included by any preset)."
+            "(except orphaned profiles/virtual disks, never included by any preset). "
+            "Custom behaves the same as Light here -- this dashboard has no "
+            "per-item checkboxes for Custom to mean anything else."
         )
         for pid in preset_names():
             label = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
@@ -959,6 +961,8 @@ class QuickCleanupTab(QWidget):
                                 return True
             elif isinstance(result, cs.ScanResult):
                 if preset_id == "custom":
+                    if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
+                        continue
                     if any(item.safety == "safe" for item in result.items):
                         return True
                 else:
@@ -1438,12 +1442,14 @@ class QuickCleanupTab(QWidget):
                             if cat.size_bytes > 0:
                                 browser_cats.append(cat)
                                 total += cat.size_bytes
-            elif cid == "wu" and cid in self._results:
+            elif cid == "wu":
                 needs_wu = True
 
         if preset_id == "custom":
             for cid, result in self._results.items():
                 if cid == "browser":
+                    continue
+                if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
                     continue
                 for item in result.items:
                     if item.safety == "safe":
@@ -1479,9 +1485,14 @@ class QuickCleanupTab(QWidget):
             self._progress.hide()
             self._status_lbl.setText(f"Clean error: {e}")
 
+        preset_label = (
+            cleanup_presets.PRESETS[preset_id]["label"]
+            if preset_id != "custom" else None)
+
         worker = csr.run_clean_safe(
             self, all_safe, browser_cats=browser_cats, stop_wuauserv=needs_wu,
-            confirm="always", on_done=_on_done, on_error=_on_error)
+            confirm="always", preset_label=preset_label,
+            on_done=_on_done, on_error=_on_error)
         if worker is None:
             return  # user declined the confirm -- nothing was disabled yet
 

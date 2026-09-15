@@ -138,6 +138,99 @@ def test_aggressive_preset_still_excludes_never_included_scanners(qapp, monkeypa
     assert captured.get("items", []) == []
 
 
+def test_aggressive_confirm_dialog_names_the_preset_not_safe_items(qapp, monkeypatch):
+    """End-to-end through _do_clean_all_safe: under Aggressive, the confirm
+    dialog the user actually sees must say "Aggressive", not disguise a
+    danger-tier bulk delete as an ordinary "safe items" clean."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    tab = _built_tab_with_result(qapp, safe=1, danger=1)
+    idx = tab._preset_combo.findData("aggressive")
+    tab._preset_combo.setCurrentIndex(idx)
+
+    seen_texts = []
+
+    def _fake_exec(self):
+        seen_texts.append(self.text())
+        return QMessageBox.StandardButton.Cancel  # decline -- no real delete runs
+    monkeypatch.setattr(QMessageBox, "exec", _fake_exec)
+
+    tab._do_clean_all_safe()
+
+    assert len(seen_texts) == 1
+    assert "Aggressive" in seen_texts[0]
+    assert "safe" not in seen_texts[0].lower()
+
+
+def test_light_confirm_dialog_keeps_saying_safe_items(qapp, monkeypatch):
+    """Same end-to-end path under the default Light preset must be
+    unaffected -- still says "safe items", no preset name inserted."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    tab = _built_tab_with_result(qapp, safe=1, danger=1)
+    # Light is already the default, set explicitly for clarity/robustness.
+    idx = tab._preset_combo.findData("light")
+    tab._preset_combo.setCurrentIndex(idx)
+
+    seen_texts = []
+
+    def _fake_exec(self):
+        seen_texts.append(self.text())
+        return QMessageBox.StandardButton.Cancel
+    monkeypatch.setattr(QMessageBox, "exec", _fake_exec)
+
+    tab._do_clean_all_safe()
+
+    assert len(seen_texts) == 1
+    assert "safe items" in seen_texts[0]
+    assert "Light" not in seen_texts[0]
+
+
+def test_custom_preset_excludes_never_included_scanners_in_clean_call(qapp, monkeypatch):
+    """I1: Custom's item selection must apply the same NEVER_INCLUDED
+    exclusion the other three presets get via items_for_preset, not rely
+    on coincidence (NEVER_INCLUDED scanners happening to always emit
+    safety="danger", which Custom's safe-only filter already drops for an
+    unrelated reason). Force a NEVER_INCLUDED scanner name onto a category
+    holding a safety="safe" item -- today's safe-only filter alone WOULD
+    include it -- and confirm Custom still excludes it."""
+    from modules.cleanup import cleanup_presets
+    from PyQt6.QtWidgets import QMessageBox
+
+    tab = _built_tab_with_result(qapp, safe=1)
+    never_included_name = next(iter(cleanup_presets.NEVER_INCLUDED))
+    tab._id_to_scanner_name["temp"] = never_included_name
+    idx = tab._preset_combo.findData("custom")
+    tab._preset_combo.setCurrentIndex(idx)
+
+    captured = {}
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: QMessageBox.StandardButton.Cancel)
+
+    def fake_run_clean_safe(widget, items, **kwargs):
+        captured["items"] = items
+        return None
+    monkeypatch.setattr("modules.cleanup.clean_safe_runner.run_clean_safe", fake_run_clean_safe)
+
+    tab._do_clean_all_safe()
+
+    assert captured.get("items", []) == []
+
+
+def test_custom_has_cleanable_items_excludes_never_included_scanners(qapp):
+    """Same exclusion, mirrored in _has_cleanable_items so a NEVER_INCLUDED
+    category under Custom never leaves the Clean button looking clickable
+    for items that _do_clean_all_safe would then refuse to include."""
+    from modules.cleanup import cleanup_presets
+
+    tab = _built_tab_with_result(qapp, safe=1)
+    never_included_name = next(iter(cleanup_presets.NEVER_INCLUDED))
+    tab._id_to_scanner_name["temp"] = never_included_name
+    idx = tab._preset_combo.findData("custom")
+    tab._preset_combo.setCurrentIndex(idx)
+
+    assert tab._has_cleanable_items() is False
+
+
 def test_has_cleanable_items_is_preset_aware(qapp):
     tab = _built_tab_with_result(qapp, caution=1)  # no "safe" items at all
 

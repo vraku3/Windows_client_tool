@@ -25,6 +25,7 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
                    browser_cats: Optional[list] = None,
                    stop_wuauserv: bool = False,
                    confirm: str = "always",
+                   preset_label: Optional[str] = None,
                    on_done: Callable[[int, int], None],
                    on_error: Optional[Callable[[str], None]] = None) -> Optional[Worker]:
     """confirm="always": always asks, via a QMessageBox Ok/Cancel dialog.
@@ -35,6 +36,16 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
     toward what actually gets deleted, matching cs.delete_items' own
     filtering (_ScanTab relies on exactly this: it passes every row in
     the tree, not just the checked ones).
+
+    `preset_label` names the active preset (e.g. "Thorough", "Aggressive")
+    in the confirm="always" dialog's own wording, so a bulk clean under a
+    preset that goes beyond safe-only items is never disguised as an
+    ordinary "safe items" clean. Only used by that branch -- confirm=
+    "size_gated" (_scan_tab.py's _do_clean, which has no concept of
+    presets) never passes it and is completely unaffected. `None` or
+    "Light" (both mean "safe-only, in practice") keep the ORIGINAL
+    wording byte-for-byte; anything else drops the word "safe" (which
+    would be actively false) and adds an explicit warning.
 
     Returns the Worker it started, or None if the user declined the
     confirm dialog -- neither on_done nor on_error fires in that case.
@@ -54,9 +65,19 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
         mb = QMessageBox(widget)
         mb.setWindowTitle("Confirm Bulk Clean")
         mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText(
-            f"Clean <b>{cs.format_size(total)}</b> of safe items across "
-            f"{item_count} item(s)?<br>This cannot be undone.")
+        if preset_label in (None, "Light"):
+            mb.setText(
+                f"Clean <b>{cs.format_size(total)}</b> of safe items across "
+                f"{item_count} item(s)?<br>This cannot be undone.")
+        else:
+            # Deliberately avoids the word "safe" anywhere in this branch --
+            # that word is what made the ORIGINAL bug (C1) misleading under
+            # Aggressive, so it must not sneak back in via a synonym like
+            # "less-safe" either.
+            mb.setText(
+                f"Clean <b>{cs.format_size(total)}</b> of {preset_label} items "
+                f"across {item_count} item(s)?<br>This may include destructive "
+                f"or higher-risk items.<br>This cannot be undone.")
         mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
         mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
         if mb.exec() != QMessageBox.StandardButton.Ok:

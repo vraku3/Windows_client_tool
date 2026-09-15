@@ -168,6 +168,94 @@ def test_an_error_landing_after_the_widget_is_deleted_is_dropped(qapp, widget, m
     assert errors == [], "on_error fired for an error delivered after the widget was deleted"
 
 
+def test_no_preset_label_produces_the_original_message_byte_for_byte(qapp, widget, monkeypatch):
+    """Regression pin: confirm="always" with no preset_label (the default,
+    and what _scan_tab.py's own confirm="size_gated" path never even
+    passes) must render EXACTLY the message this dialog has always shown.
+    """
+    seen_texts = []
+
+    def _fake_exec(self):
+        seen_texts.append(self.text())
+        return csr.QMessageBox.StandardButton.Ok
+    monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
+    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None)
+    _settle(qapp)
+
+    assert seen_texts == [
+        f"Clean <b>{cs.format_size(100)}</b> of safe items across "
+        f"1 item(s)?<br>This cannot be undone."
+    ]
+
+
+def test_light_preset_label_also_produces_the_original_message(qapp, widget, monkeypatch):
+    seen_texts = []
+
+    def _fake_exec(self):
+        seen_texts.append(self.text())
+        return csr.QMessageBox.StandardButton.Ok
+    monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
+    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
+    csr.run_clean_safe(widget, [item], confirm="always", preset_label="Light",
+                        on_done=lambda d, e: None)
+    _settle(qapp)
+
+    assert seen_texts == [
+        f"Clean <b>{cs.format_size(100)}</b> of safe items across "
+        f"1 item(s)?<br>This cannot be undone."
+    ]
+
+
+def test_aggressive_preset_label_drops_the_word_safe_and_names_the_preset(qapp, widget, monkeypatch):
+    seen_texts = []
+
+    def _fake_exec(self):
+        seen_texts.append(self.text())
+        return csr.QMessageBox.StandardButton.Ok
+    monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
+    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="danger")
+    item.selected = True
+    csr.run_clean_safe(widget, [item], confirm="always", preset_label="Aggressive",
+                        on_done=lambda d, e: None)
+    _settle(qapp)
+
+    assert len(seen_texts) == 1
+    assert "safe" not in seen_texts[0].lower()
+    assert "Aggressive" in seen_texts[0]
+
+
+def test_size_gated_confirm_is_unaffected_by_preset_label(qapp, widget, monkeypatch):
+    """_scan_tab.py's own call never passes preset_label at all, but even
+    if it were passed, size_gated must not use it -- that branch has no
+    concept of presets."""
+    seen_texts = []
+
+    def _fake_exec(self):
+        seen_texts.append(self.text())
+        return csr.QMessageBox.StandardButton.Ok
+    monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
+    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+
+    big_item = cs.ScanItem(path=r"C:\x", size=600 * 1024 * 1024, is_dir=False,
+                            safety="safe", selected=True)
+    csr.run_clean_safe(widget, [big_item], confirm="size_gated",
+                        preset_label="Aggressive", on_done=lambda d, e: None)
+    _settle(qapp)
+
+    # _confirm_large's own dialog text, from _scan_tab.py -- unrelated to
+    # run_clean_safe's "always" branch and must not mention any preset.
+    assert len(seen_texts) == 1
+    assert "Aggressive" not in seen_texts[0]
+    assert "permanently delete" in seen_texts[0]
+
+
 def test_on_error_fires_when_the_worker_raises(qapp, widget, monkeypatch):
     def _raise(items, stop_wuauserv=False):
         raise RuntimeError("disk went away")

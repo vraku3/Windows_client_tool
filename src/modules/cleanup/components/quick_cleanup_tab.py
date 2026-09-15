@@ -1171,7 +1171,7 @@ class QuickCleanupTab(QWidget):
         mb.setWindowTitle("Compact WinSxS")
         mb.setIcon(QMessageBox.Icon.Information)
         mb.setText(
-            "This runs <b>DISM /StartComponentCleanup /ResetBase</b> which can take "
+            "This runs <b>DISM /StartComponentCleanup</b> which can take "
             "<b>10–30 minutes</b>. The system will remain usable. Continue?"
         )
         mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
@@ -1188,7 +1188,7 @@ class QuickCleanupTab(QWidget):
         def _run(_worker):
             try:
                 proc = subprocess.Popen(
-                    ["Dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup", "/ResetBase"],
+                    ["Dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,

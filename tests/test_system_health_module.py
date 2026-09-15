@@ -69,3 +69,121 @@ def test_on_activate_triggers_a_findings_refresh(qapp, monkeypatch):
         assert calls == [1]
     finally:
         app.shutdown()
+
+
+def test_servicing_tab_has_three_buttons(qapp):
+    module, app = _module(qapp)
+    try:
+        assert hasattr(module, "_scan_health_btn")
+        assert hasattr(module, "_component_cleanup_btn")
+        assert hasattr(module, "_reset_base_btn")
+    finally:
+        app.shutdown()
+
+
+def test_reset_base_is_disabled_until_a_clean_scan_health(qapp):
+    module, app = _module(qapp)
+    try:
+        assert module._reset_base_btn.isEnabled() is False
+    finally:
+        app.shutdown()
+
+
+def test_scan_health_success_enables_reset_base(qapp, monkeypatch):
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_scan_health",
+            lambda: DismResult("dism /Online /Cleanup-Image /ScanHealth", 0, "No corruption"))
+        module._run_scan_health()
+
+        from PyQt6.QtCore import QThreadPool
+        import time
+        QThreadPool.globalInstance().waitForDone(5000)
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert module._last_scan_health_clean is True
+        assert module._reset_base_btn.isEnabled() is True
+    finally:
+        app.shutdown()
+
+
+def test_scan_health_failure_does_not_enable_reset_base(qapp, monkeypatch):
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_scan_health",
+            lambda: DismResult("dism /Online /Cleanup-Image /ScanHealth", 87, "Corruption found"))
+        module._run_scan_health()
+
+        from PyQt6.QtCore import QThreadPool
+        import time
+        QThreadPool.globalInstance().waitForDone(5000)
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert module._last_scan_health_clean is False
+        assert module._reset_base_btn.isEnabled() is False
+    finally:
+        app.shutdown()
+
+
+def test_reset_base_click_requires_typed_confirmation(qapp, monkeypatch):
+    """The confirmation dialog's Ok button must stay disabled until the
+    exact word RESETBASE is typed -- simulate this by driving the real
+    dialog class directly rather than mocking QMessageBox.exec, since
+    this needs a QDialog with a QLineEdit, not a plain QMessageBox."""
+    from modules.system_health.system_health_module import _ResetBaseConfirmDialog
+
+    dlg = _ResetBaseConfirmDialog()
+    ok_button = dlg._ok_button
+    assert ok_button.isEnabled() is False
+
+    dlg._confirm_field.setText("wrong")
+    assert ok_button.isEnabled() is False
+
+    dlg._confirm_field.setText("RESETBASE")
+    assert ok_button.isEnabled() is True
+
+
+def test_reset_base_creates_a_restore_point_before_running_dism(qapp, monkeypatch):
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        module._last_scan_health_clean = True
+        module._reset_base_btn.setEnabled(True)
+
+        restore_calls = []
+        monkeypatch.setattr(
+            "core.system_restore.create_restore_point",
+            lambda description, timeout=60: (restore_calls.append(description), (True, "ok"))[1])
+        dism_calls = []
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_reset_base",
+            lambda: (dism_calls.append(1), DismResult("dism ... /ResetBase", 0, "done"))[1])
+        # Skip the interactive typed-confirmation dialog for this test --
+        # call the internal method the dialog's Ok button would trigger.
+        module._do_reset_base_confirmed()
+
+        from PyQt6.QtCore import QThreadPool
+        import time
+        QThreadPool.globalInstance().waitForDone(5000)
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert len(restore_calls) == 1
+        assert len(dism_calls) == 1
+    finally:
+        app.shutdown()

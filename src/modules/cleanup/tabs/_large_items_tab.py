@@ -1,15 +1,14 @@
-"""_LargeItemsTab — Large Items scan tab + DISM Component Store Cleanup button."""
-import subprocess
-from typing import Optional
+"""_LargeItemsTab — Large Items scan tab.
 
+DISM Component Store Cleanup moved to System Health's Servicing tab
+(`modules/system_health/system_health_module.py`) -- a servicing
+operation, not a file to select-and-delete.
+"""
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFrame, QTextEdit,
+    QWidget, QVBoxLayout, QFrame,
 )
 
-from core.long_op_pool import get_long_op_pool
-from core.worker import Worker
 from modules.cleanup.tabs._driver_panel import _DriverStorePanel
 from modules.cleanup.tabs._scan_tab import _ScanTab
 from modules.cleanup import cleanup_scanner as cs
@@ -24,7 +23,7 @@ LARGE_SCANNERS = {
 
 
 class _LargeItemsTab(QWidget):
-    """Large Items scan tab + DISM Component Store Cleanup button."""
+    """Large Items scan tab."""
     freed_bytes = pyqtSignal(int)
 
     def __init__(self, parent=None):
@@ -39,138 +38,21 @@ class _LargeItemsTab(QWidget):
         self._scan_tab.freed_bytes.connect(self.freed_bytes)
         layout.addWidget(self._scan_tab, 1)
 
-        # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #444;")
-        layout.addWidget(sep)
-
-        # DISM section
-        dism = QWidget()
-        dism_lay = QVBoxLayout(dism)
-        dism_lay.setContentsMargins(8, 6, 8, 8)
-
-        dism_row = QHBoxLayout()
-        dism_title = QLabel("<b>DISM Component Store Cleanup</b>")
-        self._analyze_btn = QPushButton("Analyze WinSxS")
-        self._analyze_btn.setToolTip(
-            "Runs: DISM /Online /Cleanup-Image /AnalyzeComponentStore\n"
-            "Reports how much space cleanup could reclaim WITHOUT deleting anything.\n"
-            "Fast (seconds) — run this first to see if the full cleanup is worth it."
-        )
-        self._dism_btn = QPushButton("Run DISM Cleanup")
-        self._dism_btn.setToolTip(
-            "Runs: DISM /Online /Cleanup-Image /StartComponentCleanup\n"
-            "Removes superseded Windows components from WinSxS.\n"
-            "Can reclaim 2–10 GB. Takes several minutes. Requires admin."
-        )
-        dism_row.addWidget(dism_title)
-        dism_row.addStretch()
-        dism_row.addWidget(self._analyze_btn)
-        dism_row.addWidget(self._dism_btn)
-        dism_lay.addLayout(dism_row)
-
-        dism_desc = QLabel(
-            "Removes superseded Windows update components from the WinSxS store. "
-            "Can reclaim 2–10 GB on systems with many cumulative updates. "
-            "Takes several minutes and requires administrator privileges."
-        )
-        dism_desc.setWordWrap(True)
-        dism_desc.setStyleSheet("color: #888; font-size: 11px;")
-        dism_lay.addWidget(dism_desc)
-
-        self._dism_out = QTextEdit()
-        self._dism_out.setReadOnly(True)
-        self._dism_out.setFixedHeight(90)
-        self._dism_out.hide()
-        dism_lay.addWidget(self._dism_out)
-
-        layout.addWidget(dism)
-
         # Superseded driver packages get their own panel rather than a row
         # in the tree above: that tree is walked by delete_items, which
         # deletes PATHS, and removing a DriverStore\FileRepository folder
         # directly is how a machine loses a driver it still believes it
         # has. pnputil /delete-driver is the only correct removal.
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet("color: #444;")
-        layout.addWidget(sep2)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #444;")
+        layout.addWidget(sep)
         self._drivers = _DriverStorePanel()
         layout.addWidget(self._drivers)
-
-        self._analyze_btn.clicked.connect(self._run_analyze)
-        self._dism_btn.clicked.connect(self._run_dism)
-        self._analyze_worker: Optional[Worker] = None
-        self._dism_worker: Optional[Worker] = None
-        # DISM /StartComponentCleanup can run for minutes — a bounded pool of
-        # its own so it can't starve the global pool everything else shares.
-        self._dism_thread_pool = get_long_op_pool()
 
     def auto_scan(self):
         self._scan_tab.auto_scan()
 
-    def _run_analyze(self):
-        self._analyze_btn.setEnabled(False)
-        self._dism_out.clear()
-        self._dism_out.show()
-        self._dism_out.append("Analyzing component store (usually a few seconds)…\n")
-
-        def _do(_w):
-            proc = subprocess.run(
-                ["dism", "/Online", "/Cleanup-Image", "/AnalyzeComponentStore"],
-                capture_output=True, text=True, timeout=180,
-                creationflags=0x08000000,   # CREATE_NO_WINDOW
-            )
-            return (proc.stdout or "") + (proc.stderr or "")
-
-        def _done(output: str):
-            self._analyze_btn.setEnabled(True)
-            self._dism_out.append(output or "(No output)")
-
-        def _err(e: str):
-            self._analyze_btn.setEnabled(True)
-            self._dism_out.append(f"Error: {e}")
-
-        self._analyze_worker = Worker(_do)
-        self._analyze_worker.signals.result.connect(_done)
-        self._analyze_worker.signals.error.connect(_err)
-        self._dism_thread_pool.start(self._analyze_worker)
-
-    def _run_dism(self):
-        self._dism_btn.setEnabled(False)
-        self._dism_out.clear()
-        self._dism_out.show()
-        self._dism_out.append("Starting DISM Component Store Cleanup…")
-        self._dism_out.append("(This may take several minutes — please wait.)\n")
-
-        def _do(_w):
-            proc = subprocess.run(
-                ["dism", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
-                capture_output=True, text=True, timeout=600,
-                creationflags=0x08000000,   # CREATE_NO_WINDOW
-            )
-            return (proc.stdout or "") + (proc.stderr or "")
-
-        def _done(output: str):
-            self._dism_btn.setEnabled(True)
-            self._dism_out.append(output or "(No output)")
-
-        def _err(e: str):
-            self._dism_btn.setEnabled(True)
-            self._dism_out.append(f"Error: {e}")
-
-        self._dism_worker = Worker(_do)
-        self._dism_worker.signals.result.connect(_done)
-        self._dism_worker.signals.error.connect(_err)
-        self._dism_thread_pool.start(self._dism_worker)
-
     def _cancel_all(self) -> None:
         self._scan_tab._cancel_all()
         self._drivers._cancel_all()
-        if self._analyze_worker is not None:
-            self._analyze_worker.cancel()
-            self._analyze_worker = None
-        if self._dism_worker is not None:
-            self._dism_worker.cancel()
-            self._dism_worker = None

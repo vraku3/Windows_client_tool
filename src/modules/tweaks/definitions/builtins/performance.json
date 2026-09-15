@@ -18,27 +18,38 @@
       "disable_startup_delay",
       "disable_edge_preload",
       "keep_kernel_in_ram",
-      "boost_foreground_cpu_priority"
+      "boost_foreground_cpu_priority",
+      "power_disable_hibernate_file",
+      "disable_prefetch",
+      "disable_background_apps_global",
+      "disable_wersvc"
     ],
     "services": [
       "disable_delivery_optimization",
       "disable_xbox_services",
       "disable_fax",
       "disable_tablet_input",
-      "disable_superfetch_service",
       "disable_connected_devices_platform",
       "disable_alljoyn_router",
       "disable_downloaded_maps_manager",
-      "disable_diagnostics_hub"
+      "disable_diagnostics_hub",
+      "disable_remote_registry",
+      "disable_diagtrack"
     ],
     "network": [
       "disable_qos_reserved_bandwidth",
-      "optimise_dns_cache"
+      "optimise_dns_cache",
+      "mm_disable_network_throttling"
     ],
     "ui_tweaks": [
       "disable_taskbar_news",
       "disable_taskbar_widgets",
-      "disable_snap_suggestions"
+      "disable_snap_suggestions",
+      "taskbar_disable_taskbar_animations",
+      "disable_peek_desktop"
+    ],
+    "power": [
+      "power_disable_power_throttling"
     ]
   },
   "apps": {}

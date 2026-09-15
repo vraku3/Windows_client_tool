@@ -1,4 +1,5 @@
 from collections import OrderedDict
+from typing import Dict
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QPlainTextEdit,
@@ -149,6 +150,7 @@ class QuickFixModule(BaseModule):
         super().__init__()
         self._cards: list = []
         self._workers: list = []
+        self._category_headers: Dict[str, QLabel] = {}
 
     def create_widget(self) -> QWidget:
         outer = QWidget()
@@ -162,6 +164,12 @@ class QuickFixModule(BaseModule):
         )
         self._reboot_banner.hide()
         outer_layout.addWidget(self._reboot_banner)
+
+        # Search box
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search repair actions…")
+        self._search.textChanged.connect(self._apply_filter)
+        outer_layout.addWidget(self._search)
 
         # Scroll area
         scroll = QScrollArea()
@@ -177,6 +185,7 @@ class QuickFixModule(BaseModule):
             categories.setdefault(action.category, []).append(action)
 
         self._cards.clear()
+        self._category_headers.clear()
         for cat_name, actions in categories.items():
             hdr = QLabel(cat_name)
             hdr_font = hdr.font()
@@ -186,11 +195,13 @@ class QuickFixModule(BaseModule):
                 hdr_font.setPointSize(_pt + 1)
             hdr.setFont(hdr_font)
             content_layout.addWidget(hdr)
+            self._category_headers[cat_name] = hdr
 
             grid = QGridLayout()
             grid.setSpacing(8)
             for i, action in enumerate(actions):
                 card = _FixCard(action)
+                card._category = cat_name
                 self._cards.append(card)
                 grid.addWidget(card, i // 2, i % 2)
             content_layout.addLayout(grid)
@@ -210,6 +221,20 @@ class QuickFixModule(BaseModule):
 
     def on_activate(self) -> None:
         pass
+
+    def _apply_filter(self, text: str) -> None:
+        query = text.strip().lower()
+        visible_by_category: Dict[str, bool] = {name: False for name in self._category_headers}
+        for card in self._cards:
+            action = card._action
+            matches = (not query
+                      or query in action.title.lower()
+                      or query in action.description.lower())
+            card.setVisible(matches)
+            if matches:
+                visible_by_category[card._category] = True
+        for cat_name, hdr in self._category_headers.items():
+            hdr.setVisible(visible_by_category[cat_name])
 
     def on_deactivate(self) -> None:
         for card in self._cards:

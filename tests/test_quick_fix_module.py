@@ -86,3 +86,41 @@ def test_running_a_card_twice_while_busy_does_not_start_a_second_worker(qapp):
     first_worker = c._worker
     c._run()  # second call while "running" -- must be a no-op
     assert c._worker is first_worker
+
+
+def test_search_hides_non_matching_cards_and_their_category_header(qapp):
+    from modules.quick_fix.quick_fix_module import QuickFixModule
+
+    class FakeApp:
+        pass
+    mod = QuickFixModule()
+    mod.on_start(FakeApp())
+    widget = mod.create_widget()  # Keep a reference to prevent garbage collection
+    widget.show()  # Show the widget so the hierarchy is visible
+
+    mod._apply_filter("winsock")
+    matched = [c for c in mod._cards if c.isVisible()]
+    assert matched, "expected at least one card to match 'winsock'"
+    assert all("winsock" in c._action.title.lower()
+              or "winsock" in c._action.description.lower() for c in matched)
+
+    non_matching_categories = {c._category for c in mod._cards if not c.isVisible()}
+    fully_hidden = non_matching_categories - {c._category for c in matched}
+    for cat in fully_hidden:
+        assert not mod._category_headers[cat].isVisible()
+
+
+def test_clearing_the_search_shows_everything_again(qapp):
+    from modules.quick_fix.quick_fix_module import QuickFixModule
+
+    class FakeApp:
+        pass
+    mod = QuickFixModule()
+    mod.on_start(FakeApp())
+    widget = mod.create_widget()  # Keep a reference to prevent garbage collection
+    widget.show()  # Show the widget so the hierarchy is visible
+
+    mod._apply_filter("winsock")
+    mod._apply_filter("")
+    assert all(c.isVisible() for c in mod._cards)
+    assert all(hdr.isVisible() for hdr in mod._category_headers.values())

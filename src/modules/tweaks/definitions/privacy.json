@@ -1437,7 +1437,7 @@
   },
   {
     "id": "disable_background_apps_global",
-    "name": "Disable Background App Access (Global)",
+    "name": "Disable Background App Access (Per-User)",
     "description": "Globally prevents UWP apps from running and using resources in the background.",
     "category": "Privacy",
     "risk": "low",

@@ -734,23 +734,5 @@
         "kind": "DWORD"
       }
     ]
-  },
-  {
-    "id": "disable_hibernation",
-    "name": "Disable Hibernation",
-    "description": "Runs powercfg /hibernate off, removing hiberfil.sys and freeing disk space equal to installed RAM.",
-    "category": "Performance",
-    "risk": "low",
-    "requires_admin": true,
-    "steps": [
-      {
-        "type": "command",
-        "cmd": "powercfg /hibernate off"
-      }
-    ],
-    "detect": {
-      "type": "file_absent",
-      "path": "%SystemDrive%\\hiberfil.sys"
-    }
   }
 ]

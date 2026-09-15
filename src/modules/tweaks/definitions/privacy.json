@@ -1434,5 +1434,22 @@
         "kind": "DWORD"
       }
     ]
+  },
+  {
+    "id": "disable_background_apps_global",
+    "name": "Disable Background App Access (Global)",
+    "description": "Globally prevents UWP apps from running and using resources in the background.",
+    "category": "Privacy",
+    "risk": "low",
+    "requires_admin": false,
+    "steps": [
+      {
+        "type": "registry",
+        "key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications",
+        "value": "GlobalUserDisabled",
+        "data": 1,
+        "kind": "DWORD"
+      }
+    ]
   }
 ]

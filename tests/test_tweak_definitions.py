@@ -71,6 +71,32 @@ def test_ids_are_unique_across_every_file():
     assert not duplicates, "duplicate tweak ids: " + "; ".join(duplicates)
 
 
+def test_names_are_unique_within_each_file():
+    """Two DIFFERENT tweaks (different ids) can legitimately share a display
+    name if they live in different files -- they show up in different Tweaks
+    tabs, so nothing on screen is actually ambiguous (14 such cross-file
+    pairs already exist in this catalog, e.g. "Show File Extensions" in both
+    explorer.json and ui_tweaks.json, and that's fine).
+
+    Two entries in the SAME file sharing a name is the real defect: they
+    render in the SAME tab with no way to tell them apart except clicking
+    through. This is exactly the bug a task review caught once already (see
+    the module-consolidation-design spec) -- disable_background_apps_global
+    was given the same name as the pre-existing disable_background_apps,
+    both in privacy.json -- caught by a human reading the diff, not by any
+    test, because test_ids_are_unique_across_every_file only checks ids."""
+    duplicates = []
+    for filename in _definition_files():
+        seen_names = {}
+        for tweak in _load(filename):
+            name = tweak.get("name")
+            tid = tweak.get("id")
+            if name in seen_names:
+                duplicates.append(f"{filename}: {tid!r} and {seen_names[name]!r} both named {name!r}")
+            seen_names[name] = tid
+    assert not duplicates, "tweaks with a duplicate name in the same file/tab:\n  " + "\n  ".join(duplicates)
+
+
 def test_every_tweak_has_the_required_fields():
     missing = []
     for filename, tweak in _all_tweaks():

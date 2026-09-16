@@ -12,7 +12,7 @@ import logging
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QMessageBox,
 )
 
 from core.base_module import BaseModule
@@ -207,6 +207,19 @@ class SystemHealthModule(BaseModule):
         self._servicing_pool = get_long_op_pool()
         return tab
 
+    def _confirm(self, title: str, text: str,
+                 icon: QMessageBox.Icon = QMessageBox.Icon.Information) -> bool:
+        """Shared Ok/Cancel confirm dialog (default Cancel) -- the same
+        boilerplate was repeated verbatim across every servicing action
+        that shows one."""
+        mb = QMessageBox(self._tabs)
+        mb.setWindowTitle(title)
+        mb.setIcon(icon)
+        mb.setText(text)
+        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        return mb.exec() == QMessageBox.StandardButton.Ok
+
     def _run_scan_health(self) -> None:
         self._scan_health_btn.setEnabled(False)
         self._servicing_out.setText("Checking for corruption (can take several minutes)...")
@@ -216,6 +229,8 @@ class SystemHealthModule(BaseModule):
             return servicing.run_scan_health()
 
         def _done(result):
+            if not widget_is_valid(self._scan_health_btn):
+                return
             self._scan_health_btn.setEnabled(True)
             self._last_scan_health_clean = (result.returncode == 0)
             self._reset_base_btn.setEnabled(self._last_scan_health_clean)
@@ -227,6 +242,8 @@ class SystemHealthModule(BaseModule):
                                command=result.command, returncode=result.returncode)
 
         def _err(e: str):
+            if not widget_is_valid(self._scan_health_btn):
+                return
             self._scan_health_btn.setEnabled(True)
             self._last_scan_health_clean = False
             self._reset_base_btn.setEnabled(False)
@@ -235,21 +252,16 @@ class SystemHealthModule(BaseModule):
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
+        self._workers.append(w)
         self._servicing_pool.start(w)
 
     def _run_component_cleanup(self) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-        mb = QMessageBox(self._tabs)
-        mb.setWindowTitle("Component Cleanup")
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText(
+        if not self._confirm(
+            "Component Cleanup",
             "Runs: dism /Online /Cleanup-Image /StartComponentCleanup\n\n"
             "Removes superseded Windows components from WinSxS. Can "
-            "reclaim 2–10 GB. Takes several minutes. Continue?"
-        )
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
+            "reclaim 2–10 GB. Takes several minutes. Continue?",
+        ):
             return
 
         self._component_cleanup_btn.setEnabled(False)
@@ -260,6 +272,8 @@ class SystemHealthModule(BaseModule):
             return servicing.run_component_cleanup()
 
         def _done(result):
+            if not widget_is_valid(self._component_cleanup_btn):
+                return
             self._component_cleanup_btn.setEnabled(True)
             self._servicing_out.setText(
                 f"Component Cleanup finished (exit {result.returncode})\n{result.output[:500]}")
@@ -268,24 +282,23 @@ class SystemHealthModule(BaseModule):
                                command=result.command, returncode=result.returncode)
 
         def _err(e: str):
+            if not widget_is_valid(self._component_cleanup_btn):
+                return
             self._component_cleanup_btn.setEnabled(True)
             self._servicing_out.setText(f"Error: {e}")
 
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
+        self._workers.append(w)
         self._servicing_pool.start(w)
 
     def _run_sfc_scan(self) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-        mb = QMessageBox(self._tabs)
-        mb.setWindowTitle("SFC Scan")
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText("Runs: sfc /scannow\n\nScans and repairs protected Windows "
-                   "system files. Can take 10-15 minutes. Continue?")
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
+        if not self._confirm(
+            "SFC Scan",
+            "Runs: sfc /scannow\n\nScans and repairs protected Windows "
+            "system files. Can take 10-15 minutes. Continue?",
+        ):
             return
 
         self._sfc_btn.setEnabled(False)
@@ -318,15 +331,11 @@ class SystemHealthModule(BaseModule):
         self._servicing_pool.start(w)
 
     def _run_restore_health(self) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-        mb = QMessageBox(self._tabs)
-        mb.setWindowTitle("DISM RestoreHealth")
-        mb.setIcon(QMessageBox.Icon.Information)
-        mb.setText("Runs: dism /Online /Cleanup-Image /RestoreHealth\n\n"
-                   "Repairs component-store corruption. Can take 10-30 minutes. Continue?")
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
+        if not self._confirm(
+            "DISM RestoreHealth",
+            "Runs: dism /Online /Cleanup-Image /RestoreHealth\n\n"
+            "Repairs component-store corruption. Can take 10-30 minutes. Continue?",
+        ):
             return
 
         self._restore_health_btn.setEnabled(False)
@@ -359,16 +368,13 @@ class SystemHealthModule(BaseModule):
         self._servicing_pool.start(w)
 
     def _run_chkdsk_schedule(self) -> None:
-        from PyQt6.QtWidgets import QMessageBox
-        mb = QMessageBox(self._tabs)
-        mb.setWindowTitle("Schedule CHKDSK")
-        mb.setIcon(QMessageBox.Icon.Warning)
-        mb.setText("Runs: chkdsk C: /f /r /x\n\n"
-                   "Schedules a full disk check and repair for the NEXT REBOOT. "
-                   "Continue?")
-        mb.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        mb.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        if mb.exec() != QMessageBox.StandardButton.Ok:
+        if not self._confirm(
+            "Schedule CHKDSK",
+            "Runs: chkdsk C: /f /r /x\n\n"
+            "Schedules a full disk check and repair for the NEXT REBOOT. "
+            "Continue?",
+            icon=QMessageBox.Icon.Warning,
+        ):
             return
 
         self._chkdsk_btn.setEnabled(False)
@@ -421,6 +427,8 @@ class SystemHealthModule(BaseModule):
             return servicing.run_reset_base()
 
         def _done(result):
+            if not widget_is_valid(self._servicing_out):
+                return
             self._reset_base_btn.setEnabled(False)  # stays gated -- needs a fresh ScanHealth to re-enable
             self._last_scan_health_clean = False
             self._servicing_out.setText(
@@ -430,11 +438,14 @@ class SystemHealthModule(BaseModule):
                                command=result.command, returncode=result.returncode)
 
         def _err(e: str):
+            if not widget_is_valid(self._servicing_out):
+                return
             self._servicing_out.setText(f"Reset Base did not run: {e}")
 
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
+        self._workers.append(w)
         self._servicing_pool.start(w)
 
     # ── Lifecycle ────────────────────────────────────────────────────

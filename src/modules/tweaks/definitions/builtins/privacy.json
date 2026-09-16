@@ -25,7 +25,6 @@
     ],
     "telemetry": [
       "disable_diagtrack",
-      "disable_utcsvc",
       "telemetry_zero",
       "disable_device_name_telemetry",
       "disable_wersvc",
@@ -44,12 +43,14 @@
     ],
     "ui_tweaks": [
       "disable_taskbar_news",
-      "disable_search_highlights",
       "disable_copilot_button",
       "disable_taskbar_widgets",
       "disable_start_recommendations",
       "disable_notification_center",
       "disable_taskbar_chat"
+    ],
+    "ai_features": [
+      "disable_search_highlights"
     ]
   },
   "apps": {}

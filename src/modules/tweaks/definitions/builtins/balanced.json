@@ -40,7 +40,6 @@
       "show_file_extensions",
       "show_hidden_files",
       "disable_taskbar_news",
-      "disable_search_highlights",
       "disable_copilot_button",
       "disable_taskbar_widgets",
       "disable_snap_suggestions",
@@ -54,12 +53,15 @@
       "disable_remote_desktop",
       "disable_remote_assistance",
       "disable_smb1",
-      "require_ctrl_alt_del",
-      "disable_wpad"
+      "require_ctrl_alt_del"
     ],
     "network": [
       "optimise_dns_cache",
-      "disable_qos_reserved_bandwidth"
+      "disable_qos_reserved_bandwidth",
+      "disable_wpad"
+    ],
+    "ai_features": [
+      "disable_search_highlights"
     ]
   },
   "apps": {}

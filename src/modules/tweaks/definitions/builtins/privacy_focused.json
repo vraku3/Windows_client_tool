@@ -33,7 +33,6 @@
     ],
     "telemetry": [
       "disable_diagtrack",
-      "disable_utcsvc",
       "telemetry_zero",
       "disable_device_name_telemetry",
       "disable_wersvc",

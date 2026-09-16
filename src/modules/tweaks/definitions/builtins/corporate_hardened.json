@@ -6,7 +6,6 @@
   "tweaks": {
     "telemetry": [
       "disable_diagtrack",
-      "disable_utcsvc",
       "telemetry_zero",
       "disable_device_name_telemetry",
       "disable_telemetry_tasks",
@@ -18,7 +17,6 @@
       "disable_delivery_optimization",
       "disable_remote_registry",
       "disable_xbox_services",
-      "disable_one_sync",
       "disable_windows_insider_service"
     ],
     "security": [
@@ -33,18 +31,19 @@
       "enable_nla",
       "disable_admin_shares",
       "enable_smart_screen_filter",
-      "secure_windows_defender"
+      "secure_windows_defender",
+      "disable_netbios_tcpip"
     ],
     "network": [
       "disable_qos_reserved_bandwidth",
-      "disable_netbios_tcpip",
       "disable_lmhosts_lookup",
       "disable_ipv6"
     ],
     "privacy": [
       "disable_peer_updates",
       "disable_cortana",
-      "disable_windows_insider"
+      "disable_windows_insider",
+      "disable_one_sync"
     ]
   },
   "apps": {"remove": [], "install": [], "protected": ["Microsoft.OneDriveSync"]}

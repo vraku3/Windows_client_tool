@@ -6,7 +6,6 @@
   "tweaks": {
     "telemetry": [
       "disable_diagtrack",
-      "disable_utcsvc",
       "telemetry_zero",
       "disable_telemetry_tasks",
       "disable_office_telemetry"

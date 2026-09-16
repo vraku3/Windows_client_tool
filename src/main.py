@@ -116,11 +116,9 @@ def register_all_modules(app) -> None:
     from modules.certificate_viewer.cert_module import CertModule
     from modules.gpresult.gpresult_module import GPResultModule
     # Batch C — Tools group
-    from modules.shared_resources.shares_module import SharesModule
     from modules.env_vars.env_vars_module import EnvVarsModule
     from modules.registry_explorer.registry_module import RegistryExplorerModule
     from modules.software_inventory.software_module import SoftwareModule
-    from modules.remote_tools.remote_module import RemoteToolsModule
     from modules.disk_health.disk_health_module import DiskHealthModule
     from modules.restore_manager.restore_module import RestoreManagerModule
     # Track 2 — New Tool Modules
@@ -154,11 +152,11 @@ def register_all_modules(app) -> None:
     app.module_registry.register(CertModule())
     app.module_registry.register(GPResultModule())
     # Batch C
-    app.module_registry.register(SharesModule())
+    # SharesModule, RemoteToolsModule — folded into NetworkDiagnosticsModule
+    # as tabs (Management + Network consolidation, part 2).
     app.module_registry.register(EnvVarsModule())
     app.module_registry.register(RegistryExplorerModule())
     app.module_registry.register(SoftwareModule())
-    app.module_registry.register(RemoteToolsModule())
     app.module_registry.register(DiskHealthModule())
     app.module_registry.register(RestoreManagerModule())
     # Track 2

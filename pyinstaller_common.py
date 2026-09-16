@@ -137,6 +137,13 @@ HIDDEN_IMPORTS = [
     "modules.wifi_analyzer.wifi_module",
     "modules.hosts_editor.hosts_editor_module",
     "modules.network_extras.net_extras_module",
+    # Network Diagnostics' two newest children -- previously imported
+    # directly at main.py's top level, now reachable only through
+    # NetworkDiagnosticsModule.__init__'s function-scoped imports, same trap
+    # as System Management's three entries above (Management + Network
+    # consolidation, part 2).
+    "modules.shared_resources.shares_module",
+    "modules.remote_tools.remote_module",
     "modules.event_viewer.event_viewer_module",
     "modules.cbs_log.cbs_module",
     "modules.dism_log.dism_module",

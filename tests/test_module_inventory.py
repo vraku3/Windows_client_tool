@@ -130,11 +130,15 @@ def test_a_module_survives_being_stopped_without_ever_being_built(qapp, module_c
 
 def test_the_network_tools_are_tabs_of_network_diagnostics(registered):
     names = {m.name for m in registered}
-    for gone in ("Wi-Fi Analyzer", "Hosts Editor", "Network Extras"):
+    for gone in (
+        "Wi-Fi Analyzer", "Hosts Editor", "Network Extras",
+        "Shared Resources", "Remote Tools",
+    ):
         assert gone not in names
     host = next(m for m in registered if m.name == "Network Diagnostics")
     assert [c.name for c in host.children] == [
         "Network Diagnostics", "Wi-Fi Analyzer", "Hosts Editor", "Network Extras",
+        "Shared Resources", "Remote Tools",
     ]
 
 
@@ -166,18 +170,18 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_30_entries(registered):
-    """30, not 32 and not yet 28: this is part 1 of a 2-task Management +
-    Network consolidation (see
+def test_the_sidebar_is_28_entries(registered):
+    """28, down from 32: the full history of the Management + Network
+    consolidation (see
     docs/superpowers/specs/2026-09-16-management-network-consolidation-design.md).
-    Task 1 (this one) folds three previously-independent ModuleGroup.MANAGE
-    entries -- Scheduled Tasks, Services, Windows Features -- into one new
-    "System Management" hub: 32 - 3 + 1 = 30. A second, later task folds two
-    more modules into a different existing hub, which is what brings the
-    count down to the final 28 -- do not jump the assertion to 28 here; that
-    belongs to that task's own commit. Absorbed modules are still reachable
-    -- as tabs, which `_all_composite_children` covers."""
-    assert len(registered) == 30
+    Task 1 folded three previously-independent ModuleGroup.MANAGE entries --
+    Scheduled Tasks, Services, Windows Features -- into one new "System
+    Management" hub: 32 - 3 + 1 = 30. Task 2 (this one) folds two more
+    previously-independent ModuleGroup.TOOLS entries -- Shared Resources,
+    Remote Tools -- into the already-existing "Network Diagnostics" hub as
+    two more tabs, with no new hub created: 30 - 2 = 28. Absorbed modules are
+    still reachable -- as tabs, which `_all_composite_children` covers."""
+    assert len(registered) == 28
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

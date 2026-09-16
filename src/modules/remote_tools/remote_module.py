@@ -297,7 +297,7 @@ class RemoteToolsModule(BaseModule):
     # ------------------------------------------------------------------
 
     def on_activate(self) -> None:
-        if self.app:
+        if self.app is not None and getattr(self.app, "config", None) is not None:
             self._history = self.app.config.get("remote_tools.history", [])
 
     def on_deactivate(self) -> None:
@@ -305,7 +305,8 @@ class RemoteToolsModule(BaseModule):
 
     def on_start(self, app) -> None:
         self.app = app
-        self._history = app.config.get("remote_tools.history", [])
+        if getattr(app, "config", None) is not None:
+            self._history = app.config.get("remote_tools.history", [])
 
     def on_stop(self) -> None:
         self.cancel_all_workers()

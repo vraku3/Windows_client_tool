@@ -65,7 +65,12 @@ def app_instance():
 def test_registers_a_substantial_module_set():
     # Loose floor, not an exact count — just catches "registration silently
     # broke and nothing came back" without hardcoding the current total.
-    assert len(_MODULE_CLASSES) >= 30
+    # Lowered from 30 to 25 by the Management + Network consolidation's
+    # Task 2, which folded two more sidebar entries into an existing
+    # composite (32 -> 30 -> 28 registered modules); see
+    # tests/test_module_inventory.py's test_the_sidebar_is_28_entries for
+    # the exact count and its history.
+    assert len(_MODULE_CLASSES) >= 25
 
 
 @pytest.mark.parametrize("module_cls", _MODULE_CLASSES, ids=[c.__name__ for c in _MODULE_CLASSES])

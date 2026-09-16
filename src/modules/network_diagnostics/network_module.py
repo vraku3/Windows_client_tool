@@ -1026,15 +1026,20 @@ class NetworkToolsModule(BaseModule):
 
 
 class NetworkDiagnosticsModule(CompositeModule):
-    """The network tools in one place: diagnostics, Wi-Fi, HOSTS, DNS/proxy.
+    """The network tools in one place: diagnostics, Wi-Fi, HOSTS, DNS/proxy,
+    shares/sessions/mapped drives, and RDP/WinRS/ping-sweep/Wake-on-LAN.
 
     Wi-Fi Analyzer, Hosts Editor and Network Extras were three separate TOOLS
-    entries, none of them near the diagnostics they belong beside.
+    entries, none of them near the diagnostics they belong beside. Shared
+    Resources and Remote Tools were folded in later (the Management +
+    Network consolidation, part 2) for the same reason: both are
+    network-facing TOOLS entries that had nothing to do with each other's
+    sidebar neighbors.
     """
 
     name = "Network Diagnostics"
     icon = "🌐"
-    description = "Connectivity diagnostics, Wi-Fi, HOSTS, DNS and proxy"
+    description = "Connectivity diagnostics, Wi-Fi, HOSTS, DNS, proxy, shares and remote tools"
     group = ModuleGroup.SYSTEM
 
     def __init__(self):
@@ -1042,10 +1047,14 @@ class NetworkDiagnosticsModule(CompositeModule):
         from modules.hosts_editor.hosts_editor_module import HostsEditorModule
         from modules.network_extras.net_extras_module import NetExtrasModule
         from modules.wifi_analyzer.wifi_module import WifiAnalyzerModule
+        from modules.shared_resources.shares_module import SharesModule
+        from modules.remote_tools.remote_module import RemoteToolsModule
 
         self.children = [
             NetworkToolsModule(),
             WifiAnalyzerModule(),
             HostsEditorModule(),
             NetExtrasModule(),
+            SharesModule(),
+            RemoteToolsModule(),
         ]

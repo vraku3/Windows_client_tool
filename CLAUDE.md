@@ -89,12 +89,26 @@ re-implement that filtering — hence the list.
 ### Composite Modules (`src/core/composite_module.py`)
 
 A `CompositeModule` hosts other `BaseModule`s as tabs. `Diagnose`, `Debloat`,
-`Startup & Boot` and `Network Diagnostics` are the four; a child stays an
+`Startup & Boot`, `Network Diagnostics` and `System Management` are the five
+(the last added 2026-09-16, folding Scheduled Tasks/Services/Windows Features
+into one hub — Network Diagnostics also grew two more children that day,
+Shared Resources and Remote Tools); a child stays an
 ordinary module that knows nothing about being hosted, so it can be tested
 alone and moved between hosts unchanged. A subclass only sets `self.children`
 in `__init__` (import the children *inside* `__init__`, and add them to
 `HIDDEN_IMPORTS` in `pyinstaller_common.py` — the frozen build otherwise runs
 fine with the tab silently absent).
+
+**A child that has never been hosted before can have a latent crash that
+only becomes reachable once it is.** Composite hosting exercises lifecycle
+calls a standalone module's own tests never triggered — the auto-refresh
+timer ticking a tab that was never opened, `on_start` running against a
+`_FakeApp` with `config = None` in `test_module_inventory.py`'s own generic
+`test_every_composite_child_survives_a_tick_it_was_not_built_for`. Both the
+System Management and Network Diagnostics folds (2026-09-16) found one real
+example each this way (`ServicesModule.refresh_data()`,
+`RemoteToolsModule.on_start()`) — check for this class of bug with that
+generic test before assuming a re-hosted child needs no code changes at all.
 
 Four things about it that are easy to get wrong:
 

@@ -165,14 +165,15 @@ def set_entries(self, entries):
 
 ### Composite Modules (`src/core/composite_module.py`)
 
-A `CompositeModule` hosts other `BaseModule`s as tabs, so a child module knows nothing about being hosted and can be tested alone. Four composites: `Diagnose`, `Debloat`, `Startup & Boot`, `Network Diagnostics`.
+A `CompositeModule` hosts other `BaseModule`s as tabs, so a child module knows nothing about being hosted and can be tested alone. Five composites: `Diagnose`, `Debloat`, `Startup & Boot`, `Network Diagnostics`, `System Management`.
 
 - `on_activate`/`on_deactivate` reach the VISIBLE child only — children stop their own refresh timers in `on_deactivate`
 - `on_stop` reaches every started child, including ones whose tab was never opened (so their widgets may not exist — guard teardown code for that)
 - Never `removeTab`/`insertTab` on the current index to swap in a lazily-built widget — it re-enters `currentChanged`. Each tab owns a permanent page the child widget is added into.
 - The host answers `get_refresh_interval()` with the fastest rate any child wants; `refresh_data()` only ticks the visible child
+- **A child re-hosted into a composite can have a latent crash that was never reachable standalone** — the host's auto-refresh timer can tick a tab that was never opened, and `on_start()` can run against a bare fake app in tests. Check with `test_module_inventory.py`'s generic `test_every_composite_child_survives_a_tick_it_was_not_built_for` before assuming a moved module needs no code changes.
 
-`DiagnoseModule` hosts 6 diagnostic viewers (Event Viewer, CBS Log, DISM Log, Windows Update, Reliability, Crash Dumps) as `LogReaderModule` subclasses with a unified search bar in `wrap()`; they are NOT standalone sidebar entries. `DebloatModule` hosts `DebloatToolsModule` (Apps / Privacy & Telemetry / AI & Navigation tabs) plus a separate Store Apps module.
+`DiagnoseModule` hosts 6 diagnostic viewers (Event Viewer, CBS Log, DISM Log, Windows Update, Reliability, Crash Dumps) as `LogReaderModule` subclasses with a unified search bar in `wrap()`; they are NOT standalone sidebar entries. `DebloatModule` hosts `DebloatToolsModule` (Apps / Privacy & Telemetry / AI & Navigation tabs) plus a separate Store Apps module. `SystemManagementModule` (added 2026-09-16) hosts Scheduled Tasks, Services, and Windows Features. `NetworkDiagnosticsModule` also hosts Shared Resources and Remote Tools alongside its original 4 children.
 
 ### Log Reader Modules (`src/core/log_reader_module.py`)
 

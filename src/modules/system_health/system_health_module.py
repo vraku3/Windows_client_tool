@@ -19,6 +19,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
 from core.semantic_colors import semantic
+from core.widget_life import widget_is_valid
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,8 @@ class SystemHealthModule(BaseModule):
             return servicing.run_sfc_scan()
 
         def _done(result):
+            if not widget_is_valid(self._sfc_btn):
+                return
             self._sfc_btn.setEnabled(True)
             self._servicing_out.setText(
                 f"SFC scan finished (exit {result.returncode})\n{result.output[:500]}")
@@ -303,12 +306,15 @@ class SystemHealthModule(BaseModule):
                                command=result.command, returncode=result.returncode)
 
         def _err(e: str):
+            if not widget_is_valid(self._sfc_btn):
+                return
             self._sfc_btn.setEnabled(True)
             self._servicing_out.setText(f"Error: {e}")
 
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
+        self._workers.append(w)
         self._servicing_pool.start(w)
 
     def _run_restore_health(self) -> None:
@@ -331,6 +337,8 @@ class SystemHealthModule(BaseModule):
             return servicing.run_restore_health()
 
         def _done(result):
+            if not widget_is_valid(self._restore_health_btn):
+                return
             self._restore_health_btn.setEnabled(True)
             self._servicing_out.setText(
                 f"RestoreHealth finished (exit {result.returncode})\n{result.output[:500]}")
@@ -339,12 +347,15 @@ class SystemHealthModule(BaseModule):
                                command=result.command, returncode=result.returncode)
 
         def _err(e: str):
+            if not widget_is_valid(self._restore_health_btn):
+                return
             self._restore_health_btn.setEnabled(True)
             self._servicing_out.setText(f"Error: {e}")
 
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
+        self._workers.append(w)
         self._servicing_pool.start(w)
 
     def _run_chkdsk_schedule(self) -> None:
@@ -368,6 +379,8 @@ class SystemHealthModule(BaseModule):
             return servicing.run_chkdsk_schedule()
 
         def _done(result):
+            if not widget_is_valid(self._chkdsk_btn):
+                return
             self._chkdsk_btn.setEnabled(True)
             self._servicing_out.setText(
                 f"CHKDSK scheduled (exit {result.returncode}). Reboot to run.\n{result.output[:500]}")
@@ -376,12 +389,15 @@ class SystemHealthModule(BaseModule):
                                command=result.command, returncode=result.returncode)
 
         def _err(e: str):
+            if not widget_is_valid(self._chkdsk_btn):
+                return
             self._chkdsk_btn.setEnabled(True)
             self._servicing_out.setText(f"Error: {e}")
 
         w = Worker(_run)
         w.signals.result.connect(_done)
         w.signals.error.connect(_err)
+        self._workers.append(w)
         self._servicing_pool.start(w)
 
     def _on_reset_base_clicked(self) -> None:

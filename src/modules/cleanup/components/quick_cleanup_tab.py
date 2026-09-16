@@ -14,7 +14,6 @@ category) during the module-consolidation merge, and this tab's one-click
 panel was deleted entirely.
 """
 import logging
-import os
 from typing import Dict, List
 
 from PyQt6.QtCore import Qt, QTimer, QThreadPool, pyqtSignal

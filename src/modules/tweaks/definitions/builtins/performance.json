@@ -19,10 +19,7 @@
       "disable_edge_preload",
       "keep_kernel_in_ram",
       "boost_foreground_cpu_priority",
-      "power_disable_hibernate_file",
-      "disable_prefetch",
-      "disable_background_apps_global",
-      "disable_wersvc"
+      "disable_prefetch"
     ],
     "services": [
       "disable_delivery_optimization",
@@ -33,23 +30,34 @@
       "disable_alljoyn_router",
       "disable_downloaded_maps_manager",
       "disable_diagnostics_hub",
-      "disable_remote_registry",
-      "disable_diagtrack"
+      "disable_remote_registry"
     ],
     "network": [
       "disable_qos_reserved_bandwidth",
-      "optimise_dns_cache",
-      "mm_disable_network_throttling"
+      "optimise_dns_cache"
     ],
     "ui_tweaks": [
       "disable_taskbar_news",
       "disable_taskbar_widgets",
       "disable_snap_suggestions",
-      "taskbar_disable_taskbar_animations",
       "disable_peek_desktop"
     ],
     "power": [
-      "power_disable_power_throttling"
+      "power_disable_power_throttling",
+      "power_disable_hibernate_file"
+    ],
+    "privacy": [
+      "disable_background_apps_global"
+    ],
+    "telemetry": [
+      "disable_wersvc",
+      "disable_diagtrack"
+    ],
+    "multimedia": [
+      "mm_disable_network_throttling"
+    ],
+    "taskbar_&_start": [
+      "taskbar_disable_taskbar_animations"
     ]
   },
   "apps": {}

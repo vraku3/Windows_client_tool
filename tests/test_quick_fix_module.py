@@ -47,8 +47,27 @@ def _drain_thread_pools(qapp):
         time.sleep(0.01)
 
 
+class _SyncPool:
+    """Runs a Worker synchronously on the calling thread instead of a real
+    background one, so a test can see the outcome as soon as `_run()`
+    returns. Same technique as tests/test_driver_module.py's `_SyncPool`.
+
+    Before this, tests that wanted a fast action's result had to reach in
+    and call `c._worker.fn(c._worker)` by hand *in addition to* `_run()`
+    dispatching the same Worker onto the real global QThreadPool -- running
+    the identical closure twice, once on a real background thread and once
+    synchronously in the test, a genuine race rather than a harmless
+    redundancy (and the same shape of bug Finding 4 fixed in `_FixCard`
+    itself: a late arrival from the "other" execution recording a second,
+    contradictory outcome)."""
+
+    def start(self, worker) -> None:
+        worker.run()
+
+
 @pytest.fixture
-def card(qapp):
+def card(qapp, monkeypatch):
+    monkeypatch.setattr(QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
     calls = []
     action = FixAction("t", "Test Action", "desc", "Test", fn=lambda cb: calls.append(1))
     c = _FixCard(action)
@@ -58,7 +77,6 @@ def card(qapp):
 def test_an_action_with_no_confirm_or_precondition_runs_immediately(card):
     c, calls = card
     c._run()
-    c._worker.fn(c._worker)  # run synchronously in-test
     assert calls == [1]
 
 
@@ -73,14 +91,14 @@ def test_a_confirm_text_action_does_not_run_when_cancelled(qapp):
     assert not c._running
 
 
-def test_a_confirm_text_action_runs_when_accepted(qapp):
+def test_a_confirm_text_action_runs_when_accepted(qapp, monkeypatch):
+    monkeypatch.setattr(QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
     calls = []
     action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: calls.append(1),
                         confirm_text="Are you sure?")
     c = _FixCard(action)
     with patch.object(QMessageBox, "exec", return_value=QMessageBox.StandardButton.Ok):
         c._run()
-    c._worker.fn(c._worker)
     assert calls == [1]
 
 
@@ -94,13 +112,13 @@ def test_a_precondition_returning_a_message_blocks_the_run_and_shows_it(qapp):
     assert c._status.text() == "nothing to do here"
 
 
-def test_a_precondition_returning_none_lets_the_action_run(qapp):
+def test_a_precondition_returning_none_lets_the_action_run(qapp, monkeypatch):
+    monkeypatch.setattr(QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
     calls = []
     action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: calls.append(1),
                         precondition=lambda: None)
     c = _FixCard(action)
     c._run()
-    c._worker.fn(c._worker)
     assert calls == [1]
 
 
@@ -147,6 +165,10 @@ def test_search_hides_non_matching_cards_and_their_category_header(qapp):
 
 def test_on_done_records_ok_outcome(card):
     c, _calls = card
+    # _on_done is now a no-op unless a worker is tracked as running (Finding
+    # 4's guard against a cancelled-then-late result recording a second,
+    # contradictory outcome) -- simulate "a run is in flight".
+    c._worker = object()
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
         c._on_done()
     mock_record.assert_called_once_with(c._action.title, "ok")
@@ -154,9 +176,30 @@ def test_on_done_records_ok_outcome(card):
 
 def test_on_error_records_error_outcome(card):
     c, _calls = card
+    c._worker = object()
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
         c._on_error("boom")
     mock_record.assert_called_once_with(c._action.title, "error")
+
+
+def test_on_done_is_a_no_op_after_cancel(card):
+    """The guard Finding 4 adds: once cancel() has already put the card
+    back to its resting state (self._worker is None), a result arriving
+    from the cancelled-but-still-running command must not record a second,
+    contradictory 'ok' outcome."""
+    c, _calls = card
+    assert c._worker is None
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c._on_done()
+    mock_record.assert_not_called()
+
+
+def test_on_error_is_a_no_op_after_cancel(card):
+    c, _calls = card
+    assert c._worker is None
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c._on_error("boom")
+    mock_record.assert_not_called()
 
 
 def test_cancel_records_cancelled_outcome_only_while_running(qapp):

@@ -205,7 +205,6 @@ Single-page dashboard with pie chart and auto-refresh. Uses `QuickCleanupTab` fr
 - `_adv_scanner_map` — maps advanced category IDs
 - `_do_scan_all()` — runs both main and advanced scanners in parallel via Workers
 - `_toggle_advanced()` — reveals/hides the advanced panel
-- `_build_one_click_panel()` — one-click maintenance actions (Flush DNS, Clear Event Logs, Compact WinSxS, Rebuild Icons, WU Deep Clean, Network Repair)
 - `get_refresh_interval()` returns `60_000` (60s auto-refresh)
 - `on_deactivate()` calls `stop_auto_refresh()` and `cancel()` to stop timers and workers
 
@@ -217,10 +216,6 @@ Single-page dashboard with pie chart and auto-refresh. Uses `QuickCleanupTab` fr
 - **AI & Navigation tab** — loads `ai_features.json` and `navigation.json`; same UI pattern
 
 Restore points created via `BackupService` before any apply operation. TweakEngine detects status for registry, service, appx, and scheduled_task step types.
-
-### PerfTunerModule UI Pattern (`src/modules/performance_tuner/perf_tuner_module.py`)
-
-Checklist-style table with 5 columns: ☑ Select | Name | Category | Risk | Status. Per-row Apply button. Preset buttons (Light, Aggressive, Custom) at top. This is the reference UI pattern for modules that present a list of togglable items.
 
 ### QuickFixModule (`src/modules/quick_fix/quick_fix_module.py`)
 

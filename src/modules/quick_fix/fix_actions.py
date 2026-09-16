@@ -24,7 +24,7 @@ class FixAction:
     # (default button Cancel) before running -- ports over Quick
     # Cleanup's per-action confirm dialogs during the Part B merge.
     precondition: Optional[Callable[[], Optional[str]]] = field(default=None, repr=False)
-    # Called just before running (after any confirm). Returning None
+    # Called just before running (before any confirm). Returning None
     # means proceed; returning a string shows it in the card's status
     # label instead of running -- e.g. "hibernation is off, nothing to
     # resize" for the migrated Resize Hibernation action.
@@ -434,7 +434,10 @@ ALL_ACTIONS: List[FixAction] = [
     # Print
     FixAction("print_queue", "Clear Print Queue",
               "Stop Spooler, delete print jobs, restart",
-              "Print", fn=clear_print_queue),
+              "Print", fn=clear_print_queue,
+              confirm_text="This will stop the Print Spooler, clear all queued print "
+                           "jobs, and restart it. Any job currently printing or queued "
+                           "will be lost."),
     FixAction("print_spooler_restart", "Restart Print Spooler",
               "Stop and restart the Print Spooler service",
               "Print", reboot_required=False, fn=restart_print_spooler),

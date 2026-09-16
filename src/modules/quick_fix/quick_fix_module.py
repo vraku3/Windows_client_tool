@@ -118,6 +118,12 @@ class _FixCard(QFrame):
         pool.start(self._worker)
 
     def _on_done(self):
+        if self._worker is None:
+            # cancel() already put this card back to its resting state and
+            # recorded "cancelled" -- a result arriving after that is the
+            # cancelled command finishing late in the background, not a
+            # second real outcome to report.
+            return
         self._running = False
         self._worker = None
         self._run_btn.setEnabled(True)
@@ -126,6 +132,12 @@ class _FixCard(QFrame):
         quick_fix_history.record(self._action.title, "ok")
 
     def _on_error(self, error_str: str):
+        if self._worker is None:
+            # Same race as _on_done: cancel() already reset this card and
+            # recorded "cancelled", so a late error from the abandoned
+            # worker must not overwrite it with a second, contradictory
+            # history entry.
+            return
         self._running = False
         self._worker = None
         self._run_btn.setEnabled(True)

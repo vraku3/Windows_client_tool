@@ -1,12 +1,11 @@
 r"""Delivery Optimization is turned off by policy, not by killing the service.
 
-Both places that offer this shipped a step Windows refuses outright:
+services.json's disable_delivery_optimization shipped a step Windows refuses
+outright:
 
     services.json  disable_delivery_optimization   {"type": "service",
                                                     "name": "DoSvc",
                                                     "start_type": "disabled"}
-    perf_checks.py disable_delivery_optimization   the same, plus a detector
-                                                   reading DoSvc\Start == 4
 
 Measured with tools/service_config_probe.py, which writes nothing
 (ChangeServiceConfig with SERVICE_NO_CHANGE for every field):
@@ -46,8 +45,8 @@ def _tweak(filename, tweak_id):
     for entry in _definitions(filename):
         if entry["id"] == tweak_id:
             return entry
-    raise AssertionError(f"{tweak_id} is gone from {filename} -- six presets "
-                         "and the Performance Tuner still name it by id")
+    raise AssertionError(f"{tweak_id} is gone from {filename} -- six "
+                         "built-in presets still name it by id")
 
 
 def test_the_tweak_stops_sharing_by_policy_not_by_the_service():

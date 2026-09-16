@@ -40,6 +40,8 @@ pyinstaller WinClientTool-portable.spec -y --distpath dist
 ```
 The portable spec must include `a.binaries` and `a.datas` in the EXE constructor — without these, the output is a ~3MB bootloader stub.
 
+**After every portable build, deploy it** — copy `dist/WinClientTool-Portable.exe` over `C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe`, the copy the user actually runs day to day. Not optional cleanup — skipping it leaves a stale exe running there. See the `build-portable` skill if present.
+
 **Code-signing** — the unsigned exe is blocked by SmartScreen/WDAC on many machines. After building, sign with `tools/sign_build.ps1` (a `.pfx` + password, or a SHA-1 thumbprint of a cert already in the user's store):
 ```
 powershell -ExecutionPolicy Bypass -File tools\sign_build.ps1 -Pfx C:\certs\wct.pfx -Password "secret"
@@ -161,30 +163,53 @@ def set_entries(self, entries):
     # ... normal work ...
 ```
 
-### DiagnoseModule — Hub Pattern (`src/modules/diagnose/diagnose_module.py`)
+### Composite Modules (`src/core/composite_module.py`)
 
-The `DiagnoseModule` embeds 6 diagnostic viewers as sub-tabs (Event Viewer, CBS Log, DISM Log, Windows Update, Reliability, Crash Dumps) with a unified search bar. These 6 modules are NOT registered as standalone sidebar entries — they exist only within the hub. Their standalone files exist but are not imported in `main.py`.
+A `CompositeModule` hosts other `BaseModule`s as tabs, so a child module knows nothing about being hosted and can be tested alone. Four composites: `Diagnose`, `Debloat`, `Startup & Boot`, `Network Diagnostics`.
 
-- Tabs are lazy-loaded on first switch via `_load_tab()`; the `loaded` flag in `_tab_state` prevents re-parsing
-- `_build_tab_widget()` is a module-level factory that constructs each tab's UI — new diagnostic tabs should follow this pattern
-- Unified search runs as a separate `_active_search: Worker` tracked independently from `self._workers`; `on_stop()` must cancel it explicitly
-- Crash Dumps tab requires admin — `_load_tab()` checks `is_admin()` before loading and shows an error banner if not elevated
+- `on_activate`/`on_deactivate` reach the VISIBLE child only — children stop their own refresh timers in `on_deactivate`
+- `on_stop` reaches every started child, including ones whose tab was never opened (so their widgets may not exist — guard teardown code for that)
+- Never `removeTab`/`insertTab` on the current index to swap in a lazily-built widget — it re-enters `currentChanged`. Each tab owns a permanent page the child widget is added into.
+- The host answers `get_refresh_interval()` with the fastest rate any child wants; `refresh_data()` only ticks the visible child
+
+`DiagnoseModule` hosts 6 diagnostic viewers (Event Viewer, CBS Log, DISM Log, Windows Update, Reliability, Crash Dumps) as `LogReaderModule` subclasses with a unified search bar in `wrap()`; they are NOT standalone sidebar entries. `DebloatModule` hosts `DebloatToolsModule` (Apps / Privacy & Telemetry / AI & Navigation tabs) plus a separate Store Apps module.
+
+### Log Reader Modules (`src/core/log_reader_module.py`)
+
+The six diagnostic readers set `provider_class` and implement `load_entries(worker)`. The shared UI is `ui/log_pane.py`'s `LogPane` — table, detail panel, error banner, progress, Refresh. Don't hand-roll another log pane.
 
 ### TreeSize Module (`src/modules/treesize/`)
 
-Three key files:
-- `disk_scanner.py` — `DiskScanner` runs in a background thread, emits batches of `DiskNode` via `signals.batch_ready` every 500 nodes
-- `disk_tree_model.py` — `DiskTreeModel` (a `QAbstractItemModel`) receives batches via `add_batch()` on the main thread; must override `sort()` for interactive column sorting
-- `treesize_module.py` — wires scanner signals to model mutations; uses `threading.Thread(daemon=True)` for the scanner
+A full TreeSize Professional clone, not a simple folder-size viewer, split into three layers:
+- **`scan/`** — the engine: `volume_info.py`, `ntfs_structs.py`, `mft_reader.py` (streams `$MFT` directly — the fast path), `walk_scanner.py` (`FindFirstFileExW` fallback), `filters.py`, `prune.py`, `scanner.py` (engine selection)
+- **`store/`** — `node_store.py` (columnar arrays; a node is an `int` index, not an object), `rollup.py`, `aggregates.py`, `duplicates.py`, `search.py`, `snapshots.py`, `compare.py`
+- **`ui/`** — ribbon, tree, drive list, view tabs, status bar; `treemap.py` is Qt-free layout
 
-`DiskTreeModel.sort()` is required because `QAbstractItemModel` does not implement sorting by default:
+**No PyQt6 in `scan/` or `store/`** — that split is what lets the engine tests run with no display and no elevation. Two engines: elevated + whole NTFS drive uses the MFT reader; everything else uses the walk scanner. `size` and `alloc` are independent columns, never derived from one another.
 
-```python
-def sort(self, column: int, order: Qt.SortOrder = ...) -> None:
-    self.layoutAboutToBeChanged.emit()
-    # sort self._roots and recursively sort children
-    self.layoutChanged.emit()
-```
+### Log Viewer Module (`src/modules/log_viewer/`)
+
+A CMTrace-style viewer for ConfigMgr/plain-text logs, its own sidebar module (not a Diagnose tab) since it opens whatever file it's handed rather than a fixed system path. No Qt in `cmtrace_parser.py`/`log_reader.py`/`log_model.py`.
+
+### Monitor Control (`src/modules/monitor_control/`)
+
+Displays, modes, monitor audio, DDC/CI. `requires_admin=True`, `read_only_unelevated=True` — display/DDC reads need no elevation, only audio endpoint writes do. `QueryDisplayConfig` (CCD) is the only trustworthy source of display state; `WmiMonitorID.Active` and `Win32_VideoController.CurrentRefreshRate` both measured lying. Every display change goes through `_apply_guard`: snapshot, apply, 15s revert countdown unless confirmed.
+
+### Security Dashboard (`src/modules/security_dashboard/`)
+
+149 controls over `check_*` readers in seven category tabs. `SecurityControl.read()` returns `None` for "could not check" and this is never collapsed into `False` — a refused BitLocker read must never read as "not encrypted". `_looks_refused()` catches tools (`Get-BitLockerVolume`, `Get-Tpm`, `dism`, `netsh`) that exit 0 while refusing.
+
+### Driver Manager (`src/modules/driver_manager/`)
+
+Read/export/uninstall for installed drivers plus vendor update checking (AMD/NVIDIA/Realtek providers, and a vendor-agnostic Windows-Update-driver-channel path for others like Intel). `requires_admin=False` for read/export; only `pnputil /delete-driver` and restricted-folder backups need elevation. `Win32_PnPSignedDriver` only lists devices that HAVE a driver — a second `Win32_PnPEntity` query catches the yellow-bang case.
+
+### System Health Module (`src/modules/system_health/`)
+
+Findings tab (pending servicing transaction, orphaned scheduled tasks, upgrade headroom — all Qt-free) plus a Servicing tab (DISM ScanHealth, Component Cleanup, and a heavily-gated Reset Base: disabled until a same-session clean ScanHealth, a typed `RESETBASE` confirmation, and a forced restore point before it ever runs). `/ResetBase` must never be reachable from anywhere else in the app.
+
+### Group Policy Module (`src/modules/gpresult/`)
+
+A report, not an editor, over `gpresult /x` + local `Registry.pol` parsing. `gpresult /x` unelevated silently drops the computer half of the report (exits 0) — `RsopScope.available` tracks whether it was present at all, never inferred from empty content. `Registry.pol` is readable unelevated even when `gpresult` is refused, so `pol_parser` fills in what RSOP dropped.
 
 ### Cleanup Module (`src/modules/cleanup/`)
 
@@ -199,50 +224,38 @@ def sort(self, column: int, order: Qt.SortOrder = ...) -> None:
 
 ### QuickCleanupModule (`src/modules/cleanup/quick_cleanup_module.py`)
 
-Single-page dashboard with pie chart and auto-refresh. Uses `QuickCleanupTab` from `modules/ui/components/quick_cleanup_tab.py`.
+Single-page dashboard with pie chart and auto-refresh, now Cleanup's own first tab (not a separate sidebar entry — merged in). Uses `QuickCleanupTab` from `modules/cleanup/components/quick_cleanup_tab.py`.
 
 - `_id_map` — maps category IDs to `(scanner_fn, safety)` tuples
-- `_adv_scanner_map` — maps advanced category IDs
-- `_do_scan_all()` — runs both main and advanced scanners in parallel via Workers
-- `_toggle_advanced()` — reveals/hides the advanced panel
+- A preset selector (Light/Thorough/Aggressive/Custom, `cleanup_presets.py`) drives `_do_clean_all_safe`
 - `get_refresh_interval()` returns `60_000` (60s auto-refresh)
 - `on_deactivate()` calls `stop_auto_refresh()` and `cancel()` to stop timers and workers
+- Its one-click maintenance panel was removed — those actions moved into `QuickFixModule` (below), the single home for one-click repairs now
 
 ### DebloatModule (`src/modules/debloat/debloat_module.py`)
 
-3-tab module in `ModuleGroup.OPTIMIZE`, `requires_admin = True`:
-- **Apps tab** — scans installed UWP apps via `Get-AppxPackage` (using `debloat_scanner.py`), shows table with checkboxes, Apply Selected / Apply All Safe. Protected apps (Store, Terminal, Get Help, Calculator, Notepad, Alarms) highlighted orange and require confirmation before removal.
-- **Privacy & Telemetry tab** — loads tweak definitions from `privacy.json`, `telemetry.json`, `services.json`, `network.json`; shows status (Applied/Not Applied) per tweak; preset filters (Light, Full, Privacy-Focused, Custom)
-- **AI & Navigation tab** — loads `ai_features.json` and `navigation.json`; same UI pattern
+A `CompositeModule` with two children: `DebloatToolsModule` (3 tabs, `requires_admin=True`) and a separate Store Apps module.
 
-Restore points created via `BackupService` before any apply operation. TweakEngine detects status for registry, service, appx, and scheduled_task step types.
+- **Apps tab** — scans installed UWP apps via `Get-AppxPackage` (`debloat_scanner.py`, backed by the shared `core/appx_service.py`), checkbox table, Apply Selected / Apply All Safe. Protected apps highlighted and require confirmation.
+- **Privacy & Telemetry** / **AI & Navigation tabs** — tweak-status tables with preset filters, sourced from `debloat_presets.py` reading the real builtin preset JSON files (not a hand-rolled reimplementation)
+
+Restore points created via `BackupService`/`debloat_session.py` (one restore point per session across all three tabs, not one per click) before any apply operation.
 
 ### QuickFixModule (`src/modules/quick_fix/quick_fix_module.py`)
 
-Uses `_FixCard` widget subclasses for each fix. Cards run in background Workers. `QuickFixModule._workers` (plural, on the module) tracks all workers. Individual cards track `self._worker` (singular) for cancellation. `_FixCard` does NOT have a `_workers` list.
+The single home for one-click repair/maintenance actions (SFC/DISM moved OUT to System Health; Quick Cleanup's old one-click panel moved IN here). Uses `_FixCard` widget subclasses for each fix, defined in `fix_actions.py`'s `ALL_ACTIONS` list.
+
+- `FixAction` fields: `confirm_text` (shows an Ok/Cancel dialog before running), `precondition` (a callable that can block the run with a status message instead), `long_running` (routes to `core.long_op_pool` instead of the shared global pool)
+- A search box filters cards by title/description; a `quick_fix_history.py` run log (mirrors `debloat_history.py`'s shape) backs a "View History" dialog
+- `QuickFixModule._workers` (plural) tracks all workers; individual `_FixCard`s track `self._worker` (singular). `_on_done`/`_on_error` compare worker IDENTITY, not just None-ness, against `self._worker` before recording an outcome — a cancelled-then-rerun card must not let the old worker's late result clobber the new run
 
 ### Tweak System (`src/modules/tweaks/`)
 
-JSON definition files in `src/modules/tweaks/definitions/` define registry/script tweaks. Each entry has `steps[]` with one of these types:
+JSON definition files in `src/modules/tweaks/definitions/` (20 category files, ~700 tweaks) define registry/script tweaks. Each entry has `steps[]` with one of: `registry`, `registry_delete`, `service`, `command`, `script`, `appx`, `scheduled_task`.
 
-| Step type | Fields | What it does |
-|-----------|--------|--------------|
-| `registry` | `key`, `value`, `data`, `kind` | Sets a registry value via `winreg` |
-| `service` | `name`, `start_type` | Changes service startup type via win32service |
-| `command` | `cmd` | Runs a shell command via `subprocess.run` with `CREATE_NO_WINDOW` |
-| `appx` | `package` | Removes a UWP app via `Get-AppxPackage \| Remove-AppxPackage` |
-| `scheduled_task` | `task_name` | Disables a scheduled task via `schtasks /change /tn ... /disable` |
+`tweak_engine.py`'s `TweakEngine.detect()` returns a real `DetectionResult(status, reason, steps)` with FIVE values: `applied`, `not_applied` (including a missing key/value — that's Windows at its default, a definite answer), `partial`, `not_applicable` (the target service/task/package/edition gate doesn't apply here), and `unknown` only when the read itself was genuinely refused (e.g. access denied). `detect_status()` is a 3-value back-compat shim over that — prefer `detect()` in new code; collapsing to the shim is the exact anti-pattern that made Debloat's own tables read "Unknown" for things Windows was already at its default for.
 
-`tweak_engine.py` applies tweaks via `TweakEngine.apply_tweak()` and detects state via `TweakEngine.detect_status()` (returns `"applied"`, `"not_applied"`, or `"unknown"`). BackupService creates restore points automatically before applying.
-
-Key definition files:
-- `privacy.json` — privacy policy tweaks (47 entries)
-- `telemetry.json` — telemetry and diagnostics tweaks (19 entries)
-- `services.json` — service disable/enable tweaks (34 entries)
-- `debloat.json` — 90+ UWP app removal entries with `appx` step type
-- `ai_features.json` — Win11 24H2 AI feature tweaks (Click-to-Do, AI Hub, WSAIFabricSvc)
-- `navigation.json` — File Explorer navigation pane tweaks (Gallery, 3D Objects, Home, duplicate drives)
-- `definitions/builtins/*.json` — preset profiles (8 existing + 4 debloat presets)
+`definitions/builtins/*.json` are named presets (Balanced, Performance, Privacy, Privacy Focused, Corporate Hardened, Developer Machine, Minimal, Gaming, plus 4 `debloat_*` ones) — a preset's tweak ids are grouped by CATEGORY KEY (e.g. `"power"`, `"telemetry"`), and `TweaksModule._on_load_preset` only applies the ids filed under the key matching a tab's own category. An id filed under the wrong key is silently never applied — this has been a real, repeated bug (fixed across 4 presets already); a test (`tests/test_performance_preset_ids_resolve.py`) checks every builtin preset for it.
 
 ## UI Patterns
 

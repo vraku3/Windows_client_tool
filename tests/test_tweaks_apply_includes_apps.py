@@ -242,3 +242,21 @@ def test_the_confirmation_lists_the_desktop_apps_too(module):
     module._on_apply()
     assert asked and asked[0]["remove_winget"] == ["JAMSoftware.TreeSize"]
     assert module.app.thread_pool.started == []
+
+
+# --- Performance Tuner discoverability nudge --------------------------------
+#
+# Performance Tuner was retired; its functionality lives on as the
+# Performance preset here. Someone who used to reach for that module needs a
+# pointer to where it went.
+
+def test_the_nudge_is_hidden_when_the_performance_preset_is_selected(module):
+    module._held.show()  # isVisible() reflects the whole ancestor chain
+    module._preset_combo.setCurrentText("Performance")
+    assert not module._perf_tuner_nudge_lbl.isVisible()
+
+
+def test_the_nudge_is_visible_for_any_other_preset(module):
+    module._held.show()  # isVisible() reflects the whole ancestor chain
+    module._preset_combo.setCurrentText("Balanced")
+    assert module._perf_tuner_nudge_lbl.isVisible()

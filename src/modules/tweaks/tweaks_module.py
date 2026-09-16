@@ -923,6 +923,14 @@ class TweaksModule(BaseModule):
         import_btn.clicked.connect(self._on_import_preset)
         layout.addWidget(import_btn)
 
+        self._perf_tuner_nudge_lbl = QLabel(
+            "Looking for what used to be Performance Tuner? Try the Performance preset above.")
+        self._perf_tuner_nudge_lbl.setObjectName("muted")
+        self._perf_tuner_nudge_lbl.setStyleSheet("font-size: 11px; font-style: italic;")
+        layout.addWidget(self._perf_tuner_nudge_lbl)
+        self._preset_combo.currentTextChanged.connect(self._update_perf_tuner_nudge)
+        self._update_perf_tuner_nudge(self._preset_combo.currentText())
+
         layout.addStretch()
 
         self._select_all_global_btn = QPushButton("Select All in Tab")
@@ -934,6 +942,9 @@ class TweaksModule(BaseModule):
         layout.addWidget(self._deselect_all_global_btn)
 
         return bar
+
+    def _update_perf_tuner_nudge(self, current_preset_name: str) -> None:
+        self._perf_tuner_nudge_lbl.setVisible(current_preset_name != "Performance")
 
     def _build_bottom_bar(self) -> QWidget:
         bar = QWidget()

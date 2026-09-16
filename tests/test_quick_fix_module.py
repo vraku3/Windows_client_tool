@@ -6,10 +6,38 @@ confirmation dialogs."""
 from unittest.mock import patch
 
 import pytest
+from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QMessageBox
 
+from core.long_op_pool import get_long_op_pool
 from modules.quick_fix.fix_actions import FixAction
 from modules.quick_fix.quick_fix_module import _FixCard
+
+
+@pytest.fixture(autouse=True)
+def _drain_thread_pools(qapp):
+    """Every test in this file that calls _FixCard._run() dispatches a real
+    Worker onto QThreadPool.globalInstance() or the long-op pool -- neither is
+    ever waited on before the test returns, which left workers running on a
+    background thread while later, unrelated tests executed. That raced a
+    real native crash (test_revert_countdown.py caught mid-run with a
+    quick_fix worker still alive on another thread).
+
+    Waiting for the pools alone is not enough: `_worker.signals.result` is a
+    cross-thread (queued) connection to `_FixCard._on_done`/`_on_error`, so
+    the worker finishing only means the signal has been POSTED to the main
+    thread's event queue, not delivered. If nothing pumps that queue before
+    this test's _FixCard goes out of scope, the queued call fires later --
+    during whatever unrelated test happens to call `qapp.processEvents()`
+    next (that is exactly how test_revert_countdown.py's `_pump` ended up
+    running a quick_fix lambda against an already-destroyed widget). So
+    after draining the pools, also pump events here, while the card is
+    still alive, so the callback lands in THIS test."""
+    yield
+    QThreadPool.globalInstance().waitForDone(5000)
+    get_long_op_pool().waitForDone(5000)
+    for _ in range(10):
+        qapp.processEvents()
 
 
 @pytest.fixture

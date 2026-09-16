@@ -120,6 +120,13 @@ HIDDEN_IMPORTS = [
     # for the same reason as the TreeSize block above: if PyInstaller misses
     # one, the frozen build still runs and the tab is simply not there.
     "modules.store_apps.store_apps_module",
+    # System Management's three children -- previously imported directly at
+    # main.py's top level (so PyInstaller's static analysis found them for
+    # free), now reachable only through SystemManagementModule.__init__'s
+    # function-scoped imports, same trap as every other entry in this block.
+    "modules.scheduled_tasks.tasks_module",
+    "modules.services_manager.services_module",
+    "modules.windows_features.features_module",
     # Debloat module's lazily-imported tabs and helpers, hidden from static
     # analysis by function-scoped imports like the children listed above.
     "modules.debloat.run_all_tab",

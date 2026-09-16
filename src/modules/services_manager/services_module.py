@@ -709,6 +709,11 @@ class ServicesModule(BaseModule):
         return 30_000
 
     def refresh_data(self) -> None:
+        if not hasattr(self, "_refresh_btn"):
+            # Now hostable as a composite child (System Management): the
+            # host's auto-refresh timer can tick a tab whose widget was
+            # never built because it has not been shown yet.
+            return
         if self._refreshing:
             return
         self._refreshing = True

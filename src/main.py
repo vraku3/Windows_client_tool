@@ -112,8 +112,7 @@ def register_all_modules(app) -> None:
     from modules.system_health.system_health_module import SystemHealthModule
     # Batch B — Manage group
     from modules.startup_manager.startup_module import StartupBootModule
-    from modules.scheduled_tasks.tasks_module import TasksModule
-    from modules.windows_features.features_module import WindowsFeaturesModule
+    from modules.system_management.system_management_module import SystemManagementModule
     from modules.certificate_viewer.cert_module import CertModule
     from modules.gpresult.gpresult_module import GPResultModule
     # Batch C — Tools group
@@ -125,7 +124,6 @@ def register_all_modules(app) -> None:
     from modules.disk_health.disk_health_module import DiskHealthModule
     from modules.restore_manager.restore_module import RestoreManagerModule
     # Track 2 — New Tool Modules
-    from modules.services_manager.services_module import ServicesModule
     from modules.firewall_rules.firewall_manager_module import FirewallManagerModule
     from modules.local_users.users_module import LocalUsersModule
     from modules.system_report.report_module import SystemReportModule
@@ -152,8 +150,7 @@ def register_all_modules(app) -> None:
     app.module_registry.register(SecurityDashboardModule())
     app.module_registry.register(DriverModule())
     app.module_registry.register(StartupBootModule())
-    app.module_registry.register(TasksModule())
-    app.module_registry.register(WindowsFeaturesModule())
+    app.module_registry.register(SystemManagementModule())
     app.module_registry.register(CertModule())
     app.module_registry.register(GPResultModule())
     # Batch C
@@ -165,7 +162,6 @@ def register_all_modules(app) -> None:
     app.module_registry.register(DiskHealthModule())
     app.module_registry.register(RestoreManagerModule())
     # Track 2
-    app.module_registry.register(ServicesModule())
     app.module_registry.register(FirewallManagerModule())
     app.module_registry.register(LocalUsersModule())
     app.module_registry.register(SystemReportModule())

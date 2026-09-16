@@ -166,18 +166,18 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_32_entries(registered):
-    """32, not 33: Performance Tuner is retired -- its functionality is
-    fully absorbed into the Tweaks module's "Performance" builtin preset,
-    expanded in this same round (see
-    docs/superpowers/specs/2026-09-15-module-consolidation-design.md) --
-    so the count drops back down by one from where System Health (Sub-
-    project 4 of the Cleanup rework) left it. Same reasoning as the
-    Process Explorer/Dashboard and PerfMon/Dashboard merges below -- two
-    doors to the same room is two places to do the same cleanup from.
-    Absorbed modules are still reachable -- as tabs, which
-    `_all_composite_children` covers."""
-    assert len(registered) == 32
+def test_the_sidebar_is_30_entries(registered):
+    """30, not 32 and not yet 28: this is part 1 of a 2-task Management +
+    Network consolidation (see
+    docs/superpowers/specs/2026-09-16-management-network-consolidation-design.md).
+    Task 1 (this one) folds three previously-independent ModuleGroup.MANAGE
+    entries -- Scheduled Tasks, Services, Windows Features -- into one new
+    "System Management" hub: 32 - 3 + 1 = 30. A second, later task folds two
+    more modules into a different existing hub, which is what brings the
+    count down to the final 28 -- do not jump the assertion to 28 here; that
+    belongs to that task's own commit. Absorbed modules are still reachable
+    -- as tabs, which `_all_composite_children` covers."""
+    assert len(registered) == 30
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

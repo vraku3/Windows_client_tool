@@ -3,6 +3,7 @@ module-consolidation merge (docs/superpowers/specs/
 2026-09-15-module-consolidation-design.md) -- migrating Quick Cleanup's
 confirmed actions into Quick Fix's card UI must not silently drop their
 confirmation dialogs."""
+import time
 from unittest.mock import patch
 
 import pytest
@@ -32,12 +33,18 @@ def _drain_thread_pools(qapp):
     next (that is exactly how test_revert_countdown.py's `_pump` ended up
     running a quick_fix lambda against an already-destroyed widget). So
     after draining the pools, also pump events here, while the card is
-    still alive, so the callback lands in THIS test."""
+    still alive, so the callback lands in THIS test.
+
+    This fixture follows the established time-boxed event-pumping convention
+    used by test_revert_countdown.py, test_cleanup_scan_watchdog.py and
+    related sibling test files."""
     yield
     QThreadPool.globalInstance().waitForDone(5000)
     get_long_op_pool().waitForDone(5000)
-    for _ in range(10):
+    deadline = time.time() + 1
+    while time.time() < deadline:
         qapp.processEvents()
+        time.sleep(0.01)
 
 
 @pytest.fixture

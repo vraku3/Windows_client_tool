@@ -14,9 +14,46 @@ from core.long_op_pool import get_long_op_pool
 from modules.quick_fix.fix_actions import FixAction
 from modules.quick_fix.quick_fix_module import _FixCard
 
+#: Captured before any test/fixture can monkeypatch QThreadPool.globalInstance
+#: (several tests here replace it with `_SyncPool`, below). `_drain_thread_pools`
+#: must always drain the REAL pool regardless of which test ran, or of fixture
+#: teardown ordering relative to whichever monkeypatch put `_SyncPool` there --
+#: calling through the live (possibly patched) `QThreadPool.globalInstance`
+#: attribute crashed with `AttributeError: '_SyncPool' object has no attribute
+#: 'waitForDone'` once a `card`-fixture test's own patch outlived this
+#: fixture's teardown.
+_real_global_thread_pool = QThreadPool.globalInstance
+
 
 @pytest.fixture(autouse=True)
-def _drain_thread_pools(qapp):
+def _no_real_history(monkeypatch):
+    """Every test in this file that runs a card via `_run()` -- for real
+    or via `_SyncPool` -- can reach `_on_done`/`_on_error`, which calls
+    `quick_fix_history.record()`. Left unpatched, that writes real rows
+    into the user's ACTUAL `%APPDATA%/WindowsTweaker/quick_fix_history.json`
+    -- the same file the app's own "View History" dialog reads -- for
+    every test that doesn't explicitly guard against it. Patch it here by
+    default so no test in this file can pollute that file; tests that
+    want to assert on `record`'s calls still wrap their own
+    `with patch(...)` block (unchanged), which nests fine on top of this
+    one and is restored back to this no-op afterward, never to the real
+    function, until monkeypatch's own teardown restores that at the end
+    of the test.
+
+    Declared BEFORE `_drain_thread_pools` and taken as that fixture's own
+    dependency (see its signature) so pytest tears this one down AFTER
+    it, not before -- a first version of this fixture had the two
+    independent and same-scoped, and pytest tore this one down first,
+    restoring the real `record` while `_drain_thread_pools`'s own
+    teardown was still about to pump the delayed `_on_done` callback
+    into existence. That let exactly one real row slip through in
+    testing before the dependency was made explicit here."""
+    monkeypatch.setattr(
+        "modules.quick_fix.quick_fix_history.record", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def _drain_thread_pools(qapp, _no_real_history):
     """Every test in this file that calls _FixCard._run() dispatches a real
     Worker onto QThreadPool.globalInstance() or the long-op pool -- neither is
     ever waited on before the test returns, which left workers running on a
@@ -35,11 +72,16 @@ def _drain_thread_pools(qapp):
     after draining the pools, also pump events here, while the card is
     still alive, so the callback lands in THIS test.
 
+    Depends on `_no_real_history` (see that fixture's docstring) purely
+    for teardown ordering -- this fixture's own teardown is what can
+    trigger a delayed `_on_done`/`_on_error` call, and that must still
+    see the patched, no-op `quick_fix_history.record`.
+
     This fixture follows the established time-boxed event-pumping convention
     used by test_revert_countdown.py, test_cleanup_scan_watchdog.py and
     related sibling test files."""
     yield
-    QThreadPool.globalInstance().waitForDone(5000)
+    _real_global_thread_pool().waitForDone(5000)
     get_long_op_pool().waitForDone(5000)
     deadline = time.time() + 1
     while time.time() < deadline:
@@ -165,12 +207,13 @@ def test_search_hides_non_matching_cards_and_their_category_header(qapp):
 
 def test_on_done_records_ok_outcome(card):
     c, _calls = card
-    # _on_done is now a no-op unless a worker is tracked as running (Finding
-    # 4's guard against a cancelled-then-late result recording a second,
-    # contradictory outcome) -- simulate "a run is in flight".
+    # _on_done is now a no-op unless the reporting worker is the one this
+    # card considers "the current run" (Finding 4's guard against a
+    # cancelled-then-late result recording a second, contradictory
+    # outcome) -- simulate "a run is in flight".
     c._worker = object()
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
-        c._on_done()
+        c._on_done(c._worker)
     mock_record.assert_called_once_with(c._action.title, "ok")
 
 
@@ -178,7 +221,7 @@ def test_on_error_records_error_outcome(card):
     c, _calls = card
     c._worker = object()
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
-        c._on_error("boom")
+        c._on_error("boom", c._worker)
     mock_record.assert_called_once_with(c._action.title, "error")
 
 
@@ -190,7 +233,7 @@ def test_on_done_is_a_no_op_after_cancel(card):
     c, _calls = card
     assert c._worker is None
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
-        c._on_done()
+        c._on_done(object())
     mock_record.assert_not_called()
 
 
@@ -198,8 +241,43 @@ def test_on_error_is_a_no_op_after_cancel(card):
     c, _calls = card
     assert c._worker is None
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
-        c._on_error("boom")
+        c._on_error("boom", object())
     mock_record.assert_not_called()
+
+
+def test_on_done_is_a_no_op_when_a_newer_run_has_already_replaced_it(card):
+    """The residual race the final review flagged after Finding 4 first
+    landed: cancel() sets self._worker = None, but the cancelled command
+    keeps running in the background. If the user clicks Run again before
+    that late result arrives, self._worker becomes the NEW worker -- the
+    old `is None` guard alone would then let the OLD worker's late result
+    through, recording an outcome for the abandoned run under the new
+    run's identity, and clobbering self._worker/_running out from under
+    the run that's actually still in flight. Comparing worker identity
+    (not just None-ness) closes this."""
+    c, _calls = card
+    stale_worker = object()
+    current_worker = object()
+    c._worker = current_worker
+    c._running = True
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c._on_done(stale_worker)
+    mock_record.assert_not_called()
+    assert c._worker is current_worker, "the current run's own state must survive a stale late result"
+    assert c._running is True
+
+
+def test_on_error_is_a_no_op_when_a_newer_run_has_already_replaced_it(card):
+    c, _calls = card
+    stale_worker = object()
+    current_worker = object()
+    c._worker = current_worker
+    c._running = True
+    with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
+        c._on_error("boom", stale_worker)
+    mock_record.assert_not_called()
+    assert c._worker is current_worker
+    assert c._running is True
 
 
 def test_cancel_records_cancelled_outcome_only_while_running(qapp):

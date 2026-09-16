@@ -2,7 +2,6 @@
 here is safe to call unelevated and safe to call from --unattended
 --stages health.
 """
-import glob
 import os
 import subprocess
 from dataclasses import dataclass
@@ -95,7 +94,7 @@ def check_orphaned_scheduled_tasks() -> List[Finding]:
         if program and not _program_exists(program):
             findings.append(Finding(
                 id=f"orphaned_task:{name}",
-                title=f"Scheduled task points at a missing program",
+                title="Scheduled task points at a missing program",
                 detail=f"Task {name!r} runs {program!r}, which does not exist.",
                 severity="info",
             ))

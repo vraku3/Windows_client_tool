@@ -112,17 +112,21 @@ class _FixCard(QFrame):
             action.fn(append)
 
         self._worker = Worker(do_work)
-        self._worker.signals.result.connect(lambda _r: self._on_done())
-        self._worker.signals.error.connect(self._on_error)
+        w = self._worker
+        w.signals.result.connect(lambda _r, w=w: self._on_done(w))
+        w.signals.error.connect(lambda err, w=w: self._on_error(err, w))
         pool = get_long_op_pool() if action.long_running else self._thread_pool
-        pool.start(self._worker)
+        pool.start(w)
 
-    def _on_done(self):
-        if self._worker is None:
-            # cancel() already put this card back to its resting state and
-            # recorded "cancelled" -- a result arriving after that is the
-            # cancelled command finishing late in the background, not a
-            # second real outcome to report.
+    def _on_done(self, worker) -> None:
+        if self._worker is not worker:
+            # Either cancel() already put this card back to its resting
+            # state (self._worker is None) and recorded "cancelled", or a
+            # NEW run has since started (self._worker is a different,
+            # newer Worker) -- either way, this result belongs to a run
+            # that is no longer "the current one", and must not overwrite
+            # its outcome (or the current run's own in-flight state) with
+            # a second, contradictory history entry.
             return
         self._running = False
         self._worker = None
@@ -131,12 +135,10 @@ class _FixCard(QFrame):
         from modules.quick_fix import quick_fix_history
         quick_fix_history.record(self._action.title, "ok")
 
-    def _on_error(self, error_str: str):
-        if self._worker is None:
-            # Same race as _on_done: cancel() already reset this card and
-            # recorded "cancelled", so a late error from the abandoned
-            # worker must not overwrite it with a second, contradictory
-            # history entry.
+    def _on_error(self, error_str: str, worker) -> None:
+        if self._worker is not worker:
+            # Same race as _on_done: either cancelled already, or a newer
+            # run has since replaced this one.
             return
         self._running = False
         self._worker = None

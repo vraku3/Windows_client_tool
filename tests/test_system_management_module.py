@@ -9,7 +9,42 @@ Diagnostics). Pure re-hosting: none of the three children change at all.
 """
 import pytest
 
+import main as app_main
 from modules.system_management.system_management_module import SystemManagementModule
+
+
+class _FakeRegistry:
+    def __init__(self):
+        self.modules = []
+
+    def register(self, module):
+        self.modules.append(module)
+
+
+class _FakeSearch:
+    def __init__(self):
+        self.registered = []
+
+    def register_provider(self, provider):
+        self.registered.append(provider)
+
+
+class _FakeApp:
+    """Enough App for on_start. Matches test_module_inventory.py's fixture."""
+
+    def __init__(self):
+        self.module_registry = _FakeRegistry()
+        self.backup = None
+        self.config = None
+        self.search = _FakeSearch()
+        self.thread_pool = None
+
+
+@pytest.fixture
+def registered():
+    app = _FakeApp()
+    app_main.register_all_modules(app)
+    return app.module_registry.modules
 
 
 @pytest.fixture
@@ -44,14 +79,10 @@ def test_the_hub_builds_a_widget_with_all_three_tabs(qapp):
     assert widget.count() == 3
 
 
-def test_process_is_no_longer_registered_on_its_own(qapp):
+def test_the_three_children_are_no_longer_registered_on_their_own(registered):
     """The absorption, checked where it actually matters: the sidebar."""
-    import inspect
-
-    import main
-
-    source = inspect.getsource(main.register_all_modules)
-    assert "register(TasksModule())" not in source
-    assert "register(ServicesModule())" not in source
-    assert "register(WindowsFeaturesModule())" not in source
-    assert "register(SystemManagementModule())" in source
+    names = {m.name for m in registered}
+    assert "Scheduled Tasks" not in names
+    assert "Services" not in names
+    assert "Windows Features" not in names
+    assert "System Management" in names

@@ -212,7 +212,8 @@ class SharesModule(BaseModule):
         self._shares_tabs = tabs
         return tabs
 
-    def on_start(self, app=None): pass
+    def on_start(self, app=None):
+        self.app = app
     def on_stop(self) -> None:
         self.cancel_all_workers()
     def on_activate(self):

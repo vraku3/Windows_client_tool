@@ -289,7 +289,7 @@ class RemoteToolsModule(BaseModule):
         if host and host not in self._history:
             self._history.insert(0, host)
             self._history = self._history[:20]
-            if self.app:
+            if self.app is not None and getattr(self.app, "config", None) is not None:
                 self.app.config.set("remote_tools.history", self._history)
 
     # ------------------------------------------------------------------

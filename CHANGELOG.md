@@ -159,6 +159,17 @@
 - **Duplicate Finder was removed.** It MD5-hashed every file in full; TreeSize
   groups by size first and never hashes a file whose size is unique. The name
   still navigates to TreeSize.
+- **The Management + Network consolidation.** The sidebar is 28 entries, down
+  from 32:
+  - **System Management** replaces Scheduled Tasks, Services and Windows
+    Features — three unrelated-by-code, thematically-similar `MANAGE` panes,
+    now one hub with a tab each.
+  - **Network Diagnostics** additionally hosts Shared Resources and Remote
+    Tools, on top of the diagnostics/Wi-Fi/HOSTS/Network Extras tabs it
+    already had — six tabs total, all network-facing `TOOLS` entries that had
+    nothing to do with their old sidebar neighbors.
+  - All five absorbed modules are pure re-hosts: none of their own code
+    changed, and each is still reachable by name through `route_map()`.
 
 ### Fixed
 - **The admin banner took half the window.** Unelevated, "Some features

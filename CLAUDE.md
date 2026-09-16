@@ -110,7 +110,7 @@ example each this way (`ServicesModule.refresh_data()`,
 `RemoteToolsModule.on_start()`) — check for this class of bug with that
 generic test before assuming a re-hosted child needs no code changes at all.
 
-Four things about it that are easy to get wrong:
+Five things about it that are easy to get wrong:
 
 - **`on_activate`/`on_deactivate` go to the visible child only**, and a tab
   change deactivates the outgoing child before activating the incoming one.

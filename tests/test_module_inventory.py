@@ -4,9 +4,30 @@ These assert the shape of the module list itself — how many entries there are,
 that no two share a name, that a module which became a tab is still reachable,
 and that every search source the filter panel offers can actually answer.
 """
+import sys
+
 import pytest
+from PyQt6.QtWidgets import QApplication
 
 import main as app_main
+
+# `_all_composite_children()` is called directly as a `parametrize` argument
+# below, twice, so it builds full module trees at COLLECTION time -- before
+# any pytest fixture, including conftest's session-scoped `qapp`, has run
+# (fixtures only activate once a test body executes). A QObject constructed
+# with no QApplication in existence yet (e.g. DebloatToolsModule's own
+# `self._signals = _Signals()`) is later reported by sip as already deleted
+# the first time something tries to use its signals -- `create_widget()`'s
+# `.connect()` call -- even though nothing explicitly destroyed it. This is
+# the same hazard test_module_smoke.py's own module-level comment names
+# ("...so make sure one exists here too"), but its one-line guard doesn't
+# actually protect anything: a bare `QApplication.instance() or
+# QApplication(sys.argv)` expression with no assignment is immediately
+# garbage-collected once that statement finishes (confirmed empirically --
+# `QApplication.instance()` reports None again moments later), so the
+# reference must be kept somewhere for the life of the session. A module
+# level global does that.
+_module_inventory_qapp = QApplication.instance() or QApplication(sys.argv)
 
 
 class _FakeRegistry:
@@ -17,13 +38,34 @@ class _FakeRegistry:
         self.modules.append(module)
 
 
+class _FakeConfig:
+    """A working, in-memory stand-in for ConfigManager.
+
+    Several composite children (DebloatToolsModule, StoreAppsModule) call
+    `self.app.config.get(...)` unconditionally from `create_widget()` --
+    unlike PerfMon or RemoteToolsModule, which guard with `if app.config:` /
+    `getattr(app, "config", None) is not None` first. `config = None` made
+    that gap invisible until `test_every_composite_child_can_build_its_own_widget`
+    started actually calling `create_widget()` on every composite child.
+    """
+
+    def __init__(self):
+        self._data = {}
+
+    def get(self, key, default=None):
+        return self._data.get(key, default)
+
+    def set(self, key, value) -> None:
+        self._data[key] = value
+
+
 class _FakeApp:
     """Enough App for on_start. Modules store the reference and little else."""
 
     def __init__(self):
         self.module_registry = _FakeRegistry()
         self.backup = None          # DebloatToolsModule builds a TweakEngine on it
-        self.config = None          # PerfMon reads alert config off it
+        self.config = _FakeConfig()  # real get()/set(); several children call it unguarded
         self.search = _FakeSearch()
         self.thread_pool = None
 
@@ -128,6 +170,41 @@ def test_a_module_survives_being_stopped_without_ever_being_built(qapp, module_c
     module.on_stop()         # must not raise
 
 
+def test_system_management_hosts_the_three_managed_modules(registered):
+    names = {m.name for m in registered}
+    assert "Scheduled Tasks" not in names
+    assert "Services" not in names
+    assert "Windows Features" not in names
+    host = next(m for m in registered if m.name == "System Management")
+    assert [c.name for c in host.children] == [
+        "Scheduled Tasks", "Services", "Windows Features",
+    ]
+
+
+def test_services_the_composite_child_wins_the_route_over_the_dashboard_tab(
+    registered,
+):
+    """dashboard/services_module.py and services_manager/services_module.py
+    both declare name = "Services" -- one a Dashboard-internal process-view
+    tab, one the real System Management child. route_map() resolves
+    same-name collisions by registration order in main.py; this pins the
+    current, correct outcome so reordering main.py doesn't silently
+    misroute global "Services" navigation to the wrong pane."""
+    from core.module_registry import ModuleRegistry
+    from modules.services_manager.services_module import (
+        ServicesModule as RealServicesModule,
+    )
+
+    registry = ModuleRegistry()
+    for module in registered:
+        registry.register(module)
+
+    host_name, tab_index = registry.route_map()["Services"]
+    assert host_name == "System Management"
+    host = next(m for m in registered if m.name == host_name)
+    assert isinstance(host.children[tab_index], RealServicesModule)
+
+
 def test_the_network_tools_are_tabs_of_network_diagnostics(registered):
     names = {m.name for m in registered}
     for gone in (
@@ -230,6 +307,23 @@ def test_every_composite_child_survives_a_tick_it_was_not_built_for(
     child.refresh_data()     # must not raise
     child.on_deactivate()    # must not raise
     child.on_stop()          # must not raise
+
+
+@pytest.mark.parametrize(
+    "host_name,child",
+    _all_composite_children(),
+    ids=lambda v: v if isinstance(v, str) else type(v).__name__,
+)
+def test_every_composite_child_can_build_its_own_widget(host_name, child, qapp):
+    """test_every_composite_child_survives_a_tick_it_was_not_built_for only
+    proves a child doesn't raise when ticked unbuilt -- it never actually
+    calls create_widget(), so a module whose create_widget() itself is
+    broken (or, as WindowsFeaturesModule's own dead refresh_data guard
+    showed, silently does nothing useful) could still pass every existing
+    composite test. This one actually builds each child's widget."""
+    child.on_start(_FakeApp())
+    widget = child.create_widget()
+    assert widget is not None
 
 
 def test_leaving_a_module_and_coming_back_restarts_its_live_timer(qapp):

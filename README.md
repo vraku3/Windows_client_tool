@@ -33,7 +33,8 @@ A comprehensive Windows 11 optimization and system diagnostics utility with a mo
 ### System Information
 - **Hardware Inventory**: Collect detailed hardware specifications
 - **Driver Manager**: View and manage installed drivers
-- **Windows Features**: Enable/disable optional Windows features
+- **System Management**: Scheduled tasks, services, and optional Windows
+  features — one module with a tab each
 - **Network Diagnostics**: Analyze network adapter status and issues
 - **Security Dashboard**: Review security settings and vulnerabilities
 - **Certificates**: View and manage system certificates
@@ -42,14 +43,12 @@ A comprehensive Windows 11 optimization and system diagnostics utility with a mo
 
 ### Network
 - **Network Diagnostics**: Connectivity checks, Wi-Fi analysis, the HOSTS
-  file, and DNS/proxy settings — one module with a tab each
+  file, DNS/proxy settings, shared folders/sessions/mapped drives, and
+  RDP/WinRS/ping-sweep/Wake-on-LAN — one module with a tab each
 
 ### Tools
 - **Registry Explorer**: Browse and edit registry keys (backup-first)
 - **Environment Variables**: View and edit system variables
-- **Scheduled Tasks**: Manage task scheduler jobs
-- **Shared Folders**: Manage network shares
-- **Remote Tools**: Remote desktop and command line utilities
 
 ### Utilities
 - **Tweaks**: Apply system optimization recommendations

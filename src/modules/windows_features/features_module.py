@@ -335,11 +335,13 @@ class WindowsFeaturesModule(BaseModule):
         return w
 
     def get_refresh_interval(self) -> Optional[int]:
-        return 60_000
-
-    def refresh_data(self) -> None:
-        if hasattr(self, "_load_features_fn"):
-            self._load_features_fn()
+        # Deliberately no auto-refresh: load_features() shells out to
+        # `dism /online /get-features` with a 120s timeout, and this
+        # codebase has already measured what a periodic image-servicing-tool
+        # poll costs (see the Cleanup Module notes on scan_winsxs_cleanup --
+        # 25s elevated, holding the Windows servicing lock). Refreshing this
+        # tab is left to the user's own Refresh click.
+        return None
 
     def on_activate(self) -> None:
         pass

@@ -145,6 +145,20 @@ def test_the_migrated_cleanup_action_runs_the_expected_command(action, expected_
     assert expected_contains in flat
 
 
+def test_clear_event_logs_clears_all_three_logs(ran, output):
+    """Only compact_winsxs/resize_hibernation got a command-content test
+    when these 7 actions were migrated -- clear_event_logs calls
+    _run_cmd three times (once per log), so the single-`expected_contains`
+    parametrize above can't check all three landed; a dedicated test can."""
+    lines, cb = output
+    fix_actions.clear_event_logs(cb)
+    assert ran == [
+        ["wevtutil", "cl", "System"],
+        ["wevtutil", "cl", "Application"],
+        ["wevtutil", "cl", "Security"],
+    ]
+
+
 def test_compact_winsxs_never_passes_resetbase():
     """The one remaining door to /ResetBase must stay System Health's
     gated Reset Base -- see the Sub-project 4 safety fix this must not

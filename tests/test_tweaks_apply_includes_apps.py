@@ -254,9 +254,11 @@ def test_the_nudge_is_hidden_when_the_performance_preset_is_selected(module):
     module._held.show()  # isVisible() reflects the whole ancestor chain
     module._preset_combo.setCurrentText("Performance")
     assert not module._perf_tuner_nudge_lbl.isVisible()
+    module._held.hide()  # don't leave a shown top-level window for the rest of the process
 
 
 def test_the_nudge_is_visible_for_any_other_preset(module):
     module._held.show()  # isVisible() reflects the whole ancestor chain
     module._preset_combo.setCurrentText("Balanced")
     assert module._perf_tuner_nudge_lbl.isVisible()
+    module._held.hide()  # don't leave a shown top-level window for the rest of the process

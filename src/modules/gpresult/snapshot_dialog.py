@@ -26,6 +26,7 @@ from modules.gpresult.rsop_parser import RsopResult
 from modules.gpresult.rsop_snapshot import (
     SnapshotMeta, delete_snapshot, diff_rsop, list_snapshots, load_snapshot,
 )
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ class SnapshotCompareDialog(QDialog):
         self._metas: List[SnapshotMeta] = []
 
         layout = QVBoxLayout(self)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         layout.addWidget(QLabel(
             "Pick a saved report to compare against the one on screen."))
 
@@ -139,8 +145,7 @@ class SnapshotCompareDialog(QDialog):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         if not delete_snapshot(meta.path):
-            QMessageBox.warning(self, "Delete snapshot",
-                                "That snapshot could not be deleted.")
+            self._error_banner.set_error("That snapshot could not be deleted.")
         self.reload()
 
     # ------------------------------------------------------------------

@@ -51,6 +51,7 @@ from modules.monitor_control import display_writes as dw
 from modules.monitor_control import view_model as vm
 from modules.monitor_control._arrangement_canvas import ArrangementCanvas
 from modules.monitor_control._screen_overlay import IdentifyOverlays
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -440,6 +441,10 @@ class MonitorControlModule(BaseModule):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         self._banner = QLabel("")
         self._banner.setWordWrap(True)
         self._banner.setObjectName("noticeBanner")
@@ -612,8 +617,7 @@ class MonitorControlModule(BaseModule):
             path = pf.save_profile(profile)
         except Exception as exc:                         # noqa: BLE001
             logger.warning("Could not save display profile %r: %s", name, exc)
-            QMessageBox.warning(self._widget, "Could not save",
-                                f"The profile was not saved:\n\n{exc}")
+            self._error_banner.set_error(f"The profile was not saved: {exc}")
             return
 
         # A monitor whose EDID could not be read is saved -- the layout is
@@ -667,7 +671,6 @@ class MonitorControlModule(BaseModule):
         refusal is shown as-is — it names the monitor, which is the whole
         point of it.
         """
-        from PyQt6.QtWidgets import QMessageBox
         from modules.monitor_control import profiles as pf
 
         name = self._profile_combo.currentData()
@@ -678,14 +681,13 @@ class MonitorControlModule(BaseModule):
             present = pf.live_identities()
         except Exception as exc:                         # noqa: BLE001
             logger.warning("Could not load profile %r: %s", name, exc)
-            QMessageBox.warning(self._widget, "Could not load",
-                                f"“{name}” could not be read:\n\n{exc}")
+            self._error_banner.set_error(f"“{name}” could not be read: {exc}")
             return
 
         ok, reason = pf.can_apply(profile, present)
         if not ok:
-            QMessageBox.warning(
-                self._widget, "This profile cannot be applied here", reason)
+            self._error_banner.set_error(
+                f"This profile cannot be applied here: {reason}")
             self._status.setText(f"“{name}” refused: {reason}")
             return
 

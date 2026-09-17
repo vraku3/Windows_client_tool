@@ -197,7 +197,11 @@ class RowActions:
             self._shell.refresh_scan()
 
     def _warn(self, title: str, message: str) -> None:
-        QMessageBox.warning(self._shell, title, message)
+        banner = getattr(self._shell, "error_banner", None)
+        if banner is not None:
+            banner.set_error(f"{title}: {message}")
+        else:
+            QMessageBox.warning(self._shell, title, message)
 
     # ---- move and secure erase (spec 7.1) ------------------------------
 

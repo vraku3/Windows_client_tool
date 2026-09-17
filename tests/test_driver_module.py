@@ -674,14 +674,10 @@ def test_save_baseline_action_shows_a_warning_instead_of_crashing_on_oserror(mon
     def _raise(*a, **k):
         raise OSError("path too long")
     monkeypatch.setattr(db, "save_baseline", _raise)
-    warned = []
-    monkeypatch.setattr(dmod.QMessageBox, "warning",
-                        lambda *a, **k: warned.append(a))
 
     mod._save_baseline_action()  # must not raise
 
-    assert warned
-    assert "bad-name" in warned[0][2]
+    assert "bad-name" in mod._error_banner.text()
 
 
 def test_save_baseline_action_saves_without_confirmation_when_no_name_collides(monkeypatch, tmp_path):
@@ -795,12 +791,9 @@ def test_diff_against_baseline_action_handles_a_load_failure_without_crashing(mo
     diff_calls = []
     monkeypatch.setattr(db, "diff_against_baseline",
                         lambda *a, **k: diff_calls.append(a))
-    warned = []
-    monkeypatch.setattr(dmod.QMessageBox, "warning",
-                        lambda *a, **k: warned.append(a))
     mod._diff_against_baseline_action()
     assert diff_calls == []
-    assert warned
+    assert mod._error_banner.text()
 
 
 # ----------------------------------------------------------------------
@@ -1267,14 +1260,10 @@ def test_run_vendor_update_deletes_the_downloaded_installer_even_when_install_fa
     monkeypatch.setattr(rb_mod, "snapshot_before_install", lambda driver: "oem12.inf")
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _SyncPool()))
-    warned = []
-    monkeypatch.setattr(dmod.QMessageBox, "warning",
-                        lambda *a, **k: warned.append(a[2]))
-
     mod._run_vendor_update(driver, _fake_provider(), _fake_update())
 
     assert downloaded.exists() is False
-    assert warned  # install failure still reported
+    assert mod._error_banner.text()  # install failure still reported
     # no token recorded, button stays disabled -- the install failed
     assert mod._applied_update_tokens == {}
     assert mod._undo_all_updates_btn.isEnabled() is False
@@ -1382,12 +1371,8 @@ def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
                         staticmethod(lambda: _RecordingPool()))
     monkeypatch.setattr(dmod.QMessageBox, "question",
                         lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
-    shown = []
-    monkeypatch.setattr(dmod.QMessageBox, "warning",
-                        lambda *a, **k: shown.append(a[2]))
     mod._undo_this_update(driver)
-    assert shown
-    assert "store pruned it" in shown[0]
+    assert "store pruned it" in mod._error_banner.text()
     # token stays -- rollback failed, nothing to consume
     assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
 
@@ -1977,14 +1962,11 @@ def test_install_windows_update_driver_reports_failure(monkeypatch):
     import modules.updates.windows_updater as wu_mod
     monkeypatch.setattr(wu_mod, "install_updates_iter", lambda updates, is_cancelled=None: [fake_result])
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
-    warned = []
-    monkeypatch.setattr(dmod.QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
 
     mod = _module()
     mod._install_windows_update_driver(driver, match)
 
-    assert warned
-    assert "download failed" in warned[0]
+    assert "download failed" in mod._error_banner.text()
     assert uh.get("PCI\\DEV1") is None
 
 

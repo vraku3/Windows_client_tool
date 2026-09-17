@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget,
                               QPushButton, QFileDialog)
 
 from core.worker import Worker
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,10 @@ class StringsView(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         # Toolbar
         bar = QHBoxLayout()
@@ -125,5 +130,4 @@ class StringsView(QWidget):
                 f.write("\n\n=== Unicode ===\n")
                 f.write("\n".join(self._all_unicode))
         except OSError as e:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(parent, "Save Error", f"Could not save strings: {e}")
+            self._error_banner.set_error(f"Could not save strings: {e}")

@@ -38,6 +38,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.worker import Worker
+from ui.error_banner import ErrorBanner
 
 from modules.gpresult.admx_catalog import get_catalog
 from modules.gpresult.policy_drift import (
@@ -164,6 +165,10 @@ class GPResultModule(BaseModule):
         self._progress.setFixedHeight(4)
         self._progress.hide()
         layout.addWidget(self._progress)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         self._banner = QLabel()
         self._banner.setStyleSheet(BANNER_STYLE)
@@ -735,8 +740,7 @@ class GPResultModule(BaseModule):
             subprocess.Popen(["mmc.exe", path])
             self._status_lbl.setText("Opened %s." % console)
         except OSError as exc:
-            QMessageBox.warning(
-                self._outer, console, "Could not open %s:\n%s" % (console, exc))
+            self._error_banner.set_error("Could not open %s: %s" % (console, exc))
 
     def _save_snapshot(self) -> None:
         """Keep the report on screen so a later one can be diffed against it."""
@@ -755,8 +759,7 @@ class GPResultModule(BaseModule):
             meta = save_snapshot(self._result, label=label.strip())
         except OSError as exc:
             logger.warning("Could not save the snapshot", exc_info=True)
-            QMessageBox.warning(self._outer, "Save snapshot",
-                                "Could not save the snapshot:\n%s" % exc)
+            self._error_banner.set_error("Could not save the snapshot: %s" % exc)
             return
         self._status_lbl.setText(
             "Saved snapshot %r." % (meta.label or meta.snapshot_id))
@@ -803,9 +806,8 @@ class GPResultModule(BaseModule):
             self._progress.hide()
             if not ok:
                 self._status_lbl.setText("Export failed.")
-                QMessageBox.warning(
-                    self._outer, "Export failed",
-                    "gpresult would not write the report:\n%s" % message)
+                self._error_banner.set_error(
+                    "gpresult would not write the report: %s" % message)
                 return
             self._status_lbl.setText("HTML report written.")
             try:

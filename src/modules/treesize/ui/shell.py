@@ -33,6 +33,7 @@ from .context_menu import RowActions
 from .directory_tree import DirectoryTree
 from .formatting import Mode, Unit
 from .panels import ElevationBanner, DriveList, ScanOverview, TreeSizeStatusBar, drive_space
+from ui.error_banner import ErrorBanner
 from .options_dialog import OptionsDialog, load_settings, save_settings
 from .ribbon import Ribbon
 from .search_dialog import DuplicatesDialog, SearchDialog
@@ -107,6 +108,10 @@ class TreeSizeShell(QWidget):
         self.elevation_banner.elevation_requested.connect(self.request_elevation)
         self.elevation_banner.set_elevated(is_admin())
         layout.addWidget(self.elevation_banner)
+
+        self.error_banner = ErrorBanner()
+        self.error_banner.hide()
+        layout.addWidget(self.error_banner)
 
         self.nav_bar = self._build_nav_bar()
         layout.addWidget(self.nav_bar)
@@ -444,7 +449,7 @@ class TreeSizeShell(QWidget):
             return
         target, label = dialog.selected()
         if target is None:
-            QMessageBox.warning(self, "Remote target", label)
+            self.error_banner.set_error(f"Remote target: {label}")
             return
 
         self._set_scanning(True)
@@ -453,12 +458,12 @@ class TreeSizeShell(QWidget):
         try:
             target.enumerate(store, root, on_batch=self._on_batch)
         except TargetError as exc:
-            QMessageBox.warning(self, "Remote target", str(exc))
+            self.error_banner.set_error(f"Remote target: {exc}")
             self._set_scanning(False)
             return
         except Exception as exc:                    # noqa: BLE001
-            QMessageBox.warning(self, "Remote target",
-                                f"{type(exc).__name__}: {exc}")
+            self.error_banner.set_error(
+                f"Remote target: {type(exc).__name__}: {exc}")
             self._set_scanning(False)
             return
         finally:
@@ -591,7 +596,7 @@ class TreeSizeShell(QWidget):
         try:
             subprocess.Popen(args)
         except OSError as exc:
-            QMessageBox.warning(self, "Could not start", f"{args[0]}: {exc}")
+            self.error_banner.set_error(f"Could not start {args[0]}: {exc}")
 
     # ---- scheduling -----------------------------------------------------
 
@@ -605,7 +610,7 @@ class TreeSizeShell(QWidget):
         if ok:
             QMessageBox.information(self, "Schedule scan", message)
         else:
-            QMessageBox.warning(self, "Schedule scan", message)
+            self.error_banner.set_error(f"Schedule scan: {message}")
         self.scan_state.setText(message)
 
     def unschedule_scan(self) -> None:
@@ -691,7 +696,7 @@ class TreeSizeShell(QWidget):
             path = snapshots.create(self._store, self._root, target,
                                     engine=engine, bytes_per_cluster=cluster)
         except OSError as exc:
-            QMessageBox.warning(self, "Create snapshot", str(exc))
+            self.error_banner.set_error(f"Create snapshot: {exc}")
             return
         self.scan_state.setText(f"Snapshot saved: {os.path.basename(path)}")
         if self.views.currentWidget() is self.history:
@@ -711,7 +716,7 @@ class TreeSizeShell(QWidget):
         try:
             scan_file.save(path, self._store, self._root, header)
         except OSError as exc:
-            QMessageBox.warning(self, "Save scan", str(exc))
+            self.error_banner.set_error(f"Save scan: {exc}")
             return
         self.scan_state.setText("Scan saved")
 
@@ -747,7 +752,7 @@ class TreeSizeShell(QWidget):
         try:
             other = Scanner(folder, filters=self._filters).scan()
         except OSError as exc:
-            QMessageBox.warning(self, "Compare with path", str(exc))
+            self.error_banner.set_error(f"Compare with path: {exc}")
             return
         self._show_comparison(other.store, other.root, folder)
 
@@ -758,7 +763,7 @@ class TreeSizeShell(QWidget):
         try:
             other_store, other_root, header = scan_file.load(path)
         except (scan_file.ScanFileError, OSError) as exc:
-            QMessageBox.warning(self, "Compare", str(exc))
+            self.error_banner.set_error(f"Compare: {exc}")
             return
         self._show_comparison(other_store, other_root,
                               header.target or os.path.basename(path))
@@ -902,7 +907,7 @@ class TreeSizeShell(QWidget):
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump(self._settings, handle, indent=2)
         except OSError as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            self.error_banner.set_error(f"Export failed: {exc}")
             return
         self.scan_state.setText("Settings exported")
 
@@ -916,11 +921,11 @@ class TreeSizeShell(QWidget):
             with open(path, encoding="utf-8") as handle:
                 values = json.load(handle)
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Import failed", str(exc))
+            self.error_banner.set_error(f"Import failed: {exc}")
             return
         if not isinstance(values, dict):
-            QMessageBox.warning(self, "Import failed",
-                                "That file does not contain TreeSize settings.")
+            self.error_banner.set_error(
+                "Import failed: that file does not contain TreeSize settings.")
             return
         from .options_dialog import DEFAULTS, save_settings
         merged = dict(DEFAULTS)
@@ -1281,7 +1286,7 @@ class TreeSizeShell(QWidget):
         try:
             exporters.export(path, rows, title=title)
         except exporters.ExportError as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            self.error_banner.set_error(f"Export failed: {exc}")
             return
         self.scan_state.setText(
             "Exported %s rows to %s" % (format(len(rows) - 1, ","),

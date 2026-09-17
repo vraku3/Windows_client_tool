@@ -30,6 +30,7 @@ from modules.process_explorer.lower_pane.network_view import NetworkView
 from modules.process_explorer.lower_pane.strings_view import StringsView
 from modules.process_explorer.lower_pane.memory_map_view import MemoryMapView
 from modules.process_explorer.lower_pane.activity_view import ActivityView
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,10 @@ class ProcessExplorerModule(BaseModule):
         proc_widget = QWidget()
         proc_layout = QVBoxLayout(proc_widget)
         proc_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        proc_layout.addWidget(self._error_banner)
 
         # Toolbar
         toolbar = self._build_toolbar()
@@ -399,7 +404,7 @@ class ProcessExplorerModule(BaseModule):
         if reply == QMessageBox.StandardButton.Yes:
             ok, err = kill_process(pid)
             if not ok:
-                QMessageBox.warning(self._widget, "Kill Failed", err)
+                self._error_banner.set_error(f"Kill failed: {err}")
 
     def _action_suspend(self):
         if not self._selected_node:
@@ -409,14 +414,14 @@ class ProcessExplorerModule(BaseModule):
         else:
             ok, err = suspend_process(self._selected_node.pid)
         if not ok:
-            QMessageBox.warning(self._widget, "Action Failed", err)
+            self._error_banner.set_error(f"Action failed: {err}")
 
     def _action_set_priority(self, level: str):
         if not self._selected_node:
             return
         ok, err = set_priority(self._selected_node.pid, level)
         if not ok:
-            QMessageBox.warning(self._widget, "Priority Failed", err)
+            self._error_banner.set_error(f"Priority change failed: {err}")
 
     def _show_context_menu(self, pos):
         if not self._selected_node:
@@ -446,7 +451,8 @@ class ProcessExplorerModule(BaseModule):
             return
         ok, errors = kill_tree(self._selected_node.pid)
         if not ok:
-            QMessageBox.warning(self._widget, "Kill Tree Partial", "\n".join(errors))
+            self._error_banner.set_error(
+                "Kill tree partially failed: " + "; ".join(errors))
 
     def _action_open_location(self):
         if self._selected_node and self._selected_node.exe:
@@ -457,7 +463,7 @@ class ProcessExplorerModule(BaseModule):
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
             except Exception as e:
-                QMessageBox.warning(self._widget, "Error", f"Could not open file location: {e}")
+                self._error_banner.set_error(f"Could not open file location: {e}")
 
     def _action_check_vt(self):
         if not self._selected_node:
@@ -477,7 +483,7 @@ class ProcessExplorerModule(BaseModule):
         from core.virustotal_client import VTClient, compute_sha256
         sha = compute_sha256(exe)
         if not sha:
-            QMessageBox.warning(self._widget, "VirusTotal", "Could not compute SHA256.")
+            self._error_banner.set_error("Could not compute SHA256.")
             return
         client = VTClient(api_key=api_key)
 

@@ -155,18 +155,12 @@ def test_keep_only_latest_never_asks_when_there_is_one_point(pane, monkeypatch):
 
 def test_a_failed_delete_is_reported_not_swallowed(pane, monkeypatch):
     pane._on_points_loaded(FOUR_POINTS)
-    shown = []
-    monkeypatch.setattr(
-        rm.QMessageBox, "warning",
-        staticmethod(lambda parent, title, text, *a, **k: shown.append((title, text))),
-    )
     monkeypatch.setattr(pane, "_load_restore_points", lambda: None)
 
     pane._on_deleted((2, [(13, "Access denied — run the tool as Administrator.")]))
 
-    assert shown, "a partial failure must surface in the UI"
-    title, text = shown[0]
-    assert title == "Partially Deleted"
+    text = pane._error_banner.text()
+    assert text, "a partial failure must surface in the UI"
     assert "Administrator" in text
     assert "failed 1" in pane._status_label.text()
 

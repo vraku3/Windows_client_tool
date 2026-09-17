@@ -38,6 +38,7 @@ from modules.driver_manager.vendor_updates.provider import (
 )
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
+from ui.error_banner import ErrorBanner
 from modules.driver_manager.vendor_updates.amd_provider import AmdProvider  # noqa: F401 -- import registers the provider
 from modules.driver_manager.vendor_updates.realtek_provider import RealtekProvider  # noqa: F401 -- import registers the provider
 from modules.driver_manager.vendor_updates.rollback import (
@@ -192,6 +193,10 @@ class DriverModule(BaseModule):
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         toolbar = self._build_toolbar()
         layout.addLayout(toolbar)
@@ -617,9 +622,7 @@ class DriverModule(BaseModule):
             # rather than being caught by main.py's exception handler --
             # this is a PyQt6 slot, not a plain function call.
             logger.warning("Could not save baseline %r: %s", name, exc)
-            QMessageBox.warning(
-                self._widget, "Save Baseline",
-                f"Could not save baseline '{name}': {exc}")
+            self._error_banner.set_error(f"Could not save baseline '{name}': {exc}")
             return
         if self._status_lbl:
             self._status_lbl.setText(f"Saved baseline '{name}'.")
@@ -637,8 +640,7 @@ class DriverModule(BaseModule):
             # list_baselines(), which just enumerated the sidecar file
             # successfully moments before. Never pass None into
             # diff_against_baseline(); show the user why nothing happened.
-            QMessageBox.warning(
-                self._widget, "Diff Against Baseline",
+            self._error_banner.set_error(
                 f"Could not load baseline '{name}' -- it may have been "
                 f"deleted or corrupted.")
             return
@@ -918,9 +920,7 @@ class DriverModule(BaseModule):
                 driver.device_id, driver.device_name, provider.vendor_name,
                 update_history.OUTCOME_CHECK_FAILED, error=err_str)
             self._refresh_status_cell_for_device(driver.device_id, driver)
-            QMessageBox.warning(
-                self._widget, "Check for Vendor Update",
-                f"Could not check for an update: {err_str}")
+            self._error_banner.set_error(f"Could not check for an update: {err_str}")
 
         worker.signals.result.connect(on_check_result)
         worker.signals.error.connect(on_check_error)
@@ -973,8 +973,7 @@ class DriverModule(BaseModule):
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
             if result[0] == "download_failed":
-                QMessageBox.warning(self._widget, "Check for Vendor Update",
-                                   f"Could not use this update: {result[1]}")
+                self._error_banner.set_error(f"Could not use this update: {result[1]}")
                 return
             _, install_result, token, fresh_version = result
             if not install_result.ok:
@@ -982,8 +981,7 @@ class DriverModule(BaseModule):
                     QMessageBox.information(self._widget, "Check for Vendor Update",
                                            install_result.reason)
                 else:
-                    QMessageBox.warning(self._widget, "Check for Vendor Update",
-                                       f"Install failed: {install_result.reason}")
+                    self._error_banner.set_error(f"Install failed: {install_result.reason}")
                 return
             if token and driver.device_id:
                 self._applied_update_tokens[driver.device_id] = token
@@ -1002,8 +1000,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check for Vendor Update",
-                               f"Update failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Update failed unexpectedly: {err_str}")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
@@ -1066,8 +1063,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check Windows Update",
-                               f"Could not check Windows Update: {err_str}")
+            self._error_banner.set_error(f"Could not check Windows Update: {err_str}")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
@@ -1109,8 +1105,7 @@ class DriverModule(BaseModule):
             results, fresh_version = payload
             if not results or not results[0].success:
                 reason = results[0].message if results else "no result returned"
-                QMessageBox.warning(self._widget, "Check Windows Update",
-                                   f"Install failed: {reason}")
+                self._error_banner.set_error(f"Install failed: {reason}")
                 return
             update_history.record_applied(
                 driver.device_id, driver.device_name,
@@ -1127,8 +1122,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check Windows Update",
-                               f"Install failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Install failed unexpectedly: {err_str}")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
@@ -1180,8 +1174,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check All for Updates",
-                               f"Bulk check failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Bulk check failed unexpectedly: {err_str}")
 
         worker.signals.progress.connect(on_progress)
         worker.signals.result.connect(
@@ -1410,8 +1403,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check All for Updates",
-                               f"Windows Update install failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Windows Update install failed unexpectedly: {err_str}")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
@@ -1521,8 +1513,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Check All for Updates",
-                               f"Bulk install failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Bulk install failed unexpectedly: {err_str}")
 
         worker.signals.progress.connect(on_progress)
         worker.signals.result.connect(on_bulk_done)
@@ -1579,8 +1570,7 @@ class DriverModule(BaseModule):
                 QMessageBox.information(self._widget, "Undo This Update",
                                        f"{driver.device_name} was rolled back.")
             else:
-                QMessageBox.warning(self._widget, "Undo This Update",
-                                   f"Could not roll back: {result.reason}")
+                self._error_banner.set_error(f"Could not roll back: {result.reason}")
             self._refresh_undo_all_button_state()
 
         def on_error(err_str: str) -> None:
@@ -1588,8 +1578,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Undo This Update",
-                               f"Rollback failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Rollback failed unexpectedly: {err_str}")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
@@ -1648,8 +1637,7 @@ class DriverModule(BaseModule):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            QMessageBox.warning(self._widget, "Undo All Updates This Session",
-                               f"Rollback failed unexpectedly: {err_str}")
+            self._error_banner.set_error(f"Rollback failed unexpectedly: {err_str}")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)

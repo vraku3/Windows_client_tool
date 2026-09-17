@@ -17,6 +17,7 @@ from core.semantic_colors import semantic
 from core.windows_utils import ps_quote
 from core.table_ui import centered_item, center_header
 from core.worker import COMWorker, Worker
+from ui.error_banner import ErrorBanner
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -298,6 +299,10 @@ class ServicesModule(BaseModule):
         outer = QWidget()
         layout = QVBoxLayout(outer)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         # ---- Toolbar ----
         toolbar = QHBoxLayout()
@@ -647,10 +652,7 @@ class ServicesModule(BaseModule):
         self._status_label.setText(f"{action.capitalize()}ing {name}...")
 
         def _on_err(e):
-            QMessageBox.warning(
-                self._outer, "Error",
-                f"Failed to {action} '{name}':\n{e}"
-            )
+            self._error_banner.set_error(f"Failed to {action} '{name}': {e}")
             self._do_refresh()
 
         worker = Worker(lambda _w: service_action(name, action))
@@ -690,10 +692,7 @@ class ServicesModule(BaseModule):
         self._do_refresh()
 
     def _on_action_error(self, err: str, action: str, name: str):
-        QMessageBox.warning(
-            self._outer, "Error",
-            f"Failed to {action} '{name}':\n{err}"
-        )
+        self._error_banner.set_error(f"Failed to {action} '{name}': {err}")
         self._do_refresh()
 
     def on_activate(self):

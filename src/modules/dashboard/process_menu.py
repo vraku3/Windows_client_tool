@@ -193,8 +193,7 @@ class ProcessMenu(QObject):
         try:
             chosen = [int(part) for part in text.split(",") if part.strip()]
         except ValueError:
-            QMessageBox.warning(self._widget, "Set affinity",
-                                "That is not a list of core numbers.")
+            self._show_error("Set affinity: that is not a list of core numbers.")
             return
         self._report("Set affinity", [(pid, set_affinity(pid, chosen))])
 
@@ -288,8 +287,7 @@ class ProcessMenu(QObject):
 
         sha = compute_sha256(path)
         if not sha:
-            QMessageBox.warning(self._widget, "VirusTotal",
-                                "Could not compute SHA-256 of the executable.")
+            self._show_error("VirusTotal: could not compute SHA-256 of the executable.")
             return
         client = VTClient(api_key=api_key)
 
@@ -333,6 +331,19 @@ class ProcessMenu(QObject):
 
     # ---- talking to the person ------------------------------------------
 
+    def _show_error(self, message: str) -> None:
+        """Show a plain error via the host tab's ErrorBanner.
+
+        Falls back to a QMessageBox if the host widget does not carry one --
+        defensive only, since both current hosts (ProcessesTab, DetailsTab)
+        always do.
+        """
+        banner = getattr(self._widget, "error_banner", None)
+        if banner is not None:
+            banner.set_error(message)
+        else:
+            QMessageBox.warning(self._widget, "Error", message)
+
     def _confirm(self, title: str, question: str, detail: str) -> bool:
         box = QMessageBox(self._widget)
         box.setWindowTitle(title)
@@ -356,18 +367,14 @@ class ProcessMenu(QObject):
         self.changed.emit()
         if not failures:
             return
-        detail = "\n".join(f"PID {pid}: {result.message}"
+        detail = "; ".join(f"PID {pid}: {result.message}"
                            for pid, result in failures)
-        box = QMessageBox(self._widget)
-        box.setWindowTitle(title)
-        box.setIcon(QMessageBox.Icon.Warning)
         if len(failures) == len(outcomes):
-            box.setText(f"{title} failed.")
+            summary = f"{title} failed."
         else:
-            box.setText(f"{title} failed for {len(failures)} "
-                        f"of {len(outcomes)} processes.")
-        box.setInformativeText(detail)
-        box.exec()
+            summary = (f"{title} failed for {len(failures)} "
+                      f"of {len(outcomes)} processes.")
+        self._show_error(f"{summary} {detail}")
 
 
 def _path_of(info):

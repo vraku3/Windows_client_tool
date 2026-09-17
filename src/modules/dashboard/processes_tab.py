@@ -25,6 +25,7 @@ from core.worker import Worker
 from core.procengine.columns import fmt_bytes, fmt_percent, fmt_rate
 from core.procengine.grouping import group_processes, totals
 from core.procengine.snapshot import SnapshotSource
+from ui.error_banner import ErrorBanner
 from .process_menu import ProcessMenu
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,10 @@ class ProcessesTab(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self.error_banner = ErrorBanner()
+        self.error_banner.hide()
+        layout.addWidget(self.error_banner)
 
         top = QHBoxLayout()
         self.filter_box = QLineEdit(self)

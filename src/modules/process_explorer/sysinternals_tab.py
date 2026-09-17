@@ -8,8 +8,10 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                               QPushButton, QLineEdit, QComboBox, QScrollArea,
-                              QGroupBox, QGridLayout, QMessageBox)
+                              QGroupBox, QGridLayout)
 from PyQt6.QtCore import Qt
+
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +135,10 @@ class SysinternalsTab(QWidget):
         self._banner.hide()
         self._layout.addWidget(self._banner)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        self._layout.addWidget(self._error_banner)
+
         # Filter bar
         bar = QHBoxLayout()
         self._search = QLineEdit()
@@ -177,7 +183,8 @@ class SysinternalsTab(QWidget):
         if _start_webclient():
             self._banner.hide()
         else:
-            QMessageBox.critical(self, "Error", "Failed to start WebClient service. Run as administrator.")
+            self._error_banner.set_error(
+                "Failed to start WebClient service. Run as administrator.")
 
     def _rebuild(self):
         # Clear content

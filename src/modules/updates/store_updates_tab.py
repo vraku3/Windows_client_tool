@@ -21,6 +21,7 @@ from core.table_ui import centered_item, center_header
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
 from modules.updates.winget_updater import AppUpdate
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,10 @@ class _StoreUpdatesTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         toolbar = QHBoxLayout()
         self._trigger_btn = QPushButton("Verify Store Updates")
@@ -110,7 +115,7 @@ class _StoreUpdatesTab(QWidget):
         try:
             subprocess.Popen(["explorer.exe", "ms-windows-store://downloadsandupdates"])
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not open Microsoft Store: {e}")
+            self._error_banner.set_error(f"Could not open Microsoft Store: {e}")
 
     def _do_reset(self):
         reply = QMessageBox.question(

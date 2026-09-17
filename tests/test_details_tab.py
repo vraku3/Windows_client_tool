@@ -316,19 +316,15 @@ def test_a_failed_action_is_reported_rather_than_swallowed(tab, qapp,
     from PyQt6.QtWidgets import QMessageBox
     from core.procengine.actions import Result
 
-    shown = []
-
-    def fake_exec(self):
-        shown.append(self.informativeText())
-        return QMessageBox.StandardButton.Yes
-
-    monkeypatch.setattr(QMessageBox, "exec", fake_exec)
+    monkeypatch.setattr(QMessageBox, "exec",
+                        lambda self: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr("modules.dashboard.process_menu.end_process",
                         lambda pid, **kw: Result(False, "Access is denied."))
 
     tab.menu._end([999_999])
 
-    assert any("Access is denied." in text for text in shown)
+    assert "Access is denied." in tab.error_banner.text()
+    assert not tab.error_banner.isHidden()
 
 
 # ---- export (W5-03) -----------------------------------------------------

@@ -14,6 +14,7 @@ from core.module_groups import ModuleGroup
 from core.system_restore import parse_restore_point_time, sequence_numbers_to_prune
 from core.table_ui import centered_item, fit_table
 from core.worker import Worker
+from ui.error_banner import ErrorBanner
 import logging
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,10 @@ class RestoreManagerModule(BaseModule):
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         # Toolbar
         toolbar = QHBoxLayout()
@@ -250,12 +255,9 @@ class RestoreManagerModule(BaseModule):
             )
             self._load_restore_points()
         else:
-            QMessageBox.warning(
-                self._widget,
-                "Failed",
-                f"Could not create restore point.\n{output}\n\n"
-                "Note: Some Windows editions restrict restore point creation via scripts.",
-            )
+            self._error_banner.set_error(
+                f"Could not create restore point. {output} "
+                "Note: some Windows editions restrict restore point creation via scripts.")
             self._status_label.setText("Restore point creation may be restricted by policy")
 
     # ── deletion ──────────────────────────────────────────────
@@ -344,11 +346,7 @@ class RestoreManagerModule(BaseModule):
             self._status_label.setText("Delete failed")
             self._update_delete_buttons()
             logger.error("Delete restore points error: %s", err)
-            QMessageBox.warning(
-                self._widget,
-                "Delete Failed",
-                "Could not delete restore points.\n%s" % err,
-            )
+            self._error_banner.set_error("Could not delete restore points: %s" % err)
 
         self._worker = Worker(do_delete)
         self._worker.signals.result.connect(self._on_deleted)
@@ -365,12 +363,9 @@ class RestoreManagerModule(BaseModule):
             reasons = "\n".join(
                 "\u2022 Restore point %d: %s" % (seq, msg) for seq, msg in failures[:10]
             )
-            QMessageBox.warning(
-                self._widget,
-                "Partially Deleted" if deleted else "Delete Failed",
-                "Deleted %d restore point(s); %d could not be deleted.\n\n%s"
-                % (deleted, len(failures), reasons),
-            )
+            self._error_banner.set_error(
+                "Deleted %d restore point(s); %d could not be deleted. %s"
+                % (deleted, len(failures), reasons))
             self._status_label.setText("Deleted %d, failed %d" % (deleted, len(failures)))
         else:
             self._status_label.setText("Deleted %d restore point(s)" % deleted)
@@ -383,6 +378,4 @@ class RestoreManagerModule(BaseModule):
             subprocess.Popen(["control.exe", "sysdm.cpl,,0"],
                               creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
-            QMessageBox.warning(
-                self._widget, "Error", f"Could not open System Properties: {e}"
-            )
+            self._error_banner.set_error(f"Could not open System Properties: {e}")

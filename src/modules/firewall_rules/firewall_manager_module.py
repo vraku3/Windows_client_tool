@@ -24,6 +24,7 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import centered_item, center_header
 from core.worker import Worker
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -482,6 +483,10 @@ class FirewallManagerModule(BaseModule):
         layout = QVBoxLayout(outer)
         layout.setContentsMargins(8, 8, 8, 8)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         # ---- Toolbar ----
         toolbar = QHBoxLayout()
 
@@ -746,7 +751,7 @@ class FirewallManagerModule(BaseModule):
         self._progress.hide()
         self._set_buttons_enabled(True)
         self._status_lbl.setText(f"Error: {err}")
-        QMessageBox.warning(self._outer, "Error", f"Failed to load rules:\n{err}")
+        self._error_banner.set_error(f"Failed to load rules: {err}")
 
     def _block_program(self) -> None:
         exe_path, _ = QFileDialog.getOpenFileName(

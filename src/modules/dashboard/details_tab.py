@@ -31,6 +31,7 @@ from .details_model import DetailsModel, DetailsProxy
 from .process_menu import ProcessMenu
 from core.procengine.columns import COLUMNS, DEFAULT_KEYS, GROUPS, cell_text
 from core.procengine.snapshot import SnapshotSource
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,10 @@ class DetailsTab(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self.error_banner = ErrorBanner()
+        self.error_banner.hide()
+        layout.addWidget(self.error_banner)
 
         top = QHBoxLayout()
         self.filter_box = QLineEdit(self)

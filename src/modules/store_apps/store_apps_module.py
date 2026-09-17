@@ -35,6 +35,7 @@ from core.worker import Worker
 from core.windows_utils import ps_quote, system_root
 from modules.store_apps.store_apps_search_provider import StoreAppsSearchProvider
 from ui.empty_state import EmptyState
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 from core.widget_life import widget_is_valid
@@ -265,10 +266,21 @@ class StoreAppsModule(BaseModule):
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         self._show_pfn = bool(self.app.config.get(f"{self._CONFIG_PREFIX}.show_pfn", False))
         self._show_arch = bool(self.app.config.get(f"{self._CONFIG_PREFIX}.show_arch", False))
 
-        # Toolbar
+        layout.addLayout(self._build_toolbar())
+        layout.addWidget(self._build_table_stack())
+        layout.addLayout(self._build_bottom_bar())
+
+        self._install_shortcuts()
+        return self._widget
+
+    def _build_toolbar(self) -> QHBoxLayout:
         toolbar = QHBoxLayout()
         refresh_btn = QPushButton("🔄 Refresh")
         refresh_btn.clicked.connect(self._load_apps)
@@ -304,8 +316,9 @@ class StoreAppsModule(BaseModule):
         shortcuts_btn.clicked.connect(self._show_shortcuts_legend)
         toolbar.addWidget(shortcuts_btn)
         toolbar.addStretch()
-        layout.addLayout(toolbar)
+        return toolbar
 
+    def _build_table_stack(self) -> QStackedWidget:
         # Table stacked with empty/error state
         self._table_stack = QStackedWidget()
         self._table = QTableWidget()
@@ -356,9 +369,9 @@ class StoreAppsModule(BaseModule):
         self._empty.action_triggered.connect(self._load_apps)
         self._table_stack.addWidget(self._empty)
         self._table_stack.setCurrentIndex(1)
-        layout.addWidget(self._table_stack)
+        return self._table_stack
 
-        # Bottom toolbar
+    def _build_bottom_bar(self) -> QHBoxLayout:
         bottom = QHBoxLayout()
         self._uninstall_btn = QPushButton("🗑️ Uninstall Selected")
         self._uninstall_btn.setObjectName("_uninstall_btn")
@@ -375,10 +388,7 @@ class StoreAppsModule(BaseModule):
         clear_btn.clicked.connect(self._table.clearSelection)
         bottom.addWidget(clear_btn)
         bottom.addStretch()
-        layout.addLayout(bottom)
-
-        self._install_shortcuts()
-        return self._widget
+        return bottom
 
     def _build_auto_refresh_label(self) -> QLabel:
         interval = self.get_refresh_interval()
@@ -856,11 +866,9 @@ class StoreAppsModule(BaseModule):
             for display, output in failed[:5]:
                 hint = failure_hint(output)
                 lines.append(f"• {display}" + (f" — {hint}" if hint else ""))
-            QMessageBox.critical(
-                self._widget, "Uninstall Failed",
-                f"Uninstalled {ok_count} of {len(results)} app(s).\n\n"
-                + "\n".join(lines),
-            )
+            self._error_banner.set_error(
+                f"Uninstalled {ok_count} of {len(results)} app(s). "
+                + " ".join(lines))
         else:
             QMessageBox.information(
                 self._widget, "Uninstalled",
@@ -872,7 +880,7 @@ class StoreAppsModule(BaseModule):
         self._busy = False
         self._progress.setVisible(False)
         self._cancel_btn.setVisible(False)
-        QMessageBox.critical(self._widget, "Uninstall Failed", str(err))
+        self._error_banner.set_error(f"Uninstall failed: {err}")
 
     def _cancel_batch(self):
         if self._uninstall_worker is not None:
@@ -1051,7 +1059,7 @@ class StoreAppsModule(BaseModule):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write("\n".join(lines) + "\n")
         except OSError as e:
-            QMessageBox.critical(self._widget, "Export Failed", str(e))
+            self._error_banner.set_error(f"Export failed: {e}")
             return
 
         QMessageBox.information(

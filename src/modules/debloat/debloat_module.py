@@ -137,12 +137,11 @@ class DebloatToolsModule(BaseModule):
         layout.setContentsMargins(4, 4, 4, 4)
 
         self._tab_widget = QTabWidget()
-        self._tab_widget.setStyleSheet("""
-            QTabWidget::pane { border: 1px solid #3c3c3c; border-radius: 4px; background: #252525; }
-            QTabBar::tab { background: #2d2d2d; color: #b0b0b0; padding: 6px 12px; margin-right: 2px; border: 1px solid #3c3c3c; border-bottom: none; border-radius: 4px 4px 0 0; }
-            QTabBar::tab:selected { background: #252525; font-weight: bold; }
-            QTabBar::tab:hover { background: #3c3c3c; }
-        """)
+        # No inline setStyleSheet() here: dark.qss / light.qss already define
+        # global QTabWidget::pane / QTabBar::tab rules, and this used to
+        # duplicate them with a slightly different palette that drifted out
+        # of sync (and, being inline, would survive a theme switch unchanged
+        # -- see tests/test_no_inline_stylesheets.py).
 
         self._tab_widget.addTab(self._build_apps_tab(), "Apps")
         self._tab_widget.addTab(self._build_tweaks_tab("tweak"), "Privacy & Telemetry")

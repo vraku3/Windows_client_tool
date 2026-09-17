@@ -183,6 +183,21 @@ QLabel#muted {
     color: #5a5a5a;
 }
 
+/* Network Diagnostics' collapsible _ToolCard header -- the light half of
+   the role in dark.qss. */
+QPushButton#toolCardHeader {
+    text-align: left;
+    padding: 6px 10px;
+    font-weight: bold;
+    border: none;
+    background-color: #ececec;
+    color: #1e1e1e;
+}
+
+QPushButton#toolCardHeader:hover {
+    background-color: #dcdcdc;
+}
+
 /* DebloatModule's cross-tab "Removed this session" banner (P06). Same
    muted grey as QLabel#muted above -- kept as its own selector because the
    objectName also doubles as this widget's findChild lookup key in

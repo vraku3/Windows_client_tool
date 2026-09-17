@@ -30,8 +30,10 @@ EXEMPT = {"core/semantic_colors.py"}
 #: 400 when the ratchet was introduced; 373 after the status colours in
 #: Services, Firewall, Wi-Fi, Dashboard, Updates and Certificates moved to
 #: semantic(); 343 once the inline stylesheets that froze the
-#: dark theme text colour were converted to sheet-driven roles.
-BUDGET = 343
+#: dark theme text colour were converted to sheet-driven roles; 314 after
+#: debloat_module/hosts_editor/boot_analyzer/network_module's hardcoded
+#: QSS colours were removed in favour of dark.qss/light.qss roles.
+BUDGET = 314
 
 
 def frozen_colour_literals():

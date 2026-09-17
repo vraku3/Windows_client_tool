@@ -2,7 +2,7 @@ import datetime
 from typing import List, Dict, Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QTableWidget,
     QHeaderView, QLabel, QProgressBar, QTabWidget,
 )
 from PyQt6.QtCore import QThreadPool
@@ -12,6 +12,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
 from core.worker import Worker
+from ui.empty_state import EmptyState
 import logging
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,18 @@ class LocalUsersModule(BaseModule):
         self._user_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._user_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._user_table.setAlternatingRowColors(True)
-        tabs.addTab(self._user_table, "Users")
+
+        self._user_stack = QStackedWidget()
+        self._user_stack.addWidget(self._user_table)
+        self._user_empty = EmptyState(
+            "👤", "No local users found",
+            "Click Refresh to load local user accounts.",
+            "Refresh",
+        )
+        self._user_empty.action_triggered.connect(self._do_refresh)
+        self._user_stack.addWidget(self._user_empty)
+        self._user_stack.setCurrentIndex(1)
+        tabs.addTab(self._user_stack, "Users")
 
         self._group_table = QTableWidget(0, len(_GROUP_COLS))
         self._group_table.setHorizontalHeaderLabels(_GROUP_COLS)
@@ -144,7 +156,18 @@ class LocalUsersModule(BaseModule):
         self._group_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._group_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._group_table.setAlternatingRowColors(True)
-        tabs.addTab(self._group_table, "Groups")
+
+        self._group_stack = QStackedWidget()
+        self._group_stack.addWidget(self._group_table)
+        self._group_empty = EmptyState(
+            "👥", "No local groups found",
+            "Click Refresh to load local groups.",
+            "Refresh",
+        )
+        self._group_empty.action_triggered.connect(self._do_refresh)
+        self._group_stack.addWidget(self._group_empty)
+        self._group_stack.setCurrentIndex(1)
+        tabs.addTab(self._group_stack, "Groups")
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._lu_tabs = tabs
@@ -178,6 +201,8 @@ class LocalUsersModule(BaseModule):
                     if cell:
                         cell.setForeground(QColor("#888888"))
         _fill_table(self._group_table, groups, _GROUP_COLS)
+        self._user_stack.setCurrentIndex(0 if self._user_table.rowCount() else 1)
+        self._group_stack.setCurrentIndex(0 if self._group_table.rowCount() else 1)
         self._status_label.setText(f"{len(users)} user(s), {len(groups)} group(s)")
 
     def _on_error(self, err: str):

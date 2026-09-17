@@ -7,13 +7,15 @@ from typing import List, Tuple
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QSplitter, QTableWidget,
+    QMessageBox, QPushButton, QSplitter, QStackedWidget, QTableWidget,
     QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, fit_table
+from ui.empty_state import EmptyState
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,10 @@ class _EnvPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         header = QHBoxLayout()
         header.addWidget(QLabel(f"<b>{label} Variables</b>"))
         header.addStretch()
@@ -95,7 +101,18 @@ class _EnvPanel(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
-        layout.addWidget(self._table)
+
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self._table)
+        self._empty = EmptyState(
+            "🔤", f"No {label.lower()} variables found",
+            f"No {label} environment variables to show. Click Refresh to reload.",
+            "Refresh",
+        )
+        self._empty.action_triggered.connect(self.refresh)
+        self._table_stack.addWidget(self._empty)
+        self._table_stack.setCurrentIndex(1)
+        layout.addWidget(self._table_stack)
 
         btn_row = QHBoxLayout()
         for text, slot in [("Add", self._add), ("Edit", self._edit),
@@ -135,6 +152,7 @@ class _EnvPanel(QWidget):
             self._table.insertRow(row)
             self._table.setItem(row, 0, centered_item(name))
             self._table.setItem(row, 1, centered_item(value))
+        self._table_stack.setCurrentIndex(0 if self._table.rowCount() else 1)
 
     def _selected_name(self) -> str | None:
         rows = self._table.selectedItems()
@@ -154,7 +172,7 @@ class _EnvPanel(QWidget):
             _broadcast_env_change()
             self.refresh()
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not write variable:\n{e}")
+            self._error_banner.set_error(f"Could not write variable: {e}")
 
     def _edit(self) -> None:
         name = self._selected_name()
@@ -169,7 +187,7 @@ class _EnvPanel(QWidget):
             _broadcast_env_change()
             self.refresh()
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not update variable:\n{e}")
+            self._error_banner.set_error(f"Could not update variable: {e}")
 
     def _delete(self) -> None:
         name = self._selected_name()
@@ -187,7 +205,7 @@ class _EnvPanel(QWidget):
             _broadcast_env_change()
             self.refresh()
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not delete variable:\n{e}")
+            self._error_banner.set_error(f"Could not delete variable: {e}")
 
     def _duplicate(self) -> None:
         name = self._selected_name()
@@ -200,7 +218,7 @@ class _EnvPanel(QWidget):
             _broadcast_env_change()
             target.refresh()
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Could not copy variable:\n{e}")
+            self._error_banner.set_error(f"Could not copy variable: {e}")
 
 
 class EnvVarsModule(BaseModule):

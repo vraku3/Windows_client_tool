@@ -7,13 +7,15 @@ from typing import List, Tuple
 
 from PyQt6.QtWidgets import (
     QCheckBox, QHBoxLayout, QMessageBox,
-    QPushButton, QTableWidget, QVBoxLayout, QWidget,
+    QPushButton, QStackedWidget, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
 from core.windows_utils import system32
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, fit_table
+from ui.empty_state import EmptyState
+from ui.error_banner import ErrorBanner
 import logging
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,10 @@ class HostsEditorModule(BaseModule):
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         # Toolbar
         toolbar = QHBoxLayout()
         save_btn = QPushButton("💾 Save")
@@ -85,13 +91,24 @@ class HostsEditorModule(BaseModule):
         self._table.setHorizontalHeaderLabels(["Enabled", "IP Address", "Hostname", "Comment"])
         fit_table(self._table, stretch=[2, 3], content=[0, 1])
         self._table.setAlternatingRowColors(True)
-        self._table.setStyleSheet("""
-            QTableWidget { background: #2d2d2d; border: 1px solid #3c3c3c; border-radius: 4px; }
-            QTableWidget::item { padding: 3px; }
-            QTableWidget::item:selected { background: #094771; }
-            QHeaderView::section { background: #3c3c3c; color: #b0b0b0; padding: 4px; border: none; }
-        """)
-        layout.addWidget(self._table)
+        # No inline setStyleSheet() here: dark.qss / light.qss already style
+        # QTableView (QTableWidget's base class) and QHeaderView::section
+        # globally -- this used to duplicate them with a slightly different,
+        # outdated palette that would survive a theme switch unchanged (see
+        # tests/test_no_inline_stylesheets.py).
+
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self._table)
+        self._empty = EmptyState(
+            "🌐", "No entries in the hosts file",
+            "The hosts file has no entries yet. Click Refresh to reload, "
+            "or use Add Entry / Import Blocklist to add some.",
+            "Refresh",
+        )
+        self._empty.action_triggered.connect(self._load)
+        self._table_stack.addWidget(self._empty)
+        self._table_stack.setCurrentIndex(1)
+        layout.addWidget(self._table_stack)
 
         return self._widget
 
@@ -126,6 +143,7 @@ class HostsEditorModule(BaseModule):
         if not os.path.exists(HOSTS_PATH):
             self._table.setRowCount(1)
             self._table.setItem(0, 1, centered_item("Hosts file not found — run as admin"))
+            self._table_stack.setCurrentIndex(0)
             return
         try:
             with open(HOSTS_PATH, "r", encoding="utf-8", errors="replace") as f:
@@ -133,6 +151,7 @@ class HostsEditorModule(BaseModule):
         except PermissionError:
             self._table.setRowCount(1)
             self._table.setItem(0, 1, centered_item("Permission denied — run as Administrator"))
+            self._table_stack.setCurrentIndex(0)
             return
 
         for line in lines:
@@ -156,6 +175,8 @@ class HostsEditorModule(BaseModule):
             self._table.setItem(i, 1, centered_item(ip))
             self._table.setItem(i, 2, centered_item(hostname))
             self._table.setItem(i, 3, centered_item(comment))
+
+        self._table_stack.setCurrentIndex(0 if self._table.rowCount() else 1)
 
     def _mark_modified(self, row):
         del row
@@ -193,9 +214,9 @@ class HostsEditorModule(BaseModule):
                     f.write(f"{prefix}{ip}\t{hostname}{cmt}\n")
             QMessageBox.information(self._widget, "Saved", f"Hosts file saved.\nBackup: {bak_path}")
         except PermissionError:
-            QMessageBox.critical(self._widget, "Permission Denied", "Run as Administrator to save hosts file.")
+            self._error_banner.set_error("Run as Administrator to save hosts file.")
         except Exception as e:
-            QMessageBox.critical(self._widget, "Error", str(e))
+            self._error_banner.set_error(str(e))
 
     def _backup(self):
         try:
@@ -216,6 +237,7 @@ class HostsEditorModule(BaseModule):
         self._table.setItem(row, 2, centered_item("example.com"))
         self._table.setItem(row, 3, centered_item(""))
         self._modified = True
+        self._table_stack.setCurrentIndex(0)
 
     def _import_blocklist(self):
         reply = QMessageBox.question(
@@ -239,4 +261,5 @@ class HostsEditorModule(BaseModule):
             self._table.setItem(row, 2, centered_item(hostname))
             self._table.setItem(row, 3, centered_item(comment))
         self._modified = True
+        self._table_stack.setCurrentIndex(0 if self._table.rowCount() else 1)
         QMessageBox.information(self._widget, "Import Complete", f"Added {len(TELEMETRY_BLOCKLIST)} entries.")

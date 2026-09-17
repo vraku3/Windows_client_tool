@@ -7,7 +7,7 @@ from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter,
-    QTableWidget, QTreeView, QVBoxLayout, QWidget,
+    QStackedWidget, QTableWidget, QTreeView, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
@@ -15,6 +15,8 @@ from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
 from core.worker import Worker
 from modules.registry_explorer.registry_model import RegistryTreeModel
+from ui.empty_state import EmptyState
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,10 @@ class RegistryExplorerModule(BaseModule):
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         # Toolbar
         tb = QHBoxLayout()
@@ -115,7 +121,16 @@ class RegistryExplorerModule(BaseModule):
         center_header(self._values_table)
         self._values_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._values_table.verticalHeader().setVisible(False)
-        right_layout.addWidget(self._values_table)
+
+        self._values_stack = QStackedWidget()
+        self._values_stack.addWidget(self._values_table)
+        self._values_empty = EmptyState(
+            "⚙️", "No values",
+            "Select a registry key on the left to view its values.",
+        )
+        self._values_stack.addWidget(self._values_empty)
+        self._values_stack.setCurrentIndex(1)
+        right_layout.addWidget(self._values_stack)
         splitter.addWidget(right)
         splitter.setSizes([380, 620])
 
@@ -140,6 +155,7 @@ class RegistryExplorerModule(BaseModule):
             self._values_table.setItem(row, 0, centered_item(name))
             self._values_table.setItem(row, 1, centered_item(type_str))
             self._values_table.setItem(row, 2, centered_item(data))
+        self._values_stack.setCurrentIndex(0 if self._values_table.rowCount() else 1)
 
     def _copy_path(self) -> None:
         idx = self._tree.currentIndex()
@@ -171,7 +187,8 @@ class RegistryExplorerModule(BaseModule):
         if result.returncode == 0:
             QMessageBox.information(self._widget, "Export", f"Exported to:\n{file}")
         else:
-            QMessageBox.critical(self._widget, "Export Failed", result.stderr or result.stdout)
+            self._error_banner.set_error(
+                f"Export failed: {result.stderr or result.stdout}")
 
     def _nav_to_path(self) -> None:
         """Expand tree to the path typed in path bar."""

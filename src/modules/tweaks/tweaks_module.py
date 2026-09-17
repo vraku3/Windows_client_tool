@@ -22,6 +22,7 @@ from modules.tweaks.app_catalog import AppCatalog, PROTECTED_APPS_DEFAULT
 from modules.tweaks.preset_manager import PresetManager
 from modules.tweaks.tweak_categories import CATEGORY_FILES
 from core.semantic_colors import semantic
+from ui.error_banner import ErrorBanner
 
 logger = logging.getLogger(__name__)
 
@@ -808,6 +809,10 @@ class TweaksModule(BaseModule):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
+
         # Top: preset toolbar + search bar
         top_layout = QVBoxLayout()
         top_layout.setSpacing(4)
@@ -1136,7 +1141,7 @@ class TweaksModule(BaseModule):
         try:
             preset = self._preset_mgr.load_preset(name)
         except KeyError as e:
-            QMessageBox.warning(self._widget, "Preset", str(e))
+            self._error_banner.set_error(f"Preset: {e}")
             return
         tweaks = preset.get("tweaks", {})
         for category, tab in self._tab_widgets.items():
@@ -1189,7 +1194,7 @@ class TweaksModule(BaseModule):
                 QMessageBox.information(
                     self._widget, "Import", f"Preset '{name}' imported.")
             except Exception as e:
-                QMessageBox.critical(self._widget, "Import failed", str(e))
+                self._error_banner.set_error(f"Import failed: {e}")
 
     def _open_restore_manager(self) -> None:
         """Open the app's own change-history/undo dialog (Tools ▸ Restore Manager
@@ -1341,7 +1346,8 @@ class TweaksModule(BaseModule):
                 logger.info("Uninstalling app: %s", app_id)
                 if not self._catalog.remove_app_winget(
                         app_id, on_output=lambda line: logger.info(
-                            "  %s", line)):
+                            "  %s", line),
+                        is_cancelled=lambda: worker.is_cancelled):
                     errors.append(f"Could not remove {app_id}")
                 done += 1
                 worker.signals.progress.emit(done)
@@ -1352,7 +1358,8 @@ class TweaksModule(BaseModule):
                 logger.info("Installing: %s", winget_id)
                 if not self._catalog.install_app(
                         winget_id, on_output=lambda line: logger.info(
-                            "  %s", line)):
+                            "  %s", line),
+                        is_cancelled=lambda: worker.is_cancelled):
                     errors.append(f"Could not install {winget_id}")
                 done += 1
                 worker.signals.progress.emit(done)

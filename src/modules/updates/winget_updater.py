@@ -1,4 +1,5 @@
 import subprocess
+import threading
 from dataclasses import dataclass
 from typing import List, Callable, Optional
 
@@ -14,8 +15,21 @@ class AppUpdate:
     source: str
 
 
-def _run_winget(args: List[str], output_cb: Optional[Callable[[str], None]] = None) -> str:
-    """Run winget, stream output via output_cb, return full output."""
+def _run_winget(
+    args: List[str],
+    output_cb: Optional[Callable[[str], None]] = None,
+    is_cancelled: Callable[[], bool] = lambda: False,
+) -> str:
+    """Run winget, stream output via output_cb, return full output.
+
+    `worker.is_cancelled` was only ever checked BETWEEN winget calls (see
+    `updates_module.py`'s per-package loops) -- a single stuck call (a
+    network stall, an install silently waiting on an interactive prompt)
+    left "Update All"'s Cancel button inert until that one call resolved on
+    its own. A side thread polls `is_cancelled` and kills the process tree
+    if it fires, the same pattern `windows_features/features_module.py`'s
+    `_run_dism_action` uses for the identical shape of bug.
+    """
     try:
         proc = subprocess.Popen(
             ["winget"] + args,
@@ -23,13 +37,30 @@ def _run_winget(args: List[str], output_cb: Optional[Callable[[str], None]] = No
             text=True, encoding="utf-8", errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+        stop_watching = threading.Event()
+
+        def _watch_for_cancel() -> None:
+            while not stop_watching.wait(0.5):
+                if is_cancelled():
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        capture_output=True, timeout=10,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                    return
+
+        watcher = threading.Thread(target=_watch_for_cancel, daemon=True)
+        watcher.start()
         lines = []
-        for line in proc.stdout:
-            line = line.rstrip()
-            lines.append(line)
-            if output_cb:
-                output_cb(line)
-        proc.wait()
+        try:
+            for line in proc.stdout:
+                line = line.rstrip()
+                lines.append(line)
+                if output_cb:
+                    output_cb(line)
+            proc.wait()
+        finally:
+            stop_watching.set()
         return "\n".join(lines)
     except FileNotFoundError:
         msg = "winget not found. Please install App Installer from the Microsoft Store."
@@ -118,22 +149,29 @@ def _parse_upgrade_output(output: str) -> List[AppUpdate]:
     return updates
 
 
-def install_update(winget_id: str, output_cb: Callable[[str], None]) -> bool:
+def install_update(
+    winget_id: str,
+    output_cb: Callable[[str], None],
+    is_cancelled: Callable[[], bool] = lambda: False,
+) -> bool:
     """Run winget upgrade for a specific package. Returns True on success."""
     output = _run_winget(
         ["upgrade", "--id", winget_id, "--silent", "--accept-source-agreements",
          "--accept-package-agreements"],
-        output_cb=output_cb,
+        output_cb=output_cb, is_cancelled=is_cancelled,
     )
     return "successfully installed" in output.lower() or "no applicable upgrade" in output.lower()
 
 
-def install_all_updates(output_cb: Callable[[str], None]) -> None:
+def install_all_updates(
+    output_cb: Callable[[str], None],
+    is_cancelled: Callable[[], bool] = lambda: False,
+) -> None:
     """Run winget upgrade --all."""
     _run_winget(
         ["upgrade", "--all", "--silent", "--accept-source-agreements",
          "--accept-package-agreements", "--include-unknown"],
-        output_cb=output_cb,
+        output_cb=output_cb, is_cancelled=is_cancelled,
     )
 
 

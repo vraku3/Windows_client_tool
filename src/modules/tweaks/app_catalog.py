@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.parse
 
@@ -248,12 +249,13 @@ class AppCatalog:
     # ------------------------------------------------------------------
 
     def install_app(self, winget_id: str,
-                    on_output: Optional[callable] = None) -> bool:
+                    on_output: Optional[callable] = None,
+                    is_cancelled: Optional[callable] = None) -> bool:
         """Run winget install. Streams output via on_output callback."""
         return self._run_winget(
             ["winget", "install", winget_id, "--silent",
              "--accept-package-agreements", "--accept-source-agreements"],
-            on_output,
+            on_output, is_cancelled,
         )
 
     def _winget_present(self, app_id: str,
@@ -267,7 +269,8 @@ class AppCatalog:
                    for row in self.parse_winget_rows(output))
 
     def remove_app_winget(self, app_id: str,
-                          on_output: Optional[callable] = None) -> bool:
+                          on_output: Optional[callable] = None,
+                          is_cancelled: Optional[callable] = None) -> bool:
         """Uninstall a desktop app, and return whether it is actually gone.
 
         Same evidence rule as `remove_appx`: winget exiting 0 is not proof.
@@ -289,7 +292,7 @@ class AppCatalog:
         self._run_winget(
             ["winget", "uninstall", "--id", app_id, "--exact", "--silent",
              "--accept-source-agreements"],
-            on_output,
+            on_output, is_cancelled,
         )
 
         after = self._winget_present(app_id, on_output)
@@ -473,17 +476,42 @@ class AppCatalog:
         return True
 
     def _run_winget(self, args: List[str],
-                    on_output: Optional[callable]) -> bool:
+                    on_output: Optional[callable],
+                    is_cancelled: Optional[callable] = None) -> bool:
+        """Run winget, streaming output. `is_cancelled` (if given) is polled
+        by a side thread that kills the process tree if it fires -- without
+        it, `Worker.cancel()` on the caller only stops the NEXT app in a
+        batch (see tweaks_module.py's apply loop), not one already running.
+        Same shape as `windows_features/features_module.py`'s
+        `_run_dism_action` and `updates/winget_updater.py`'s `_run_winget`.
+        """
         try:
             proc = subprocess.Popen(
                 args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            for line in proc.stdout:
-                if on_output:
-                    on_output(line.rstrip())
-            proc.wait()
+            stop_watching = threading.Event()
+
+            def _watch_for_cancel() -> None:
+                while not stop_watching.wait(0.5):
+                    if is_cancelled and is_cancelled():
+                        subprocess.run(
+                            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                            capture_output=True, timeout=10,
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                        )
+                        return
+
+            watcher = threading.Thread(target=_watch_for_cancel, daemon=True)
+            watcher.start()
+            try:
+                for line in proc.stdout:
+                    if on_output:
+                        on_output(line.rstrip())
+                proc.wait()
+            finally:
+                stop_watching.set()
             return proc.returncode == 0
         except Exception as e:
             logger.error("winget command failed: %s", e)

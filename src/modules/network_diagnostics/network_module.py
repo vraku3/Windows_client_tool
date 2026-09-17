@@ -87,10 +87,11 @@ class _ToolCard(QFrame):
         self._toggle_btn = QPushButton()
         self._toggle_btn.setCheckable(True)
         self._toggle_btn.setChecked(expanded)
-        self._toggle_btn.setStyleSheet(
-            "QPushButton { text-align: left; padding: 6px 10px; font-weight: bold; border: none; background: #2d2d2d; }"
-            "QPushButton:hover { background: #3a3a3a; }"
-        )
+        # Flat collapsible-card header, deliberately unlike the default
+        # QPushButton -- a named role in dark.qss / light.qss rather than an
+        # inline sheet, so it still follows a theme switch (see
+        # tests/test_no_inline_stylesheets.py).
+        self._toggle_btn.setObjectName("toolCardHeader")
         self._toggle_btn.clicked.connect(self._on_toggle)
         layout.addWidget(self._toggle_btn)
 
@@ -537,6 +538,7 @@ def _build_wifi_card() -> _ToolCard:
     content = QWidget()
     layout = QVBoxLayout(content)
     layout.setContentsMargins(8, 8, 8, 8)
+    card: Optional[_ToolCard] = None  # defined early so closures can capture it
 
     top_row = QHBoxLayout()
     load_btn = QPushButton("Load Profiles")
@@ -559,35 +561,51 @@ def _build_wifi_card() -> _ToolCard:
     layout.addLayout(splitter_layout)
 
     def _load_profiles() -> None:
+        nonlocal card
         load_btn.setEnabled(False)
         profile_list.clear()
         detail_box.setPlainText("Loading…")
 
-        worker = Worker(lambda _w: network_tools.get_wifi_profiles())
+        card._worker = Worker(lambda _w: network_tools.get_wifi_profiles())
 
         def _on_profiles(profiles) -> None:
+            if not _widget_valid(profile_list):
+                return
             profile_list.clear()
             for p in profiles:
                 profile_list.addItem(p)
-            detail_box.setPlainText(f"Loaded {len(profiles)} profile(s). Click one to see details.")
-            load_btn.setEnabled(True)
+            if _widget_valid(detail_box):
+                detail_box.setPlainText(f"Loaded {len(profiles)} profile(s). Click one to see details.")
+            if _widget_valid(load_btn):
+                load_btn.setEnabled(True)
 
-        worker.signals.result.connect(_on_profiles)
-        worker.signals.error.connect(lambda e: (detail_box.setPlainText(f"Error: {e}"), load_btn.setEnabled(True)))
-        QThreadPool.globalInstance().start(worker)
+        card._worker.signals.result.connect(_on_profiles)
+        card._worker.signals.error.connect(
+            lambda e: (
+                detail_box.setPlainText(f"Error: {e}") if _widget_valid(detail_box) else None,
+                load_btn.setEnabled(True) if _widget_valid(load_btn) else None,
+            )
+        )
+        QThreadPool.globalInstance().start(card._worker)
 
     def _show_profile_detail(item) -> None:
+        nonlocal card
         name = item.text()
         detail_box.setPlainText("Loading details…")
-        worker = Worker(lambda _w: network_tools.get_wifi_profile_detail(name))
-        worker.signals.result.connect(lambda txt: detail_box.setPlainText(txt or "(no details returned)"))
-        worker.signals.error.connect(lambda e: detail_box.setPlainText(f"Error: {e}"))
-        QThreadPool.globalInstance().start(worker)
+        card._worker = Worker(lambda _w: network_tools.get_wifi_profile_detail(name))
+        card._worker.signals.result.connect(
+            lambda txt: detail_box.setPlainText(txt or "(no details returned)") if _widget_valid(detail_box) else None
+        )
+        card._worker.signals.error.connect(
+            lambda e: detail_box.setPlainText(f"Error: {e}") if _widget_valid(detail_box) else None
+        )
+        QThreadPool.globalInstance().start(card._worker)
 
     load_btn.clicked.connect(_load_profiles)
     profile_list.itemClicked.connect(_show_profile_detail)
 
-    return _ToolCard("WiFi Profiles", content, expanded=False)
+    card = _ToolCard("WiFi Profiles", content, expanded=False)
+    return card
 
 
 def _build_adapter_card() -> _ToolCard:

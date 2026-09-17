@@ -1,5 +1,6 @@
 import subprocess
-from typing import List, Tuple, Optional
+import threading
+from typing import Callable, List, Tuple, Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTreeWidget, QTreeWidgetItem, QSplitter, QPlainTextEdit, QLabel,
@@ -70,30 +71,58 @@ def _fetch_all_features() -> List[Tuple[str, str]]:
     return _parse_features(result.stdout)
 
 
-def _enable_feature(name: str, output_cb) -> int:
+def _run_dism_action(args: List[str], output_cb, is_cancelled: Callable[[], bool]) -> int:
+    """Run a DISM enable/disable and make Worker.cancel() actually reach it.
+
+    `Worker.cancel()` only flips a flag -- it never touches this function's
+    own `proc`, so without this, cancelling the worker (e.g. the app closing
+    while DISM is contended, a real, independently-measured 25s+ lock
+    elsewhere in this codebase) left DISM running to completion regardless,
+    with no way to stop it. A side thread polls `is_cancelled` and kills the
+    whole process tree (matching `core/appx_service.py::_run_ps_bounded`'s
+    established pattern) rather than restructuring the blocking stdout read.
+    """
     proc = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace",
+        creationflags=CREATE_NO_WINDOW,
+    )
+
+    stop_watching = threading.Event()
+
+    def _watch_for_cancel() -> None:
+        while not stop_watching.wait(0.5):
+            if is_cancelled():
+                logger.warning("DISM action cancelled -- killing process tree (pid %s)", proc.pid)
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    capture_output=True, timeout=10, creationflags=CREATE_NO_WINDOW,
+                )
+                return
+
+    watcher = threading.Thread(target=_watch_for_cancel, daemon=True)
+    watcher.start()
+    try:
+        for line in proc.stdout:
+            output_cb(line.rstrip())
+        proc.wait()
+        return proc.returncode
+    finally:
+        stop_watching.set()
+
+
+def _enable_feature(name: str, output_cb, is_cancelled: Callable[[], bool] = lambda: False) -> int:
+    return _run_dism_action(
         ["dism", "/online", "/enable-feature", f"/featurename:{name}", "/norestart"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
-        creationflags=CREATE_NO_WINDOW,
+        output_cb, is_cancelled,
     )
-    for line in proc.stdout:
-        output_cb(line.rstrip())
-    proc.wait()
-    return proc.returncode
 
 
-def _disable_feature(name: str, output_cb) -> int:
-    proc = subprocess.Popen(
+def _disable_feature(name: str, output_cb, is_cancelled: Callable[[], bool] = lambda: False) -> int:
+    return _run_dism_action(
         ["dism", "/online", "/disable-feature", f"/featurename:{name}", "/norestart"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
-        creationflags=CREATE_NO_WINDOW,
+        output_cb, is_cancelled,
     )
-    for line in proc.stdout:
-        output_cb(line.rstrip())
-    proc.wait()
-    return proc.returncode
 
 
 class WindowsFeaturesModule(BaseModule):
@@ -275,7 +304,7 @@ class WindowsFeaturesModule(BaseModule):
             def run(_w):
                 def safe_append(line: str):
                     _w.signals.log_line.emit(line)
-                return action_fn(feat_name, safe_append)
+                return action_fn(feat_name, safe_append, lambda: _w.is_cancelled)
 
             worker = Worker(run)
             worker.signals.log_line.connect(output_view.appendPlainText)

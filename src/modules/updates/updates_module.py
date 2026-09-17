@@ -29,6 +29,7 @@ from modules.updates.windows_updater import (
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
 from modules.updates.run_all_tab import _RunAllTab
+from ui.error_banner import ErrorBanner
 import logging
 from core.semantic_colors import semantic
 logger = logging.getLogger(__name__)
@@ -263,7 +264,10 @@ class _AppUpdatesTab(QWidget):
                     worker.signals.log_line.emit("Cancelled.")
                     break
                 worker.signals.log_line.emit(f"Updating {wid}...")
-                install_update(wid, lambda line: worker.signals.log_line.emit(line))
+                install_update(
+                    wid, lambda line: worker.signals.log_line.emit(line),
+                    is_cancelled=lambda: worker.is_cancelled,
+                )
                 worker.signals.progress.emit(i + 1)
             return before_map
 
@@ -364,6 +368,10 @@ class _WinUpdatesTab(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         # Reboot pending banner
         self._reboot_banner = QLabel("A system reboot is pending.")
@@ -691,7 +699,7 @@ class _WinUpdatesTab(QWidget):
         try:
             subprocess.Popen(["explorer.exe", "ms-settings:windowsupdate"])
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Could not open Settings: {e}")
+            self._error_banner.set_error(f"Could not open Settings: {e}")
 
     def _cancel_all(self) -> None:
         for w in self._workers:

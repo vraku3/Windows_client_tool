@@ -103,7 +103,7 @@ def test_the_work_reaches_the_catalog(module):
     """`install_app` and `remove_appx` were implemented and never called."""
     removed, installed = [], []
     module._catalog.remove_appx = lambda pkg, on_output=None: removed.append(pkg) or True
-    module._catalog.install_app = lambda wid, on_output=None: installed.append(wid) or True
+    module._catalog.install_app = lambda wid, on_output=None, is_cancelled=None: installed.append(wid) or True
 
     _queue_an_app_removal(module, "Microsoft.ZuneMusic")
     module._app_tab._install_queue.add("VideoLAN.VLC")
@@ -203,7 +203,7 @@ def test_a_desktop_app_is_uninstalled_through_winget(module):
     """`remove_app_winget` was implemented and no UI path ever called it."""
     winget_removals, appx_removals = [], []
     module._catalog.remove_app_winget = (
-        lambda app_id, on_output=None: winget_removals.append(app_id) or True)
+        lambda app_id, on_output=None, is_cancelled=None: winget_removals.append(app_id) or True)
     module._catalog.remove_appx = (
         lambda pkg, on_output=None: appx_removals.append(pkg) or True)
 
@@ -223,7 +223,7 @@ def test_a_desktop_removal_alone_is_enough_to_apply(module):
 
 
 def test_a_failed_desktop_removal_is_reported(module):
-    module._catalog.remove_app_winget = lambda app_id, on_output=None: False
+    module._catalog.remove_app_winget = lambda app_id, on_output=None, is_cancelled=None: False
     _queue_a_desktop_removal(module)
     module._on_apply()
     worker = module.app.thread_pool.started[0]

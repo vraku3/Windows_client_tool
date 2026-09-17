@@ -11,7 +11,9 @@ from PyQt6.QtWidgets import (
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.widget_life import widget_is_valid as _widget_valid
 from core.worker import Worker
+from ui.error_banner import ErrorBanner
 import logging
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,10 @@ class BootAnalyzerModule(BaseModule):
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
+
+        self._error_banner = ErrorBanner()
+        self._error_banner.hide()
+        layout.addWidget(self._error_banner)
 
         # Scroll area for content
         scroll = QScrollArea()
@@ -213,6 +219,13 @@ class BootAnalyzerModule(BaseModule):
 
     def _display_info(self, info: dict) -> None:
         self._scanning = False
+        if not _widget_valid(self._widget):
+            # A queued result signal landed after this tab's widget was
+            # torn down -- calling into it now is not a Python exception,
+            # it is a hard process crash (reproduced standalone as
+            # 0xC0000409 from the identical shape of bug in the sibling
+            # PowerBootModule, this session).
+            return
         # Clear
         while self._info_cards.count():
             item = self._info_cards.takeAt(0)
@@ -256,14 +269,11 @@ class BootAnalyzerModule(BaseModule):
 
         for title, value, detail in cards_data:
             card = QFrame()
-            card.setStyleSheet("""
-                QFrame {
-                    background: #2d2d2d;
-                    border: 1px solid #3c3c3c;
-                    border-radius: 6px;
-                    padding: 4px;
-                }
-            """)
+            # dark.qss / light.qss's QFrame#card role (background + border +
+            # radius) instead of an inline sheet, which would freeze this
+            # card's colours against a theme switch (see
+            # tests/test_no_inline_stylesheets.py).
+            card.setObjectName("card")
             card_layout = QGridLayout(card)
             card_layout.setContentsMargins(12, 8, 12, 8)
             card_layout.setSpacing(2)
@@ -297,10 +307,9 @@ class BootAnalyzerModule(BaseModule):
             QMessageBox.information(self._widget, "Done", "Boot timeout set to 3 seconds.")
             self._load_info()
         except Exception as e:
-            QMessageBox.warning(
-                self._widget, "Failed",
-                f"Could not change timeout:\n{e}\n\nMake sure you are running as Administrator."
-            )
+            self._error_banner.set_error(
+                f"Could not change timeout: {e}. "
+                "Make sure you are running as Administrator.")
 
     def _show_fast_startup_info(self) -> None:
         QMessageBox.information(

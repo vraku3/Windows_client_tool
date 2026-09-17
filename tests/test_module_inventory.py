@@ -5,8 +5,10 @@ that no two share a name, that a module which became a tab is still reachable,
 and that every search source the filter panel offers can actually answer.
 """
 import sys
+import time
 
 import pytest
+from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QApplication
 
 import main as app_main
@@ -320,10 +322,29 @@ def test_every_composite_child_can_build_its_own_widget(host_name, child, qapp):
     calls create_widget(), so a module whose create_widget() itself is
     broken (or, as WindowsFeaturesModule's own dead refresh_data guard
     showed, silently does nothing useful) could still pass every existing
-    composite test. This one actually builds each child's widget."""
+    composite test. This one actually builds each child's widget.
+
+    Some children (PowerBootModule's own `load_power`/`load_boot`) start a
+    real background Worker synchronously inside `create_widget()`. This
+    function's own `widget` local keeps the returned widget alive only for
+    the CALL -- once it returns, nothing here reparents it the way a real
+    composite host's `wrap()` would, so it becomes collectible while that
+    worker's queued result signal is still in flight. Delivering a queued
+    signal into a since-destroyed QWidget is not a Python exception, it is
+    a hard process crash (reproduced standalone as `0xC0000409`, this
+    session, from exactly this shape). Draining the thread pool WHILE
+    `widget` is still a live local -- before this function returns --
+    means any such worker resolves against a still-live widget instead of
+    a torn-down one, for every composite child this parametrizes over, not
+    just the one that happened to be found and fixed this time."""
     child.on_start(_FakeApp())
     widget = child.create_widget()
     assert widget is not None
+    QThreadPool.globalInstance().waitForDone(10_000)
+    deadline = time.time() + 1
+    while time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
 
 
 def test_leaving_a_module_and_coming_back_restarts_its_live_timer(qapp):

@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, fit_table
+from core.widget_life import widget_is_valid as _widget_valid
 from core.worker import Worker
 from core.windows_utils import is_reboot_pending
 import logging
@@ -201,7 +202,12 @@ class PowerBootModule(BaseModule):
         tabs = QTabWidget()
         layout.addWidget(tabs, 1)
 
-        # ── Power Tab ─────────────────────────────────────────────────────────
+        self._build_power_tab(tabs)
+        self._build_boot_tab(tabs)
+
+        return w
+
+    def _build_power_tab(self, tabs: QTabWidget) -> None:
         power_w = QWidget()
         pw_layout = QVBoxLayout(power_w)
 
@@ -252,6 +258,8 @@ class PowerBootModule(BaseModule):
                 return plans, hs, fs, sl
 
             def on_result(data):
+                if not _widget_valid(plan_list):
+                    return
                 plans, hs, fs, sl = data
                 plans_ref[0] = plans
                 plan_list.clear()
@@ -260,19 +268,25 @@ class PowerBootModule(BaseModule):
                     item.setData(Qt.ItemDataRole.UserRole, guid)
                     plan_list.addItem(item)
                 # Block signals to avoid triggering toggled callbacks while setting
-                fast_startup_cb.blockSignals(True)
-                hibernate_cb.blockSignals(True)
-                fast_startup_cb.setChecked(fs)
-                hibernate_cb.setChecked(hs)
-                fast_startup_cb.blockSignals(False)
-                hibernate_cb.blockSignals(False)
-                sleep_spin.setValue(sl)
-                set_plan_btn.setEnabled(True)
-                status_lbl.setText("Loaded.")
+                if _widget_valid(fast_startup_cb) and _widget_valid(hibernate_cb):
+                    fast_startup_cb.blockSignals(True)
+                    hibernate_cb.blockSignals(True)
+                    fast_startup_cb.setChecked(fs)
+                    hibernate_cb.setChecked(hs)
+                    fast_startup_cb.blockSignals(False)
+                    hibernate_cb.blockSignals(False)
+                if _widget_valid(sleep_spin):
+                    sleep_spin.setValue(sl)
+                if _widget_valid(set_plan_btn):
+                    set_plan_btn.setEnabled(True)
+                if _widget_valid(status_lbl):
+                    status_lbl.setText("Loaded.")
 
             def on_error(err):
-                status_lbl.setText(f"Error: {err}")
-                set_plan_btn.setEnabled(True)
+                if _widget_valid(status_lbl):
+                    status_lbl.setText(f"Error: {err}")
+                if _widget_valid(set_plan_btn):
+                    set_plan_btn.setEnabled(True)
 
             self._worker = Worker(_run_load)
             self._worker.signals.result.connect(on_result)
@@ -304,9 +318,10 @@ class PowerBootModule(BaseModule):
         set_plan_btn.clicked.connect(set_plan)
 
         tabs.addTab(power_w, "Power")
+        self._load_power = load_power
         load_power()
 
-        # ── Boot Tab ──────────────────────────────────────────────────────────
+    def _build_boot_tab(self, tabs: QTabWidget) -> None:
         boot_w = QWidget()
         bt_layout = QVBoxLayout(boot_w)
 
@@ -348,8 +363,12 @@ class PowerBootModule(BaseModule):
             self._worker = Worker(lambda _w: get_boot_entries())
 
             def on_result(entries):
-                refresh_boot_btn.setEnabled(True)
-                boot_status.setText(f"{len(entries)} entries.")
+                if not _widget_valid(boot_table):
+                    return
+                if _widget_valid(refresh_boot_btn):
+                    refresh_boot_btn.setEnabled(True)
+                if _widget_valid(boot_status):
+                    boot_status.setText(f"{len(entries)} entries.")
                 rows = []
                 for entry in entries:
                     for k, v in entry.items():
@@ -361,8 +380,10 @@ class PowerBootModule(BaseModule):
                     boot_table.setItem(r, 1, centered_item(v))
 
             def on_error(err):
-                refresh_boot_btn.setEnabled(True)
-                boot_status.setText(f"Error: {err}")
+                if _widget_valid(refresh_boot_btn):
+                    refresh_boot_btn.setEnabled(True)
+                if _widget_valid(boot_status):
+                    boot_status.setText(f"Error: {err}")
 
             self._worker.signals.result.connect(on_result)
             self._worker.signals.error.connect(on_error)
@@ -387,9 +408,8 @@ class PowerBootModule(BaseModule):
         )
 
         tabs.addTab(boot_w, "Boot")
+        self._load_boot = load_boot
         load_boot()
-
-        return w
 
     def on_start(self, app=None) -> None:
         pass

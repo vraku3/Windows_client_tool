@@ -199,13 +199,24 @@ def test_a_locked_file_row_is_highlighted(module, monkeypatch):
         locking_summary="ok", creator_candidates=[], top_creator_signature=None,
         reputation=None,
     )
-    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
+    unlocked = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\free.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok", creator_candidates=[],
+        top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked, unlocked])
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
 
-    from PyQt6.QtGui import QColor
-    item = module._table.item(0, 5)
-    assert item.background().color() != QColor(0, 0, 0, 0)  # actually colored
+    from modules.file_forensics.file_forensics_module import _LOCKED_COLOR
+    locked_item = module._table.item(0, 5)
+    unlocked_item = module._table.item(1, 5)
+    assert locked_item.background().color() == _LOCKED_COLOR
+    assert unlocked_item.background().color() != _LOCKED_COLOR
 
 
 def test_selecting_a_row_shows_its_detail(module, monkeypatch):
@@ -268,3 +279,47 @@ def test_kill_locking_process_asks_for_confirmation(module, monkeypatch):
 
     assert asked  # confirmation was shown
     assert killed == []  # user said No, nothing killed
+
+
+def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch):
+    """A failed end_process() (protected process, access denied, timeout,
+    "no longer running") must never be collapsed into silence -- the same
+    "a refusal is never dropped" rule this task's other pieces already
+    follow. Regression test for the reviewer's Important #1 finding."""
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    from modules.file_forensics.engine.locking_processes import LockingProcess
+    from core.procengine.actions import Result
+    import datetime
+
+    locked = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\locked.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
+        locking_summary="ok", creator_candidates=[], top_creator_signature=None,
+        reputation=None,
+    )
+    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    module._table.selectRow(0)
+    module._on_row_selected()
+
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.end_process",
+        lambda pid: Result(False, "Notepad cannot be ended."),
+    )
+
+    module._on_kill_locking_clicked()
+
+    # The refresh (_on_search_clicked) unconditionally clears the banner on
+    # a clean search -- the failure message must survive that, not be wiped
+    # out by it.
+    assert not module._error_banner.isHidden()
+    assert "Notepad cannot be ended." in module._error_banner.text()

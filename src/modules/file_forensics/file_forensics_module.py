@@ -307,8 +307,15 @@ class FileForensicsModule(BaseModule):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            end_process(proc.pid)
-            self._on_search_clicked()  # refresh to show the file is now free
+            result = end_process(proc.pid)
+            # Refresh FIRST, then apply the kill outcome to the banner --
+            # _on_search_clicked() unconditionally clears the banner on a
+            # clean (no-skip) search, which would silently wipe out a kill
+            # failure message if it were set beforehand. Setting it after
+            # is what actually gets it in front of the user.
+            self._on_search_clicked()
+            if not result.ok:
+                self._error_banner.set_error(result.message)
 
     def _on_reveal_clicked(self) -> None:
         analysis = self._selected_analysis()

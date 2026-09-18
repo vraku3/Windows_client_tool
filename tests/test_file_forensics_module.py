@@ -181,3 +181,90 @@ def test_per_file_analysis_refusals_are_disclosed_not_dropped(
     assert not module._error_banner.isHidden()
     assert "1" in module._error_banner.text()
     assert "skipped" in module._error_banner.text().lower()
+
+
+def test_a_locked_file_row_is_highlighted(module, monkeypatch):
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    from modules.file_forensics.engine.locking_processes import LockingProcess
+    import datetime
+
+    locked = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\locked.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
+        locking_summary="ok", creator_candidates=[], top_creator_signature=None,
+        reputation=None,
+    )
+    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+
+    from PyQt6.QtGui import QColor
+    item = module._table.item(0, 5)
+    assert item.background().color() != QColor(0, 0, 0, 0)  # actually colored
+
+
+def test_selecting_a_row_shows_its_detail(module, monkeypatch):
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    from modules.file_forensics.engine.locking_processes import LockingProcess
+    import datetime
+
+    locked = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\locked.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
+        locking_summary="1 matches in 250 processes", creator_candidates=[],
+        top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    module._table.selectRow(0)
+    module._on_row_selected()
+
+    assert "notepad" in module._detail_label.text()
+    assert "250 processes" in module._detail_label.text()
+
+
+def test_kill_locking_process_asks_for_confirmation(module, monkeypatch):
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    from modules.file_forensics.engine.locking_processes import LockingProcess
+    import datetime
+
+    locked = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\locked.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
+        locking_summary="ok", creator_candidates=[], top_creator_signature=None,
+        reputation=None,
+    )
+    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    module._table.selectRow(0)
+    module._on_row_selected()
+
+    from PyQt6.QtWidgets import QMessageBox
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: asked.append(a) or QMessageBox.StandardButton.No)
+    killed = []
+    monkeypatch.setattr("modules.file_forensics.file_forensics_module.end_process",
+                        lambda pid: killed.append(pid))
+
+    module._on_kill_locking_clicked()
+
+    assert asked  # confirmation was shown
+    assert killed == []  # user said No, nothing killed

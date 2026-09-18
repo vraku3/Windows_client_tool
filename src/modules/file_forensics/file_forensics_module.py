@@ -39,6 +39,7 @@ class FileForensicsModule(BaseModule):
         super().__init__()
         self._widget: Optional[QWidget] = None
         self._loaded = False
+        self._last_skip_count = 0
 
     def on_start(self, app) -> None:
         self.app = app
@@ -107,12 +108,29 @@ class FileForensicsModule(BaseModule):
                         ) -> List[FileAnalysis]:
         """Walk `folder` for names containing `name_filter`, analyzing
         each match. Raises FileNotFoundError / NotADirectoryError for the
-        UI to turn into an ErrorBanner -- never swallowed."""
+        UI to turn into an ErrorBanner -- never swallowed.
+
+        A per-file refusal (the target vanished or became unreadable
+        between listing and analysis) is skipped rather than aborting the
+        whole search, but the count is never dropped on the floor either --
+        it is recorded on `self._last_skip_count` for `_on_search_clicked`
+        to disclose. A refusal to LIST a directory at all (as opposed to
+        one file within it) is a different thing and must never be
+        collapsed into "nothing found": `os.walk`'s default `onerror=None`
+        silently swallows a `scandir()` failure on any directory it
+        touches, including the top-level folder itself -- `isdir()`
+        succeeding only means the folder is traversable, not listable, and
+        those are a documented-separately pair of Windows ACL permissions.
+        `onerror` here re-raises so that refusal propagates like the
+        non-recurse path's `os.listdir()` already does."""
         if not os.path.isdir(folder):
             raise FileNotFoundError(f"'{folder}' is not a folder.")
         results = []
+        skipped = 0
         if recurse:
-            walker = os.walk(folder)
+            def _raise(error: OSError) -> None:
+                raise error
+            walker = os.walk(folder, onerror=_raise)
         else:
             # os.listdir() returns subdirectories too; os.walk() already
             # separates them into _dirs, but the single-level case must
@@ -129,7 +147,9 @@ class FileForensicsModule(BaseModule):
                 try:
                     results.append(analyze(path, vt_api_key=self._vt_api_key()))
                 except (FileNotFoundError, PermissionError, OSError):
+                    skipped += 1
                     continue  # gone or unreadable between listing and analysis
+        self._last_skip_count = skipped
         return results
 
     def _vt_api_key(self) -> str:
@@ -141,12 +161,21 @@ class FileForensicsModule(BaseModule):
         folder = self._folder_edit.text().strip()
         name_filter = self._filter_edit.text().strip()
         recurse = self._recurse_cb.isChecked()
+        self._last_skip_count = 0
         try:
             results = self._analyze_folder(folder, name_filter, recurse)
-        except (FileNotFoundError, NotADirectoryError, PermissionError) as e:
+        except (FileNotFoundError, NotADirectoryError, PermissionError, OSError) as e:
             self._error_banner.set_error(str(e))
             return
-        self._error_banner.clear()
+        if self._last_skip_count:
+            # A result set can be non-empty AND carry a disclosed refusal
+            # at once -- showing the table is not a reason to hide that
+            # some files could not be inspected.
+            self._error_banner.set_error(
+                f"{self._last_skip_count} file(s) could not be analyzed and were skipped."
+            )
+        else:
+            self._error_banner.clear()
         self._populate_table(results)
 
     def _populate_table(self, results: List[FileAnalysis]) -> None:

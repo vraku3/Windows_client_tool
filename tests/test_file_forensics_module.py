@@ -86,6 +86,60 @@ def test_a_directory_listing_refusal_during_walk_is_not_swallowed(
     assert module._table.rowCount() == 0
 
 
+def test_a_subdirectory_listing_refusal_is_skipped_not_fatal(
+        module, monkeypatch, tmp_path):
+    """The distinguishing case from the top-level test above: os.walk's
+    onerror fires for EVERY directory it can't list anywhere in a
+    recursive tree, not just the target folder -- System Volume
+    Information, $RECYCLE.BIN, another user's profile subfolder are all
+    ordinary occurrences on a real Windows volume. Those must be skipped
+    and counted, not treated as a reason to abort a search that already
+    found real results elsewhere in the tree."""
+    import os as os_module
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    def _fake_walk(folder, onerror=None, **kwargs):
+        if onerror is not None:
+            # A DIFFERENT directory than the target folder itself failing
+            # to list -- the ordinary mid-walk case, not the rare "the
+            # user pointed the tool straight at something unlistable"
+            # case the previous test covers.
+            onerror(PermissionError(
+                13, "Access is denied",
+                os_module.path.join(folder, "System Volume Information"),
+            ))
+        yield (folder, [], ["found.txt"])
+
+    def _fake_analyze(path, vt_api_key=""):
+        return FileAnalysis(
+            metadata=FileMetadata(
+                path=path, size=1,
+                created=datetime.datetime(2026, 1, 1),
+                modified=datetime.datetime(2026, 1, 1),
+                accessed=datetime.datetime(2026, 1, 1),
+                owner="TESTUSER", read_only=False,
+            ),
+            locking_processes=[], locking_summary="ok",
+            creator_candidates=[], top_creator_signature=None, reputation=None,
+        )
+
+    monkeypatch.setattr(os_module, "walk", _fake_walk)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", _fake_analyze
+    )
+    module._folder_edit.setText(str(tmp_path))
+    module._recurse_cb.setChecked(True)
+    module._on_search_clicked()
+
+    assert module._table.rowCount() == 1
+    assert module._last_skip_count == 1
+    assert not module._error_banner.isHidden()
+    assert "1" in module._error_banner.text()
+    assert "skipped" in module._error_banner.text().lower()
+
+
 def test_per_file_analysis_refusals_are_disclosed_not_dropped(
         module, monkeypatch, tmp_path):
     """A file that exists but can't be analyzed (e.g. ACL-denied) must not

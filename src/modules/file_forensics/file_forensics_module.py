@@ -108,29 +108,41 @@ class FileForensicsModule(BaseModule):
                         ) -> List[FileAnalysis]:
         """Walk `folder` for names containing `name_filter`, analyzing
         each match. Raises FileNotFoundError / NotADirectoryError for the
-        UI to turn into an ErrorBanner -- never swallowed.
+        UI to turn into an ErrorBanner -- never swallowed, for a refusal
+        to list the TARGET folder itself.
 
-        A per-file refusal (the target vanished or became unreadable
-        between listing and analysis) is skipped rather than aborting the
-        whole search, but the count is never dropped on the floor either --
-        it is recorded on `self._last_skip_count` for `_on_search_clicked`
-        to disclose. A refusal to LIST a directory at all (as opposed to
-        one file within it) is a different thing and must never be
-        collapsed into "nothing found": `os.walk`'s default `onerror=None`
-        silently swallows a `scandir()` failure on any directory it
-        touches, including the top-level folder itself -- `isdir()`
-        succeeding only means the folder is traversable, not listable, and
-        those are a documented-separately pair of Windows ACL permissions.
-        `onerror` here re-raises so that refusal propagates like the
-        non-recurse path's `os.listdir()` already does."""
+        A refusal to list some OTHER directory encountered mid-walk (an
+        ordinary occurrence on a real Windows volume --
+        `System Volume Information`, `$RECYCLE.BIN`, another user's
+        profile subfolder) is a different, expected case: it is skipped
+        and counted, the same as a per-file refusal below, rather than
+        aborting a search that has already found real results elsewhere
+        in the tree. Only the top-level folder failing to list is treated
+        as a refusal worth surfacing as an error -- the user explicitly
+        pointed the tool there, and `isdir()` succeeding only proves it is
+        traversable, not listable (a separate Windows ACL permission), so
+        without this `os.walk`'s default `onerror=None` would otherwise
+        silently swallow that one and report "nothing found".
+
+        Either kind of refusal (a skipped subdirectory, or a skipped file
+        that vanished or became unreadable between listing and analysis)
+        adds to `self._last_skip_count`, which `_on_search_clicked`
+        discloses rather than ever dropping on the floor."""
         if not os.path.isdir(folder):
             raise FileNotFoundError(f"'{folder}' is not a folder.")
         results = []
         skipped = 0
         if recurse:
-            def _raise(error: OSError) -> None:
-                raise error
-            walker = os.walk(folder, onerror=_raise)
+            target = os.path.normcase(os.path.abspath(folder))
+
+            def _on_walk_error(error: OSError) -> None:
+                nonlocal skipped
+                failed_dir = os.path.normcase(os.path.abspath(error.filename or ""))
+                if failed_dir == target:
+                    raise error  # the target folder itself can't be listed
+                skipped += 1  # an ordinary unlistable subdirectory -- skip it
+
+            walker = os.walk(folder, onerror=_on_walk_error)
         else:
             # os.listdir() returns subdirectories too; os.walk() already
             # separates them into _dirs, but the single-level case must
@@ -170,9 +182,11 @@ class FileForensicsModule(BaseModule):
         if self._last_skip_count:
             # A result set can be non-empty AND carry a disclosed refusal
             # at once -- showing the table is not a reason to hide that
-            # some files could not be inspected.
+            # some items could not be inspected. "item(s)" covers both a
+            # file that vanished/became unreadable and a subdirectory
+            # `os.walk` could not list along the way.
             self._error_banner.set_error(
-                f"{self._last_skip_count} file(s) could not be analyzed and were skipped."
+                f"{self._last_skip_count} item(s) could not be analyzed and were skipped."
             )
         else:
             self._error_banner.clear()

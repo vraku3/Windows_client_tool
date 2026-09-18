@@ -1,10 +1,25 @@
+import time
+
 import pytest
+from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QApplication
 
 
 class _FakeApp:
     config = None
     thread_pool = None
+
+
+def _settle(qapp):
+    """Drain the real global thread pool and pump Qt events so a Worker's
+    queued `result`/`error` signal actually lands on the UI thread before a
+    test asserts on its effects -- search is a Worker now (Task 11), not a
+    synchronous call. Same pattern as test_power_boot_module.py's `_settle`."""
+    QThreadPool.globalInstance().waitForDone(10_000)
+    deadline = time.time() + 2
+    while time.time() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
 
 
 @pytest.fixture
@@ -25,14 +40,15 @@ def test_create_widget_builds_without_raising(module):
     assert module._widget is not None
 
 
-def test_search_with_no_folder_shows_the_empty_state(module, monkeypatch):
+def test_search_with_no_folder_shows_the_empty_state(module, monkeypatch, qapp):
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [])
     module._folder_edit.setText(r"C:\some\folder")
     module._on_search_clicked()
+    _settle(qapp)
     assert module._results_stack.currentIndex() == 1  # empty page
 
 
-def test_a_result_populates_the_table_and_shows_content_page(module, monkeypatch):
+def test_a_result_populates_the_table_and_shows_content_page(module, monkeypatch, qapp):
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     import datetime
@@ -49,22 +65,24 @@ def test_a_result_populates_the_table_and_shows_content_page(module, monkeypatch
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [fake_analysis])
     module._folder_edit.setText(r"C:\some\folder")
     module._on_search_clicked()
+    _settle(qapp)
 
     assert module._table.rowCount() == 1
     assert module._results_stack.currentIndex() == 0  # content page
 
 
-def test_a_nonexistent_folder_shows_the_error_banner(module, monkeypatch):
+def test_a_nonexistent_folder_shows_the_error_banner(module, monkeypatch, qapp):
     def _raise(*a, **k):
         raise FileNotFoundError("no such folder")
     monkeypatch.setattr(module, "_analyze_folder", _raise)
     module._folder_edit.setText(r"C:\does\not\exist")
     module._on_search_clicked()
+    _settle(qapp)
     assert not module._error_banner.isHidden()
 
 
 def test_a_directory_listing_refusal_during_walk_is_not_swallowed(
-        module, monkeypatch, tmp_path):
+        module, monkeypatch, tmp_path, qapp):
     """os.walk()'s default onerror=None would otherwise let a scandir()
     refusal on the folder itself (traversable but not listable -- a real
     Windows ACL configuration) return an empty result set silently,
@@ -81,13 +99,14 @@ def test_a_directory_listing_refusal_during_walk_is_not_swallowed(
     module._folder_edit.setText(str(tmp_path))
     module._recurse_cb.setChecked(True)
     module._on_search_clicked()
+    _settle(qapp)
 
     assert not module._error_banner.isHidden()
     assert module._table.rowCount() == 0
 
 
 def test_a_subdirectory_listing_refusal_is_skipped_not_fatal(
-        module, monkeypatch, tmp_path):
+        module, monkeypatch, tmp_path, qapp):
     """The distinguishing case from the top-level test above: os.walk's
     onerror fires for EVERY directory it can't list anywhere in a
     recursive tree, not just the target folder -- System Volume
@@ -132,6 +151,7 @@ def test_a_subdirectory_listing_refusal_is_skipped_not_fatal(
     module._folder_edit.setText(str(tmp_path))
     module._recurse_cb.setChecked(True)
     module._on_search_clicked()
+    _settle(qapp)
 
     assert module._table.rowCount() == 1
     assert module._last_skip_count == 1
@@ -141,7 +161,7 @@ def test_a_subdirectory_listing_refusal_is_skipped_not_fatal(
 
 
 def test_per_file_analysis_refusals_are_disclosed_not_dropped(
-        module, monkeypatch, tmp_path):
+        module, monkeypatch, tmp_path, qapp):
     """A file that exists but can't be analyzed (e.g. ACL-denied) must not
     just vanish from the results with no trace -- see CLAUDE.md's
     tweak_engine "(N step(s) could not be checked)" disclosed-uncertainty
@@ -176,6 +196,7 @@ def test_per_file_analysis_refusals_are_disclosed_not_dropped(
     module._folder_edit.setText(str(tmp_path))
     module._recurse_cb.setChecked(False)
     module._on_search_clicked()
+    _settle(qapp)
 
     assert module._table.rowCount() == 1
     assert not module._error_banner.isHidden()
@@ -183,7 +204,7 @@ def test_per_file_analysis_refusals_are_disclosed_not_dropped(
     assert "skipped" in module._error_banner.text().lower()
 
 
-def test_a_locked_file_row_is_highlighted(module, monkeypatch):
+def test_a_locked_file_row_is_highlighted(module, monkeypatch, qapp):
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     from modules.file_forensics.engine.locking_processes import LockingProcess
@@ -211,6 +232,7 @@ def test_a_locked_file_row_is_highlighted(module, monkeypatch):
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked, unlocked])
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
+    _settle(qapp)
 
     from modules.file_forensics.file_forensics_module import _LOCKED_COLOR
     locked_item = module._table.item(0, 5)
@@ -219,7 +241,7 @@ def test_a_locked_file_row_is_highlighted(module, monkeypatch):
     assert unlocked_item.background().color() != _LOCKED_COLOR
 
 
-def test_selecting_a_row_shows_its_detail(module, monkeypatch):
+def test_selecting_a_row_shows_its_detail(module, monkeypatch, qapp):
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     from modules.file_forensics.engine.locking_processes import LockingProcess
@@ -238,6 +260,7 @@ def test_selecting_a_row_shows_its_detail(module, monkeypatch):
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
+    _settle(qapp)
     module._table.selectRow(0)
     module._on_row_selected()
 
@@ -245,7 +268,7 @@ def test_selecting_a_row_shows_its_detail(module, monkeypatch):
     assert "250 processes" in module._detail_label.text()
 
 
-def test_kill_locking_process_asks_for_confirmation(module, monkeypatch):
+def test_kill_locking_process_asks_for_confirmation(module, monkeypatch, qapp):
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     from modules.file_forensics.engine.locking_processes import LockingProcess
@@ -264,6 +287,7 @@ def test_kill_locking_process_asks_for_confirmation(module, monkeypatch):
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
+    _settle(qapp)
     module._table.selectRow(0)
     module._on_row_selected()
 
@@ -276,12 +300,13 @@ def test_kill_locking_process_asks_for_confirmation(module, monkeypatch):
                         lambda pid: killed.append(pid))
 
     module._on_kill_locking_clicked()
+    _settle(qapp)
 
     assert asked  # confirmation was shown
     assert killed == []  # user said No, nothing killed
 
 
-def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch):
+def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch, qapp):
     """A failed end_process() (protected process, access denied, timeout,
     "no longer running") must never be collapsed into silence -- the same
     "a refusal is never dropped" rule this task's other pieces already
@@ -305,6 +330,7 @@ def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch):
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
+    _settle(qapp)
     module._table.selectRow(0)
     module._on_row_selected()
 
@@ -317,9 +343,238 @@ def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch):
     )
 
     module._on_kill_locking_clicked()
+    _settle(qapp)
 
-    # The refresh (_on_search_clicked) unconditionally clears the banner on
-    # a clean search -- the failure message must survive that, not be wiped
-    # out by it.
+    # The refresh (_on_search_clicked, now a Worker) must not silently
+    # overwrite the kill failure once it lands -- _on_search_result applies
+    # the module's stashed _pending_banner_message instead of clearing the
+    # banner on this otherwise-clean re-search.
     assert not module._error_banner.isHidden()
     assert "Notepad cannot be ended." in module._error_banner.text()
+
+
+def test_live_watch_toggle_starts_and_stops_a_watcher(module, monkeypatch):
+    started = []
+    stopped = []
+
+    class _FakeWatcher:
+        def __init__(self, path, on_created, recursive=False):
+            started.append(path)
+            self.on_created = on_created
+
+        def run(self, worker):
+            pass
+
+        def stop(self):
+            stopped.append(True)
+
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.FolderWatcher", _FakeWatcher)
+    module._folder_edit.setText(r"C:\watch\me")
+    module._watch_cb.setChecked(True)
+    module._on_watch_toggled(True)
+    assert started == [r"C:\watch\me"]
+
+    module._watch_cb.setChecked(False)
+    module._on_watch_toggled(False)
+    assert stopped == [True]
+
+
+def test_ignore_pattern_skips_analysis(module, monkeypatch):
+    """The mocked `analyze` here only needs to prove it was (or was not)
+    called for a given path -- unlike the history-recording test below, it
+    does not need to return a real FileAnalysis, because `_is_ignored`
+    short-circuits before `analyze()` (or anything that reads its return
+    value) ever runs for the ignored path."""
+    module._ignore_edit.setText("*.tmp")
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.record",
+        lambda entry: None)
+    # Notification is a separate concern (covered by its own tests below) and
+    # the fixture's _FakeApp has no event_bus -- _maybe_notify would reach
+    # for one and crash a test that isn't about toasts at all.
+    monkeypatch.setattr(module, "_maybe_notify", lambda *a, **k: None)
+    analyzed = []
+
+    def _fake_analyze(path, **k):
+        analyzed.append(path)
+        from modules.file_forensics.engine.file_metadata import FileMetadata
+        from modules.file_forensics.engine.analysis import FileAnalysis
+        import datetime
+        return FileAnalysis(
+            metadata=FileMetadata(
+                path=path, size=1,
+                created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+                accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+            ),
+            locking_processes=[], locking_summary="ok",
+            creator_candidates=[], top_creator_signature=None, reputation=None,
+        )
+
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", _fake_analyze)
+
+    module._on_watched_file_created(r"C:\watch\noise.tmp")
+    assert analyzed == []
+
+    module._on_watched_file_created(r"C:\watch\real.docx")
+    assert analyzed == [r"C:\watch\real.docx"]
+
+
+def test_a_watch_detection_is_recorded_to_history(module, monkeypatch):
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    fake = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\watch\real.docx", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok",
+        creator_candidates=[], top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+    recorded = []
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.record",
+        lambda entry: recorded.append(entry))
+    # Not testing notification here -- see the comment on the ignore-pattern
+    # test above for why this must be stubbed against the fixture's _FakeApp.
+    monkeypatch.setattr(module, "_maybe_notify", lambda *a, **k: None)
+
+    module._on_watched_file_created(r"C:\watch\real.docx")
+
+    assert len(recorded) == 1
+    assert recorded[0]["path"] == r"C:\watch\real.docx"
+
+
+def test_a_watch_detection_updates_the_table(module, monkeypatch):
+    """`_on_watched_file_created` hands its result to `_watch_bridge`
+    rather than touching the table directly -- see the module's own
+    docstring on why (it runs on the watch Worker's background thread in
+    real use). A direct call, as here, is a same-thread emit, so the
+    connected slot still runs synchronously and the table still updates."""
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    fake = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\watch\real.docx", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok",
+        creator_candidates=[], top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.record",
+        lambda entry: None)
+    # Not testing notification here -- see the comment on the ignore-pattern
+    # test above for why this must be stubbed against the fixture's _FakeApp.
+    monkeypatch.setattr(module, "_maybe_notify", lambda *a, **k: None)
+
+    module._on_watched_file_created(r"C:\watch\real.docx")
+
+    assert module._table.rowCount() == 1
+    assert module._results_stack.currentIndex() == 0  # content page
+
+
+def test_watch_detection_toasts_when_app_is_not_foreground(module, monkeypatch):
+    """A live-watch hit raises a desktop toast via NOTIFY_BALLOON only when
+    the app isn't the foreground window -- when it is, the table update
+    already told the user."""
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    class _FakeEventBus:
+        def __init__(self):
+            self.published = []
+
+        def publish(self, topic, data):
+            self.published.append((topic, data))
+
+    class _FakeAppWithBus:
+        config = None
+        thread_pool = None
+        event_bus = _FakeEventBus()
+
+    fake_app = _FakeAppWithBus()
+    module.app = fake_app
+
+    fake = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\watch\real.docx", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok",
+        creator_candidates=[], top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.record",
+        lambda entry: None)
+    monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: None))
+
+    from core.events import NOTIFY_BALLOON
+
+    module._on_watched_file_created(r"C:\watch\real.docx")
+
+    assert len(fake_app.event_bus.published) == 1
+    topic, data = fake_app.event_bus.published[0]
+    assert topic == NOTIFY_BALLOON
+    assert "real.docx" in data.message
+
+
+def test_watch_detection_does_not_toast_when_app_is_foreground(module, monkeypatch):
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    class _FakeEventBus:
+        def __init__(self):
+            self.published = []
+
+        def publish(self, topic, data):
+            self.published.append((topic, data))
+
+    class _FakeAppWithBus:
+        config = None
+        thread_pool = None
+        event_bus = _FakeEventBus()
+
+    fake_app = _FakeAppWithBus()
+    module.app = fake_app
+
+    fake = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\watch\real.docx", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok",
+        creator_candidates=[], top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.record",
+        lambda entry: None)
+    monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: module._widget))
+
+    module._on_watched_file_created(r"C:\watch\real.docx")
+
+    assert fake_app.event_bus.published == []
+
+
+def test_ignore_patterns_parses_semicolon_separated_list(module):
+    module._ignore_edit.setText(" *.tmp ; ~$* ;;  *.log ")
+    assert module._ignore_patterns() == ["*.tmp", "~$*", "*.log"]

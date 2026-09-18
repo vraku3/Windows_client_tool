@@ -10,7 +10,7 @@ import fnmatch
 import os
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.base_module import BaseModule
+from core.events import NOTIFY_BALLOON, BalloonNotifyData
 from core.module_groups import ModuleGroup
 from core.procengine.actions import end_process
 from core.procengine.signatures import COULD_NOT_VERIFY, INVALID, NOT_SIGNED
@@ -27,13 +28,29 @@ from core.worker import Worker
 from ui.empty_state import EmptyState
 from ui.error_banner import ErrorBanner
 
+from . import history_log
 from .engine.analysis import FileAnalysis, analyze
+from .engine.folder_watcher import FolderWatcher
 
 _COLUMNS = ["Name", "Path", "Size", "Created", "Owner", "Locked By", "Likely Creator"]
 
 _LOCKED_COLOR = QColor("#5c4a1a")        # amber -- in use
 _CREATOR_HIGH_COLOR = QColor("#1a5c2a")  # green -- confident single match
 _CREATOR_LOW_COLOR = QColor("#5c4a1a")   # amber -- ambiguous/multiple
+
+
+class _WatchBridge(QObject):
+    """Marshals a live-watch detection back onto the UI thread.
+
+    `FolderWatcher.run()` executes on a background Worker thread, and its
+    `on_created` callback runs there too -- so the heavy part (`analyze()`,
+    including a real VirusTotal network call) stays off the UI thread, but
+    the result must cross back via a signal before anything touches a Qt
+    widget or QApplication. See CLAUDE.md's "Cross-thread widget access --
+    CRITICAL" rule. A signal needs a QObject to live on, and BaseModule
+    is not one, hence this small helper rather than a signal on the module
+    itself."""
+    detection_ready = pyqtSignal(object, str)  # (FileAnalysis, creator)
 
 
 class FileForensicsModule(BaseModule):
@@ -48,6 +65,11 @@ class FileForensicsModule(BaseModule):
         self._widget: Optional[QWidget] = None
         self._loaded = False
         self._last_skip_count = 0
+        self._pending_banner_message: Optional[str] = None
+        self._watcher: Optional[FolderWatcher] = None
+        self._watch_worker: Optional[Worker] = None
+        self._watch_bridge = _WatchBridge()
+        self._watch_bridge.detection_ready.connect(self._on_watch_detection_ready)
 
     def on_start(self, app) -> None:
         self.app = app
@@ -56,9 +78,11 @@ class FileForensicsModule(BaseModule):
         pass
 
     def on_deactivate(self) -> None:
+        self._stop_watch()
         self.cancel_all_workers()
 
     def on_stop(self) -> None:
+        self._stop_watch()
         self.cancel_all_workers()
 
     def get_refresh_interval(self):
@@ -124,6 +148,13 @@ class FileForensicsModule(BaseModule):
         self._search_btn = QPushButton("Search")
         self._search_btn.clicked.connect(self._on_search_clicked)
         toolbar.addWidget(self._search_btn)
+        self._watch_cb = QCheckBox("Live Watch")
+        self._watch_cb.toggled.connect(self._on_watch_toggled)
+        toolbar.addWidget(self._watch_cb)
+        toolbar.addWidget(QLabel("Ignore:"))
+        self._ignore_edit = QLineEdit("*.tmp;~$*")
+        self._ignore_edit.setMaximumWidth(120)
+        toolbar.addWidget(self._ignore_edit)
         return toolbar
 
     def _build_table(self) -> QTableWidget:
@@ -204,12 +235,38 @@ class FileForensicsModule(BaseModule):
         name_filter = self._filter_edit.text().strip()
         recurse = self._recurse_cb.isChecked()
         self._last_skip_count = 0
-        try:
-            results = self._analyze_folder(folder, name_filter, recurse)
-        except (FileNotFoundError, NotADirectoryError, PermissionError, OSError) as e:
-            self._error_banner.set_error(str(e))
+        self._search_btn.setEnabled(False)
+        worker = Worker(self._run_search, folder, name_filter, recurse)
+        worker.signals.result.connect(self._on_search_result)
+        worker.signals.error.connect(self._on_search_error)
+        self._workers.append(worker)
+        self.thread_pool.start(worker)
+
+    def _run_search(self, worker, folder: str, name_filter: str, recurse: bool
+                    ) -> List[FileAnalysis]:
+        """The Worker function. `FileNotFoundError`/`PermissionError`/`OSError`
+        raised by `_analyze_folder` for an unlistable TARGET folder are
+        deliberately NOT caught here -- they propagate out so `Worker.run()`'s
+        own exception handling catches them and emits `signals.error`, which
+        `_on_search_error` turns into the ErrorBanner. A per-file or
+        per-subdirectory refusal mid-walk is a different, already-handled
+        case inside `_analyze_folder` itself (see its own docstring)."""
+        return self._analyze_folder(folder, name_filter, recurse)
+
+    def _on_search_result(self, results: List[FileAnalysis]) -> None:
+        if not _widget_valid(self._search_btn):
             return
-        if self._last_skip_count:
+        self._search_btn.setEnabled(True)
+        if self._pending_banner_message:
+            # A kill-locking-process failure queued a refresh via
+            # _on_search_clicked() and is waiting for THIS refresh to land
+            # before it can safely show its own message -- see
+            # _on_kill_locking_clicked's comment on why a plain "clear the
+            # banner on a clean search" can no longer run first now that the
+            # search is asynchronous.
+            self._error_banner.set_error(self._pending_banner_message)
+            self._pending_banner_message = None
+        elif self._last_skip_count:
             # A result set can be non-empty AND carry a disclosed refusal
             # at once -- showing the table is not a reason to hide that
             # some items could not be inspected. "item(s)" covers both a
@@ -221,6 +278,13 @@ class FileForensicsModule(BaseModule):
         else:
             self._error_banner.clear()
         self._populate_table(results)
+
+    def _on_search_error(self, message: str) -> None:
+        if not _widget_valid(self._search_btn):
+            return
+        self._search_btn.setEnabled(True)
+        self._pending_banner_message = None
+        self._error_banner.set_error(message)
 
     def _populate_table(self, results: List[FileAnalysis]) -> None:
         self._current_results = results
@@ -308,14 +372,16 @@ class FileForensicsModule(BaseModule):
         )
         if reply == QMessageBox.StandardButton.Yes:
             result = end_process(proc.pid)
-            # Refresh FIRST, then apply the kill outcome to the banner --
-            # _on_search_clicked() unconditionally clears the banner on a
-            # clean (no-skip) search, which would silently wipe out a kill
-            # failure message if it were set beforehand. Setting it after
-            # is what actually gets it in front of the user.
-            self._on_search_clicked()
+            # The refresh now runs on a Worker (search is no longer
+            # synchronous), so there is no "call refresh, then overwrite its
+            # banner" ordering to rely on -- the refresh's own result can
+            # land after this method has already returned. Stash the
+            # failure and let _on_search_result apply it once the refresh
+            # actually completes, instead of a plain clear silently
+            # overwriting it.
             if not result.ok:
-                self._error_banner.set_error(result.message)
+                self._pending_banner_message = result.message
+            self._on_search_clicked()
 
     def _on_reveal_clicked(self) -> None:
         analysis = self._selected_analysis()
@@ -328,3 +394,86 @@ class FileForensicsModule(BaseModule):
         if analysis:
             from PyQt6.QtWidgets import QApplication
             QApplication.clipboard().setText(analysis.metadata.path)
+
+    def _ignore_patterns(self) -> List[str]:
+        raw = self._ignore_edit.text().strip()
+        return [p.strip() for p in raw.split(";") if p.strip()]
+
+    def _is_ignored(self, path: str) -> bool:
+        name = os.path.basename(path)
+        return any(fnmatch.fnmatch(name, pat) for pat in self._ignore_patterns())
+
+    def _on_watch_toggled(self, checked: bool) -> None:
+        if checked:
+            if self._watcher is not None:
+                return  # already watching -- e.g. setChecked() firing the
+                        # toggled signal AND an explicit caller both landing here
+            folder = self._folder_edit.text().strip()
+            self._watcher = FolderWatcher(
+                folder, on_created=self._on_watched_file_created,
+                recursive=self._recurse_cb.isChecked(),
+            )
+            self._watch_worker = Worker(self._watcher.run)
+            self._workers.append(self._watch_worker)
+            self.thread_pool.start(self._watch_worker)
+        else:
+            self._stop_watch()
+
+    def _stop_watch(self) -> None:
+        """Stops a running live watch, if any. Called on toggle-off,
+        on_deactivate and on_stop alike.
+
+        `FolderWatcher.stop()` must be called explicitly here --
+        `worker.cancel()` alone only sets a flag `FolderWatcher.run()`'s
+        blocking native wait never looks at; `.stop()` is what signals the
+        real Win32 event that wait is actually listening on. See
+        engine/folder_watcher.py's own docstring."""
+        if self._watcher is not None:
+            self._watcher.stop()
+        if self._watch_worker is not None:
+            self._watch_worker.cancel()
+            if self._watch_worker in self._workers:
+                self._workers.remove(self._watch_worker)
+        self._watcher = None
+        self._watch_worker = None
+
+    def _on_watched_file_created(self, path: str) -> None:
+        """`FolderWatcher`'s `on_created` callback -- runs on the watch
+        Worker's background thread, not the UI thread. `analyze()` and
+        `history_log.record()` are safe to do here (no Qt objects); the
+        result is handed to `_watch_bridge` to cross back to the UI thread
+        before anything Qt-related happens (`_on_watch_detection_ready`)."""
+        if self._is_ignored(path):
+            return
+        try:
+            result = analyze(path, vt_api_key=self._vt_api_key())
+        except (FileNotFoundError, PermissionError, OSError):
+            return  # gone or unreadable by the time we got to it
+        creator = result.creator_candidates[0].name if result.creator_candidates else ""
+        history_log.record({
+            "path": result.metadata.path, "creator": creator,
+            "locked_by": ", ".join(p.process for p in result.locking_processes),
+        })
+        self._watch_bridge.detection_ready.emit(result, creator)
+
+    def _on_watch_detection_ready(self, result: FileAnalysis, creator: str) -> None:
+        """Runs on the UI thread (queued there by `_watch_bridge` when the
+        emit came from the watch worker thread; a direct call, as in tests,
+        runs synchronously since sender and receiver share a thread)."""
+        if not _widget_valid(self._table):
+            return
+        self._current_results = self._current_results + [result]
+        self._populate_table(self._current_results)
+        self._maybe_notify(result, creator)
+
+    def _maybe_notify(self, result: FileAnalysis, creator: str) -> None:
+        from PyQt6.QtWidgets import QApplication
+        if QApplication.activeWindow() is not None:
+            return  # app is in the foreground -- the table update is enough
+        if not self.app:
+            return
+        message = f"New file: {os.path.basename(result.metadata.path)}"
+        if creator:
+            message += f" (likely by {creator})"
+        self.app.event_bus.publish(NOTIFY_BALLOON, BalloonNotifyData(
+            title="File Forensics", message=message))

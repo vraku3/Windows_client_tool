@@ -677,9 +677,22 @@ git commit -m "feat(file-forensics): add reputation and signature check wrappers
   `creator_heuristic.find_creator_candidates`,
   `reputation.check_signature`, `reputation.check_reputation`
 - Produces: `FileAnalysis` dataclass (`metadata`, `locking_processes`,
-  `locking_summary`, `creator_candidates`, `top_creator_signed`,
+  `locking_summary`, `creator_candidates`, `top_creator_signature`,
   `reputation`), `analyze(path: str, tolerance_seconds: float = 5.0,
   vt_api_key: str = "") -> FileAnalysis`
+
+> **Post-review correction (applied during Task 6's own fix round,
+> before Task 7 began):** the field was originally named
+> `top_creator_signed: Optional[bool]`, storing only
+> `SignatureFacts.signed`. The task reviewer found this collapses three
+> distinct answers -- genuinely unsigned, signature present but invalid/
+> tampered, and "could not verify" (a refusal) -- into the same `False`,
+> directly conflicting with this plan's own global constraint that a
+> refusal is never collapsed into a not-found-equivalent answer. Fixed by
+> storing the whole `SignatureFacts` object instead of the pre-collapsed
+> bool. Every code sample below (Task 6's own implementation and every
+> later task's test fixtures) already reflects the corrected
+> `top_creator_signature: Optional[SignatureFacts]` shape.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -706,7 +719,8 @@ def test_orchestrates_every_engine_piece(monkeypatch):
     class _SigFacts:
         signed = False
 
-    monkeypatch.setattr(analysis, "check_signature", lambda path: _SigFacts())
+    fake_sig = _SigFacts()
+    monkeypatch.setattr(analysis, "check_signature", lambda path: fake_sig)
     monkeypatch.setattr(analysis, "check_reputation", lambda path, api_key: None)
 
     result = analysis.analyze("C:\\found.txt", vt_api_key="")
@@ -715,7 +729,7 @@ def test_orchestrates_every_engine_piece(monkeypatch):
     assert result.locking_processes == ["proc1"]
     assert result.locking_summary == "1 matches"
     assert len(result.creator_candidates) == 1
-    assert result.top_creator_signed is False
+    assert result.top_creator_signature is fake_sig
     assert result.reputation is None
 
 
@@ -734,7 +748,7 @@ def test_no_creator_candidates_means_no_signature_check(monkeypatch):
 
     result = analysis.analyze("C:\\found.txt")
 
-    assert result.top_creator_signed is None
+    assert result.top_creator_signature is None
     assert called == []
 ```
 
@@ -758,7 +772,7 @@ from typing import List, Optional
 from .creator_heuristic import CreatorCandidate, find_creator_candidates
 from .file_metadata import FileMetadata, read_metadata
 from .locking_processes import LockingProcess, find_locking_processes
-from .reputation import check_reputation, check_signature
+from .reputation import SignatureFacts, check_reputation, check_signature
 
 
 @dataclass(frozen=True)
@@ -767,9 +781,13 @@ class FileAnalysis:
     locking_processes: List[LockingProcess]
     locking_summary: str
     creator_candidates: List[CreatorCandidate]
-    #: None when there was no creator candidate to check at all -- a
-    #: different fact than "checked and it's unsigned".
-    top_creator_signed: Optional[bool]
+    #: None when there was no creator candidate to check at all, OR when
+    #: the top candidate's own process path could not be resolved. The
+    #: full SignatureFacts is kept (not just .signed) so a caller can
+    #: tell "genuinely unsigned" apart from "signature invalid/tampered"
+    #: apart from "could not verify" -- collapsing those into one bool
+    #: was the exact refusal-hiding bug this field's first draft had.
+    top_creator_signature: Optional[SignatureFacts]
     reputation: object  # VTResult | None
 
 
@@ -779,10 +797,10 @@ def analyze(path: str, tolerance_seconds: float = 5.0,
     locking, locking_summary = find_locking_processes(path)
     candidates = find_creator_candidates(metadata.created, tolerance_seconds)
 
-    top_creator_signed = None
+    top_creator_signature = None
     reputation = None
     if candidates and candidates[0].path:
-        top_creator_signed = check_signature(candidates[0].path).signed
+        top_creator_signature = check_signature(candidates[0].path)
         reputation = check_reputation(candidates[0].path, vt_api_key)
 
     return FileAnalysis(
@@ -790,7 +808,7 @@ def analyze(path: str, tolerance_seconds: float = 5.0,
         locking_processes=locking,
         locking_summary=locking_summary,
         creator_candidates=candidates,
-        top_creator_signed=top_creator_signed,
+        top_creator_signature=top_creator_signature,
         reputation=reputation,
     )
 ```
@@ -1152,7 +1170,7 @@ def test_a_result_populates_the_table_and_shows_content_page(module, monkeypatch
             accessed=datetime.datetime(2026, 1, 1), owner="TESTUSER", read_only=False,
         ),
         locking_processes=[], locking_summary="ok",
-        creator_candidates=[], top_creator_signed=None, reputation=None,
+        creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [fake_analysis])
     module._folder_edit.setText(r"C:\some\folder")
@@ -1392,7 +1410,7 @@ def test_a_locked_file_row_is_highlighted(module, monkeypatch):
             accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
         ),
         locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
-        locking_summary="ok", creator_candidates=[], top_creator_signed=None,
+        locking_summary="ok", creator_candidates=[], top_creator_signature=None,
         reputation=None,
     )
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
@@ -1418,7 +1436,7 @@ def test_selecting_a_row_shows_its_detail(module, monkeypatch):
         ),
         locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
         locking_summary="1 matches in 250 processes", creator_candidates=[],
-        top_creator_signed=None, reputation=None,
+        top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
     module._folder_edit.setText(r"C:\x")
@@ -1443,7 +1461,7 @@ def test_kill_locking_process_asks_for_confirmation(module, monkeypatch):
             accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
         ),
         locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
-        locking_summary="ok", creator_candidates=[], top_creator_signed=None,
+        locking_summary="ok", creator_candidates=[], top_creator_signature=None,
         reputation=None,
     )
     monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
@@ -1481,6 +1499,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QMessageBox
 
 from core.procengine.actions import end_process
+from core.procengine.signatures import COULD_NOT_VERIFY, INVALID, NOT_SIGNED
 
 # Add module-level color constants, near _COLUMNS:
 _LOCKED_COLOR = QColor("#5c4a1a")     # amber -- in use
@@ -1590,8 +1609,16 @@ Update `_populate_table` to keep the analyses and color rows:
             lines.append("Creator candidates:")
             for c in analysis.creator_candidates:
                 lines.append(f"  {c.name} (PID {c.pid}, Δ{c.delta_seconds:+.1f}s)")
-            if analysis.top_creator_signed is False:
+            sig = analysis.top_creator_signature
+            # Three distinct answers, never collapsed into one -- see
+            # analysis.py's own docstring on why this field carries the
+            # whole SignatureFacts rather than just a bool.
+            if sig is not None and sig.status == NOT_SIGNED:
                 lines.append("⚠ Likely creator is UNSIGNED.")
+            elif sig is not None and sig.status == INVALID:
+                lines.append(f"⚠ Likely creator's signature is INVALID: {sig.reason or ''}".rstrip())
+            elif sig is not None and sig.status == COULD_NOT_VERIFY:
+                lines.append(f"Signature could not be verified: {sig.reason or ''}".rstrip())
         else:
             lines.append("No process started close enough to the file's creation time.")
         self._detail_label.setText("\n".join(lines))
@@ -1705,7 +1732,7 @@ def test_a_watch_detection_is_recorded_to_history(module, monkeypatch):
             accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
         ),
         locking_processes=[], locking_summary="ok",
-        creator_candidates=[], top_creator_signed=None, reputation=None,
+        creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
@@ -1869,7 +1896,7 @@ def test_export_writes_a_csv(module, tmp_path, monkeypatch):
             accessed=datetime.datetime(2026, 1, 1), owner="me", read_only=False,
         ),
         locking_processes=[], locking_summary="ok",
-        creator_candidates=[], top_creator_signed=None, reputation=None,
+        creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     module._current_results = [fake]
     out_path = str(tmp_path / "export.csv")

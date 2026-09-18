@@ -20,7 +20,8 @@ def test_orchestrates_every_engine_piece(monkeypatch):
     class _SigFacts:
         signed = False
 
-    monkeypatch.setattr(analysis, "check_signature", lambda path: _SigFacts())
+    sig_facts = _SigFacts()
+    monkeypatch.setattr(analysis, "check_signature", lambda path: sig_facts)
     monkeypatch.setattr(analysis, "check_reputation", lambda path, api_key: None)
 
     result = analysis.analyze("C:\\found.txt", vt_api_key="")
@@ -29,7 +30,8 @@ def test_orchestrates_every_engine_piece(monkeypatch):
     assert result.locking_processes == ["proc1"]
     assert result.locking_summary == "1 matches"
     assert len(result.creator_candidates) == 1
-    assert result.top_creator_signed is False
+    assert result.top_creator_signature is sig_facts
+    assert result.top_creator_signature.signed is False
     assert result.reputation is None
 
 
@@ -48,5 +50,5 @@ def test_no_creator_candidates_means_no_signature_check(monkeypatch):
 
     result = analysis.analyze("C:\\found.txt")
 
-    assert result.top_creator_signed is None
+    assert result.top_creator_signature is None
     assert called == []

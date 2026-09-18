@@ -12,6 +12,19 @@ from typing import List
 #: tight cap would defeat the point of keeping history at all.
 _CAP = 500
 
+#: Set by the most recent _load() call (via recent()/search()). `_load()`
+#: swallows a corrupted-or-unreadable history file into a plain `[]`, which
+#: is indistinguishable from a genuinely empty history to anything that only
+#: looks at the return value -- this flag is what lets a caller (the History
+#: tab) tell the two apart and surface a real refusal instead of collapsing
+#: it into "nothing here", per this app's own "a refusal is never dropped"
+#: rule (see CLAUDE.md's tweak_engine/security_dashboard sections).
+_last_load_ok = True
+
+
+def last_load_ok() -> bool:
+    return _last_load_ok
+
 
 def _history_path() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
@@ -21,13 +34,18 @@ def _history_path() -> str:
 
 
 def _load() -> list:
+    global _last_load_ok
     path = _history_path()
     if not os.path.exists(path):
+        _last_load_ok = True
         return []
     try:
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        _last_load_ok = True
+        return data
     except (OSError, json.JSONDecodeError):
+        _last_load_ok = False
         return []
 
 

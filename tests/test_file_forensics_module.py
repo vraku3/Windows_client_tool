@@ -705,6 +705,39 @@ def test_export_writes_a_csv(module, tmp_path, monkeypatch):
     assert r"C:\a.txt" in content
 
 
+def test_history_load_failure_shows_error_banner(module, monkeypatch, tmp_path):
+    """history_log._load() swallows a corrupted/unreadable history file into
+    a plain `[]` -- identical, from recent()/search()'s return value alone,
+    to a genuinely empty history. This drives the REAL _load()/_history_path
+    path (no monkeypatching recent()/search() themselves) with an actually
+    corrupted file on disk, to prove the distinction survives up through
+    _refresh_history() into the shared ErrorBanner. Regression test for the
+    reviewer's fix-round-1 Important finding."""
+    from modules.file_forensics import history_log
+    bad_path = tmp_path / "history.json"
+    bad_path.write_text("{not valid json", encoding="utf-8")
+    monkeypatch.setattr(history_log, "_history_path", lambda: str(bad_path))
+
+    module._refresh_history()
+
+    assert module._history_table.rowCount() == 0
+    assert not module._error_banner.isHidden()
+    assert "history" in module._error_banner.text().lower()
+
+
+def test_genuinely_empty_history_does_not_show_error_banner(module, monkeypatch, tmp_path):
+    """The counterpart to the failure case above: a history file that
+    simply does not exist yet (a fresh install, or nothing recorded today)
+    must NOT trip the same banner -- only a real read/parse failure should."""
+    from modules.file_forensics import history_log
+    monkeypatch.setattr(history_log, "_history_path", lambda: str(tmp_path / "history.json"))
+
+    module._refresh_history()
+
+    assert module._history_table.rowCount() == 0
+    assert module._error_banner.isHidden()
+
+
 def test_a_live_watch_hit_refreshes_the_history_tab(module, monkeypatch):
     """The brief's illustrative placement (calling _refresh_history() right
     inside _on_watched_file_created) would touch the Qt _history_table from

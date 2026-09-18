@@ -458,12 +458,30 @@ class FileForensicsModule(BaseModule):
                 writer.writerow([meta.path, meta.size, meta.created, meta.owner, locked, creator])
 
     def _refresh_history(self) -> None:
-        self._fill_history_table(history_log.recent(limit=50))
+        entries = history_log.recent(limit=50)
+        self._fill_history_table(entries)
+        self._report_history_load_failure()
 
     def _on_history_search(self) -> None:
         query = self._history_search_edit.text().strip()
         entries = history_log.search(query) if query else history_log.recent(limit=50)
         self._fill_history_table(entries)
+        self._report_history_load_failure()
+
+    def _report_history_load_failure(self) -> None:
+        """`history_log._load()` swallows a corrupted-or-unreadable history
+        file into a plain `[]` -- identical, from `recent()`/`search()`'s
+        return value alone, to a genuinely empty history. `last_load_ok()`
+        is what tells the two apart, so a real read/parse failure surfaces
+        here rather than looking like "no history yet". Only ever SETS the
+        banner, never clears it -- the same banner is shared with the Search
+        tab (it lives in the outer layout above both tabs), and a clean
+        history load has no business dismissing an unrelated Search-tab
+        error still on screen."""
+        if not history_log.last_load_ok() and _widget_valid(self._error_banner):
+            self._error_banner.set_error(
+                "History could not be loaded -- the log file may be corrupted or unreadable."
+            )
 
     def _fill_history_table(self, entries: List[dict]) -> None:
         self._history_table.setRowCount(0)

@@ -660,6 +660,89 @@ def test_deactivate_while_watching_unchecks_the_box(module, monkeypatch, qapp):
     assert module._watch_worker is None
 
 
+def test_history_tab_shows_recorded_entries(module, monkeypatch):
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.recent",
+        lambda limit=50: [{"path": r"C:\a.txt", "creator": "x.exe", "at": "2026-01-01T00:00:00"}])
+    module._refresh_history()
+    assert module._history_table.rowCount() == 1
+
+
+def test_history_search_filters(module, monkeypatch):
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.search",
+        lambda query, limit=50: [{"path": r"C:\found.txt", "creator": "y.exe", "at": "2026-01-01T00:00:00"}])
+    module._history_search_edit.setText("found")
+    module._on_history_search()
+    assert module._history_table.rowCount() == 1
+    assert module._history_table.item(0, 0).text() == r"C:\found.txt"
+
+
+def test_export_writes_a_csv(module, tmp_path, monkeypatch):
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    fake = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\a.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="me", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok",
+        creator_candidates=[], top_creator_signature=None, reputation=None,
+    )
+    module._current_results = [fake]
+    out_path = str(tmp_path / "export.csv")
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.QFileDialog.getSaveFileName",
+        lambda *a, **k: (out_path, "CSV"))
+
+    module._on_export_clicked()
+
+    with open(out_path, encoding="utf-8") as f:
+        content = f.read()
+    assert r"C:\a.txt" in content
+
+
+def test_a_live_watch_hit_refreshes_the_history_tab(module, monkeypatch):
+    """The brief's illustrative placement (calling _refresh_history() right
+    inside _on_watched_file_created) would touch the Qt _history_table from
+    the watch worker's background thread -- this module's own "Cross-thread
+    widget access" rule forbids that. The refresh is wired into
+    _on_watch_detection_ready instead, which _watch_bridge's signal already
+    marshals onto the UI thread; a direct call here (as in all the other
+    watch tests) is a same-thread emit, so the connected slot still runs
+    synchronously and the history table still updates immediately."""
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    import datetime
+
+    fake = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\watch\real.docx", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok",
+        creator_candidates=[], top_creator_signature=None, reputation=None,
+    )
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.record",
+        lambda entry: None)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.history_log.recent",
+        lambda limit=50: [{"path": r"C:\watch\real.docx", "creator": "", "at": "2026-01-01T00:00:00"}])
+    monkeypatch.setattr(module, "_maybe_notify", lambda *a, **k: None)
+
+    module._on_watched_file_created(r"C:\watch\real.docx")
+
+    assert module._history_table.rowCount() == 1
+    assert module._history_table.item(0, 0).text() == r"C:\watch\real.docx"
+
+
 def test_kill_failure_survives_a_refresh_that_also_fails(module, monkeypatch, qapp):
     """Reviewer's Important #3 (fix round 1): a pending kill-failure message
     must not be silently discarded if the refresh search it triggers ALSO

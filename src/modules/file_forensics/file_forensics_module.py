@@ -6,6 +6,7 @@ Built entirely on this app's existing process-forensics engine
 (core.procengine) rather than reimplementing any of it -- see
 docs/superpowers/specs/2026-09-18-scripts-file-forensics-design.md.
 """
+import csv
 import fnmatch
 import os
 from typing import List, Optional
@@ -13,9 +14,9 @@ from typing import List, Optional
 from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
-    QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem, QVBoxLayout,
-    QWidget,
+    QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMessageBox, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
@@ -104,6 +105,17 @@ class FileForensicsModule(BaseModule):
         self._error_banner.hide()
         layout.addWidget(self._error_banner)
 
+        tabs = QTabWidget()
+        tabs.addTab(self._build_search_tab(), "Search")
+        tabs.addTab(self._build_history_tab(), "History")
+        layout.addWidget(tabs, 1)
+
+        self._current_results: List[FileAnalysis] = []
+        return self._widget
+
+    def _build_search_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
         layout.addLayout(self._build_toolbar())
 
         self._results_stack = QStackedWidget()
@@ -135,11 +147,31 @@ class FileForensicsModule(BaseModule):
         self._copy_btn.setEnabled(False)
         self._copy_btn.clicked.connect(self._on_copy_path_clicked)
         actions.addWidget(self._copy_btn)
+        self._export_btn = QPushButton("Export CSV")
+        self._export_btn.clicked.connect(self._on_export_clicked)
+        actions.addWidget(self._export_btn)
         actions.addStretch()
         layout.addLayout(actions)
+        return tab
 
-        self._current_results: List[FileAnalysis] = []
-        return self._widget
+    def _build_history_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search history:"))
+        self._history_search_edit = QLineEdit()
+        self._history_search_edit.textChanged.connect(self._on_history_search)
+        search_row.addWidget(self._history_search_edit, 1)
+        layout.addLayout(search_row)
+
+        self._history_table = QTableWidget(0, 3)
+        self._history_table.setHorizontalHeaderLabels(["Path", "Creator", "When"])
+        self._history_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch)
+        self._history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        layout.addWidget(self._history_table, 1)
+        self._refresh_history()
+        return tab
 
     def _build_toolbar(self) -> QHBoxLayout:
         toolbar = QHBoxLayout()
@@ -410,6 +442,38 @@ class FileForensicsModule(BaseModule):
             from PyQt6.QtWidgets import QApplication
             QApplication.clipboard().setText(analysis.metadata.path)
 
+    def _on_export_clicked(self) -> None:
+        path, _filter = QFileDialog.getSaveFileName(
+            self._widget, "Export Results", "file_forensics_export.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Path", "Size", "Created", "Owner", "Locked By", "Likely Creator"])
+            for analysis in self._current_results:
+                meta = analysis.metadata
+                locked = ", ".join(p.process for p in analysis.locking_processes)
+                creator = (analysis.creator_candidates[0].name
+                          if analysis.creator_candidates else "")
+                writer.writerow([meta.path, meta.size, meta.created, meta.owner, locked, creator])
+
+    def _refresh_history(self) -> None:
+        self._fill_history_table(history_log.recent(limit=50))
+
+    def _on_history_search(self) -> None:
+        query = self._history_search_edit.text().strip()
+        entries = history_log.search(query) if query else history_log.recent(limit=50)
+        self._fill_history_table(entries)
+
+    def _fill_history_table(self, entries: List[dict]) -> None:
+        self._history_table.setRowCount(0)
+        for entry in entries:
+            row = self._history_table.rowCount()
+            self._history_table.insertRow(row)
+            self._history_table.setItem(row, 0, QTableWidgetItem(entry.get("path", "")))
+            self._history_table.setItem(row, 1, QTableWidgetItem(entry.get("creator", "")))
+            self._history_table.setItem(row, 2, QTableWidgetItem(entry.get("at", "")))
+
     def _ignore_patterns(self) -> List[str]:
         raw = self._ignore_edit.text().strip()
         return [p.strip() for p in raw.split(";") if p.strip()]
@@ -502,6 +566,14 @@ class FileForensicsModule(BaseModule):
             return
         self._current_results = self._current_results + [result]
         self._populate_table(self._current_results)
+        # history_log.record() already ran on the watch worker's background
+        # thread inside _on_watched_file_created (safe -- no Qt objects
+        # involved), but _history_table IS a Qt widget, so the refresh that
+        # reads it back must happen here instead, now that execution has
+        # crossed back onto the UI thread via _watch_bridge's signal -- see
+        # this module's own "Cross-thread widget access" rule.
+        if _widget_valid(self._history_table):
+            self._refresh_history()
         self._maybe_notify(result, creator)
 
     def _maybe_notify(self, result: FileAnalysis, creator: str) -> None:

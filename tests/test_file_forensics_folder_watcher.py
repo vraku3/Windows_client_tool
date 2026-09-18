@@ -49,5 +49,13 @@ def test_stop_before_any_event_returns_promptly(tmp_path):
 
 def test_a_nonexistent_folder_raises_immediately():
     watcher = FolderWatcher(r"Z:\this\does\not\exist\at\all", on_created=lambda p: None)
-    with pytest.raises(OSError):
+    # Specifically FileNotFoundError, not just any OSError: OSError's
+    # constructor treats its first positional as a POSIX errno, and a Win32
+    # winerror passed there instead lands CPython on the wrong concrete
+    # subclass (winerror=3 collides with POSIX ESRCH -> ProcessLookupError)
+    # with .winerror silently dropped to None. A bare `pytest.raises(OSError)`
+    # would not catch that regression since ProcessLookupError is still an
+    # OSError subclass.
+    with pytest.raises(FileNotFoundError) as exc_info:
         watcher.run(_FakeWorker())
+    assert exc_info.value.winerror is not None

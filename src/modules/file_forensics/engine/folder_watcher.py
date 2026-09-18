@@ -42,11 +42,18 @@ class FolderWatcher:
             # pywintypes.error does NOT subclass OSError (confirmed: its MRO
             # is (error, Exception, BaseException, object)) -- callers
             # catching the standard "this path is no good" exception would
-            # miss it entirely. winerror/strerror line up with OSError's own
-            # errno/strerror fields, so translate rather than let a
-            # Win32-specific type leak into a caller that reasonably expects
-            # OSError for a bad path.
-            raise OSError(exc.winerror, exc.strerror, self._path) from exc
+            # miss it entirely. Use OSError's real 4-argument form
+            # (errno, strerror, filename, winerror) rather than passing
+            # winerror as the first (errno) positional: OSError.__new__
+            # auto-selects a concrete subclass from errno's POSIX numbering
+            # space, and Win32 winerror codes collide with unrelated POSIX
+            # errnos -- winerror=3 (path not found) as errno picks
+            # ProcessLookupError (POSIX ESRCH) and drops winerror to None,
+            # which is exactly the diagnostic this translation exists to
+            # keep. Passing errno=None, winerror=exc.winerror instead lets
+            # CPython map it correctly (winerror 3 -> FileNotFoundError)
+            # and preserves the real Win32 code on the resulting exception.
+            raise OSError(None, exc.strerror, self._path, exc.winerror) from exc
         overlapped = pywintypes.OVERLAPPED()
         overlapped.hEvent = win32event.CreateEvent(None, True, False, None)
         buf = win32file.AllocateReadBuffer(_BUFFER_SIZE)

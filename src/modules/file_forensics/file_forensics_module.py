@@ -79,6 +79,13 @@ class FileForensicsModule(BaseModule):
 
     def on_deactivate(self) -> None:
         self._stop_watch()
+        if _widget_valid(self._watch_cb):
+            # Reflect reality on the module's own primary control -- without
+            # this the checkbox reads "Live Watch: ON" indefinitely after any
+            # tab-away-and-back even though _stop_watch() just tore down the
+            # actual watch (BaseModule's lifecycle calls on_deactivate() on
+            # every navigation away, not just app shutdown).
+            self._watch_cb.setChecked(False)
         self.cancel_all_workers()
 
     def on_stop(self) -> None:
@@ -283,7 +290,15 @@ class FileForensicsModule(BaseModule):
         if not _widget_valid(self._search_btn):
             return
         self._search_btn.setEnabled(True)
-        self._pending_banner_message = None
+        if self._pending_banner_message:
+            # A kill-locking-process failure was waiting for this refresh to
+            # show it (see _on_kill_locking_clicked), and the refresh ITSELF
+            # also failed -- neither refusal may be dropped in favor of the
+            # other (the same rule this file already applies to skipped
+            # files), so both are shown together and the pending one is only
+            # cleared now that it has actually been displayed.
+            message = f"{self._pending_banner_message} Also: {message}"
+            self._pending_banner_message = None
         self._error_banner.set_error(message)
 
     def _populate_table(self, results: List[FileAnalysis]) -> None:
@@ -414,10 +429,33 @@ class FileForensicsModule(BaseModule):
                 recursive=self._recurse_cb.isChecked(),
             )
             self._watch_worker = Worker(self._watcher.run)
+            self._watch_worker.signals.error.connect(self._on_watch_error)
             self._workers.append(self._watch_worker)
             self.thread_pool.start(self._watch_worker)
         else:
             self._stop_watch()
+
+    def _on_watch_error(self, message: str) -> None:
+        """`FolderWatcher.run()` raised -- e.g. `CreateFile` failing on an
+        empty, invalid, or removed folder, a disconnected network share, or
+        a revoked ACL mid-watch (see engine/folder_watcher.py's own
+        docstring). Nothing validates the folder before starting a watch
+        (unlike search), so this is trivially reachable on the very first
+        click with a bad path. Without this connected, `Worker.run()`'s own
+        exception handling emits `signals.error` into the void: the
+        checkbox stays checked and `self._watcher` stays non-None with no
+        actual watch running, and the idempotency guard in
+        `_on_watch_toggled` would then block a retry."""
+        if _widget_valid(self._error_banner):
+            self._error_banner.set_error(f"Live Watch stopped: {message}")
+        if _widget_valid(self._watch_cb):
+            # Reflects reality -- watching actually stopped -- and also
+            # fires _on_watch_toggled(False) -> _stop_watch() via the
+            # checkbox's own toggled signal.
+            self._watch_cb.setChecked(False)
+        self._stop_watch()  # always run directly too: harmless if the
+                            # checkbox above already did it (idempotent),
+                            # and the only path if the widget is gone.
 
     def _stop_watch(self) -> None:
         """Stops a running live watch, if any. Called on toggle-off,

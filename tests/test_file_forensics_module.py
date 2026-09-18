@@ -578,3 +578,137 @@ def test_watch_detection_does_not_toast_when_app_is_foreground(module, monkeypat
 def test_ignore_patterns_parses_semicolon_separated_list(module):
     module._ignore_edit.setText(" *.tmp ; ~$* ;;  *.log ")
     assert module._ignore_patterns() == ["*.tmp", "~$*", "*.log"]
+
+
+def test_watch_worker_failure_shows_banner_and_unchecks_box(module, monkeypatch, qapp):
+    """Reviewer's Important #1 (fix round 1): FolderWatcher.run() raising
+    (CreateFile failing on an empty/invalid/removed folder, a disconnected
+    share, a revoked ACL mid-watch) must not vanish into Worker's own
+    swallowed signals.error -- the checkbox must reflect that watching
+    actually stopped, and the banner must say so."""
+    class _FailingWatcher:
+        def __init__(self, path, on_created, recursive=False):
+            pass
+
+        def run(self, worker):
+            raise OSError(None, "The folder could not be opened", r"C:\bad\folder", 3)
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.FolderWatcher", _FailingWatcher)
+    module._folder_edit.setText(r"C:\bad\folder")
+    module._watch_cb.setChecked(True)  # fires _on_watch_toggled(True)
+    _settle(qapp)
+
+    assert module._watch_cb.isChecked() is False
+    assert not module._error_banner.isHidden()
+    assert "Live Watch stopped" in module._error_banner.text()
+    assert module._watcher is None
+    assert module._watch_worker is None
+
+    # A retry must not be blocked by the start-path idempotency guard now
+    # that state has been reset.
+    started = []
+
+    class _FakeWatcher:
+        def __init__(self, path, on_created, recursive=False):
+            started.append(path)
+
+        def run(self, worker):
+            pass
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.FolderWatcher", _FakeWatcher)
+    module._watch_cb.setChecked(True)
+    assert started == [r"C:\bad\folder"]
+
+
+def test_deactivate_while_watching_unchecks_the_box(module, monkeypatch, qapp):
+    """Reviewer's Important #2 (fix round 1): on_deactivate() already tore
+    down the actual watch via _stop_watch() -- this pins that the checkbox,
+    the module's own primary control, is kept in sync with that, since
+    BaseModule's lifecycle calls on_deactivate() on every navigation away,
+    not just app shutdown."""
+    stopped = []
+
+    class _FakeWatcher:
+        def __init__(self, path, on_created, recursive=False):
+            pass
+
+        def run(self, worker):
+            pass
+
+        def stop(self):
+            stopped.append(True)
+
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.FolderWatcher", _FakeWatcher)
+    module._folder_edit.setText(r"C:\watch\me")
+    module._watch_cb.setChecked(True)
+
+    module.on_deactivate()
+    _settle(qapp)
+
+    assert module._watch_cb.isChecked() is False
+    assert stopped == [True]
+    assert module._watcher is None
+    assert module._watch_worker is None
+
+
+def test_kill_failure_survives_a_refresh_that_also_fails(module, monkeypatch, qapp):
+    """Reviewer's Important #3 (fix round 1): a pending kill-failure message
+    must not be silently discarded if the refresh search it triggers ALSO
+    fails -- the same "never collapse a refusal" rule this file already
+    applies to skipped files. Both messages must show, not just the last
+    one to arrive."""
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    from modules.file_forensics.engine.locking_processes import LockingProcess
+    from core.procengine.actions import Result
+    import datetime
+
+    locked = FileAnalysis(
+        metadata=FileMetadata(
+            path=r"C:\locked.txt", size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="", read_only=False,
+        ),
+        locking_processes=[LockingProcess(pid=1, process="notepad", type_name="File")],
+        locking_summary="ok", creator_candidates=[], top_creator_signature=None,
+        reputation=None,
+    )
+    monkeypatch.setattr(module, "_analyze_folder", lambda *a, **k: [locked])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    _settle(qapp)
+    module._table.selectRow(0)
+    module._on_row_selected()
+
+    from PyQt6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.end_process",
+        lambda pid: Result(False, "Notepad cannot be ended."),
+    )
+
+    # The re-search _on_kill_locking_clicked triggers must ALSO fail, to
+    # exercise the double-refusal path -- not the ordinary "kill fails,
+    # refresh succeeds cleanly" case the other kill test already covers.
+    def _raise(*a, **k):
+        raise PermissionError(13, "Access is denied", r"C:\x")
+    monkeypatch.setattr(module, "_analyze_folder", _raise)
+
+    module._on_kill_locking_clicked()
+    _settle(qapp)
+
+    text = module._error_banner.text()
+    assert not module._error_banner.isHidden()
+    assert "Notepad cannot be ended." in text
+    assert "Access is denied" in text
+    assert module._pending_banner_message is None  # displayed, not left dangling

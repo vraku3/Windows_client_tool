@@ -354,6 +354,49 @@ def test_apps_applied_reports_what_actually_left(monkeypatch):
     assert "1 of 1" in mod._apps_status.text()
 
 
+def test_apps_applied_drops_the_appx_cache_before_reverifying(monkeypatch):
+    """Real bug (user-reported): selecting a preset that targets 8 apps and
+    applying it reported "0 of 8 app(s) confirmed removed" even though the
+    removal itself succeeded. Root cause: get_installed_packages() ->
+    appx_service.fetch_packages() reuses a cached AppX list for up to 60s
+    (core/appx_service.py's CACHE_TTL_SECONDS) -- the Apps tab's own earlier
+    scan (opening the tab, or a prior preset click) populates that cache,
+    and applying + re-verifying an app's removal well within that window
+    means the "confirmed removed" check reads the PRE-removal snapshot and
+    reports every genuinely-removed app as still present. This pins that
+    _on_apps_applied calls invalidate_cache() before re-checking, the same
+    fresh-read requirement CLAUDE.md documents for Store Apps' _load_apps
+    ("needs current truth right before an uninstall decision")."""
+    mod = _module()
+    mod._installed_apps = ["Pkg.A"]
+    monkeypatch.setattr(mod, "_on_scan", lambda: None)
+    monkeypatch.setattr(QMessageBox, "exec",
+                        lambda self: QMessageBox.StandardButton.Ok)
+
+    calls = []
+    # debloat_module.py does `from core.appx_service import ...,
+    # invalidate_cache`, binding the name directly into its own namespace --
+    # patch it there (dm.invalidate_cache), not on core.appx_service itself,
+    # or the patch has no effect on the already-bound reference.
+    monkeypatch.setattr(dm, "invalidate_cache",
+                        lambda: calls.append("invalidated"))
+    # Simulates the stale-cache bug directly: if _on_apps_applied does not
+    # invalidate first, this stand-in for get_installed_packages() still
+    # reports Pkg.A as present (the pre-removal snapshot); a correct
+    # implementation invalidates the cache first, so this test only needs
+    # to prove the invalidation call happens, not re-implement the cache.
+    monkeypatch.setattr(dm.debloat_scanner, "get_installed_packages",
+                        lambda: {"Pkg.A": "Pkg.A"})
+
+    result = {"success": 1, "total": 1, "targeted": ["Pkg.A"]}
+    mod._on_apps_applied(result)
+
+    assert calls == ["invalidated"], (
+        "_on_apps_applied must call appx_service.invalidate_cache() before "
+        "re-checking installed packages, or the check can read a stale "
+        "pre-removal cache and report a successful removal as failed")
+
+
 def test_show_all_reveals_uninstalled_catalog_entries(monkeypatch):
     mod = _module()
     monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {

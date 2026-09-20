@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 
-from core.appx_service import dir_size, fetch_packages
+from core.appx_service import dir_size, fetch_packages, invalidate_cache
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
 from core.confirm import confirm_destructive
@@ -708,6 +708,16 @@ class DebloatToolsModule(BaseModule):
         self._cancel_apply_btn.setVisible(False)
         self._apply_selected_btn.setEnabled(True)
         self._apply_all_btn.setEnabled(True)
+        # get_installed_packages() -> appx_service.fetch_packages() reuses a
+        # cached AppX list for up to 60s (core/appx_service.py's own
+        # CACHE_TTL_SECONDS), so the Apps tab's own earlier scan populating
+        # that cache seconds before an apply can make this "confirmed
+        # removed" check read the PRE-removal snapshot and report every
+        # removed app as still present -- "0 of N confirmed removed" even
+        # when the removal genuinely succeeded. Drop the cache first, the
+        # same way Store Apps' own _load_apps forces a fresh read "right
+        # before an uninstall decision" (see CLAUDE.md's Apps tab section).
+        invalidate_cache()
         now_installed = set(debloat_scanner.get_installed_packages())
         actually_gone = sum(1 for pkg in result.get("targeted", [])
                             if pkg not in now_installed)

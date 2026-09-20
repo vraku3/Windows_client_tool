@@ -49,6 +49,7 @@ A comprehensive Windows 11 optimization and system diagnostics utility with a mo
 ### Tools
 - **Registry Explorer**: Browse and edit registry keys (backup-first)
 - **Environment Variables**: View and edit system variables
+- **Scripts → File Forensics**: Search a folder to see who has each file open and a ranked guess at what created it, with live folder watching, SHA256/VirusTotal lookup, and persistent run history
 
 ### Utilities
 - **Tweaks**: Apply system optimization recommendations

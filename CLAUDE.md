@@ -89,10 +89,12 @@ re-implement that filtering — hence the list.
 ### Composite Modules (`src/core/composite_module.py`)
 
 A `CompositeModule` hosts other `BaseModule`s as tabs. `Diagnose`, `Debloat`,
-`Startup & Boot`, `Network Diagnostics` and `System Management` are the five
-(the last added 2026-09-16, folding Scheduled Tasks/Services/Windows Features
-into one hub — Network Diagnostics also grew two more children that day,
-Shared Resources and Remote Tools); a child stays an
+`Startup & Boot`, `Network Diagnostics`, `System Management` and `Scripts`
+are the six (`System Management` added 2026-09-16, folding Scheduled
+Tasks/Services/Windows Features into one hub — Network Diagnostics also grew
+two more children that day, Shared Resources and Remote Tools; `Scripts`
+added 2026-09-20 as a home for hand-rolled utility tools, File Forensics
+being the first); a child stays an
 ordinary module that knows nothing about being hosted, so it can be tested
 alone and moved between hosts unchanged. A subclass only sets `self.children`
 in `__init__` (import the children *inside* `__init__`, and add them to
@@ -107,8 +109,12 @@ timer ticking a tab that was never opened, `on_start` running against a
 `test_every_composite_child_survives_a_tick_it_was_not_built_for`. Both the
 System Management and Network Diagnostics folds (2026-09-16) found one real
 example each this way (`ServicesModule.refresh_data()`,
-`RemoteToolsModule.on_start()`) — check for this class of bug with that
-generic test before assuming a re-hosted child needs no code changes at all.
+`RemoteToolsModule.on_start()`), and the Scripts hub (2026-09-20) found a
+third: `FileForensicsModule.__init__` never set `self._watch_cb`, only
+`create_widget()` did, so `on_deactivate()` firing before the tab was ever
+opened raised `AttributeError` before the widget-lifetime guard even ran —
+check for this class of bug with that generic test before assuming a
+re-hosted child needs no code changes at all.
 
 Five things about it that are easy to get wrong:
 
@@ -1164,6 +1170,56 @@ Smaller traps, each of which cost real debugging:
 imported inside the pane's button handlers, so they are listed in
 `HIDDEN_IMPORTS` (`pyinstaller_common.py`) — miss one and the frozen build runs
 fine until someone clicks Snapshot, Compare or Refresh Policy.
+
+### Scripts / File Forensics (`src/modules/scripts_hub/`, `src/modules/file_forensics/`)
+
+`ScriptsModule` is a `CompositeModule` (`ModuleGroup.TOOLS`, `requires_admin
+= False`) meant as a home for hand-rolled utility tools — File Forensics is
+the first child, and a second tool later is just another entry in
+`self.children`. File Forensics itself is a redesigned, professionalized
+rebuild of a one-off PowerShell script (`Find-FileCreator.ps1`): search a
+folder, and for every file see who has it open right now and a ranked guess
+at which process created it, plus live folder watching, SHA256/VirusTotal
+lookup, and persistent run history.
+
+Built entirely on this app's own existing process-forensics engine
+(`core/procengine/`, built for Process Explorer) rather than reimplementing
+any of it:
+
+| Need | Reused from |
+|---|---|
+| "What has this file open" | `core.procengine.findref.find()` — the same native NT handle enumeration Process Explorer's own Ctrl+F uses |
+| Process start times, for the creator heuristic | `core.procengine.ntquery.system_processes()` |
+| A creator candidate's exe path / user / elevation | `core.procengine.details.resolve(pid)` — never raises, reports refusals per-field |
+| "Is the likely creator signed" | `core.procengine.signatures.verify_signature(path)` |
+| SHA256 + VirusTotal lookup | `core.virustotal_client` — the same client `process_explorer_module.py` uses, gated on the same `virustotal.api_key` config value |
+| Kill the locking process | `core.procengine.actions.end_process(pid)` |
+| Persistent run history | Same shape as `quick_fix_history.py`: a capped JSON array under the app data dir |
+
+**No PyQt6 below the UI layer** — everything under `file_forensics/engine/`
+(`file_metadata.py`, `device_paths.py`, `locking_processes.py`,
+`creator_heuristic.py`, `reputation.py`, `analysis.py`, `folder_watcher.py`)
+is Qt-free, the same `scan/`+`store/` split TreeSize and Monitor Control
+keep, for the same reason: it lets the engine test headless.
+
+- **`findref.find()` matches NT device paths, not drive letters.** A search
+  target like `C:\Users\...\Temp` has to go through `device_paths.py`'s
+  `QueryDosDeviceW`-based translation to `\Device\HarddiskVolumeN\...` once,
+  up front — passing the drive-letter form straight into `find()`'s
+  substring match silently finds nothing.
+- **`FolderWatcher.stop()` must be called explicitly — `worker.cancel()`
+  alone does not interrupt it.** The watcher blocks in
+  `WaitForMultipleObjects([overlapped.hEvent, stop_event], False, INFINITE)`
+  on real `ReadDirectoryChangesW` overlapped I/O; `worker.cancel()` only
+  sets a Python-level flag the blocking kernel wait never looks at. `.stop()`
+  signals the real Win32 event the wait is actually listening on. Both
+  `on_deactivate` and `on_stop` route through the module's own
+  `_stop_watch()`, which calls both.
+- **A refusal is never collapsed into "nothing found."** Per-file analysis
+  refusals, `os.walk` directory refusals, a corrupted history file, and a
+  discarded `kill process` result are all surfaced rather than silently
+  dropped — the same rule Security Dashboard and the Tweak System hold
+  elsewhere in this app.
 
 ## UI Patterns
 

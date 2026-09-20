@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- **New Scripts tab, with File Forensics as its first tool.** A redesigned,
+  professionalized rebuild of a one-off PowerShell script
+  (`Find-FileCreator.ps1`): search a folder and see, per file, who has it
+  open right now and a ranked guess at which process created it, built on
+  the app's own existing process-forensics engine (the same native handle
+  enumeration and process-detail lookups Process Explorer uses) rather than
+  reimplementing any of it. Adds live folder watching (native
+  `ReadDirectoryChangesW`, not polling), SHA256 + VirusTotal lookup,
+  kill-locking-process/reveal-in-Explorer actions, and persistent, searchable
+  run history with CSV export.
 - **Group Policy: the pane was rebuilt, and it now shows the settings.** It
   listed GPO names and nothing else — double-clicking a row did nothing,
   because the rows had no children: the settings each GPO delivered were

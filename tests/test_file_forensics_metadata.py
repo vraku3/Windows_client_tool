@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 
 from modules.file_forensics.engine.file_metadata import read_metadata

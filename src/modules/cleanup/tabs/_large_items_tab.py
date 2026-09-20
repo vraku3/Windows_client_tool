@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QFrame,
 )
 
+from modules.cleanup.tabs._disk_cleanup_panel import _DiskCleanupPanel
 from modules.cleanup.tabs._driver_panel import _DriverStorePanel
 from modules.cleanup.tabs._scan_tab import _ScanTab
 from modules.cleanup import cleanup_scanner as cs
@@ -50,9 +51,21 @@ class _LargeItemsTab(QWidget):
         self._drivers = _DriverStorePanel()
         layout.addWidget(self._drivers)
 
+        # Windows' own Disk Cleanup, same reasoning as the driver panel
+        # above: /sagerun deletes according to categories cleanmgr's own
+        # dialog controls, which is not something a checkbox tree of
+        # ScanItems can represent.
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #444;")
+        layout.addWidget(sep2)
+        self._disk_cleanup = _DiskCleanupPanel()
+        layout.addWidget(self._disk_cleanup)
+
     def auto_scan(self):
         self._scan_tab.auto_scan()
 
     def _cancel_all(self) -> None:
         self._scan_tab._cancel_all()
         self._drivers._cancel_all()
+        self._disk_cleanup._cancel_all()

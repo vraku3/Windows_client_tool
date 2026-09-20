@@ -129,6 +129,25 @@ def scan_appdata_autodiscover(min_age_days: int = 0) -> ScanResult:
         "cache", "cache2", "cacheddata", "gpucache", "code cache",
         "blob_storage", "crashpad", "crash reports",
         "grshaderCache", "shadercache", "media cache",
+        # The rest of this set was compiled from a live directory-name
+        # census of %LOCALAPPDATA% (`Get-ChildItem -Recurse -Depth 3
+        # -Filter '*cache*'`) rather than guessed -- every name here was
+        # observed as a REAL folder on a real machine, not assumed from a
+        # generic "sounds like a cache" pattern. Deliberately NOT included:
+        # "Package Cache" (MSI/Burn's own installer cache -- removing it
+        # can break a future repair/uninstall of an unrelated app) and
+        # anything without "cache" unambiguously in its own name.
+        "caches", "cachestorage", "d3dscache", "dx9cache", "dxcache",
+        "dxccache", "dawncache", "dawngraphitecache", "dawnwebgpucache",
+        "graphitedawncache", "fontcache", "gpupersistentcache", "oglcache",
+        "vkcache", "persistentmapcache", "iecompatcache", "iecompatuacache",
+        "ppbcompatcache", "ppbcompatuacache", "component_crx_cache",
+        "extensions_crx_cache", "node-compile-cache", "qmlcache",
+        "apicache", "webservicecache", "resourceinfocache",
+        "targetedcontentcache", "optimization_guide_hint_cache_store",
+        "actioncentercache", "browsercache", "browsercaches",
+        "transcoded files cache", "htmlcache", "cl.cache",
+        "mruservicecache",
     }
     _CACHE_DIR_NAMES = {s.lower() for s in _CACHE_DIR_NAMES}
 

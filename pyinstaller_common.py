@@ -236,6 +236,10 @@ HIDDEN_IMPORTS = [
     # panes quietly empty and the Security Dashboard scoring a TPM it could
     # not read as absent.
     "wmi",
+    # ScriptsModule (a CompositeModule) imports FileForensicsModule lazily
+    # inside __init__, per the composite-hosting convention -- the frozen
+    # build runs fine until someone opens the Scripts tab.
+    "modules.file_forensics.file_forensics_module",
     "httpx", "paramiko",
     "openpyxl", "reportlab",
     "PIL", "PIL._imaging",

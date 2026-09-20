@@ -249,18 +249,21 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_28_entries(registered):
-    """28, down from 32: the full history of the Management + Network
+def test_the_sidebar_is_29_entries(registered):
+    """29, up from 28: the full history of the Management + Network
     consolidation (see
     docs/superpowers/specs/2026-09-16-management-network-consolidation-design.md).
     Task 1 folded three previously-independent ModuleGroup.MANAGE entries --
     Scheduled Tasks, Services, Windows Features -- into one new "System
-    Management" hub: 32 - 3 + 1 = 30. Task 2 (this one) folds two more
+    Management" hub: 32 - 3 + 1 = 30. Task 2 folded two more
     previously-independent ModuleGroup.TOOLS entries -- Shared Resources,
     Remote Tools -- into the already-existing "Network Diagnostics" hub as
     two more tabs, with no new hub created: 30 - 2 = 28. Absorbed modules are
-    still reachable -- as tabs, which `_all_composite_children` covers."""
-    assert len(registered) == 28
+    still reachable -- as tabs, which `_all_composite_children` covers. The
+    new Scripts hub (docs/superpowers/specs/
+    2026-09-18-scripts-file-forensics-design.md) is a genuinely new sidebar
+    entry, not a fold of existing ones: 28 + 1 = 29."""
+    assert len(registered) == 29
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

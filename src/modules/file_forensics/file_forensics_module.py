@@ -69,6 +69,7 @@ class FileForensicsModule(BaseModule):
         self._pending_banner_message: Optional[str] = None
         self._watcher: Optional[FolderWatcher] = None
         self._watch_worker: Optional[Worker] = None
+        self._watch_cb: Optional[QCheckBox] = None
         self._watch_bridge = _WatchBridge()
         self._watch_bridge.detection_ready.connect(self._on_watch_detection_ready)
 

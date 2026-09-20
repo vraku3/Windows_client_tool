@@ -121,6 +121,7 @@ def register_all_modules(app) -> None:
     from modules.software_inventory.software_module import SoftwareModule
     from modules.disk_health.disk_health_module import DiskHealthModule
     from modules.restore_manager.restore_module import RestoreManagerModule
+    from modules.scripts_hub.scripts_hub_module import ScriptsModule
     # Track 2 — New Tool Modules
     from modules.firewall_rules.firewall_manager_module import FirewallManagerModule
     from modules.local_users.users_module import LocalUsersModule
@@ -159,6 +160,7 @@ def register_all_modules(app) -> None:
     app.module_registry.register(SoftwareModule())
     app.module_registry.register(DiskHealthModule())
     app.module_registry.register(RestoreManagerModule())
+    app.module_registry.register(ScriptsModule())
     # Track 2
     app.module_registry.register(FirewallManagerModule())
     app.module_registry.register(LocalUsersModule())

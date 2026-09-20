@@ -353,16 +353,7 @@ def test_expanding_a_section_triggers_its_auto_scan_exactly_once(qapp):
     module, app = _module(qapp)
     try:
         calls = []
-        # _CollapsibleSection is connected to the ORIGINAL bound
-        # module._sys_tab.auto_scan at wiring time -- replacing that
-        # attribute afterward would not rewire the already-made connection.
-        # auto_scan() itself calls self._do_scan(), a fresh attribute
-        # lookup on self at call time, so stubbing _do_scan (not auto_scan)
-        # is what a monkeypatch after construction can actually observe.
-        def _fake_do_scan():
-            calls.append(1)
-            module._sys_tab._scanned = True  # real _do_scan's own contract
-        module._sys_tab._do_scan = _fake_do_scan
+        module._sys_tab.auto_scan = lambda: calls.append(1)
         module._sections["System Junk"].set_expanded(True)
         assert calls == [1]
         module._sections["System Junk"].set_expanded(False)

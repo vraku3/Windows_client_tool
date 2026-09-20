@@ -65,6 +65,10 @@ def _section(qapp):
     from modules.cleanup.collapsible_section import _CollapsibleSection
     body = QLabel("body content")
     section = _CollapsibleSection("System Junk", body)
+    # isVisible() reflects the real on-screen state (ancestor chain
+    # included), not just the explicit setVisible() flag -- show() the
+    # top-level section itself so the body's own visibility is meaningful.
+    section.show()
     return section, body
 
 

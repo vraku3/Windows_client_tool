@@ -1,23 +1,28 @@
 """
-Cleanup module — 8-tab overhaul.
+Cleanup module — one scrollable page.
 
-Tabs: Quick Cleanup · System Junk · Browser Caches · App & Game Caches ·
-      Windows Update · Logs & Reports · Large Items · Dev Tools
+Quick Cleanup's dashboard (pie chart, totals, Scan All / Clean All Safe) is
+an always-visible header; System Junk, Browser Caches, App & Game Caches,
+Windows Update, Logs & Reports, Large Items and Dev Tools are collapsible
+sections below it (see docs/superpowers/specs/
+2026-09-20-cleanup-single-tab-merge-design.md — merged from the former
+8-tab QTabWidget layout).
 
-Cross-cutting: auto-scan on first tab switch, safety colour-coding,
-age filter per tab, running-process guard, >500 MB confirmation,
+Cross-cutting: auto-scan on first section expand, safety colour-coding,
+age filter per section, running-process guard, >500 MB confirmation,
 error panel, freed-session counter, DISM button on Large Items.
 """
 import logging
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
 )
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from modules.cleanup import cleanup_scanner as cs
+from modules.cleanup.collapsible_section import _CollapsibleSection
 from modules.cleanup.tabs import (
     _ScanTab,
     _BrowserCleanupTab,
@@ -208,18 +213,26 @@ class CleanupModule(BaseModule):
         header.addWidget(self._freed_lbl)
         main_lay.addLayout(header)
 
-        # ── Tabs ──
-        self._tabs = QTabWidget()
-        main_lay.addWidget(self._tabs, 1)
+        # ── Scrollable page: Quick Cleanup header + collapsible sections ──
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setWidgetResizable(True)
+        page = QWidget()
+        page_lay = QVBoxLayout(page)
+        page_lay.setContentsMargins(0, 0, 0, 0)
+        self._scroll_area.setWidget(page)
+        main_lay.addWidget(self._scroll_area, 1)
 
-        # 1. Quick Cleanup (merged from the former standalone
-        # QuickCleanupModule -- see docs/superpowers/specs/
-        # 2026-09-14-cleanup-quick-cleanup-merge-design.md)
+        # Quick Cleanup's dashboard is the page header, always visible --
+        # it already scans everything and shows the pie chart + totals, so
+        # it is not wrapped in a section (see docs/superpowers/specs/
+        # 2026-09-20-cleanup-single-tab-merge-design.md).
         self._quick = QuickCleanupTab(on_category_clicked=self._on_category_clicked)
         self._quick.build(advanced_categories=ADVANCED_CATEGORIES)
-        self._tabs.addTab(self._quick, "Quick Cleanup")
+        page_lay.addWidget(self._quick)
 
-        # 2. System Junk
+        self._sections: dict = {}
+
+        # System Junk
         sys_scanners = {
             cs.scan_temp_files:       ("Temp Files",       "safe"),
             cs.scan_prefetch:         ("Prefetch",          "caution"),
@@ -228,13 +241,13 @@ class CleanupModule(BaseModule):
         }
         self._sys_tab = _ScanTab(
             _with_catalog({**sys_scanners, **SYSTEM_EXTRA}, "system"))
-        self._tabs.addTab(self._sys_tab, "System Junk")
+        self._add_section(page_lay, "System Junk", self._sys_tab)
 
-        # 3. Browser Caches
+        # Browser Caches
         self._browser = _BrowserCleanupTab()
-        self._tabs.addTab(self._browser, "Browser Caches")
+        self._add_section(page_lay, "Browser Caches", self._browser)
 
-        # 4. App & Game Caches
+        # App & Game Caches
         app_scanners = {
             cs.scan_app_caches:           ("App Caches",             "safe"),
             cs.scan_store_app_caches:     ("Store / UWP Caches",     "safe"),
@@ -245,25 +258,25 @@ class CleanupModule(BaseModule):
             cs.scan_outlook_cache:        ("Outlook Cache",           "safe"),
             cs.scan_winget_packages:      ("WinGet Packages",         "safe"),
         }
-        # "browsers" is here rather than on the Browser Caches tab: that
-        # tab runs EnhancedBrowserScanner, which enumerates live profiles
+        # "browsers" is here rather than on the Browser Caches section: that
+        # section runs EnhancedBrowserScanner, which enumerates live profiles
         # and takes no scanner dict at all, so the catalog's per-browser
         # path scanners had nowhere to appear. Overlap between the two is
         # handled by dedupe_items, which counts a path once.
         self._app_tab = _ScanTab(_with_catalog(
             app_scanners, "apps", "games", "media", "comms", "cloud",
             "browsers"))
-        self._tabs.addTab(self._app_tab, "App & Game Caches")
+        self._add_section(page_lay, "App & Game Caches", self._app_tab)
 
-        # 5. Windows Update
+        # Windows Update
         wu_scanners = {
             cs.scan_wu_cache:              ("WU Download Cache",   "caution"),
             cs.scan_delivery_optimization: ("Delivery Opt. Cache", "safe"),
         }
         self._wu_tab = _ScanTab(wu_scanners, wu_cache=True)
-        self._tabs.addTab(self._wu_tab, "Windows Update")
+        self._add_section(page_lay, "Windows Update", self._wu_tab)
 
-        # 6. Logs & Reports
+        # Logs & Reports
         log_scanners = {
             cs.scan_windows_logs:     ("Windows Logs",      "caution"),
             cs.scan_event_logs:       ("Event Log Files",   "caution"),
@@ -275,18 +288,20 @@ class CleanupModule(BaseModule):
             cs.scan_defender_history: ("Defender History",   "safe"),
         }
         self._logs_tab = _ScanTab({**log_scanners, **LOGS_EXTRA})
-        self._tabs.addTab(self._logs_tab, "Logs & Reports")
+        self._add_section(page_lay, "Logs & Reports", self._logs_tab)
 
-        # 7. Large Items + DISM
+        # Large Items + DISM
         self._large = _LargeItemsTab()
-        self._tabs.addTab(self._large, "Large Items")
+        self._add_section(page_lay, "Large Items", self._large)
 
-        # 8. Dev Tools
+        # Dev Tools
         dev_scanners = {
             cs.scan_dev_tool_caches: ("Dev Tool Caches", "safe"),
         }
         self._dev_tab = _ScanTab(_with_catalog(dev_scanners, "dev"))
-        self._tabs.addTab(self._dev_tab, "Dev Tools")
+        self._add_section(page_lay, "Dev Tools", self._dev_tab)
+
+        page_lay.addStretch()
 
         # ── Wire signals ──
         for tab in (
@@ -295,9 +310,14 @@ class CleanupModule(BaseModule):
         ):
             tab.freed_bytes.connect(self._on_freed)
 
-        self._tabs.currentChanged.connect(self._on_tab_changed)
-
         return outer
+
+    def _add_section(self, page_lay, title: str, body: QWidget) -> None:
+        section = _CollapsibleSection(title, body)
+        if hasattr(body, "auto_scan"):
+            section.expanded.connect(body.auto_scan)
+        self._sections[title] = section
+        page_lay.addWidget(section)
 
     # ── Freed-session counter ──
 
@@ -305,21 +325,15 @@ class CleanupModule(BaseModule):
         self._freed_bytes += nbytes
         self._freed_lbl.setText(f"Freed this session: {cs.format_size(self._freed_bytes)}")
 
-    # ── Auto-scan on tab switch ──
-
-    def _on_tab_changed(self, index: int):
-        tab = self._tabs.widget(index)
-        if hasattr(tab, "auto_scan"):
-            tab.auto_scan()
-
     def _on_category_clicked(self, category_id: str) -> None:
-        tab_name = _CATEGORY_TAB_NAMES.get(category_id)
-        if tab_name is None:
+        section_name = _CATEGORY_TAB_NAMES.get(category_id)
+        if section_name is None:
             return
-        for i in range(self._tabs.count()):
-            if self._tabs.tabText(i) == tab_name:
-                self._tabs.setCurrentIndex(i)
-                return
+        section = self._sections.get(section_name)
+        if section is None:
+            return
+        section.set_expanded(True)
+        self._scroll_area.ensureWidgetVisible(section)
 
     # ── BaseModule lifecycle ──
 
@@ -340,15 +354,13 @@ class CleanupModule(BaseModule):
         return 60_000
 
     def refresh_data(self) -> None:
-        """Only the Quick Cleanup tab auto-refreshes, and only while it's
-        the one actually visible -- every other tab in this module has
-        never auto-refreshed on a timer, and blindly rescanning whichever
-        tab happens to be open would silently re-run something like Large
-        Items' full-machine scan every 60s while someone is reading it."""
+        """Quick Cleanup's dashboard is always on screen now (the page
+        header, not a tab that can be navigated away from), so its 60s
+        auto-refresh is unconditional. The seven collapsible sections are
+        unaffected -- nothing about them was ever on this timer."""
         if getattr(self, "_quick", None) is None:
             return
-        if self._tabs.currentWidget() is self._quick:
-            self._quick.scan()
+        self._quick.scan()
 
     def on_deactivate(self) -> None:
         self._cancel_all_tabs()

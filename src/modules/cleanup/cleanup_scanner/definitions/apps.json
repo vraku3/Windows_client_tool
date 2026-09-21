@@ -88,12 +88,12 @@
     },
     {
       "id": "bleachbit_cache",
-      "label": "BleachBit痕清理工具 cache and cleaner definition update cache",
+      "label": "BleachBit cache and cleaner definition update cache",
       "paths": [
         "%APPDATA%\\BleachBit"
       ],
       "safety": "safe",
-      "description": "BleachBit痕清理工具 cache and cleaner definition update cache."
+      "description": "BleachBit cache and cleaner definition update cache."
     },
     {
       "id": "bluetooth_cache",

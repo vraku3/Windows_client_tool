@@ -188,13 +188,13 @@
     },
     {
       "id": "illustrator_cache",
-      "label": "Adobe Illustrator cache and saved恢复了工作进度文件恢复",
+      "label": "Adobe Illustrator cache and saved recovery data",
       "paths": [
         "%APPDATA%\\Adobe\\Illustrator*\\Cache",
         "%APPDATA%\\Adobe\\Illustrator*\\Temp"
       ],
       "safety": "safe",
-      "description": "Adobe Illustrator cache and saved恢复了工作进度文件恢复."
+      "description": "Adobe Illustrator cache and saved recovery data."
     },
     {
       "id": "infuse_cache",

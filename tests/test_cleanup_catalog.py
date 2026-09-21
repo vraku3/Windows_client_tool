@@ -280,7 +280,12 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: new catalog entries, confirmed real on a live machine (CurseForge is an
 #: Electron app with the same Cache/Code Cache/GPUCache layout Discord/Slack
 #: already use; AMD DVR is ReLive's instant-replay buffer).
-REACHABLE_SCANNERS = 545
+#:
+#: 549 after cyberghost_cache, opencode_desktop_cache, amd_comgr_cache and
+#: amd_install_manager_cache landed the same day, from a direct AppData
+#: folder census (not just the registry Uninstall keys, which miss
+#: portable/Electron-updater-style installs) of the same live machine.
+REACHABLE_SCANNERS = 549
 
 
 def _scanners_the_tabs_offer():

@@ -198,6 +198,12 @@ ADVANCED_CATEGORIES = [
     # ReLive's DVR buffer had no catalog entry at all until now.
     ("curseforge_cache",           "CurseForge Cache",        "#f39c12"),
     ("amd_dvr_cache",              "AMD ReLive Buffer",       "#e74c3c"),
+    # Found via a direct AppData folder census (registry Uninstall keys
+    # miss portable/Electron-updater-style installs like these).
+    ("cyberghost_cache",           "CyberGhost VPN Cache",    "#2ecc71"),
+    ("opencode_desktop_cache",     "OpenCode Cache",          "#3498db"),
+    ("amd_comgr_cache",            "AMD Compute Cache",       "#e67e22"),
+    ("amd_install_manager_cache",  "AMD Installer Cache",     "#9b59b6"),
 ]
 
 
@@ -573,6 +579,10 @@ class QuickCleanupTab(QWidget):
             "wu_history_cache":          (cs.scan_wu_history_cache,          "caution"),
             "curseforge_cache":          (cs.scan_curseforge_cache,          "safe"),
             "amd_dvr_cache":             (cs.scan_amd_dvr_cache,             "caution"),
+            "cyberghost_cache":          (cs.scan_cyberghost_cache,          "safe"),
+            "opencode_desktop_cache":    (cs.scan_opencode_desktop_cache,    "safe"),
+            "amd_comgr_cache":           (cs.scan_amd_comgr_cache,           "safe"),
+            "amd_install_manager_cache": (cs.scan_amd_install_manager_cache, "safe"),
         }
 
         self._scanner_map = {}

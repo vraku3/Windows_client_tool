@@ -373,6 +373,17 @@
       ],
       "safety": "safe",
       "description": "WireGuard interface logs and adapter state cache."
+    },
+    {
+      "id": "cyberghost_cache",
+      "label": "CyberGhost VPN API and browser cache",
+      "paths": [
+        "%LOCALAPPDATA%\\CyberGhost\\APICache",
+        "%LOCALAPPDATA%\\CyberGhost\\BrowserCache",
+        "%APPDATA%\\CyberGhost\\API Cache"
+      ],
+      "safety": "safe",
+      "description": "CyberGhost VPN client's API response and browser (Chromium Embedded Framework UI) cache -- confirmed real, both under %LOCALAPPDATA% and %APPDATA%. Scoped to these named cache subfolders only, never the CyberGhost root, which also holds server-list .scf files and UI assets."
     }
   ]
 }

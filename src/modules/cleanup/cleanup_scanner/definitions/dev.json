@@ -1231,6 +1231,37 @@
       ],
       "safety": "safe",
       "description": "Zed editor logs, LSP cache, and extension data."
+    },
+    {
+      "id": "opencode_desktop_cache",
+      "label": "OpenCode desktop app cache",
+      "paths": [
+        "%APPDATA%\\ai.opencode.desktop\\blob_storage",
+        "%APPDATA%\\ai.opencode.desktop\\DawnGraphiteCache",
+        "%APPDATA%\\ai.opencode.desktop\\DawnWebGPUCache",
+        "%APPDATA%\\ai.opencode.desktop\\Network",
+        "%APPDATA%\\ai.opencode.desktop\\Shared Dictionary"
+      ],
+      "safety": "safe",
+      "description": "OpenCode's desktop app is Electron-based, the same layout Discord/Slack use -- confirmed real on a live machine. NOT Local Storage/Session Storage, which can hold real session/auth data."
+    },
+    {
+      "id": "amd_comgr_cache",
+      "label": "AMD comgr (ROCm/HIP) LLVM compile cache",
+      "paths": [
+        "%LOCALAPPDATA%\\comgr"
+      ],
+      "safety": "safe",
+      "description": "AMD's Code Object Manager (comgr) LLVM bitcode compile cache for ROCm/HIP/OpenCL compute kernels -- confirmed real on a live machine (dozens of llvmcache-* files). A compiler cache: always regenerates, and can grow large with repeated GPU compute compilation."
+    },
+    {
+      "id": "amd_install_manager_cache",
+      "label": "AMD Install Manager download cache",
+      "paths": [
+        "%LOCALAPPDATA%\\AMDInstallManager\\cache"
+      ],
+      "safety": "safe",
+      "description": "AMD Software's own installer download cache -- confirmed real (876 KB). Driver packages already installed do not need their installer payload kept around."
     }
   ]
 }

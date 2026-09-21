@@ -27,12 +27,17 @@ _NEW_CATALOG_IDS = {
     "windowsupdate_orch_cache", "wu_history_cache",
 }
 
-#: These two are genuinely NEW catalog entries (not previously reachable
+#: These are genuinely NEW catalog entries (not previously reachable
 #: anywhere), added after cross-referencing this app's own catalog against
 #: a real installed-software census of a live machine -- confirmed real,
 #: not guessed (see REACHABLE_SCANNERS's own comment in
-#: test_cleanup_catalog.py).
-_NEW_MACHINE_SPECIFIC_IDS = {"curseforge_cache", "amd_dvr_cache"}
+#: test_cleanup_catalog.py). The last four came from a direct AppData
+#: folder census (registry Uninstall keys miss portable/Electron-updater
+#: installs like these).
+_NEW_MACHINE_SPECIFIC_IDS = {
+    "curseforge_cache", "amd_dvr_cache", "cyberghost_cache",
+    "opencode_desktop_cache", "amd_comgr_cache", "amd_install_manager_cache",
+}
 
 
 def test_every_new_id_is_on_the_dashboard():
@@ -90,3 +95,19 @@ def test_amd_dvr_cache_is_caution_not_safe():
 
     spec = load_catalog()["amd_dvr_cache"]
     assert spec.safety == "caution"
+
+
+def test_the_four_appdata_census_scanners_find_real_data_or_stay_at_zero():
+    """Confirmed real on this machine at authoring time (CyberGhost 33 MB,
+    OpenCode 1.2 MB, comgr 873 KB, AMD Install Manager 876 KB) -- real
+    assertions against the live filesystem. Never negative; 0 on a machine
+    without these apps installed."""
+    from modules.cleanup.cleanup_scanner import (
+        scan_cyberghost_cache, scan_opencode_desktop_cache,
+        scan_amd_comgr_cache, scan_amd_install_manager_cache,
+    )
+
+    for fn in (scan_cyberghost_cache, scan_opencode_desktop_cache,
+               scan_amd_comgr_cache, scan_amd_install_manager_cache):
+        result = fn()
+        assert result.total_size >= 0

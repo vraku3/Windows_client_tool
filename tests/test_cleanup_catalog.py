@@ -275,7 +275,12 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #:
 #: 543 after scan_orphaned_user_profiles landed (Sub-project 2, Task 4) —
 #: a new hand-written scanner, not a catalog entry.
-REACHABLE_SCANNERS = 543
+#:
+#: 545 after curseforge_cache and amd_dvr_cache landed (2026-09-21) — both
+#: new catalog entries, confirmed real on a live machine (CurseForge is an
+#: Electron app with the same Cache/Code Cache/GPUCache layout Discord/Slack
+#: already use; AMD DVR is ReLive's instant-replay buffer).
+REACHABLE_SCANNERS = 545
 
 
 def _scanners_the_tabs_offer():

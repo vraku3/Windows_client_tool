@@ -870,6 +870,20 @@
       ],
       "safety": "safe",
       "description": "Xbox Live device info cache, achievements staging, and gaming services logs."
+    },
+    {
+      "id": "curseforge_cache",
+      "label": "CurseForge cache, code cache, and GPU cache",
+      "paths": [
+        "%APPDATA%\\CurseForge\\Cache",
+        "%APPDATA%\\CurseForge\\Code Cache",
+        "%APPDATA%\\CurseForge\\GPUCache",
+        "%APPDATA%\\CurseForge\\DawnGraphiteCache",
+        "%APPDATA%\\CurseForge\\DawnWebGPUCache",
+        "%APPDATA%\\CurseForge\\blob_storage"
+      ],
+      "safety": "safe",
+      "description": "CurseForge (Minecraft/WoW mod manager) is Electron-based, the same layout Discord/Slack use -- these are its cache directories only. NOT IndexedDB/Local Storage, which can hold real modpack/instance metadata."
     }
   ]
 }

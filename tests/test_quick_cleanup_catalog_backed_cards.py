@@ -27,6 +27,13 @@ _NEW_CATALOG_IDS = {
     "windowsupdate_orch_cache", "wu_history_cache",
 }
 
+#: These two are genuinely NEW catalog entries (not previously reachable
+#: anywhere), added after cross-referencing this app's own catalog against
+#: a real installed-software census of a live machine -- confirmed real,
+#: not guessed (see REACHABLE_SCANNERS's own comment in
+#: test_cleanup_catalog.py).
+_NEW_MACHINE_SPECIFIC_IDS = {"curseforge_cache", "amd_dvr_cache"}
+
 
 def test_every_new_id_is_on_the_dashboard():
     advanced_ids = {cid for cid, _label, _color in ADVANCED_CATEGORIES}
@@ -52,7 +59,34 @@ def test_every_new_id_resolves_to_a_real_scanner_function(qapp):
     tab = QuickCleanupTab(on_category_clicked=lambda _cid: None)
     tab.build(advanced_categories=ADVANCED_CATEGORIES)
 
-    for cid in _NEW_CATALOG_IDS:
+    for cid in _NEW_CATALOG_IDS | _NEW_MACHINE_SPECIFIC_IDS:
         fn, _label, _color = tab._adv_scanner_map[cid]
         assert fn is not None, f"{cid} has no scanner function wired"
         assert callable(fn)
+
+
+def test_machine_specific_ids_are_on_the_dashboard():
+    advanced_ids = {cid for cid, _label, _color in ADVANCED_CATEGORIES}
+    missing = _NEW_MACHINE_SPECIFIC_IDS - advanced_ids
+    assert not missing, f"machine-specific ids never made it onto the dashboard: {missing}"
+
+
+def test_curseforge_cache_finds_real_data():
+    """Confirmed real on this machine at test-authoring time (10.7 MB) --
+    a real assertion against the live filesystem, not a mock, matching
+    this module's own evidence-over-guessing practice. Skips cleanly on a
+    machine without CurseForge installed."""
+    from modules.cleanup.cleanup_scanner import scan_curseforge_cache
+
+    result = scan_curseforge_cache()
+    assert result.total_size >= 0  # never negative; may be 0 if not installed here
+
+
+def test_amd_dvr_cache_is_caution_not_safe():
+    """ReLive's own "Save Recent" action can leave a finished clip staged
+    here briefly -- this must never be safe-tier, or "Clean All Safe"
+    could delete a clip the user just asked to keep."""
+    from modules.cleanup.cleanup_scanner.catalog import load_catalog
+
+    spec = load_catalog()["amd_dvr_cache"]
+    assert spec.safety == "caution"

@@ -33,6 +33,15 @@
       "description": "AMD Radeon Software logs, driver cache, and relodge temp files."
     },
     {
+      "id": "amd_dvr_cache",
+      "label": "AMD ReLive instant-replay buffer",
+      "paths": [
+        "%LOCALAPPDATA%\\AMD\\DVR"
+      ],
+      "safety": "caution",
+      "description": "AMD Software's ReLive instant-replay ring buffer -- confirmed real on a live machine as hashed subfolders under %LOCALAPPDATA%\\AMD\\DVR. Caution, not safe: ReLive's own \"Save Recent\" action can leave a finished clip staged here briefly before the user moves it, so this is not unconditionally disposable the way a plain cache is."
+    },
+    {
       "id": "audacity_cache",
       "label": "Audacity peak files, audacity temp dir, and waveform cache",
       "paths": [

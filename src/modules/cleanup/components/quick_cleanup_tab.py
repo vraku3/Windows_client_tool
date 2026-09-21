@@ -193,6 +193,11 @@ ADVANCED_CATEGORIES = [
     ("windows_tweaker_logs",       "This App's Own Logs",     "#80cbc4"),
     ("windowsupdate_orch_cache",   "WU Orchestrator Cache",   "#c5e1a5"),
     ("wu_history_cache",           "WU Download History",     "#64b5f6"),
+    # Confirmed real on THIS machine specifically (cross-referenced against
+    # its own installed-software list, not guessed): CurseForge and AMD
+    # ReLive's DVR buffer had no catalog entry at all until now.
+    ("curseforge_cache",           "CurseForge Cache",        "#f39c12"),
+    ("amd_dvr_cache",              "AMD ReLive Buffer",       "#e74c3c"),
 ]
 
 
@@ -566,6 +571,8 @@ class QuickCleanupTab(QWidget):
             "windows_tweaker_logs":      (cs.scan_windows_tweaker_logs,      "safe"),
             "windowsupdate_orch_cache":  (cs.scan_windowsupdate_orch_cache,  "caution"),
             "wu_history_cache":          (cs.scan_wu_history_cache,          "caution"),
+            "curseforge_cache":          (cs.scan_curseforge_cache,          "safe"),
+            "amd_dvr_cache":             (cs.scan_amd_dvr_cache,             "caution"),
         }
 
         self._scanner_map = {}

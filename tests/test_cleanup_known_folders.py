@@ -110,7 +110,12 @@ def test_the_user_data_scanners_find_a_redirected_folder(
 
     target = str(redirected_folder)
     monkeypatch.setattr(ss.known_folders, "known_folder", lambda name: target)
-    monkeypatch.setattr(ss.known_folders, "user_data_dirs", lambda: [target])
+    # scan_large_files/scan_duplicate_files/scan_old_files now call
+    # user_data_dirs(FILE_SWEEP_SAFE_FOLDERS) with an explicit folder list
+    # (excluding Pictures/Videos -- see FILE_SWEEP_SAFE_FOLDERS's own
+    # docstring), so the stub must accept an optional positional arg too.
+    monkeypatch.setattr(ss.known_folders, "user_data_dirs",
+                        lambda folders=None: [target])
 
     result = getattr(ss, scanner_name)(min_age_days=0)
     looked_here = any(target.lower() in item.path.lower()

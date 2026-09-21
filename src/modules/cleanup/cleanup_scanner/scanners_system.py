@@ -1328,13 +1328,17 @@ def scan_triumph_cache(min_age_days: int = 0) -> ScanResult:
 def scan_large_files(min_age_days: int = 0, min_size_mb: int = 100) -> ScanResult:
     """Find files larger than min_size_mb across common user directories.
 
-    Targets: Downloads, Documents, Videos, Desktop, and common app data folders.
+    Targets: Downloads, Documents, Desktop, and common app data folders --
+    NOT Pictures or Videos. A real photo or home video is exactly as
+    "large" as a real duplicate download; this heuristic cannot tell them
+    apart, so those two folders are deliberately out of scope (see
+    known_folders.FILE_SWEEP_SAFE_FOLDERS).
     Uses os.scandir() for performance — does NOT follow symlinks.
     """
     result = ScanResult()
     min_bytes = min_size_mb * 1024 * 1024
     # Use scandir for performance, walk for depth
-    scan_dirs = known_folders.user_data_dirs() + [
+    scan_dirs = known_folders.user_data_dirs(known_folders.FILE_SWEEP_SAFE_FOLDERS) + [
         os.environ.get("LOCALAPPDATA", ""),
         os.environ.get("PROGRAMFILES", r"C:\Program Files"),
         os.path.join(os.environ.get("PROGRAMFILES(x86)", r"C:\Program Files (x86)"), "Steam", "steamapps", "common"),
@@ -1385,10 +1389,14 @@ def scan_duplicate_files(min_age_days: int = 0, min_size_kb: int = 100, max_dept
 
     Phase 1: Group files by size (fast)
     Phase 2: Hash files with matching sizes (accurate)
-    Only scans user directories to avoid system files.
+    Only scans user directories to avoid system files -- NOT Pictures or
+    Videos, since a real photo saved twice (once from a phone backup, once
+    from an export) is a genuine duplicate by this heuristic's own
+    definition, and deleting either copy is still deleting a real photo.
+    See known_folders.FILE_SWEEP_SAFE_FOLDERS.
     """
     result = ScanResult()
-    scan_dirs = known_folders.user_data_dirs()
+    scan_dirs = known_folders.user_data_dirs(known_folders.FILE_SWEEP_SAFE_FOLDERS)
     min_bytes = min_size_kb * 1024
 
     # Phase 1: Group by size
@@ -1477,6 +1485,9 @@ def scan_empty_folders(min_age_days: int = 0, min_depth: int = 2, max_depth: int
     Scans user directories recursively between min_depth and max_depth levels.
     """
     result = ScanResult()
+    # Unrestricted (all of USER_DATA_FOLDERS, including Pictures/Videos) --
+    # unlike the three scanners above, this only ever finds EMPTY
+    # directories, so it carries none of their real-photo risk.
     scan_dirs = known_folders.user_data_dirs() + [
         os.environ.get("LOCALAPPDATA", ""),
     ]
@@ -1521,13 +1532,16 @@ def _find_empty_folders(result: ScanResult, dirs: list, min_depth: int, max_dept
             logger.debug("Ignored OSError", exc_info=True)
 
 def scan_old_files(min_age_days: int = 0, min_age_months: int = 6) -> ScanResult:
-    """Find files not modified in min_age_months across user directories.
+    """Find files not modified in min_age_months across user directories --
+    NOT Pictures or Videos. An old photo is still a photo: "not touched in
+    6 months" describes most of a real photo library, not junk. See
+    known_folders.FILE_SWEEP_SAFE_FOLDERS.
 
     Uses mtime (last modified) — Windows atime is unreliable so mtime is more practical.
     """
     result = ScanResult()
     min_age_seconds = min_age_months * 30 * 86400
-    scan_dirs = known_folders.user_data_dirs()
+    scan_dirs = known_folders.user_data_dirs(known_folders.FILE_SWEEP_SAFE_FOLDERS)
     _scan_old_recursive(result, scan_dirs, min_age_seconds, depth=4)
     return result
 

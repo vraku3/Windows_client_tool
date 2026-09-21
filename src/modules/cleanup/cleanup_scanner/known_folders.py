@@ -48,6 +48,18 @@ _FOLDER_IDS: Dict[str, str] = {
 USER_DATA_FOLDERS = ("Downloads", "Documents", "Desktop", "Pictures",
                      "Videos", "Music")
 
+#: The subset safe for a scanner that FLAGS INDIVIDUAL FILES for deletion by
+#: age/size/duplicate-hash (scan_old_files, scan_large_files,
+#: scan_duplicate_files) rather than one that only measures a folder as a
+#: whole. Pictures and Videos are deliberately excluded: a real photo or
+#: home video is exactly as "old" or "large" as a real duplicate or a real
+#: stale download, and none of those three heuristics can tell irreplaceable
+#: personal media apart from actual junk. User-reported concern (2026-09-21):
+#: make sure Cleanup never deletes photos.
+FILE_SWEEP_SAFE_FOLDERS = tuple(
+    f for f in USER_DATA_FOLDERS if f not in ("Pictures", "Videos")
+)
+
 # Attributes that mean "the bytes are not necessarily here". OFFLINE alone is
 # not enough — plenty of backup software sets it — but together with a
 # reparse point it is what a Files On-Demand placeholder looks like.

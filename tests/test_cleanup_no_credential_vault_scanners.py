@@ -68,6 +68,45 @@ def test_no_safe_tier_scanner_targets_a_credential_vault_or_wallet():
         + "\n  ".join(f"{sid}: {label!r}" for sid, label in offenders))
 
 
+def test_no_scanner_targets_a_cloud_cli_credential_store_root():
+    """Real defect (2026-09-22), lower severity than the vault/wallet one
+    above but the same shape: azure_cli_cache pointed at the whole
+    %USERPROFILE%\\.azure root (which holds accessTokens.json / the MSAL
+    token cache directly, not in a subfolder) while its own label said
+    "Azure CLI access token cache" -- caution tier, so not auto-deleted,
+    but a user checking it because it says "cache" gets logged out of
+    every Azure session instead. Same for gcp_sdk_cache and the bare
+    gcloud config root (credentials.db lives there directly). Removed
+    both rather than guess an unverified narrower subfolder.
+
+    aws_cli_cache is the model to match: scoped to
+    .aws\\cli\\cache / .aws\\sso\\cache specifically, with its own
+    description stating "NOT credentials file" -- proof the narrow,
+    correct version is always possible, the same role
+    bitwarden_desktop_cache plays for the vault/wallet test above.
+    """
+    catalog = load_catalog()
+    cred_words = re.compile(r"\bcredential|\baccess\s*token", re.I)
+    known_cli_credential_roots = {
+        ".azure", ".cloudshell", "gcloud", ".aws", ".config/gcloud",
+    }
+    offenders = []
+    for spec_id, spec in catalog.items():
+        text = f"{spec.label} {spec.description}"
+        if not cred_words.search(text):
+            continue
+        for path in spec.paths:
+            tail = path.rstrip("\\").split("\\")[-1]
+            if tail.lower() in known_cli_credential_roots:
+                offenders.append((spec_id, path))
+                break
+    assert offenders == [], (
+        "these scanners mention credentials/access tokens in their own "
+        "label/description AND target a cloud CLI's bare credential-store "
+        "root rather than a verified cache-only subfolder:\n  "
+        + "\n  ".join(f"{sid}: {path}" for sid, path in offenders))
+
+
 def test_no_scanner_at_all_targets_a_bare_password_manager_app_folder():
     """Even at caution/danger tier, a scanner should never point at a whole
     password manager's root %APPDATA% folder -- narrower is always

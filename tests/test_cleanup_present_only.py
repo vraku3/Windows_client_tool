@@ -61,8 +61,18 @@ def test_a_spec_pointing_nowhere_is_not_offered(monkeypatch):
 
 
 def test_the_catalog_still_defines_everything():
-    """Filtering is a display and scan decision, never a deletion."""
-    assert len(catalog.load_catalog()) >= 456
+    """Filtering is a display and scan decision, never a deletion.
+
+    The floor was lowered from 456 to 455 on 2026-09-22, in the same
+    commits that deliberately removed 12 catalog entries for real safety
+    reasons (net_sdk_cache's overclaimed/duplicated path; 8 password-manager/
+    wallet vaults and 2 cloud-CLI credential stores marked "safe"/"caution"
+    over their whole app-data root; phantom_cache -- see
+    test_cleanup_no_credential_vault_scanners.py) -- an intentional,
+    reviewed removal, not the silent present_only-filtering shrinkage
+    this test exists to catch.
+    """
+    assert len(catalog.load_catalog()) >= 455
 
 
 def test_the_app_tab_is_not_mostly_scanners_that_cannot_apply(qapp):

@@ -314,7 +314,16 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: test_cleanup_no_credential_vault_scanners.py's own whole-catalog sweep
 #: -- that test exists specifically so the next one of these does not need
 #: a human to notice it first.
-REACHABLE_SCANNERS = 539
+#:
+#: 537 after azure_cli_cache and gcp_sdk_cache were removed the same day:
+#: both pointed at a cloud CLI's bare credential-store root (%USERPROFILE%
+#: \.azure, ...\gcloud) where the real OAuth token cache/credentials.db
+#: lives directly, not in a subfolder -- lower severity than the
+#: vault/wallet removals above (caution tier, forces a re-login rather than
+#: losing data permanently) but the identical shape. aws_cli_cache is the
+#: correctly-scoped model both should have followed
+#: (.aws\cli\cache / .aws\sso\cache specifically, "NOT credentials file").
+REACHABLE_SCANNERS = 537
 
 
 def _scanners_the_tabs_offer():

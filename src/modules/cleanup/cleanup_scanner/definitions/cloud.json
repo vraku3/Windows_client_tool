@@ -21,16 +21,6 @@
       "description": "AWS Toolkit for VS Code cache and SAM CLI build cache."
     },
     {
-      "id": "azure_cli_cache",
-      "label": "Azure CLI access token cache, cloud shell, and arm cache",
-      "paths": [
-        "%USERPROFILE%\\.azure",
-        "%USERPROFILE%\\.cloudshell"
-      ],
-      "safety": "caution",
-      "description": "Azure CLI access token cache, cloud shell, and arm cache."
-    },
-    {
       "id": "box_cache",
       "label": "Box Drive cache and sync staging data",
       "paths": [
@@ -81,16 +71,6 @@
       ],
       "safety": "safe",
       "description": "Firebase CLI token cache and emulator local data staging."
-    },
-    {
-      "id": "gcp_sdk_cache",
-      "label": "Google Cloud SDK credentials, bq cache, and gcloud config",
-      "paths": [
-        "%USERPROFILE%\\AppData\\Roaming\\gcloud",
-        "%USERPROFILE%\\AppData\\Local\\gcloud"
-      ],
-      "safety": "caution",
-      "description": "Google Cloud SDK credentials, bq cache, and gcloud config."
     },
     {
       "id": "google_drive_cache",

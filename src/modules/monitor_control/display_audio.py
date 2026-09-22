@@ -800,9 +800,12 @@ def set_endpoint_enabled(endpoint_id: str, enabled: bool, *,
                          confirm_supervised: bool = False) -> bool:
     """Show or hide an endpoint via `IPolicyConfig::SetEndpointVisibility`.
 
-    **UNVERIFIED.** See the module docstring: the interface is undocumented,
-    the vtable index is taken from two agreeing third-party headers rather
-    than from Microsoft, and nothing here has been run against real hardware.
+    See the module docstring: the interface is undocumented and the vtable
+    index is taken from two agreeing third-party headers rather than from
+    Microsoft, but the round trip has been run against real hardware
+    (2026-09-04, three hide/show cycles, S_OK every call) --
+    tools/monitor_audio_visibility_check.py is the repeatable version of
+    that same manual session.
 
     Returns True only when the call returned S_OK. Every other outcome raises
     `AudioPolicyError` carrying the HRESULT, or `SupervisionRequired` — this

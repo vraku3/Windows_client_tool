@@ -32,8 +32,15 @@ UNKNOWN_TIME = datetime.min
 #: question is not a detector.
 SNIFF_BYTES = 8192
 
+#: The attrs group matches the KNOWN attribute structure (a run of
+#: key="value" pairs) rather than "anything but angle brackets" -- a real
+#: attribute value containing a literal `<` or `>` (e.g. `context="a<b"`)
+#: is legal CMTrace-adjacent content and used to make [^<>]* refuse to
+#: match, silently dropping the ENTIRE record. Only a literal `"` inside a
+#: value can still break this, which the format itself has no answer for
+#: either (there is no escape sequence CMTrace defines for it).
 _RECORD = re.compile(
-    r"<!\[LOG\[(?P<message>.*?)\]LOG\]!>\s*<(?P<attrs>[^<>]*)>",
+    r'<!\[LOG\[(?P<message>.*?)\]LOG\]!>\s*<(?P<attrs>(?:\s*\w+="[^"]*")*)\s*>',
     re.DOTALL)
 _ATTR = re.compile(r'(\w+)="([^"]*)"')
 

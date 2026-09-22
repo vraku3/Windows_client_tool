@@ -211,3 +211,59 @@ def test_a_leading_bom_does_not_cost_the_first_lines_timestamp():
     drops the timestamp of the first line of every real Windows log."""
     entry = parser.parse("\ufeff2026-08-20 13:45:12 ERROR boom\n")[0]
     assert entry.timestamp == datetime(2026, 8, 20, 13, 45, 12)
+
+
+# ---- real-log edge cases this app has no genuine SCCM/Intune log to test
+# against (see CLAUDE.md's Log Viewer section) -- these are the specific
+# things flagged as unverified against a real client's output, checked here
+# empirically instead of left as an assumption ----------------------------
+
+def test_an_attribute_value_containing_an_angle_bracket_does_not_drop_the_record():
+    """Real bug, found empirically: the attrs blob used to be matched as
+    "anything but < or >", so a value like context="a<b" made the whole
+    record disappear rather than degrade -- exactly the "losing the line"
+    outcome this parser's own docstring says must never happen. The attrs
+    group now matches the KNOWN key="value" structure instead, so a `<`/`>`
+    inside a quoted value is no longer special."""
+    text = ('<![LOG[bracket test]LOG]!><time="01:02:03.000+000" '
+           'date="01-01-2026" component="X" context="a<b" type="1">')
+    entries = parser.parse_cmtrace(text)
+    assert len(entries) == 1
+    assert entries[0].message == "bracket test"
+    assert entries[0].raw["context"] == "a<b"
+
+
+def test_non_ascii_content_survives_component_and_message():
+    """Real component names and messages are not guaranteed to be ASCII
+    (a non-English OS locale, a localized component name)."""
+    text = ('<![LOG[Starting up \u65e5\u672c\u8a9e componente]LOG]!>'
+           '<time="13:45:12.345+000" date="08-20-2026" '
+           'component="\u00dcpdatesHandler" type="1">')
+    entries = parser.parse_cmtrace(text)
+    assert entries[0].message == "Starting up \u65e5\u672c\u8a9e componente"
+    assert entries[0].source == "\u00dcpdatesHandler"
+
+
+def test_attribute_order_does_not_matter():
+    """`_ATTR.findall` builds a dict keyed by name, so a real client writing
+    attributes in a different order (or a different one per component)
+    reads identically to the canonical time/date/component/.../file order
+    every synthetic fixture in this file happens to use."""
+    text = ('<![LOG[reordered]LOG]!><thread="99" type="2" component="Foo" '
+           'time="01:02:03.000+000" date="01-01-2026">')
+    entries = parser.parse_cmtrace(text)
+    assert entries[0].source == "Foo"
+    assert entries[0].level == "Warning"
+
+
+def test_nul_padding_before_a_cmtrace_record_does_not_hide_it():
+    """parse_plain/parse_service_log strip leading NUL padding per line
+    (_unpadded) because their timestamp regexes only look at a bounded
+    window near the front of a line -- parse_cmtrace's _RECORD regex scans
+    the whole text with finditer, so padding anywhere before a record was
+    already not a risk; this pins that down rather than leaving it assumed."""
+    text = "\x00" * 50 + ('<![LOG[after nuls]LOG]!><time="01:02:03.000+000" '
+                          'date="01-01-2026" component="X" type="1">')
+    entries = parser.parse_cmtrace(text)
+    assert len(entries) == 1
+    assert entries[0].message == "after nuls"

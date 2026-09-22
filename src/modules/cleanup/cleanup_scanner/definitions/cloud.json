@@ -51,15 +51,6 @@
       "description": "Cloudflare WARP client logs and WireGuard config cache."
     },
     {
-      "id": "coinbase_cache",
-      "label": "Coinbase wallet extension cache and tx relay data",
-      "paths": [
-        "%APPDATA%\\Coinbase Wallet"
-      ],
-      "safety": "safe",
-      "description": "Coinbase wallet extension cache and tx relay data."
-    },
-    {
       "id": "dropbox_cache",
       "label": "Dropbox cache, cache.db, and blob metadata — keeps account data intact",
       "paths": [
@@ -151,16 +142,6 @@
       ],
       "safety": "safe",
       "description": "MEGAsync cache, temp files, and sync database."
-    },
-    {
-      "id": "metamask_cache",
-      "label": "MetaMask extension cache, vault data, and provider cache",
-      "paths": [
-        "%APPDATA%\\MetaMask",
-        "%LOCALAPPDATA%\\MetaMask"
-      ],
-      "safety": "safe",
-      "description": "MetaMask extension cache, vault data, and provider cache."
     },
     {
       "id": "mullvad_cache",

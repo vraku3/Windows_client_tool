@@ -285,7 +285,36 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: amd_install_manager_cache landed the same day, from a direct AppData
 #: folder census (not just the registry Uninstall keys, which miss
 #: portable/Electron-updater-style installs) of the same live machine.
-REACHABLE_SCANNERS = 549
+#:
+#: 548 after net_sdk_cache was REMOVED (2026-09-22): it duplicated
+#: nuget_global_packages's %USERPROFILE%\.nuget\packages path, its label
+#: was a raw unedited id-slug ("Net Sdk Cache") rather than a real
+#: description, and its other path, %USERPROFILE%\.dotnet, typically holds
+#: real installed `dotnet tool install -g` global tools, not disposable
+#: cache -- marking that "safe" to delete was never actually verified and
+#: is a real risk, not just a naming issue.
+#:
+#: 540 after REMOVING 8 password-manager/crypto-wallet entries the same
+#: day: 1password_cache, bitwarden_cache, dashlane_cache, keepass_cache,
+#: lastpass_cache, nordpass_cache, metamask_cache, coinbase_cache. Every
+#: one of them pointed at that product's whole %APPDATA% folder and was
+#: marked "safe" -- auto-included in "Clean All Safe" with zero manual
+#: review -- while each one's OWN label admitted it covered "vault data",
+#: "vault cache", "credential cache" or "session data". Getting this wrong
+#: risks a lost password vault or (for the two wallet entries, whose
+#: %APPDATA%\MetaMask / %APPDATA%\Coinbase Wallet paths do not match how
+#: either product actually ships -- both are browser extensions, not
+#: desktop apps with their own profile folder) a fabricated path that
+#: happened to be harmless only by accident. bitwarden_desktop_cache
+#: (System, already correctly scoped to %APPDATA%\Bitwarden\cache only)
+#: was left in place -- proof the narrow version was always possible.
+#:
+#: 539 after phantom_cache (a real crypto wallet, %APPDATA%\phantom
+#: unscoped) was found and removed the same way by
+#: test_cleanup_no_credential_vault_scanners.py's own whole-catalog sweep
+#: -- that test exists specifically so the next one of these does not need
+#: a human to notice it first.
+REACHABLE_SCANNERS = 539
 
 
 def _scanners_the_tabs_offer():

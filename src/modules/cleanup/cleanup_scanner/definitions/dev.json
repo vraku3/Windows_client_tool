@@ -24,13 +24,13 @@
     },
     {
       "id": "ansible_cache",
-      "label": "Ansible vault password file, collections cache, and role cache",
+      "label": "Ansible Galaxy collections cache and tmp files",
       "paths": [
         "%USERPROFILE%\\.ansible\\collections",
         "%USERPROFILE%\\.ansible\\tmp"
       ],
       "safety": "safe",
-      "description": "Ansible vault password file, collections cache, and role cache."
+      "description": "Ansible Galaxy collections cache and tmp files. NOT ~/.ansible/vault_pass.txt or any user-named vault password file -- neither path here is the vault, and the old label incorrectly implied it covered one."
     },
     {
       "id": "apt_cache",
@@ -593,16 +593,6 @@
       ],
       "safety": "caution",
       "description": ".NET Framework download cache and NGEN assembly binary cache."
-    },
-    {
-      "id": "net_sdk_cache",
-      "label": "Net Sdk Cache",
-      "paths": [
-        "%USERPROFILE%\\.nuget\\packages",
-        "%USERPROFILE%\\.dotnet"
-      ],
-      "safety": "safe",
-      "description": ".NET SDK NuGet package cache and build MSBuild task inputs cache."
     },
     {
       "id": "netbeans_cache",

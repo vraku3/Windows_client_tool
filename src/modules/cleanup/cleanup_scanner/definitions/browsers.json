@@ -93,15 +93,6 @@
       "description": "Tor Browser session data, cache, and circuit display logs."
     },
     {
-      "id": "phantom_cache",
-      "label": "Phantom wallet extension cache and transaction history",
-      "paths": [
-        "%APPDATA%\\phantom"
-      ],
-      "safety": "safe",
-      "description": "Phantom wallet extension cache and transaction history."
-    },
-    {
       "id": "chrome_cache_full",
       "label": "Chrome full cache paths including GPUCache and Code Cache",
       "paths": [

@@ -2,16 +2,6 @@
   "category": "apps",
   "scanners": [
     {
-      "id": "1password_cache",
-      "label": "1Password SSH agent cache and session data",
-      "paths": [
-        "%APPDATA%\\1Password",
-        "%LOCALAPPDATA%\\1Password"
-      ],
-      "safety": "safe",
-      "description": "1Password SSH agent cache and session data."
-    },
-    {
       "id": "7zip_cache",
       "label": "7-Zip recent archive history and temporary extraction output",
       "paths": [
@@ -65,16 +55,6 @@
       ],
       "safety": "safe",
       "description": "Bandizip recent archive history and preview cache."
-    },
-    {
-      "id": "bitwarden_cache",
-      "label": "Bitwarden CLI vault lock and browser extension cache",
-      "paths": [
-        "%APPDATA%\\Bitwarden",
-        "%LOCALAPPDATA%\\Bitwarden"
-      ],
-      "safety": "safe",
-      "description": "Bitwarden CLI vault lock and browser extension cache."
     },
     {
       "id": "bitwarden_desktop_cache",
@@ -169,15 +149,6 @@
       ],
       "safety": "safe",
       "description": "CrystalDiskInfo health log and S.M.A.R.T. data cache."
-    },
-    {
-      "id": "dashlane_cache",
-      "label": "Dashlane credential cache and dark web monitoring data",
-      "paths": [
-        "%APPDATA%\\Dashlane"
-      ],
-      "safety": "safe",
-      "description": "Dashlane credential cache and dark web monitoring data."
     },
     {
       "id": "defraggler_logs",
@@ -301,24 +272,6 @@
       ],
       "safety": "safe",
       "description": "Joplin markdown notes cache and synchronisation database."
-    },
-    {
-      "id": "keepass_cache",
-      "label": "KeePass lock file, key file temp, and HTTP proxy credentials",
-      "paths": [
-        "%APPDATA%\\KeePass"
-      ],
-      "safety": "safe",
-      "description": "KeePass lock file, key file temp, and HTTP proxy credentials."
-    },
-    {
-      "id": "lastpass_cache",
-      "label": "LastPass browser extension vault cache and LPAPI token",
-      "paths": [
-        "%LOCALAPPDATA%\\LastPass"
-      ],
-      "safety": "safe",
-      "description": "LastPass browser extension vault cache and LPAPI token."
     },
     {
       "id": "logseq_cache",

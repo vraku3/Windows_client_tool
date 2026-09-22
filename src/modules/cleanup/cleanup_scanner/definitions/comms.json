@@ -205,15 +205,6 @@
       "description": "Sunshine GameStream logs and configuration cache."
     },
     {
-      "id": "nordpass_cache",
-      "label": "NordPass vault cache and browser extension data",
-      "paths": [
-        "%LOCALAPPDATA%\\NordPass"
-      ],
-      "safety": "safe",
-      "description": "NordPass vault cache and browser extension data."
-    },
-    {
       "id": "discord_canary_cache",
       "label": "Discord Canary / PTB beta cache and crash reports",
       "paths": [

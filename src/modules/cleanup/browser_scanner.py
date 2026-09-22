@@ -68,7 +68,21 @@ BROWSER_EXES = {
     "Pale Moon":  "palemoon.exe",
 }
 
-# All modern cache subdirectories for Chromium-based browsers
+# All modern cache subdirectories for Chromium-based browsers.
+#
+# Real, live bug found 2026-09-22: this dict used to also include "Local
+# Storage", "Sessions", "Tabs", "Local App Settings" and "Web Application
+# History" -- and _browser_tab.py's real, live Browser Caches tab (via
+# scan_browsers_robust() -> BrowserScanner2().scan()) pre-CHECKS every
+# entry it finds by default (see _browser_tab.py's setCheckState(...,
+# Checked) on every CacheEntry). "Local Storage" specifically is where a
+# growing number of real sites keep session/login state instead of (or
+# alongside) cookies -- a user opening this tab and clicking Clean without
+# manually unchecking anything would delete that for every profile in
+# every Chromium browser installed. Narrowed to match
+# CHROMIUM_CACHE_CATEGORIES (this file's OTHER, already-correctly-scoped
+# Chromium cache list, used by EnhancedBrowserScanner/detect_browsers)
+# rather than re-deriving safety per entry from scratch.
 CHROMIUM_CACHE_SUBDIRS = {
     "Cache":                     "HTTP Cache",
     "Cache2":                    "HTTP Cache v2",
@@ -80,11 +94,6 @@ CHROMIUM_CACHE_SUBDIRS = {
     "GrShaderCache":             "General Shader Cache",
     "DawnCache":                 "Dawn WebGPU Cache",
     "Extension Cache":           "Extension Cache",
-    "Local App Settings":        "Local App Settings",
-    "Local Storage":             "Local Storage",
-    "Sessions":                  "Tab Sessions",
-    "Tabs":                      "Tab Data",
-    "Web Application History":   "Web App History",
     r"Crashpad\reports":         "Crash Reports",
     r"Crashpad\pending":         "Pending Crash Reports",
     r"GrShaderCache\GPUCache":  "GPU Cache (sub)",

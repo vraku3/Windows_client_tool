@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.semantic_colors import semantic
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,9 +65,10 @@ class NotificationTray(QWidget):
     def _render_item(self, item: NotificationItem) -> None:
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
-        colors = {"info": "#264f78", "warning": "#805500", "error": "#6e1e1e"}
+        colors = {"info": semantic("info"), "warning": semantic("warning"),
+                 "error": semantic("error")}
         frame.setStyleSheet(
-            f"background-color: {colors.get(item.level, '#264f78')}; "
+            f"background-color: {colors.get(item.level, colors['info'])}; "
             f"border-radius: 4px; padding: 4px; margin: 2px;"
         )
         layout = QVBoxLayout(frame)

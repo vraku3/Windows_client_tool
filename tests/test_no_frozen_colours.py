@@ -33,7 +33,16 @@ EXEMPT = {"core/semantic_colors.py"}
 #: dark theme text colour were converted to sheet-driven roles; 314 after
 #: debloat_module/hosts_editor/boot_analyzer/network_module's hardcoded
 #: QSS colours were removed in favour of dark.qss/light.qss roles.
-BUDGET = 314
+#:
+#: 269 after quick_cleanup_tab.py's 137 per-category (id, label, colour)
+#: tuples were collapsed onto one shared _CATEGORY_COLORS palette (52
+#: distinct hex literals, indexed by position) instead of each entry
+#: freezing its own -- this landed the SAME DAY 41 new category cards were
+#: added, which had briefly pushed the true count to 354 before this
+#: collapse (the tuples were never a status colour or theme-able chrome,
+#: just a decorative pie-chart accent per category, so semantic() and the
+#: .qss role system both apply to nothing here).
+BUDGET = 269
 
 
 def frozen_colour_literals():

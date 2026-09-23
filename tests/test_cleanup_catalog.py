@@ -323,7 +323,23 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: losing data permanently) but the identical shape. aws_cli_cache is the
 #: correctly-scoped model both should have followed
 #: (.aws\cli\cache / .aws\sso\cache specifically, "NOT credentials file").
-REACHABLE_SCANNERS = 537
+#:
+#: 530 after a game-save sweep (2026-09-23) removed 7 more "safe" tier
+#: entries whose whole-folder scope reached real save games or
+#: significant user-created content, not disposable cache: scrivener_cache
+#: (real writing projects), factorio_cache and stardew_cache (both store
+#: real save games directly in that exact root, confirmed by each game's
+#: own well-documented save location), godot_cache (Godot's own
+#: app_userdata convention is where countless indie games built with it
+#: keep their save files), gta_v_cache, snowrunner_cache and
+#: warcraft_3_cache (the last one's own label admitted "ladder save
+#: data"). Four more (cities_skylines_cache, ck3_cache, eu4_cache,
+#: beamng_cache) were narrowed to their already-safe logs-only path rather
+#: than removed outright, so the catalog count does not reflect all nine
+#: fixes -- see test_cleanup_no_credential_vault_scanners.py's own docstring
+#: for why this is the same shape as the password-manager/wallet sweep,
+#: just for save data instead of credentials.
+REACHABLE_SCANNERS = 530
 
 
 def _scanners_the_tabs_offer():

@@ -488,15 +488,6 @@
       "description": "Rufus ISO download cache and log files."
     },
     {
-      "id": "scrivener_cache",
-      "label": "Scrivener project auto-save and compile staging",
-      "paths": [
-        "%APPDATA%\\Scrivener"
-      ],
-      "safety": "safe",
-      "description": "Scrivener project auto-save and compile staging."
-    },
-    {
       "id": "simplenote_cache",
       "label": "Simplenote sync cache and local database",
       "paths": [

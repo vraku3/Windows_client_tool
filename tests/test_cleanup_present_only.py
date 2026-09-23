@@ -71,8 +71,14 @@ def test_the_catalog_still_defines_everything():
     test_cleanup_no_credential_vault_scanners.py) -- an intentional,
     reviewed removal, not the silent present_only-filtering shrinkage
     this test exists to catch.
+
+    Lowered again, 455 to 448, on 2026-09-23: 7 more entries removed for
+    the same reason, this time reaching real save games or significant
+    user-created content instead of credentials (scrivener_cache,
+    factorio_cache, stardew_cache, godot_cache, gta_v_cache,
+    snowrunner_cache, warcraft_3_cache).
     """
-    assert len(catalog.load_catalog()) >= 455
+    assert len(catalog.load_catalog()) >= 448
 
 
 def test_the_app_tab_is_not_mostly_scanners_that_cannot_apply(qapp):

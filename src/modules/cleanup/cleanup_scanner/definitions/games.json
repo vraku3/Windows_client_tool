@@ -46,13 +46,12 @@
     },
     {
       "id": "beamng_cache",
-      "label": "BeamNG.drive logs, replay cache, and crash reports",
+      "label": "BeamNG.drive logs",
       "paths": [
-        "%APPDATA%\\BeamNG\\logs",
-        "%LOCALAPPDATA%\\BeamNG.drive"
+        "%APPDATA%\\BeamNG\\logs"
       ],
       "safety": "safe",
-      "description": "BeamNG.drive logs, replay cache, and crash reports."
+      "description": "BeamNG.drive logs only. NOT the whole %LOCALAPPDATA%\\BeamNG.drive folder, where real user-created vehicle configs, mods, and possibly save/scenario progress live."
     },
     {
       "id": "blizzard_downloads_cache",
@@ -77,13 +76,12 @@
     },
     {
       "id": "cities_skylines_cache",
-      "label": "Cities: Skylines savegame backup and Colossal Order mod staging",
+      "label": "Cities: Skylines logs",
       "paths": [
-        "%APPDATA%\\Colossal Order\\Cities Skylines\\logs",
-        "%LOCALAPPDATA%\\Colossal Order\\Cities Skylines"
+        "%APPDATA%\\Colossal Order\\Cities Skylines\\logs"
       ],
       "safety": "safe",
-      "description": "Cities: Skylines savegame backup and Colossal Order mod staging."
+      "description": "Cities: Skylines logs only. NOT %LOCALAPPDATA%\\Colossal Order\\Cities Skylines, where real save games and mods live -- the old label admitted 'savegame backup' while pointing at that whole unscoped folder."
     },
     {
       "id": "ck2_cache",
@@ -96,13 +94,12 @@
     },
     {
       "id": "ck3_cache",
-      "label": "Crusader Kings III autosave staging and Paradox Launcher logs",
+      "label": "Crusader Kings III Paradox Launcher logs",
       "paths": [
-        "%APPDATA%\\Paradox Interactive\\Crusader Kings III\\logs",
-        "%LOCALAPPDATA%\\Paradox Interactive\\Crusader Kings III"
+        "%APPDATA%\\Paradox Interactive\\Crusader Kings III\\logs"
       ],
       "safety": "safe",
-      "description": "Crusader Kings III autosave staging and Paradox Launcher logs."
+      "description": "Crusader Kings III Paradox Launcher logs only. NOT the whole %LOCALAPPDATA%\\Paradox Interactive\\Crusader Kings III folder -- the old label admitted 'autosave staging' while pointing at that unscoped root."
     },
     {
       "id": "csgo_cache",
@@ -209,22 +206,12 @@
     },
     {
       "id": "eu4_cache",
-      "label": "Europa Universalis IV autosave cache and Paradox mod staging",
+      "label": "Europa Universalis IV logs",
       "paths": [
-        "%APPDATA%\\Paradox Interactive\\Europa Universalis IV\\logs",
-        "%LOCALAPPDATA%\\Paradox Interactive\\Europa Universalis IV"
+        "%APPDATA%\\Paradox Interactive\\Europa Universalis IV\\logs"
       ],
       "safety": "safe",
-      "description": "Europa Universalis IV autosave cache and Paradox mod staging."
-    },
-    {
-      "id": "factorio_cache",
-      "label": "Factorio script output, save game, and factorio-data cache",
-      "paths": [
-        "%APPDATA%\\Factorio"
-      ],
-      "safety": "safe",
-      "description": "Factorio script output, save game, and factorio-data cache."
+      "description": "Europa Universalis IV logs only. NOT the whole %LOCALAPPDATA%\\Paradox Interactive\\Europa Universalis IV folder -- the old label admitted 'autosave cache' while pointing at that unscoped root."
     },
     {
       "id": "fortnite_cache",
@@ -279,15 +266,6 @@
       "description": "Xbox Game Pass (PC) app cache, downloads, and shader cache."
     },
     {
-      "id": "godot_cache",
-      "label": "Godot Engine editor cache, import, and remote debug temp",
-      "paths": [
-        "%APPDATA%\\Godot"
-      ],
-      "safety": "safe",
-      "description": "Godot Engine editor cache, import, and remote debug temp."
-    },
-    {
       "id": "gog_cache",
       "label": "GOG Galaxy cache, web cache, and game manager data",
       "paths": [
@@ -320,16 +298,6 @@
       ],
       "safety": "safe",
       "description": "GOG Galaxy offline installer cache and game backup metadata."
-    },
-    {
-      "id": "gta_v_cache",
-      "label": "GTA V shader cache, social club cache, and crash handler logs",
-      "paths": [
-        "%APPDATA%\\Rockstar Games\\GTA V",
-        "%LOCALAPPDATA%\\Rockstar Games\\GTA V"
-      ],
-      "safety": "safe",
-      "description": "GTA V shader cache, social club cache, and crash handler logs."
     },
     {
       "id": "hoi4_cache",
@@ -556,24 +524,6 @@
       "description": "Rust game logs, crash dumps, and shader cache."
     },
     {
-      "id": "snowrunner_cache",
-      "label": "Snowrunner save backups and rendered truck config cache",
-      "paths": [
-        "%APPDATA%\\ Snowrunner"
-      ],
-      "safety": "safe",
-      "description": "Snowrunner save backups and rendered truck config cache."
-    },
-    {
-      "id": "stardew_cache",
-      "label": "Stardew Valley save backup and ConcernedApe mod config cache",
-      "paths": [
-        "%APPDATA%\\StardewValley"
-      ],
-      "safety": "safe",
-      "description": "Stardew Valley save backup and ConcernedApe mod config cache."
-    },
-    {
       "id": "steamCMD_cache",
       "label": "steamcmd downloaded game content and workshop staging",
       "paths": [
@@ -774,15 +724,6 @@
       ],
       "safety": "safe",
       "description": "Valorant game logs and Riot Vanguard logs."
-    },
-    {
-      "id": "warcraft_3_cache",
-      "label": "Warcraft III replay cache, ladder save data, and custom map staging",
-      "paths": [
-        "%APPDATA%\\Warcraft III"
-      ],
-      "safety": "safe",
-      "description": "Warcraft III replay cache, ladder save data, and custom map staging."
     },
     {
       "id": "warcraft_cache",

@@ -339,7 +339,17 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: fixes -- see test_cleanup_no_credential_vault_scanners.py's own docstring
 #: for why this is the same shape as the password-manager/wallet sweep,
 #: just for save data instead of credentials.
-REACHABLE_SCANNERS = 530
+#: 528 after a documents/notes sweep (2026-09-23) removed 2 more "safe"
+#: tier entries reaching real, irreplaceable user content instead of
+#: cache: joplin_cache (Joplin is local-first -- its whole %APPDATA%\Joplin
+#: folder is where the actual notes database lives, sync is optional) and
+#: microsoft_templates (%APPDATA%\Microsoft\Templates holds the user's own
+#: SAVED Office templates -- real content by design, never cache, despite
+#: the old label calling it "cached document templates"). sticky_notes was
+#: narrowed rather than removed: its LocalState path held plum.sqlite, the
+#: real database of every sticky note's text, alongside the genuinely
+#: telemetry-only .sqm file that's now the only path left.
+REACHABLE_SCANNERS = 528
 
 
 def _scanners_the_tabs_offer():

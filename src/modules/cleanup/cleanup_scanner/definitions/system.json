@@ -186,15 +186,6 @@
       "description": "Windows minidumps and full kernel memory dumps — needed for crash debugging."
     },
     {
-      "id": "microsoft_templates",
-      "label": "Microsoft Office/Windows cached document templates",
-      "paths": [
-        "%APPDATA%\\Microsoft\\Templates"
-      ],
-      "safety": "safe",
-      "description": "Microsoft Office/Windows cached document templates."
-    },
-    {
       "id": "minidump",
       "label": "Kernel minidumps (small memory dumps from bugchecks)",
       "paths": [

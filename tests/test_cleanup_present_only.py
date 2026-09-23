@@ -77,8 +77,12 @@ def test_the_catalog_still_defines_everything():
     user-created content instead of credentials (scrivener_cache,
     factorio_cache, stardew_cache, godot_cache, gta_v_cache,
     snowrunner_cache, warcraft_3_cache).
+
+    Lowered again, 448 to 446, same day: joplin_cache (local-first note
+    app, real notes database) and microsoft_templates (real, user-saved
+    Office templates, never actually cache) removed for the same reason.
     """
-    assert len(catalog.load_catalog()) >= 448
+    assert len(catalog.load_catalog()) >= 446
 
 
 def test_the_app_tab_is_not_mostly_scanners_that_cannot_apply(qapp):

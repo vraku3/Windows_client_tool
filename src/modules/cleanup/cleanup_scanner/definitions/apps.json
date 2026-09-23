@@ -264,16 +264,6 @@
       "description": "HWiNFO64 sensor log history and sensor data cache."
     },
     {
-      "id": "joplin_cache",
-      "label": "Joplin markdown notes cache and synchronisation database",
-      "paths": [
-        "%APPDATA%\\Joplin",
-        "%LOCALAPPDATA%\\Joplin"
-      ],
-      "safety": "safe",
-      "description": "Joplin markdown notes cache and synchronisation database."
-    },
-    {
       "id": "logseq_cache",
       "label": "Logseq cache, Calva/REPL server logs, and graph database",
       "paths": [
@@ -516,13 +506,12 @@
     },
     {
       "id": "sticky_notes",
-      "label": "Sticky Notes database and UWP sticky notes state",
+      "label": "Sticky Notes telemetry file",
       "paths": [
-        "%APPDATA%\\Microsoft\\Sticky Notes\\StickyNotes.sqm",
-        "%LOCALAPPDATA%\\Packages\\Microsoft.MicrosoftStickyNotes_*\\LocalState"
+        "%APPDATA%\\Microsoft\\Sticky Notes\\StickyNotes.sqm"
       ],
       "safety": "safe",
-      "description": "Sticky Notes database and UWP sticky notes state."
+      "description": "Sticky Notes' own .sqm usage-telemetry file only. NOT %LOCALAPPDATA%\\Packages\\Microsoft.MicrosoftStickyNotes_*\\LocalState, which holds plum.sqlite -- the real database of every note's actual text. The old label called that 'UWP sticky notes state', which is exactly what it is: state, not disposable cache."
     },
     {
       "id": "thrustmaster_cache",

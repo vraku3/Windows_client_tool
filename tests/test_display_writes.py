@@ -169,6 +169,25 @@ def test_a_staged_mode_change_does_not_reset_on_each_device():
     assert dw.CDS_NORESET & dw.COMMIT_FLAGS == 0
 
 
+# ── position (dragging a monitor in the arrangement map) ───────────────
+
+def test_a_position_devmode_sets_only_the_position_field():
+    """Resolution/refresh must be left alone -- DM_POSITION only, so a drag
+    can never change what a monitor is showing, only where it sits."""
+    devmode = dw._devmode_for_position(2560, -100)
+    assert devmode.dmFields == dw.DM_POSITION
+    assert devmode.dmPositionX == 2560
+    assert devmode.dmPositionY == -100
+    assert devmode.dmPelsWidth == 0
+    assert devmode.dmDisplayFrequency == 0
+
+
+def test_a_negative_position_is_preserved():
+    """A monitor placed left of the primary sits at a negative x."""
+    devmode = dw._devmode_for_position(-1920, 0)
+    assert devmode.dmPositionX == -1920
+
+
 # ── arrangement (the Win+P options) ────────────────────────────────────
 
 def test_every_arrangement_maps_to_one_topology_flag():

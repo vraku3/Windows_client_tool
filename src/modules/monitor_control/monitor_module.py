@@ -488,6 +488,7 @@ class MonitorControlModule(BaseModule):
         layout.addLayout(self._build_profile_bar())
 
         self._canvas = ArrangementCanvas()
+        self._canvas.moved.connect(self._do_move_monitor)
         layout.addWidget(self._canvas)
 
         scroll = QScrollArea()
@@ -1032,6 +1033,34 @@ class MonitorControlModule(BaseModule):
                        name, target_id, reason)
             return
         self._status.setText(f"{name}: {verb}")
+        self.refresh_data()
+
+    def _do_move_monitor(self, target_id: int, x: int, y: int) -> None:
+        """Persist a drag in the arrangement map to the real desktop layout.
+
+        `ArrangementCanvas` only draws and tracks the drag itself -- it
+        emits `moved` on release but was never connected to anything, so
+        dragging a monitor snapped it into place on screen and then did
+        nothing to Windows; the next `refresh_data()` would have silently
+        put it back, since `set_views()` rebuilds from the real position.
+
+        No `_guarded` countdown here, same reasoning already applied to
+        connect/disconnect and brightness/contrast: only `DM_POSITION`
+        changes, so this can never leave a monitor showing no signal --
+        there's nothing for the revert countdown to protect against.
+        """
+        view = self._view_for(target_id)
+        if view is None or not view.device_name:
+            return
+
+        ok, reason = dw.set_position(view.device_name, x, y)
+        if not ok:
+            self._status.setText(f"{view.name}: position not changed -- {reason}")
+            logger.info("Move refused for %s (target %s) to (%d, %d): %s",
+                       view.name, target_id, x, y, reason)
+            self._canvas.set_views(self._views)  # snap the drawing back to reality
+            return
+        self._status.setText(f"{view.name}: moved to ({x}, {y})")
         self.refresh_data()
 
     def _do_set_refresh_rate(self, target_id: int, hz: float) -> None:

@@ -10,11 +10,11 @@ import logging
 import subprocess
 from typing import List
 
-from PyQt6.QtCore import QThreadPool
+from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPlainTextEdit,
-    QPushButton, QTableWidget, QVBoxLayout, QWidget,
+    QPushButton, QSplitter, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.table_ui import centered_item, center_header
@@ -63,13 +63,16 @@ class _StoreUpdatesTab(QWidget):
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self._table, 1)
 
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
-        self._log.setMaximumHeight(120)
         self._log.setFont(QFont("Consolas", 8))
-        layout.addWidget(self._log)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self._table)
+        splitter.addWidget(self._log)
+        splitter.setSizes([400, 120])
+        layout.addWidget(splitter, 1)
 
         self._trigger_btn.clicked.connect(self._do_trigger)
         self._open_btn.clicked.connect(self._do_open_store)

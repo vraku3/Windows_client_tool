@@ -7,9 +7,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTabWidget,
     QTableWidget, QHeaderView, QPlainTextEdit,
     QCheckBox, QTimeEdit, QComboBox, QProgressBar, QLineEdit, QMessageBox,
-    QGroupBox, QScrollArea, QSpinBox,
+    QGroupBox, QScrollArea, QSpinBox, QSplitter,
 )
-from PyQt6.QtCore import QThreadPool, QTime, QElapsedTimer
+from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer
 from PyQt6.QtGui import QFont, QColor
 
 from core.base_module import BaseModule
@@ -125,14 +125,21 @@ class _AppUpdatesTab(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        layout.addWidget(self._table, 1)
 
         # Log output
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
-        self._log.setMaximumHeight(120)
         self._log.setFont(QFont("Consolas", 8))
-        layout.addWidget(self._log)
+
+        # A drag handle between table and log, not a fixed 120px cap on the
+        # log -- a user watching a long winget run had no way to see more
+        # than a few lines of it, or to give the log space back to the table
+        # once it was done.
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self._table)
+        splitter.addWidget(self._log)
+        splitter.setSizes([400, 120])
+        layout.addWidget(splitter, 1)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._update_sel_btn.clicked.connect(self._do_update_selected)
@@ -424,13 +431,16 @@ class _WinUpdatesTab(QWidget):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
-        layout.addWidget(self._table, 1)
 
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
-        self._log.setMaximumHeight(120)
         self._log.setFont(QFont("Consolas", 8))
-        layout.addWidget(self._log)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self._table)
+        splitter.addWidget(self._log)
+        splitter.setSizes([400, 120])
+        layout.addWidget(splitter, 1)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._install_btn.clicked.connect(self._do_install)

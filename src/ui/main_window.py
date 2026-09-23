@@ -124,6 +124,7 @@ class MainWindow(QMainWindow):
         self._filter_panel = FilterPanel(self)
         self._filter_panel.setAccessibleName("Search filters")
         self._filter_panel.setVisible(False)
+        self._filter_panel.filters_changed.connect(self._on_filters_changed)
         root_layout.insertWidget(root_layout.indexOf(splitter), self._filter_panel)
 
         self._status_bar = AppStatusBar(self)
@@ -628,6 +629,19 @@ class MainWindow(QMainWindow):
 
     def _on_filter_toggled(self, expanded: bool) -> None:
         self._filter_panel.setVisible(expanded)
+
+    def _on_filters_changed(self, _query) -> None:
+        """A filter widget changed -- re-run the active search with it.
+
+        `FilterPanel.filters_changed` is real, but nothing was ever
+        connected to it: adjusting the date range or a source checkbox
+        silently did nothing until the next keystroke re-triggered
+        `_on_search` on its own. `_query` itself carries an empty search
+        text (`FilterPanel` has no way to know it), so the real text comes
+        from the search bar -- the same source `_on_search` always uses.
+        `_on_search` already no-ops when there is nothing to search for.
+        """
+        self._on_search(self._search_bar.text(), self._search_bar.is_regex())
 
     def _on_result_activated(self, result) -> None:
         from ui.search_result_detail import SearchResultDetail

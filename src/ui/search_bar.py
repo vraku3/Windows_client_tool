@@ -57,6 +57,12 @@ class SearchBar(QWidget):
         self._filter_expanded = checked
         self.filter_toggled.emit(checked)
 
+    def text(self) -> str:
+        return self._input.text()
+
+    def is_regex(self) -> bool:
+        return self._regex_cb.isChecked()
+
     def focus_search(self):
         self._input.setFocus()
         self._input.selectAll()

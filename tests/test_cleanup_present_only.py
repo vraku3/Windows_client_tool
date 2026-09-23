@@ -81,8 +81,13 @@ def test_the_catalog_still_defines_everything():
     Lowered again, 448 to 446, same day: joplin_cache (local-first note
     app, real notes database) and microsoft_templates (real, user-saved
     Office templates, never actually cache) removed for the same reason.
+
+    Lowered again, 446 to 440, same day: cinema4d_cache, dbeaver_cache,
+    qgis_cache, sas_cache, kontakt_cache, logic_pro_cache removed --
+    real saved work, connection credentials, or license/activation state
+    reached via a whole-folder "safe" tier scope.
     """
-    assert len(catalog.load_catalog()) >= 446
+    assert len(catalog.load_catalog()) >= 440
 
 
 def test_the_app_tab_is_not_mostly_scanners_that_cannot_apply(qapp):

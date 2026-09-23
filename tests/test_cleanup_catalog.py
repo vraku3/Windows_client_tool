@@ -349,7 +349,22 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: narrowed rather than removed: its LocalState path held plum.sqlite, the
 #: real database of every sticky note's text, alongside the genuinely
 #: telemetry-only .sqm file that's now the only path left.
-REACHABLE_SCANNERS = 528
+#: 522 after a creative/professional-tools sweep (2026-09-23) removed 6
+#: more "safe" tier entries whose whole-folder scope reached real work
+#: product, licensing state, or was outright fictional:
+#: cinema4d_cache and logic_pro_cache both admitted "project backups" in
+#: their own label (the latter also describes a Windows product of a
+#: Mac-only DAW that does not exist -- "(if installed)" was doing a lot of
+#: work); dbeaver_cache admitted "SQL scripts" (real saved work) and can
+#: also hold saved database connection credentials; qgis_cache and
+#: sas_cache both reach a whole profile root that can hold real user
+#: projects/programs, not just the cache their label named; kontakt_cache
+#: pointed at Native Instruments' own license/activation management
+#: folder, where losing state can cost a real activation on paid sample
+#: libraries. perforce_cache was reviewed and deliberately left as-is --
+#: real but lower-severity (a workflow confusion recoverable via `p4
+#: reconcile`, not permanent loss).
+REACHABLE_SCANNERS = 522
 
 
 def _scanners_the_tabs_offer():

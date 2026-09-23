@@ -102,15 +102,6 @@
       "description": "Chocolatey package download cache and lib/bad packages."
     },
     {
-      "id": "cinema4d_cache",
-      "label": "Cinema 4D render cache, preview staging, and project backups",
-      "paths": [
-        "%APPDATA%\\Maxon"
-      ],
-      "safety": "safe",
-      "description": "Cinema 4D render cache, preview staging, and project backups."
-    },
-    {
       "id": "clang_cache",
       "label": "LLVM/Clang precompiled headers and modules cache",
       "paths": [
@@ -214,16 +205,6 @@
       ],
       "safety": "safe",
       "description": "JetBrains DataGrip schema cache and result set cache."
-    },
-    {
-      "id": "dbeaver_cache",
-      "label": "DBeaver workspace cache, SQL scripts, and driver cache",
-      "paths": [
-        "%APPDATA%\\DBeaver",
-        "%APPDATA%\\DBeaverData"
-      ],
-      "safety": "safe",
-      "description": "DBeaver workspace cache, SQL scripts, and driver cache."
     },
     {
       "id": "docker_desktop_cache",
@@ -762,15 +743,6 @@
       "description": "pyenv Python builds and cache of downloaded Python versions."
     },
     {
-      "id": "qgis_cache",
-      "label": "QGIS active project thumbnail cache,QGis, and processing algorithm cache",
-      "paths": [
-        "%APPDATA%\\QGIS"
-      ],
-      "safety": "safe",
-      "description": "QGIS active project thumbnail cache,QGis, and processing algorithm cache."
-    },
-    {
       "id": "qt_creator_cache",
       "label": "Qt Creator analysis cache, autocomplete data, and build logs",
       "paths": [
@@ -842,15 +814,6 @@
       ],
       "safety": "safe",
       "description": "Rust cargo registry and target build cache."
-    },
-    {
-      "id": "sas_cache",
-      "label": "SAS temp work library staging and output cache",
-      "paths": [
-        "%APPDATA%\\SAS"
-      ],
-      "safety": "safe",
-      "description": "SAS temp work library staging and output cache."
     },
     {
       "id": "scoop_bucket_cache",

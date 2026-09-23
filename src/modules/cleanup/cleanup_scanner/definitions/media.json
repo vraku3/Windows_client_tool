@@ -247,15 +247,6 @@
       "description": "Kodi texture cache, thumbnails, and log files."
     },
     {
-      "id": "kontakt_cache",
-      "label": "Kontakt sample library database cache and preload cache",
-      "paths": [
-        "%APPDATA%\\Native Instruments\\Service Center"
-      ],
-      "safety": "safe",
-      "description": "Kontakt sample library database cache and preload cache."
-    },
-    {
       "id": "lightshot_cache",
       "label": "Lightshot saved screenshots and upload history",
       "paths": [
@@ -263,15 +254,6 @@
       ],
       "safety": "safe",
       "description": "Lightshot saved screenshots and upload history."
-    },
-    {
-      "id": "logic_pro_cache",
-      "label": "Logic Pro for Windows (if installed) media cache and project backups",
-      "paths": [
-        "%APPDATA%\\Logic Pro"
-      ],
-      "safety": "safe",
-      "description": "Logic Pro for Windows (if installed) media cache and project backups."
     },
     {
       "id": "mpc_cache",

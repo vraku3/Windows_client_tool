@@ -836,6 +836,20 @@ Rules here, each one measured:
   for the same physical panel, with no user action beyond ordinary topology
   changes. Never cache a target id across a refresh; `view_model.build_views()`
   already re-reads it every time for exactly this reason.
+- **Dragging a monitor writes the WHOLE layout, through CCD, in one call**
+  (`display_config.apply_source_positions`, via `display_writes.set_layout`
+  keyed by target id). Two things measured 2026-09-24: staging a lone
+  monitor's position with `ChangeDisplaySettingsEx` is `DISP_CHANGE_FAILED`
+  the moment the half-moved layout has a gap or no display at the origin, so
+  the per-device route can only nudge; and `SDC_USE_SUPPLIED_DISPLAY_CONFIG |
+  SDC_NO_OPTIMIZATION` is `ERROR_INVALID_PARAMETER` even on an UNCHANGED layout
+  where `... | SDC_ALLOW_CHANGES` validates. The primary is at (0,0) by
+  definition, so dragging it sideways means `normalise_to_primary` shifts
+  everyone else the other way. A drop on another monitor is pushed to its
+  nearest free side (`resolve_overlaps`), and the snap reach is in ON-SCREEN
+  pixels -- the map is ~1/30 scale, so the old 32 desktop pixels was one canvas
+  pixel and the drag felt twitchy. A click that ends where it began emits
+  nothing: every `moved` is a visible flicker.
 - **A refused read is never an answer.** `MonitorIdentity.identified` False,
   `DdcCapability.responded` False, `audio_hidden` None and
   `WriteResult.verified` None all mean "we could not find out", and none of

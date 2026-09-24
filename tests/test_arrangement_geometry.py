@@ -98,3 +98,53 @@ def test_a_clear_gap_is_left_alone():
 def test_snapping_aligns_tops_as_well_as_edges():
     moved = geo.snap((2560, 12, 2560, 1440), [(0, 0, 2560, 1440)], threshold=32)
     assert moved[1] == 0, "did not align to the neighbour's top"
+
+
+# ── dropping a monitor: overlap, primary re-basing ─────────────────────
+
+def test_touching_edges_are_not_an_overlap():
+    assert geo.overlap((0, 0, 100, 100), (100, 0, 100, 100)) is False
+    assert geo.overlap((0, 0, 100, 100), (99, 0, 100, 100)) is True
+
+
+def test_a_drop_on_a_neighbour_is_pushed_to_its_nearest_free_side():
+    others = [(0, 0, 2560, 1440)]
+    # mostly over the right half of the neighbour: nearest clear spot is its right
+    assert geo.resolve_overlaps((1800, 0, 2560, 1440), others) == (2560, 0, 2560, 1440)
+    # mostly over the left half: nearest clear spot is its left
+    assert geo.resolve_overlaps((-1800, 0, 2560, 1440), others) == (-2560, 0, 2560, 1440)
+
+
+def test_pushing_clear_of_one_monitor_cannot_land_on_another():
+    others = [(0, 0, 2560, 1440), (2560, 0, 2560, 1440)]
+    x, y, w, h = geo.resolve_overlaps((1000, 0, 2560, 1440), others)
+    assert not any(geo.overlap((x, y, w, h), o) for o in others)
+
+
+def test_a_clear_drop_is_left_alone():
+    assert geo.resolve_overlaps((0, 2000, 100, 100), [(0, 0, 100, 100)]) == (0, 2000, 100, 100)
+
+
+def test_normalising_moves_the_primary_back_to_the_origin():
+    layout = {"dell": (7680, 0, 2560, 1440), "giga": (2560, 0, 2560, 1440),
+              "lg": (5120, 0, 2560, 1080)}
+    out = geo.normalise_to_primary(layout, "dell")
+    assert out["dell"][:2] == (0, 0)
+    assert out["giga"][:2] == (-5120, 0)
+    assert out["lg"][:2] == (-2560, 0)
+    assert out["lg"][2:] == (2560, 1080)
+
+
+def test_normalising_an_unknown_primary_changes_nothing():
+    layout = {"a": (5, 5, 10, 10)}
+    assert geo.normalise_to_primary(layout, None) == layout
+
+
+def test_a_snap_reaches_a_few_canvas_pixels_not_a_few_desktop_pixels():
+    """The map is drawn at ~1/30 scale, so a hand can only judge a drop to
+    within tens of DESKTOP pixels' worth of canvas pixels. The canvas now
+    passes a threshold scaled from on-screen pixels; snap honours it."""
+    others = [(0, 0, 2560, 1440)]
+    near = (2560 + 500, 0, 2560, 1440)        # 500 desktop px off the edge
+    assert geo.snap(near, others, threshold=32)[0] == 3060      # old: no snap
+    assert geo.snap(near, others, threshold=700)[0] == 2560     # scaled: snaps

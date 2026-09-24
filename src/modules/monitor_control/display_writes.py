@@ -49,7 +49,6 @@ COMMIT_FLAGS = 0
 DM_PELSWIDTH = 0x00080000
 DM_PELSHEIGHT = 0x00100000
 DM_DISPLAYFREQUENCY = 0x00400000
-DM_POSITION = 0x00000020
 DM_DISPLAYORIENTATION = 0x00000080
 
 #: DISP_CHANGE_*. Named, because a bare -2 in a log is not a reason.
@@ -152,44 +151,20 @@ def apply_mode(gdi_device_name: str, width: int, height: int, refresh: float,
     return True, ""
 
 
-def _devmode_for_position(x: int, y: int):
-    devmode = dm._DEVMODEW()
-    devmode.dmSize = ctypes.sizeof(dm._DEVMODEW)
-    devmode.dmPositionX = x
-    devmode.dmPositionY = y
-    devmode.dmFields = DM_POSITION
-    return devmode
+def set_layout(positions) -> Tuple[bool, str]:
+    """Move displays: `{target_id: (x, y)}`, every one in a single call.
 
-
-def stage_position(gdi_device_name: str, x: int, y: int) -> int:
-    """Write one device's desktop position to the registry WITHOUT applying it."""
-    devmode = _devmode_for_position(x, y)
-    return ctypes.windll.user32.ChangeDisplaySettingsExW(
-        ctypes.c_wchar_p(gdi_device_name), ctypes.byref(devmode), None,
-        STAGE_FLAGS, None)
-
-
-def set_position(gdi_device_name: str, x: int, y: int) -> Tuple[bool, str]:
-    """Move one display to a new spot in the virtual desktop.
-
-    This is what dragging a monitor icon in Windows' own Display Settings
-    does under the hood: only `DM_POSITION` is set, resolution and refresh
-    are left untouched. Unlike `apply_mode`, there is no "can this device
-    show it" check to run first -- a position can never leave a monitor
-    showing no signal, only windows on it sitting at a different spot in
-    the virtual desktop -- so this only reports what Windows itself did
-    with the new layout.
+    This is what Windows' own Display Settings does when a monitor is
+    dragged, and it has to be a whole layout: the primary is by definition at
+    (0, 0), so moving it means every other display's coordinates change too,
+    and any way of writing them one at a time passes through layouts Windows
+    refuses. Only positions change -- never resolution or refresh -- so there
+    is no "can this device show it" check to run first, and nothing that can
+    leave a monitor showing no signal.
     """
-    staged = stage_position(gdi_device_name, x, y)
-    if not change_succeeded(staged):
-        return False, (f"staging position ({x}, {y}) failed: "
-                       f"{change_result_name(staged)}")
-    committed = commit_staged_modes()
-    if not change_succeeded(committed):
-        return False, (f"committing position ({x}, {y}) failed: "
-                       f"{change_result_name(committed)}")
-    logger.info("Moved %s to (%d, %d)", gdi_device_name, x, y)
-    return True, ""
+    if not positions:
+        return True, ""
+    return dc.apply_source_positions(positions)
 
 
 def apply_modes(changes: Sequence[Tuple[str, int, int, float]]

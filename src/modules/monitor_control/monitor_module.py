@@ -1044,23 +1044,60 @@ class MonitorControlModule(BaseModule):
         nothing to Windows; the next `refresh_data()` would have silently
         put it back, since `set_views()` rebuilds from the real position.
 
+        The WHOLE layout is written, not just the dragged monitor: the
+        primary is at (0, 0) by definition, so dragging it (or dropping
+        anything left of/above it) changes every other display's
+        coordinates, and a lone write leaves Windows a layout it refuses --
+        which is why a vertical nudge of a secondary worked while moving
+        the primary sideways silently did nothing.
+
         No `_guarded` countdown here, same reasoning already applied to
-        connect/disconnect and brightness/contrast: only `DM_POSITION`
-        changes, so this can never leave a monitor showing no signal --
+        connect/disconnect and brightness/contrast: only positions
+        change, so this can never leave a monitor showing no signal --
         there's nothing for the revert countdown to protect against.
         """
+        from modules.monitor_control import _arrangement_geometry as geo
+
         view = self._view_for(target_id)
         if view is None or not view.device_name:
             return
 
-        ok, reason = dw.set_position(view.device_name, x, y)
+        active = [v for v in self._views
+                  if v.active and v.position and v.resolution and v.device_name]
+        current = {v.target_id: (v.position[0], v.position[1],
+                                 v.resolution[0], v.resolution[1])
+                   for v in active}
+        if target_id not in current:
+            return
+        primary = next((v.target_id for v in active if v.position == (0, 0)),
+                       None)
+
+        proposed = dict(current)
+        proposed[target_id] = (x, y, current[target_id][2], current[target_id][3])
+        others = [r for t, r in proposed.items() if t != target_id]
+        if any(geo.overlap(proposed[target_id], o) for o in others):
+            self._status.setText(
+                f"{view.name}: position not changed -- it would overlap "
+                "another monitor")
+            self._canvas.set_views(self._views)
+            return
+        proposed = geo.normalise_to_primary(proposed, primary)
+
+        changes = {v.target_id: proposed[v.target_id][:2]
+                   for v in active
+                   if proposed[v.target_id][:2] != current[v.target_id][:2]}
+        if not changes:
+            self._canvas.set_views(self._views)
+            return
+
+        ok, reason = dw.set_layout(changes)
         if not ok:
             self._status.setText(f"{view.name}: position not changed -- {reason}")
             logger.info("Move refused for %s (target %s) to (%d, %d): %s",
                        view.name, target_id, x, y, reason)
             self._canvas.set_views(self._views)  # snap the drawing back to reality
             return
-        self._status.setText(f"{view.name}: moved to ({x}, {y})")
+        self._status.setText(f"{view.name}: moved")
         self.refresh_data()
 
     def _do_set_refresh_rate(self, target_id: int, hz: float) -> None:

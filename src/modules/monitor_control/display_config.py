@@ -469,6 +469,71 @@ def apply_target_active(target_id: int, active: bool):
     return True, ""
 
 
+def apply_source_positions(positions):
+    """Move active displays by rewriting their source-mode positions.
+
+    `positions` maps a CCD target id to its new desktop `(x, y)`. `(ok,
+    reason)`; validated before it is applied, and a refusal changes nothing.
+
+    One `SetDisplayConfig` call carries the WHOLE layout. That is the point:
+    the legacy per-device `ChangeDisplaySettingsEx` route has to pass through
+    each half-moved layout on the way (measured on this machine: staging a
+    single monitor to a position that leaves a gap or no display at the
+    origin is `DISP_CHANGE_FAILED`), so it can only do nudges that keep the
+    desktop contiguous. Only ACTIVE paths are read, so every mode index in
+    the arrays is valid. The flags are the ones `apply_target_active` already
+    uses: `SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES` validates, and
+    swapping `SDC_ALLOW_CHANGES` for `SDC_NO_OPTIMIZATION` is
+    ERROR_INVALID_PARAMETER even on an unchanged layout (measured).
+    """
+    user32 = ctypes.windll.user32
+    npath = wintypes.UINT()
+    nmode = wintypes.UINT()
+    rc = user32.GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS,
+                                            ctypes.byref(npath),
+                                            ctypes.byref(nmode))
+    if rc != 0:
+        return False, f"GetDisplayConfigBufferSizes: {win32_error_name(rc)}"
+    paths = (_PATH_INFO * npath.value)()
+    modes = (_MODE_INFO * nmode.value)()
+    rc = user32.QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, ctypes.byref(npath),
+                                   paths, ctypes.byref(nmode), modes, None)
+    if rc != 0:
+        return False, f"QueryDisplayConfig: {win32_error_name(rc)}"
+
+    moved = set()
+    for path in list(paths)[:npath.value]:
+        target = path.targetInfo.id
+        if target not in positions:
+            continue
+        index = path.sourceInfo.modeInfoIdx
+        if index == MODE_IDX_INVALID or index >= nmode.value:
+            return False, f"target {target} has no source mode to move"
+        mode = modes[index]
+        if mode.infoType != MODE_INFO_TYPE_SOURCE:
+            return False, f"target {target}: mode {index} is not a source mode"
+        mode.mode.sourceMode.positionX = int(positions[target][0])
+        mode.mode.sourceMode.positionY = int(positions[target][1])
+        moved.add(target)
+
+    missing = set(positions) - moved
+    if missing:
+        return False, ("not active on the desktop, so cannot be moved: "
+                       + ", ".join(str(t) for t in sorted(missing)))
+
+    flags = SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES
+    rc = user32.SetDisplayConfig(npath, paths, nmode, modes,
+                                 SDC_VALIDATE | flags)
+    if rc != 0:
+        return False, f"Windows refused this layout: {win32_error_name(rc)}"
+    rc = user32.SetDisplayConfig(npath, paths, nmode, modes,
+                                 SDC_APPLY | SDC_SAVE_TO_DATABASE | flags)
+    if rc != 0:
+        return False, f"SetDisplayConfig: {win32_error_name(rc)}"
+    logger.info("Applied display layout: %s", positions)
+    return True, ""
+
+
 def apply_raw_topology(paths, modes, npath, nmode):
     """Apply a previously captured path/mode array. Used to REVERT.
 

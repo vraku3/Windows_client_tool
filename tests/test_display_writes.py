@@ -171,21 +171,23 @@ def test_a_staged_mode_change_does_not_reset_on_each_device():
 
 # ── position (dragging a monitor in the arrangement map) ───────────────
 
-def test_a_position_devmode_sets_only_the_position_field():
-    """Resolution/refresh must be left alone -- DM_POSITION only, so a drag
-    can never change what a monitor is showing, only where it sits."""
-    devmode = dw._devmode_for_position(2560, -100)
-    assert devmode.dmFields == dw.DM_POSITION
-    assert devmode.dmPositionX == 2560
-    assert devmode.dmPositionY == -100
-    assert devmode.dmPelsWidth == 0
-    assert devmode.dmDisplayFrequency == 0
+def test_an_empty_layout_is_a_successful_no_op(monkeypatch):
+    called = []
+    monkeypatch.setattr(dc, "apply_source_positions",
+                        lambda positions: called.append(positions))
+    assert dw.set_layout({}) == (True, "")
+    assert called == []
 
 
-def test_a_negative_position_is_preserved():
-    """A monitor placed left of the primary sits at a negative x."""
-    devmode = dw._devmode_for_position(-1920, 0)
-    assert devmode.dmPositionX == -1920
+def test_a_layout_is_handed_over_whole_in_one_call(monkeypatch):
+    """One `SetDisplayConfig` for every display -- the legacy per-device
+    route was measured refusing the half-moved layouts in between."""
+    calls = []
+    monkeypatch.setattr(dc, "apply_source_positions",
+                        lambda positions: (calls.append(dict(positions)), (True, ""))[1])
+    layout = {1: (0, 0), 2: (-5120, 0), 3: (-2560, 0)}
+    assert dw.set_layout(layout) == (True, "")
+    assert calls == [layout]
 
 
 # ── arrangement (the Win+P options) ────────────────────────────────────

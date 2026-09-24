@@ -124,6 +124,53 @@ def snap(moved: Rect, others: Sequence[Rect], threshold: int = 32) -> Rect:
     return (x + (best_dx or 0), y + (best_dy or 0), w, h)
 
 
+def overlap(a: Rect, b: Rect) -> bool:
+    """True when two rectangles share area. Touching edges do not count."""
+    return (a[0] < b[0] + b[2] and b[0] < a[0] + a[2]
+            and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
+
+
+def resolve_overlaps(moved: Rect, others: Sequence[Rect]) -> Rect:
+    """Push a dropped monitor off whatever it landed on.
+
+    Windows will not lay two displays over the same desktop area, so a drop
+    onto another monitor has to mean "next to it". Each overlap is resolved by
+    the smallest move that clears it (left, right, above or below that
+    monitor); pushing clear of one can land on another, so it repeats. Gives
+    up after a bounded number of passes and returns the last position -- the
+    caller re-checks with `overlap` before writing anything.
+    """
+    x, y, w, h = moved
+    for _ in range(len(others) * 4 + 1):
+        clash = next((o for o in others if overlap((x, y, w, h), o)), None)
+        if clash is None:
+            break
+        ox, oy, ow, oh = clash
+        options = [
+            (abs((ox - w) - x), (ox - w, y)),
+            (abs((ox + ow) - x), (ox + ow, y)),
+            (abs((oy - h) - y), (x, oy - h)),
+            (abs((oy + oh) - y), (x, oy + oh)),
+        ]
+        _cost, (x, y) = min(options, key=lambda o: o[0])
+    return (x, y, w, h)
+
+
+def normalise_to_primary(layout: dict, primary_id) -> dict:
+    """Shift a whole layout so the primary monitor sits at (0, 0).
+
+    `layout` maps a monitor id to its (x, y, w, h). Windows defines the primary
+    as the display at the origin, so dragging the primary anywhere else is only
+    expressible as "everyone else moves the other way". Returns new (x, y, w,
+    h) tuples; an unknown `primary_id` shifts nothing.
+    """
+    if primary_id not in layout:
+        return dict(layout)
+    dx, dy = layout[primary_id][0], layout[primary_id][1]
+    return {key: (r[0] - dx, r[1] - dy, r[2], r[3])
+            for key, r in layout.items()}
+
+
 def rects_from_monitors(monitors) -> List[Rect]:
     """Desktop rectangles for the active monitors in a topology.
 

@@ -26,6 +26,13 @@ logger = logging.getLogger(__name__)
 
 _PARKED_STRIP = 74
 
+#: How close, in ON-SCREEN pixels, a dragged monitor must come to a
+#: neighbour's edge before it snaps. Measured in canvas pixels because that is
+#: what a hand can judge: the map is drawn at roughly 1/30th scale, so the old
+#: fixed 32 DESKTOP pixels was about one canvas pixel -- no snap at all, and a
+#: drop that landed a hair off the neighbour.
+_SNAP_CANVAS_PX = 22
+
 
 class ArrangementCanvas(QWidget):
     """Click to select a monitor; drag an active one to move it."""
@@ -41,6 +48,7 @@ class ArrangementCanvas(QWidget):
         self._selected_id: Optional[int] = None
         self._dragging: Optional[int] = None
         self._drag_offset = (0.0, 0.0)
+        self._drag_start_rect: Optional[Tuple[int, int, int, int]] = None
         self.setMinimumHeight(240)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
                            QSizePolicy.Policy.Fixed)
@@ -172,6 +180,7 @@ class ArrangementCanvas(QWidget):
             self._drag_offset = (event.position().x() - x,
                                  event.position().y() - y)
             self._dragging = target_id
+            self._drag_start_rect = self._rects[target_id]
         self.update()
 
     def mouseMoveEvent(self, event):  # noqa: N802 - Qt naming
@@ -184,9 +193,12 @@ class ArrangementCanvas(QWidget):
                   event.position().y() - self._drag_offset[1])
         desktop = geo.to_desktop_point(corner, self._transform)
         others = [r for tid, r in self._rects.items() if tid != self._dragging]
+        threshold = max(1, int(_SNAP_CANVAS_PX / self._transform.scale))
         snapped = geo.snap((int(desktop[0]), int(desktop[1]), rect[2], rect[3]),
-                           others)
-        self._rects[self._dragging] = snapped
+                           others, threshold)
+        # Show where it will really land: Windows will not lay two displays
+        # over the same area, so a drop on another monitor means "next to it".
+        self._rects[self._dragging] = geo.resolve_overlaps(snapped, others)
         self.update()
 
     def mouseReleaseEvent(self, event):  # noqa: N802 - Qt naming
@@ -195,5 +207,9 @@ class ArrangementCanvas(QWidget):
             return
         event.accept()
         rect = self._rects[self._dragging]
-        self.moved.emit(self._dragging, rect[0], rect[1])
+        target, started = self._dragging, self._drag_start_rect
         self._dragging = None
+        self._drag_start_rect = None
+        if started is not None and rect[:2] == started[:2]:
+            return  # a click, or a drag that ended where it began
+        self.moved.emit(target, rect[0], rect[1])

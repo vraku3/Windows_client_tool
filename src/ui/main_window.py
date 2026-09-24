@@ -6,8 +6,8 @@ from typing import Dict, Optional
 from PyQt6.QtCore import QByteArray, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
-    QSplitter, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QPushButton, QScrollArea, QSplitter, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from core.admin_utils import is_admin, restart_as_admin
@@ -322,7 +322,18 @@ class MainWindow(QMainWindow):
 
         page = self._module_pages.get(module.name)
         if page is not None:
-            page.layout().addWidget(widget)
+            # In a scroll area so a pane's MINIMUM size cannot become the
+            # window's. Measured 2026-09-24: Driver Manager's rows of buttons
+            # add up to a 3476px minimum, and selecting it made the main window
+            # 3660px wide -- wider than a 2560px monitor -- and it stayed that
+            # way for every tab after. Log Viewer (2172px), TreeSize (1581px)
+            # and Monitor Control (1280px) did the same. A pane wider than the
+            # window now scrolls instead of stretching the window off-screen.
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setWidget(widget)
+            page.layout().addWidget(scroll)
         self._module_widgets[module.name] = widget
 
     def _on_module_selected(self, name: str) -> None:
@@ -345,18 +356,27 @@ class MainWindow(QMainWindow):
         page = self._module_pages.get(name)
         if page is not None:
             self._stack.setCurrentWidget(page)
-        try:
-            module.on_activate()
-        except Exception:
-            logger.exception("Error activating %s", name)
+        # A module disabled for want of elevation never built its widget --
+        # the page shows a placeholder. Activating it, or ticking a refresh
+        # timer for it, calls into a pane that does not exist (Firewall Rules:
+        # `AttributeError: _refresh_btn`, logged on every visit and again on
+        # every timer tick for as long as the app ran unelevated).
+        disabled = module in self._app.module_registry.disabled_modules
+        if not disabled:
+            try:
+                module.on_activate()
+            except Exception:
+                logger.exception("Error activating %s", name)
 
-        # Start auto-refresh timer if configured and not paused
-        interval = module.get_refresh_interval()
-        if interval is not None and not self._auto_refresh_paused:
-            self._start_module_refresh_timer(module, interval)
+            # Start auto-refresh timer if configured and not paused
+            interval = module.get_refresh_interval()
+            if interval is not None and not self._auto_refresh_paused:
+                self._start_module_refresh_timer(module, interval)
 
-        self._toolbar.set_module_actions(module.get_toolbar_actions())
-        self._status_bar.set_module_info(module.get_status_info())
+        self._toolbar.set_module_actions(
+            [] if disabled else module.get_toolbar_actions())
+        self._status_bar.set_module_info(
+            "Requires administrator" if disabled else module.get_status_info())
         self._status_bar.set_last_updated(
             datetime.datetime.now().strftime("%H:%M:%S"))
 

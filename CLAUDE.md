@@ -86,6 +86,20 @@ overrides it. `SearchEngine.execute` filters *per provider* on
 `provider.module_name`, so one provider standing in for several would have to
 re-implement that filtering — hence the list.
 
+### Main window page hosting (`MainWindow._ensure_built`)
+
+Each module widget is hosted in a `QScrollArea` inside its permanent page, so a
+pane's MINIMUM size never becomes the window's. Measured 2026-09-24: Driver
+Manager's rows of buttons summed to a 3476px minimum and selecting it made the
+main window 3660px wide (wider than a 2560px monitor) for every tab after; Log
+Viewer (2172), TreeSize (1581) and Monitor Control (1280) did the same. A new
+module needs no care about this: a pane wider than the window scrolls.
+
+A module disabled for want of elevation never built its widget, so
+`_on_module_selected` skips `on_activate()`, the refresh timer and the toolbar
+actions for it -- Firewall Rules raised `AttributeError: _refresh_btn` on every
+visit before that.
+
 ### Composite Modules (`src/core/composite_module.py`)
 
 A `CompositeModule` hosts other `BaseModule`s as tabs. `Diagnose`, `Debloat`,

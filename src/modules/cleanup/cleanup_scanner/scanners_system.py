@@ -1703,6 +1703,34 @@ _SERVICE_STOP_WAIT_SECS = 20
 ERROR_SERVICE_ALREADY_RUNNING = 1056
 
 
+def protected_app_dirs() -> List[str]:
+    """Folders Cleanup must never delete from: the running app's own.
+
+    Only meaningful in a frozen build. The folder the exe sits in is where
+    it is deployed and where it writes its per-session log; the PyInstaller
+    extraction directory is the runtime the process is executing from.
+    Nothing in the catalog reaches either (checked against every scanner on
+    a real machine, 2026-09-24), so this is the last line of defence rather
+    than a fix -- a scanner added later, or a path built from a user-typed
+    root, must not be able to remove the tool that is running it.
+    """
+    import sys
+
+    if not getattr(sys, "frozen", False):
+        return []
+    found = [os.path.dirname(os.path.abspath(sys.executable))]
+    bundle = getattr(sys, "_MEIPASS", "")
+    if bundle:
+        found.append(os.path.abspath(bundle))
+    return found
+
+
+def _is_inside(path: str, folder: str) -> bool:
+    path = os.path.normcase(os.path.abspath(path))
+    folder = os.path.normcase(os.path.abspath(folder))
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
 def delete_items(items: List[ScanItem],
                  on_progress: Optional[Callable[[int, int], None]] = None,
                  stop_wuauserv: bool = False) -> Tuple[int, int]:
@@ -1771,6 +1799,12 @@ def delete_items(items: List[ScanItem],
             try:
                 if not os.path.exists(item.path):
                     continue  # already gone — not an error
+                if any(_is_inside(item.path, guarded)
+                       for guarded in protected_app_dirs()):
+                    logger.warning("Refusing to delete %s: it is inside this "
+                                   "application's own folder", item.path)
+                    errors += 1
+                    continue
                 if item.is_dir:
                     shutil.rmtree(item.path, ignore_errors=True)
                 else:

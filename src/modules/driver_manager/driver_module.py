@@ -264,9 +264,24 @@ class DriverModule(BaseModule):
 
         return self._widget
 
-    def _build_toolbar(self) -> QHBoxLayout:
-        """Build and return the toolbar layout with all widgets and signal connections."""
-        toolbar = QHBoxLayout()
+    def _build_toolbar(self) -> QVBoxLayout:
+        """Build and return the toolbar layout with all widgets and signal connections.
+
+        Three short rows, not one: the single row of nineteen widgets summed
+        to a ~3400px minimum width, so at an ordinary window size the Filter
+        box was clipped and the table needed a horizontal scrollbar to reach
+        its last columns. Top row is what you look at (refresh, filter),
+        the middle row is what you do to drivers (update, system), and the
+        bottom row is files plus the status text.
+        """
+        toolbar = QVBoxLayout()
+        toolbar.setSpacing(4)
+        view_row = QHBoxLayout()
+        action_row = QHBoxLayout()
+        file_row = QHBoxLayout()
+        toolbar.addLayout(view_row)
+        toolbar.addLayout(action_row)
+        toolbar.addLayout(file_row)
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
         self._export_inventory_btn = QPushButton("Export Inventory")
@@ -298,25 +313,30 @@ class DriverModule(BaseModule):
         interval = self.get_refresh_interval()
         auto_refresh_lbl = QLabel(f"Auto-refreshes every {interval // 1000}s")
         auto_refresh_lbl.setObjectName("muted")
-        toolbar.addWidget(self._refresh_btn)
-        toolbar.addWidget(self._export_btn)
-        toolbar.addWidget(self._export_inventory_btn)
-        toolbar.addWidget(snapshots_btn)
-        toolbar.addWidget(self._restore_points_btn)
-        toolbar.addWidget(self._check_all_updates_btn)
-        toolbar.addWidget(self._undo_all_updates_btn)
-        toolbar.addWidget(devmgr_btn)
-        toolbar.addWidget(wu_btn)
-        toolbar.addWidget(self._backup_btn)
-        toolbar.addWidget(self._cancel_backup_btn)
-        toolbar.addWidget(QLabel("Filter:"))
-        toolbar.addWidget(self._filter_edit, 1)
-        toolbar.addWidget(QLabel("Flag:"))
-        toolbar.addWidget(self._flag_filter_combo)
-        toolbar.addWidget(self._select_flagged_btn)
-        toolbar.addWidget(self._hide_pseudo_cb)
-        toolbar.addWidget(self._status_lbl)
-        toolbar.addWidget(auto_refresh_lbl)
+        view_row.addWidget(self._refresh_btn)
+        view_row.addWidget(QLabel("Filter:"))
+        view_row.addWidget(self._filter_edit, 1)
+        view_row.addWidget(QLabel("Flag:"))
+        view_row.addWidget(self._flag_filter_combo)
+        view_row.addWidget(self._select_flagged_btn)
+        view_row.addWidget(self._hide_pseudo_cb)
+
+        action_row.addWidget(self._check_all_updates_btn)
+        action_row.addWidget(wu_btn)
+        action_row.addWidget(self._undo_all_updates_btn)
+        action_row.addSpacing(12)
+        action_row.addWidget(devmgr_btn)
+        action_row.addWidget(self._restore_points_btn)
+        action_row.addWidget(snapshots_btn)
+        action_row.addStretch()
+
+        file_row.addWidget(self._backup_btn)
+        file_row.addWidget(self._cancel_backup_btn)
+        file_row.addWidget(self._export_btn)
+        file_row.addWidget(self._export_inventory_btn)
+        file_row.addStretch()
+        file_row.addWidget(self._status_lbl)
+        file_row.addWidget(auto_refresh_lbl)
 
         # Connect button signals
         self._refresh_btn.clicked.connect(self._do_refresh)
@@ -415,6 +435,39 @@ class DriverModule(BaseModule):
                  or (flag == "Has error" and d.error_code != 0)
                  or (flag == "Old" and "Old" in d.flags))
         ]
+        # Sorting must be OFF while rows are filled. With it on, setting a
+        # row's first cell re-sorts the table, so the row moves and the rest
+        # of that row's cells (class, version, publisher...) land on whatever
+        # row is now at that index. Measured on the real machine: 238 of 338
+        # rows showed another device's data or nothing at all -- a driver
+        # manager displaying the wrong driver version. Turning it back on at
+        # the end re-sorts ONCE, by the header's current indicator, so a sort
+        # the user chose still holds.
+        sorting_was_on = self._table.isSortingEnabled()
+        self._table.setSortingEnabled(False)
+        self._table.setUpdatesEnabled(False)
+        try:
+            self._fill_rows(visible)
+        finally:
+            self._table.setUpdatesEnabled(True)
+            self._table.setSortingEnabled(sorting_was_on)
+
+        # C07 follow-up: fit Interactive columns to content ONCE, on the
+        # first real population this session, when nothing was persisted
+        # for them -- never again after that (_populate runs on every
+        # filter keystroke, hide-pseudo toggle and flag-combo change; doing
+        # this every time would silently undo an in-session column drag,
+        # the same class of bug Task 35 fixed for sort order).
+        if not self._columns_fitted_this_session:
+            self._columns_fitted_this_session = True
+            cfg = self.app.config if self.app else None
+            if cfg is not None:
+                fit_columns_once(self._table, cfg.get, self._CONFIG_PREFIX)
+            else:
+                self._table.resizeColumnsToContents()
+
+    def _fill_rows(self, visible: List[DriverInfo]) -> None:
+        """Write `visible` into the table. Sorting must already be off."""
         self._table.setRowCount(len(visible))
         # Loaded ONCE for the whole population, not once per row --
         # _populate runs on every filter keystroke, hide-pseudo toggle
@@ -447,20 +500,6 @@ class DriverModule(BaseModule):
                     cell = self._table.item(r, c)
                     if cell:
                         cell.setForeground(QColor(semantic("error")))
-
-        # C07 follow-up: fit Interactive columns to content ONCE, on the
-        # first real population this session, when nothing was persisted
-        # for them -- never again after that (_populate runs on every
-        # filter keystroke, hide-pseudo toggle and flag-combo change; doing
-        # this every time would silently undo an in-session column drag,
-        # the same class of bug Task 35 fixed for sort order).
-        if not self._columns_fitted_this_session:
-            self._columns_fitted_this_session = True
-            cfg = self.app.config if self.app else None
-            if cfg is not None:
-                fit_columns_once(self._table, cfg.get, self._CONFIG_PREFIX)
-            else:
-                self._table.resizeColumnsToContents()
 
     def _select_all_flagged(self) -> None:
         if self._table is None:

@@ -24,8 +24,14 @@ _PS_CMD = r"""
 $drivers = Get-CimInstance -ClassName Win32_PnPSignedDriver |
     Where-Object { $_.DeviceName -ne $null -and $_.DeviceName -ne '' }
 $result = foreach ($d in $drivers) {
+    # Get-CimInstance hands DriverDate back as a [datetime]; only the older
+    # Get-WmiObject gives the "20240115000000.000000-000" string. The string
+    # test alone ([datetime] has no .Length) left EVERY date blank, which in
+    # turn meant the Old flag and filter could never fire.
     $dateStr = ''
-    if ($d.DriverDate -and $d.DriverDate.Length -ge 8) {
+    if ($d.DriverDate -is [datetime]) {
+        $dateStr = $d.DriverDate.ToString('yyyyMMdd', [System.Globalization.CultureInfo]::InvariantCulture)
+    } elseif ($d.DriverDate -and $d.DriverDate.Length -ge 8) {
         $dateStr = $d.DriverDate.Substring(0,8)
     }
     [PSCustomObject]@{
@@ -142,13 +148,29 @@ def decode_error_code(code: int) -> str:
         code, f"unrecognized ConfigManagerErrorCode {code}")
 
 
+#: Windows' own inbox INFs name their manufacturer "(Standard system
+#: devices)", "(Standard USB HUBs)", "(Standard keyboards)"... -- a
+#: parenthesised "Standard ..." string is that convention, and only Windows
+#: ships those.
+_INBOX_MANUFACTURER_RE = re.compile(r"^\(standard [^)]+\)$")
+
+
 def classify_provider(publisher: str) -> str:
     """"Microsoft" only for Microsoft's own strings, not anything that
     merely contains the word -- "Microsoft-compatible XYZ Corp" is a
-    real OEM naming pattern and is third-party."""
+    real OEM naming pattern and is third-party.
+
+    Windows' inbox drivers are Microsoft's too, though their INF manufacturer
+    reads "(Standard system devices)" rather than "Microsoft": on the real
+    machine 170 of 327 rows were labelled Third-Party for that reason alone.
+    A bare "Standard X" name ("Standard NVM Express Controller") is the same
+    family; "Standardized Corp" is not, hence the trailing space."""
     normalized = (publisher or "").strip().lower()
-    return "Microsoft" if normalized in ("microsoft", "microsoft corporation") \
-        else "Third-Party"
+    if normalized in ("microsoft", "microsoft corporation"):
+        return "Microsoft"
+    if _INBOX_MANUFACTURER_RE.match(normalized) or normalized.startswith("standard "):
+        return "Microsoft"
+    return "Third-Party"
 
 
 def _build_driver_info(d: dict, old_threshold_days: int = 730) -> DriverInfo:
@@ -183,7 +205,13 @@ def _build_driver_info(d: dict, old_threshold_days: int = 730) -> DriverInfo:
         flags.append("🔴 Unsigned (as reported by Windows)")
     if error_code != 0:
         flags.append(f"🔴 Error({error_code}): {decode_error_code(error_code)}")
-    if date_obj and date_obj < two_years_ago:
+    # "Old" is only meaningful for a driver a vendor ships and can update: an
+    # OEM-numbered package (oem##.inf). Windows' own inbox drivers (usb.inf,
+    # hidclass.inf, ...) are dated 2006 and up and are refreshed by Windows
+    # Update, not by the vendor; flagging them put "Old" on roughly two thirds
+    # of the list and buried the drivers that could actually be updated.
+    if (date_obj and date_obj < two_years_ago
+            and published_name_for(d.get("InfName") or "")):
         flags.append("🟠 Old")
     if date_unreadable:
         flags.append("⚪ date unreadable")

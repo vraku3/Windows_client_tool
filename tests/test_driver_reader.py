@@ -20,6 +20,19 @@ def test_classify_provider_is_shared_by_table_and_export():
     assert dr.classify_provider("Microsoft-compatible XYZ Corp") == "Third-Party"
 
 
+def test_windows_inbox_manufacturer_strings_are_microsoft():
+    for inbox in ("(Standard system devices)", "(Standard USB HUBs)",
+                  "(Standard keyboards)", "(Standard disk drives)",
+                  "Standard NVM Express Controller"):
+        assert dr.classify_provider(inbox) == "Microsoft", inbox
+
+
+def test_lookalike_publishers_stay_third_party():
+    for other in ("Standardized Corp", "Advanced Micro Devices, Inc.",
+                  "Realtek", "(Standard-like Vendor)", "", None):
+        assert dr.classify_provider(other) == "Third-Party", other
+
+
 def test_error_code_decodes_to_a_known_meaning():
     assert "disabled" in dr.decode_error_code(22).lower()
     assert dr.decode_error_code(0) == ""
@@ -74,14 +87,14 @@ def test_old_threshold_days_is_configurable():
     info_default = dr._build_driver_info({
         "Name": "X", "Class": "Net", "Version": "1.0",
         "Date": old_by_default_only, "Publisher": "Vendor", "IsSigned": True,
-        "ErrorCode": 0})
+        "ErrorCode": 0, "InfName": "oem12.inf"})
     assert "old" not in info_default.flags.lower()
 
     # With a tighter 30-day threshold, that same 100-day-old driver is "Old".
     info_tight = dr._build_driver_info({
         "Name": "X", "Class": "Net", "Version": "1.0",
         "Date": old_by_default_only, "Publisher": "Vendor", "IsSigned": True,
-        "ErrorCode": 0}, old_threshold_days=30)
+        "ErrorCode": 0, "InfName": "oem12.inf"}, old_threshold_days=30)
     assert "old" in info_tight.flags.lower()
 
     # A genuinely recent driver is not "Old" against a threshold it is
@@ -89,8 +102,42 @@ def test_old_threshold_days_is_configurable():
     info_recent = dr._build_driver_info({
         "Name": "X", "Class": "Net", "Version": "1.0",
         "Date": recent, "Publisher": "Vendor", "IsSigned": True,
-        "ErrorCode": 0}, old_threshold_days=30)
+        "ErrorCode": 0, "InfName": "oem12.inf"}, old_threshold_days=30)
     assert "old" not in info_recent.flags.lower()
+
+
+def _old_raw(inf_name):
+    return {"Name": "X", "Class": "USB", "Version": "10.0", "Date": "20060621",
+            "Publisher": "Microsoft", "IsSigned": True, "ErrorCode": 0,
+            "InfName": inf_name}
+
+
+def test_a_windows_inbox_driver_is_never_flagged_old():
+    """Inbox drivers (usb.inf, hidclass.inf...) are dated 2006 and refreshed by
+    Windows Update, not by a vendor. Once dates were actually read, flagging
+    them put "Old" on 298 of 327 rows on the real machine."""
+    assert "old" not in dr._build_driver_info(_old_raw("usb.inf")).flags.lower()
+    assert "old" not in dr._build_driver_info(_old_raw("")).flags.lower()
+
+
+def test_a_vendor_installed_driver_that_is_old_is_flagged():
+    assert "old" in dr._build_driver_info(_old_raw("oem42.inf")).flags.lower()
+
+
+def test_the_powershell_reads_a_cim_datetime_not_only_a_string():
+    """Get-CimInstance returns DriverDate as [datetime], which has no .Length.
+    The string-only test left every driver's date blank, so the Old flag and
+    filter could never fire."""
+    assert "-is [datetime]" in dr._PS_CMD
+    assert "yyyyMMdd" in dr._PS_CMD
+
+
+@pytest.mark.real_machine
+def test_real_machine_drivers_actually_carry_a_date():
+    drivers = dr.fetch_drivers()
+    dated = [d for d in drivers if d.date]
+    assert drivers and len(dated) > len(drivers) * 0.5, (
+        f"{len(dated)} of {len(drivers)} drivers have a date")
 
 
 def test_pseudo_classes_constant_covers_known_non_hardware_classes():

@@ -880,6 +880,22 @@ drivers. `requires_admin = False` — reading and exporting need no
 elevation; only `pnputil /delete-driver` and a backup to a
 permission-restricted folder do.
 
+- **The table must not be sorting while it is filled** (`_populate` turns
+  sorting off around `_fill_rows` and back on once). With sorting on, setting a
+  row's first cell re-sorts, the row moves, and the rest of its cells land on
+  another row: measured 2026-09-24, 238 of 338 rows showed another device's
+  version/publisher or nothing. Any `QTableWidget` with `setSortingEnabled(True)`
+  has this trap; `test_driver_table_row_integrity.py` compares every row to its
+  own driver.
+- **`Get-CimInstance` returns `DriverDate` as a `[datetime]`**, not the
+  `"20240115000000.000000-000"` string `Get-WmiObject` gives. The reader tested
+  only for a string (`.Length`), so all 327 dates were blank and the Old flag
+  could never fire. **"Old" is only for vendor-installed (`oem##.inf`) drivers**:
+  inbox drivers are dated 2006 and are refreshed by Windows Update, and flagging
+  them marked 298 of 327 rows. On the real machine that leaves 7, including the
+  RX 7900 XTX on a 2022 driver.
+- **The Provider column treats Windows' `(Standard ...)` manufacturer strings
+  as Microsoft** -- 170 inbox rows were labelled Third-Party.
 - **`Win32_PnPSignedDriver` only lists devices that HAVE a driver.** A
   device Windows found none for at all — the yellow-bang case — needed a
   second `Win32_PnPEntity` query merged in, or "Driver Manager" never

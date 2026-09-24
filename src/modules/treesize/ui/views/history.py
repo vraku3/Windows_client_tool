@@ -103,7 +103,6 @@ class HistoryView(QWidget):
     """Snapshot list plus trend, and the comparison result."""
 
     snapshot_chosen = pyqtSignal(str)
-    compare_requested = pyqtSignal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)

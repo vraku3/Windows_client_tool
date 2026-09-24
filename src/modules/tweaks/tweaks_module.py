@@ -64,7 +64,6 @@ _FILTER_TO_STATUS = {
 
 class _Signals(QObject):
     status_detected = pyqtSignal(str, str, str)  # tweak_id, status, reason
-    apply_done      = pyqtSignal(bool, list) # success, errors
     apps_detected   = pyqtSignal(set, set, list)  # winget_ids, appx, desktop
 
 
@@ -387,9 +386,6 @@ class TweakTab(QWidget):
         for row in self._rows.values():
             row.checkbox.stateChanged.connect(self._on_selection_changed)
 
-    def apply_row_clicked(self, row: TweakRow) -> None:
-        self.row_apply_requested.emit(row.tweak)
-
     def set_row_apply_handler(self, handler) -> None:
         for row in self._rows.values():
             row.apply_btn.clicked.connect(lambda _, r=row: handler(r))
@@ -454,7 +450,6 @@ class TweakTab(QWidget):
 
     # Signal emitted when row selection should show details
     row_selected = pyqtSignal(dict)
-    row_apply_requested = pyqtSignal(dict)
 
     def mousePressEvent(self, event) -> None:
         # Find which row was clicked

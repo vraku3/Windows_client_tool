@@ -28,6 +28,7 @@ from core.table_ui import (
 )
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
+from modules.driver_manager.driver_grouping import DriverGroup, group_drivers
 from modules.driver_manager.driver_reader import (
     DriverInfo, classify_provider, fetch_drivers, list_restore_points,
     published_name_for, _dedup_key, _PSEUDO_CLASSES,
@@ -167,6 +168,7 @@ class DriverModule(BaseModule):
         self._hide_pseudo_cb: Optional[QCheckBox] = None
         self._refresh_btn: Optional[QPushButton] = None
         self._export_btn: Optional[QPushButton] = None
+        self._group_cb: Optional[QCheckBox] = None
         self._export_inventory_btn: Optional[QPushButton] = None
         self._cancel_backup_btn: Optional[QPushButton] = None
         self._backup_worker: Optional[Worker] = None
@@ -309,6 +311,12 @@ class DriverModule(BaseModule):
         self._select_flagged_btn = QPushButton("Select flagged")
         self._hide_pseudo_cb = QCheckBox("Hide pseudo-devices")
         self._hide_pseudo_cb.setChecked(True)
+        self._group_cb = QCheckBox("Group identical drivers")
+        self._group_cb.setChecked(True)
+        self._group_cb.setToolTip(
+            "Show devices that run the same driver as ONE row with a count "
+            "(32 identical processors become one \"AMD Processor  x32\" row). "
+            "Double-click a grouped row to see the individual devices.")
         self._status_lbl = QLabel("Click Refresh to load drivers.")
         interval = self.get_refresh_interval()
         auto_refresh_lbl = QLabel(f"Auto-refreshes every {interval // 1000}s")
@@ -320,6 +328,7 @@ class DriverModule(BaseModule):
         view_row.addWidget(self._flag_filter_combo)
         view_row.addWidget(self._select_flagged_btn)
         view_row.addWidget(self._hide_pseudo_cb)
+        view_row.addWidget(self._group_cb)
 
         action_row.addWidget(self._check_all_updates_btn)
         action_row.addWidget(wu_btn)
@@ -356,6 +365,7 @@ class DriverModule(BaseModule):
         self._hide_pseudo_cb.stateChanged.connect(
             lambda _state: self._populate(self._drivers_ref[0], self._filter_edit.text())
         )
+        self._group_cb.stateChanged.connect(lambda _state: self._on_group_toggled())
         self._flag_filter_combo.currentTextChanged.connect(
             lambda _txt: self._populate(self._drivers_ref[0], self._filter_edit.text())
         )
@@ -475,12 +485,19 @@ class DriverModule(BaseModule):
         # read+parse per call) would re-read the same small JSON file
         # once per VISIBLE ROW every time any of those fire.
         history_by_id = update_history.get_all()
-        for r, d in enumerate(visible):
+        grouping = self._group_cb.isChecked() if self._group_cb else False
+        groups = (group_drivers(visible) if grouping
+                  else [DriverGroup((d,)) for d in visible])
+        self._table.setRowCount(len(groups))
+        for r, group in enumerate(groups):
+            d = group.representative
             provider = classify_provider(d.publisher)
+            name = (f"{d.device_name}  \u00d7{group.count}"
+                    if group.count > 1 else d.device_name)
             values = [
-                d.device_name, d.driver_class, d.version, d.date,
-                d.publisher, provider, "✓" if d.signed else "✗", d.flags,
-                _update_status_text(d, history_by_id),
+                name, d.driver_class, d.version, d.date,
+                d.publisher, provider, "\u2713" if d.signed else "\u2717",
+                group.flags, _update_status_text(d, history_by_id),
             ]
             for c, val in enumerate(values):
                 if c == 3:
@@ -493,13 +510,37 @@ class DriverModule(BaseModule):
                     # devices apart. Carry the real identity on the row so
                     # a later context-menu click or export can resolve it
                     # back to the right DriverInfo -- see _row_dedup_key.
+                    # A grouped row carries its representative's id here
+                    # and the whole group beside it (UserRole + 1), which
+                    # is what double-click, export and the status-cell
+                    # refresh use to reach the other devices.
                     item.setData(Qt.ItemDataRole.UserRole, d.device_id)
+                    item.setData(Qt.ItemDataRole.UserRole + 1, group)
+                    if group.count > 1:
+                        item.setToolTip(
+                            f"{group.count} devices use this driver. "
+                            "Double-click to list them.")
                 self._table.setItem(r, c, item)
             if d.error_code != 0 or not d.signed:
                 for c in range(len(COLUMNS)):
                     cell = self._table.item(r, c)
                     if cell:
                         cell.setForeground(QColor(semantic("error")))
+
+    def _on_group_toggled(self) -> None:
+        if self._table is None:
+            return
+        data = self._drivers_ref[0]
+        self._populate(data, self._filter_edit.text() if self._filter_edit else "")
+        if data and self._status_lbl:
+            self._status_lbl.setText(self._status_summary(data))
+
+    def _status_summary(self, data: List[DriverInfo]) -> str:
+        issues = sum(1 for d in data if d.error_code != 0 or not d.signed)
+        if self._group_cb is not None and self._group_cb.isChecked():
+            return (f"{len(data)} devices, {len(group_drivers(data))} distinct "
+                    f"drivers, {issues} with issues.")
+        return f"{len(data)} drivers, {issues} with issues."
 
     def _select_all_flagged(self) -> None:
         if self._table is None:
@@ -545,8 +586,7 @@ class DriverModule(BaseModule):
             if self._table_stack is not None:
                 self._table_stack.setCurrentIndex(0 if data else 1)
             if self._status_lbl:
-                issues = sum(1 for d in data if d.error_code != 0 or not d.signed)
-                self._status_lbl.setText(f"{len(data)} drivers, {issues} with issues.")
+                self._status_lbl.setText(self._status_summary(data))
 
         def on_error(err_str: str) -> None:
             if not widget_is_valid(self._widget):
@@ -579,9 +619,18 @@ class DriverModule(BaseModule):
         # device_id-based key _on_context_menu resolves rows with, or
         # exporting a visible row also exports every OTHER driver sharing
         # its visible name, not just the rows actually shown.
-        visible_ids = {_row_dedup_key(self._table.item(r, 0))
-                       for r in range(self._table.rowCount())
-                       if not self._table.isRowHidden(r)}
+        visible_ids = set()
+        for r in range(self._table.rowCount()):
+            if self._table.isRowHidden(r):
+                continue
+            item0 = self._table.item(r, 0)
+            group = item0.data(Qt.ItemDataRole.UserRole + 1)
+            if isinstance(group, DriverGroup):
+                # A grouped row stands for every device in it: the CSV lists
+                # them all, not just the one that represents the row.
+                visible_ids.update(_dedup_key(m) for m in group.members)
+            else:
+                visible_ids.add(_row_dedup_key(item0))
         history_by_id = update_history.get_all()
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -800,7 +849,11 @@ class DriverModule(BaseModule):
         status_col = len(COLUMNS) - 1
         for r in range(self._table.rowCount()):
             item0 = self._table.item(r, 0)
-            if item0 is not None and item0.data(Qt.ItemDataRole.UserRole) == device_id:
+            if item0 is None:
+                continue
+            group = item0.data(Qt.ItemDataRole.UserRole + 1)
+            in_group = isinstance(group, DriverGroup) and device_id in group.device_ids
+            if item0.data(Qt.ItemDataRole.UserRole) == device_id or in_group:
                 text = update_history.status_label(driver.version, update_history.get(device_id))
                 self._table.setItem(r, status_col, centered_item(text))
                 return
@@ -1804,8 +1857,21 @@ class DriverModule(BaseModule):
         return next((d for d in self._drivers_ref[0]
                     if _dedup_key(d) == row_key), None)
 
+    def _group_for_row(self, row: int) -> Optional[DriverGroup]:
+        item0 = self._table.item(row, 0)
+        group = item0.data(Qt.ItemDataRole.UserRole + 1) if item0 else None
+        return group if isinstance(group, DriverGroup) else None
+
     def _on_cell_double_clicked(self, row: int, _column: int) -> None:
+        group = self._group_for_row(row)
+        if group is not None and group.count > 1:
+            self._show_group_instances(group)
+            return
         self._show_driver_details(self._resolve_driver_for_row(row))
+
+    def _show_group_instances(self, group: DriverGroup) -> None:
+        from modules.driver_manager.driver_instances_dialog import DriverInstancesDialog
+        DriverInstancesDialog(group, parent=self._widget).exec()
 
     def _show_driver_details(self, driver: Optional[DriverInfo]) -> None:
         if driver is None:
@@ -1825,12 +1891,15 @@ class DriverModule(BaseModule):
             return
         row = index.row()
         name_item = self._table.item(row, 0)
-        device_name = name_item.text()
         # Task 36: device_name is not unique -- resolve by device_id (via
         # the same key driver_reader._dedup_key computes), not by name, or
         # two rows sharing a generic name ("USB Root Hub" x N) can resolve
         # to the wrong physical device.
         driver = self._resolve_driver_for_row(row)
+        # The cell text of a grouped row carries a "x32" suffix; the real
+        # name is what belongs on the clipboard and in confirmations.
+        device_name = driver.device_name if driver else name_item.text()
+        group = self._group_for_row(row)
         published = published_name_for(driver.inf_name) if driver else None
 
         menu = QMenu(self._table)
@@ -1840,6 +1909,10 @@ class DriverModule(BaseModule):
         act_details = menu.addAction("Details...")
         act_details.setEnabled(bool(driver))
         act_details.triggered.connect(lambda: self._show_driver_details(driver))
+        if group is not None and group.count > 1:
+            act_instances = menu.addAction(f"Show all {group.count} devices...")
+            act_instances.triggered.connect(
+                lambda: self._show_group_instances(group))
         menu.addSeparator()
         act_uninstall = menu.addAction("Uninstall driver package…")
         act_uninstall.setEnabled(bool(published))

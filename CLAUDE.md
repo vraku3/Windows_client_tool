@@ -894,6 +894,18 @@ permission-restricted folder do.
   inbox drivers are dated 2006 and are refreshed by Windows Update, and flagging
   them marked 298 of 327 rows. On the real machine that leaves 7, including the
   RX 7900 XTX on a 2022 driver.
+- **The table groups devices that run the same driver** (`driver_grouping.py`,
+  the "Group identical drivers" checkbox, on by default): 327 devices are 119
+  rows here, `AMD Processor  ×32` being one. "Same" means name, class, version,
+  date, publisher, INF, signed state AND error code all match -- a device with
+  an error is never folded into healthy ones, and two versions of one driver stay
+  two rows. A grouped row carries its representative's `device_id` in
+  `UserRole` (so every row-level action resolves as before) and the whole
+  `DriverGroup` in `UserRole + 1` (double-click opens `DriverInstancesDialog`;
+  the CSV export lists every member; the Update Status refresh matches any
+  member). The name cell has a `×N` suffix, so take the device name from the
+  resolved `DriverInfo`, never from the cell text. Filters apply to devices
+  BEFORE grouping.
 - **The Provider column treats Windows' `(Standard ...)` manufacturer strings
   as Microsoft** -- 170 inbox rows were labelled Third-Party.
 - **`Win32_PnPSignedDriver` only lists devices that HAVE a driver.** A

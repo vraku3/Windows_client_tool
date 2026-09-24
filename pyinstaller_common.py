@@ -181,6 +181,8 @@ HIDDEN_IMPORTS = [
     # moment someone clicks them.
     "modules.driver_manager.driver_detail_dialog",
     "modules.driver_manager.driver_baselines",
+    # Imported inside the double-click handler for a grouped row.
+    "modules.driver_manager.driver_instances_dialog",
     # Imported inside DashboardModule.__init__, so PyInstaller's static
     # analysis can miss them and the tabs would be silently absent.
     "modules.dashboard.details_module",

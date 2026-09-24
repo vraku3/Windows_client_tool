@@ -1752,6 +1752,12 @@ def test_check_all_for_updates_separates_manual_only_from_auto_installable(monke
     monkeypatch.setattr(dmod, "provider_for", fake_provider_for)
     monkeypatch.setattr(dmod, "is_admin", lambda: True)
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    # d2's vendor match is manual-only, so it falls through to the Windows
+    # Update pass. Mocked so this test never makes a real COM call: unstubbed,
+    # it ran a live IUpdateSearcher.Search that hung past the 120s timeout and
+    # killed the whole pytest run whenever Windows Update was busy.
+    import modules.driver_manager.vendor_updates.windows_update_driver_check as wudc_mod
+    monkeypatch.setattr(wudc_mod, "find_windows_update_drivers_for_many", lambda drivers: {})
     asked = []
 
     def fake_ask_bulk(self, found, checked_count):

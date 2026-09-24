@@ -133,3 +133,23 @@ def test_clean_drops_frameworks_and_resources():
     names = [p["Name"] for p in appx_service._clean(
         [framework, resource, partial, normal])]
     assert names == ["Microsoft.WindowsCalculator"]
+
+
+def test_architecture_is_requested_as_a_name_not_an_enum_number():
+    """ConvertTo-Json writes the ProcessorArchitecture enum as a number, and
+    QTableWidgetItem(9) is the item-TYPE overload, so the Store Apps
+    Architecture column was blank on every row."""
+    from core import appx_service
+    assert "[string]$_.Architecture" in appx_service._SELECT
+
+
+import pytest
+
+
+@pytest.mark.real_machine
+def test_real_machine_architectures_are_names():
+    from core import appx_service
+    packages = appx_service.fetch_packages(use_cache=False)
+    assert packages
+    assert all(isinstance(p["Architecture"], str) and not p["Architecture"].isdigit()
+               for p in packages), {p["Architecture"] for p in packages}

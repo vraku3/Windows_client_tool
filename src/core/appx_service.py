@@ -18,8 +18,15 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Architecture is an enum (Windows.System.ProcessorArchitecture) that
+# ConvertTo-Json writes as a NUMBER (9 = X64, 11 = Neutral, 0 = X86). The Store
+# Apps table then called QTableWidgetItem(9), which PyQt takes as the item TYPE
+# overload rather than text, so the Architecture column was blank on every row.
+# Emit the name instead.
 _SELECT = ("Select-Object Name, Publisher, Version, InstallLocation, "
-           "PackageFamilyName, Architecture, IsFramework, IsResourcePackage, "
+           "PackageFamilyName, "
+           "@{Name='Architecture';Expression={[string]$_.Architecture}}, "
+           "IsFramework, IsResourcePackage, "
            "IsPartiallyStaged | ConvertTo-Json -Compress")
 
 #: How long a fetched package list is reused before re-querying.

@@ -38,7 +38,13 @@ class _CertTab(QWidget):
         self._certs: List[CertInfo] = []
         self._worker: Optional[Worker] = None
         self._all_certs: List[CertInfo] = []
+        self._loaded_once = False
         self._setup_ui()
+
+    def ensure_loaded(self) -> None:
+        """Load this store the first time it is looked at, and only then."""
+        if not self._loaded_once:
+            self._load()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -104,6 +110,7 @@ class _CertTab(QWidget):
     # ── worker ────────────────────────────────────────────────────────────
 
     def _load(self):
+        self._loaded_once = True
         self._stop()
         self._refresh_btn.setEnabled(False)
         self._status.setText("Loading certificates…")
@@ -323,8 +330,16 @@ class CertModule(BaseModule):
             tab = _CertTab(store_name, store_location, self.thread_pool)
             self._tabs.addTab(tab, label)
 
+        # Connected AFTER the addTab loop: addTab fires currentChanged for the
+        # first tab, which would start a load during create_widget().
+        self._tabs.currentChanged.connect(self._on_tab_changed)
         outer_layout.addWidget(self._tabs)
         return outer
+
+    def _on_tab_changed(self, index: int) -> None:
+        tab = self._tabs.widget(index) if self._tabs is not None else None
+        if tab is not None and hasattr(tab, "ensure_loaded"):
+            tab.ensure_loaded()
 
     def get_refresh_interval(self) -> Optional[int]:
         return 60_000
@@ -335,7 +350,15 @@ class CertModule(BaseModule):
                 tab._load()
 
     def on_activate(self) -> None:
-        pass
+        # Opening the module used to load nothing: the certificate list stayed
+        # empty until the 60s auto-refresh first ticked (the timer's first
+        # tick is a full interval after the tab is opened), or until someone
+        # thought to click Refresh. Load the visible store now, the others as
+        # they are opened.
+        if self._tabs is not None:
+            current = self._tabs.currentWidget()
+            if current is not None and hasattr(current, "ensure_loaded"):
+                current.ensure_loaded()
 
     def on_deactivate(self) -> None:
         for tab in self._each_tab():

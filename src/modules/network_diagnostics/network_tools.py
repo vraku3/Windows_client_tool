@@ -353,9 +353,56 @@ def capture_packets(
     return packets
 
 
+_DNS_PS = ("Get-DnsClientServerAddress -AddressFamily IPv4 | "
+           "Select-Object InterfaceAlias, ServerAddresses | "
+           "ConvertTo-Json -Compress")
+
+
+def parse_dns_servers(raw: str) -> Dict[str, str]:
+    """`{adapter name: "1.1.1.1, 8.8.8.8"}` from Get-DnsClientServerAddress JSON.
+
+    ConvertTo-Json writes ONE adapter as a bare object and several as a list,
+    and an adapter with no servers has an empty (or null) ServerAddresses --
+    all three shapes are normal, none of them an error."""
+    import json
+    if not (raw or "").strip():
+        return {}
+    data = json.loads(raw)
+    if isinstance(data, dict):
+        data = [data]
+    result: Dict[str, str] = {}
+    for entry in data:
+        alias = entry.get("InterfaceAlias") or ""
+        servers = entry.get("ServerAddresses") or []
+        if isinstance(servers, str):
+            servers = [servers]
+        if alias and servers:
+            result[alias] = ", ".join(servers)
+    return result
+
+
+def get_dns_servers() -> Dict[str, str]:
+    """DNS servers per adapter, by the adapter names psutil uses.
+
+    The Adapter Info card's DNS column was always blank: the value was
+    initialised to "" and never assigned. A failed read returns {} and says why
+    in the log -- an unreadable DNS setting must not look like "no DNS"."""
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _DNS_PS],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            creationflags=CREATE_NO_WINDOW, timeout=15,
+        )
+        return parse_dns_servers(proc.stdout)
+    except Exception:
+        logger.warning("Could not read DNS servers per adapter", exc_info=True)
+        return {}
+
+
 def get_adapter_info() -> List[dict]:
     """Return a list of network adapter info dicts."""
     adapters = []
+    dns_by_adapter = get_dns_servers()
     stats = psutil.net_if_stats()
     addrs = psutil.net_if_addrs()
 
@@ -379,7 +426,8 @@ def get_adapter_info() -> List[dict]:
         _log.debug("Could not parse default gateway from route table", exc_info=True)
 
     for name, addr_list in addrs.items():
-        ip = mac = netmask = dns = ""
+        ip = mac = netmask = ""
+        dns = dns_by_adapter.get(name, "")
         for a in addr_list:
             family_name = a.family.name if hasattr(a.family, "name") else str(a.family)
             upper = family_name.upper()

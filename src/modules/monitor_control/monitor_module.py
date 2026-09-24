@@ -458,7 +458,20 @@ class MonitorControlModule(BaseModule):
             "unless you confirm.")
         self._fix_btn.clicked.connect(self._do_raise_refresh)
         self._fix_btn.hide()
-        layout.addWidget(self._fix_btn, 0, Qt.AlignmentFlag.AlignLeft)
+
+        self._mute_btn = QPushButton("Disable all monitor sound")
+        self._mute_btn.setToolTip(
+            "Hide the audio output of every monitor that currently has one "
+            "from Windows' sound device list, in one step. Each monitor's own "
+            "Audio button turns it back on.")
+        self._mute_btn.clicked.connect(self._do_mute_all_audio)
+        self._mute_btn.hide()
+
+        action_row = QHBoxLayout()
+        action_row.addWidget(self._fix_btn)
+        action_row.addWidget(self._mute_btn)
+        action_row.addStretch()
+        layout.addLayout(action_row)
 
         bar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
@@ -909,6 +922,7 @@ class MonitorControlModule(BaseModule):
 
         self._canvas.set_views(self._views)
         self._fix_btn.setVisible(bool(vm.raise_refresh_plan(self._views)))
+        self._mute_btn.setVisible(bool(self._audible_outputs()))
 
         while self._cards_layout.count() > 1:
             item = self._cards_layout.takeAt(0)
@@ -1119,6 +1133,116 @@ class MonitorControlModule(BaseModule):
                 raise OSError(reason)
 
         self._guarded(_apply, f"{view.name} to {hz:g} Hz at {width}x{height}")
+
+    def _audible_outputs(self) -> list:
+        """Display audio outputs that are live and not already hidden.
+
+        Deliberately NOT derived from the per-monitor views. On this machine
+        every HDMI output is named "High Definition Audio Device (Digital
+        Audio (HDMI))", so no endpoint can be attributed to any one monitor
+        and every card reads as "no audio" -- a button built on that would
+        never appear. "All monitor sound" is a class, not a per-monitor
+        question: every ACTIVE endpoint that belongs to a display output.
+        Ghosts (NOTPRESENT) are left alone, and so is an endpoint whose state
+        could not be read.
+        """
+        from modules.monitor_control import display_audio as da
+
+        try:
+            endpoints = da.list_render_endpoints()
+        except Exception:                                # noqa: BLE001
+            logger.debug("Could not read the audio endpoints", exc_info=True)
+            return []
+        return [e for e in da.display_audio_endpoints(endpoints)
+                if e.is_active
+                and da.is_hidden(e.raw_state) is False
+                and _full_endpoint_id(e)]
+
+    def _do_mute_all_audio(self) -> None:
+        """Hide every live monitor audio output, after one confirmation.
+
+        The same `SetEndpointVisibility` write as the per-monitor button, run
+        once per output on a single worker. A failure on one does not stop the
+        others, and the result says how many worked and which did not -- a
+        bulk action that reports only "done" hides which half failed.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+        from modules.monitor_control import display_audio as da
+
+        targets = self._audible_outputs()
+        if not targets:
+            self._status.setText("No monitor audio is on")
+            self._mute_btn.hide()
+            return
+
+        default_guid = None
+        try:
+            detail = da.default_render_endpoint_detail()
+            if detail.endpoint_id:
+                default_guid = da.endpoint_guid(detail.endpoint_id)
+        except Exception:                                # noqa: BLE001
+            logger.debug("Could not read the default output", exc_info=True)
+        default_hit = bool(default_guid) and any(
+            da.endpoint_guid(_full_endpoint_id(e)) == default_guid
+            for e in targets)
+
+        question = (f"Hide {len(targets)} monitor audio output"
+                    f"{'s' if len(targets) != 1 else ''} (HDMI / DisplayPort) "
+                    "from Windows' sound device list?\n\n"
+                    "Your headset and speakers are not touched. Each monitor's "
+                    "Audio button (or Windows' sound settings) turns them back on.")
+        if default_hit:
+            question += ("\n\nOne of them is currently your DEFAULT output -- "
+                         "Windows will fall back to another device.")
+        answer = QMessageBox.question(
+            self._widget, "Disable all monitor sound", question,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer is not QMessageBox.StandardButton.Yes:
+            return
+
+        jobs = [(e.friendly_name or "monitor audio", _full_endpoint_id(e))
+                for e in targets]
+        self._status.setText(f"Hiding {len(jobs)} monitor audio output(s)\u2026")
+
+        def _run(_worker):
+            outcome = []
+            for name, full_id in jobs:
+                try:
+                    da.set_endpoint_enabled(full_id, False,
+                                            confirm_supervised=True)
+                    outcome.append((name, ""))
+                except Exception as exc:  # noqa: BLE001 - reported per output
+                    logger.warning("Hiding audio %s failed: %s", full_id, exc)
+                    outcome.append((name, str(exc) or type(exc).__name__))
+            return outcome
+
+        def _done(outcome):
+            if not widget_is_valid(self._widget):
+                return
+            failed = [(n, why) for n, why in outcome if why]
+            if failed:
+                self._status.setText(
+                    f"Hid {len(outcome) - len(failed)} of {len(outcome)} "
+                    "monitor audio outputs; failed: "
+                    + "; ".join(f"{n} ({why})" for n, why in failed))
+            else:
+                self._status.setText(
+                    f"Monitor sound disabled ({len(outcome)} output"
+                    f"{'s' if len(outcome) != 1 else ''} hidden)")
+            self.refresh_data()
+
+        def _error(message: str):
+            if not widget_is_valid(self._widget):
+                return
+            self._status.setText(f"Could not change monitor audio: {message}")
+            logger.warning("Bulk audio hide failed: %s", message)
+
+        worker = Worker(_run)
+        worker.signals.result.connect(_done)
+        worker.signals.error.connect(_error)
+        self._workers.append(worker)
+        self._thread_pool().start(worker)
 
     def _do_set_audio_enabled(self, target_id: int, turn_on: bool) -> None:
         """Show or hide this monitor's audio endpoint, after asking.

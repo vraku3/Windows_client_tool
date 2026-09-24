@@ -167,7 +167,7 @@ def test_dropping_the_primary_onto_another_monitor_lands_beside_it(qapp):
     canvas.moved.connect(lambda t, x, y: got.append((t, x, y)))
     x, y, w, h = geo.to_canvas(canvas._rects[1], canvas._transform)
     start = QPointF(x + w / 2, y + h / 2)
-    end = QPointF(start.x() + w * 1.3, start.y())      # well onto the Gigabyte
+    end = QPointF(start.x() + w * 2.8, start.y())      # over the LG's right half
 
     def ev(kind, p, btn=Qt.MouseButton.LeftButton, held=Qt.MouseButton.LeftButton):
         return QMouseEvent(kind, p, canvas.mapToGlobal(p), btn, held,
@@ -178,6 +178,7 @@ def test_dropping_the_primary_onto_another_monitor_lands_beside_it(qapp):
                                 Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton))
     assert len(got) == 1
     target, nx, ny = got[0]
+    assert (target, nx, ny) == (1, 7680, 0)            # beside the LG, not on it
     rects = {t: r for t, r in canvas._rects.items()}
     assert not any(geo.overlap(rects[target], r)
                    for t, r in rects.items() if t != target)

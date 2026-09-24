@@ -131,29 +131,38 @@ def overlap(a: Rect, b: Rect) -> bool:
 
 
 def resolve_overlaps(moved: Rect, others: Sequence[Rect]) -> Rect:
-    """Push a dropped monitor off whatever it landed on.
+    """Where a dropped monitor really lands: the nearest slot that is clear.
 
-    Windows will not lay two displays over the same desktop area, so a drop
-    onto another monitor has to mean "next to it". Each overlap is resolved by
-    the smallest move that clears it (left, right, above or below that
-    monitor); pushing clear of one can land on another, so it repeats. Gives
-    up after a bounded number of passes and returns the last position -- the
-    caller re-checks with `overlap` before writing anything.
+    Windows will not lay two displays over the same area, so a drop onto
+    another monitor has to mean "next to it". Every edge of every other
+    monitor offers a slot (left of it, right of it, above, below); the slots
+    that overlap nothing are the candidates and the nearest one wins.
+    Choosing among clear slots -- rather than pushing clear of one monitor at
+    a time -- cannot end up under a shorter neighbour or bounce between two.
+
+    Vertical moves cost triple. Monitors sit side by side far more often than
+    stacked, and a horizontal drag onto a neighbour that previewed a landing
+    BELOW it (a few pixels cheaper) read as the map misbehaving; a genuinely
+    downward drop is still much nearer vertically than sideways.
+
+    Returns `moved` unchanged when it already overlaps nothing, and also when
+    no clear slot exists -- the caller re-checks with `overlap`.
     """
     x, y, w, h = moved
-    for _ in range(len(others) * 4 + 1):
-        clash = next((o for o in others if overlap((x, y, w, h), o)), None)
-        if clash is None:
-            break
-        ox, oy, ow, oh = clash
-        options = [
-            (abs((ox - w) - x), (ox - w, y)),
-            (abs((ox + ow) - x), (ox + ow, y)),
-            (abs((oy - h) - y), (x, oy - h)),
-            (abs((oy + oh) - y), (x, oy + oh)),
-        ]
-        _cost, (x, y) = min(options, key=lambda o: o[0])
-    return (x, y, w, h)
+    if not any(overlap(moved, o) for o in others):
+        return moved
+    candidates = []
+    for ox, oy, ow, oh in others:
+        candidates += [(ox - w, y, abs(ox - w - x)),
+                       (ox + ow, y, abs(ox + ow - x)),
+                       (x, oy - h, 3 * abs(oy - h - y)),
+                       (x, oy + oh, 3 * abs(oy + oh - y))]
+    clear = [(cx, cy, cost) for cx, cy, cost in candidates
+             if not any(overlap((cx, cy, w, h), o) for o in others)]
+    if not clear:
+        return moved
+    cx, cy, _cost = min(clear, key=lambda c: c[2])
+    return (cx, cy, w, h)
 
 
 def normalise_to_primary(layout: dict, primary_id) -> dict:

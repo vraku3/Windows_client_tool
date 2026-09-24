@@ -148,3 +148,19 @@ def test_a_snap_reaches_a_few_canvas_pixels_not_a_few_desktop_pixels():
     near = (2560 + 500, 0, 2560, 1440)        # 500 desktop px off the edge
     assert geo.snap(near, others, threshold=32)[0] == 3060      # old: no snap
     assert geo.snap(near, others, threshold=700)[0] == 2560     # scaled: snaps
+
+
+def test_a_horizontal_drop_on_a_neighbour_never_previews_below_it():
+    """The reported symptom: dragging the leftmost monitor across the others
+    previewed a landing UNDER the Gigabyte because that was a few pixels
+    cheaper than the sideways slot."""
+    others = [(2560, 0, 2560, 1440), (5120, 0, 2560, 1080)]
+    x, y, w, h = geo.resolve_overlaps((3583, 0, 2560, 1440), others)
+    assert y == 0, (x, y)
+    assert not any(geo.overlap((x, y, w, h), o) for o in others)
+
+
+def test_a_downward_drop_still_lands_below():
+    others = [(0, 0, 2560, 1440)]
+    x, y, w, h = geo.resolve_overlaps((100, 1200, 2560, 1440), others)
+    assert (x, y) == (100, 1440)

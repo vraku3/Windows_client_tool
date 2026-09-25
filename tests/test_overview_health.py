@@ -74,3 +74,14 @@ def test_real_reboot_and_shutdown_readers_do_not_raise():
     assert r is None or isinstance(r, list)
     c = oh.unexpected_shutdown_count()
     assert c is None or c >= 0
+
+
+def test_quick_tools_are_well_formed_and_launch_errors_are_reported(monkeypatch):
+    assert len(oh.QUICK_TOOLS) >= 6
+    for label, argv, tip in oh.QUICK_TOOLS:
+        assert label and argv and tip
+    monkeypatch.setattr(oh.os, "startfile", lambda *_: (_ for _ in ()).throw(OSError("nope")), raising=False)
+    assert "nope" in oh.launch_tool(["x.msc"])
+    calls = []
+    monkeypatch.setattr(oh.subprocess, "Popen", lambda argv, **k: calls.append(argv))
+    assert oh.launch_tool(["taskmgr.exe"]) is None and calls == [["taskmgr.exe"]]

@@ -39,7 +39,8 @@ from core.module_groups import ModuleGroup
 from core.composite_module import CompositeModule
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.worker import Worker
-from modules.dashboard.overview_health import History, collect_findings, summary_text
+from modules.dashboard.overview_health import (
+    QUICK_TOOLS, History, collect_findings, launch_tool, summary_text)
 from modules.dashboard.overview_widgets import CoreGrid, FindingRow, MetricTile
 
 logger = logging.getLogger(__name__)
@@ -254,6 +255,7 @@ class _DashboardWidget(QWidget):
         col.addLayout(self._build_tiles())
         col.addLayout(self._build_middle())
         col.addLayout(self._build_bottom())
+        col.addWidget(self._build_tools())
         col.addStretch(1)
         scroll.setWidget(inner)
         outer = QVBoxLayout(self)
@@ -353,6 +355,25 @@ class _DashboardWidget(QWidget):
         self._cores_card.body().addStretch(1)
         row.addWidget(self._cores_card, 2)
         return row
+
+    def _build_tools(self) -> QWidget:
+        card = _Card("Quick tools")
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        for label, argv, tip in QUICK_TOOLS:
+            button = QPushButton(label)
+            button.setToolTip(tip)
+            button.clicked.connect(lambda _=False, a=argv: self._open_tool(a))
+            row.addWidget(button)
+        row.addStretch(1)
+        card.body().addLayout(row)
+        self._tools_status = QLabel("")
+        self._tools_status.setStyleSheet("color: gray;")
+        card.body().addWidget(self._tools_status)
+        return card
+
+    def _open_tool(self, argv) -> None:
+        self._tools_status.setText(launch_tool(argv) or "")
 
     # ---- refresh ----------------------------------------------------------
 

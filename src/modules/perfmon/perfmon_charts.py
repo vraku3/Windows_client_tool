@@ -146,7 +146,9 @@ class _QtLineChart(QWidget):
         lbl_font = QFont("Segoe UI", 7)
         painter.setFont(lbl_font)
         painter.setPen(QPen(QColor(self.colours["axis"]), 1))
-        painter.drawText(2, int(chart_bottom - chart_h // 2), self._y_label)
+        # Halfway between two ticks, not on one: at the 50 tick the unit
+        # was drawn over the tick's own number ("5%0").
+        painter.drawText(2, int(chart_bottom - chart_h * 0.375), self._y_label)
 
         # Grid lines
         grid_pen = QPen(QColor(self.colours["grid"]), 1)
@@ -209,7 +211,13 @@ class _QtLineChart(QWidget):
         # Value text
         val_text = f"{self._data[-1]:.1f}"
         painter.setPen(QPen(QColor(self.colours["value"]), 1))
-        painter.drawText(int(last.x() + 6), int(last.y() - 4), val_text)
+        # Beside the dot -- but the newest point is at the right edge, where
+        # text to its right was clipped away, so put it on the left there.
+        text_w = painter.fontMetrics().horizontalAdvance(val_text)
+        x = last.x() + 6
+        if x + text_w > self.width():
+            x = last.x() - text_w - 6
+        painter.drawText(int(x), int(last.y() - 4), val_text)
 
 
 class RealTimeChart(QWidget):

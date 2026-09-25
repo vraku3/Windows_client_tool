@@ -6,6 +6,7 @@ found nothing", never "was refused" -- the rule Security Dashboard and the Tweak
 System hold too.
 """
 import logging
+import os
 import subprocess
 import time
 from collections import deque
@@ -223,6 +224,34 @@ class History:
 
     def values(self) -> List[float]:
         return list(self._values)
+
+
+#: Built-in Windows tools an admin reaches for first, as (label, argv, tip).
+#: Launched, never wrapped: each is Microsoft's own console and needs nothing
+#: from this app. None of them changes anything by opening.
+QUICK_TOOLS = (
+    ("Task Manager", ["taskmgr.exe"], "Windows' own process list"),
+    ("Resource Monitor", ["resmon.exe"], "Per-process disk, network and memory detail"),
+    ("Event Viewer", ["eventvwr.msc"], "System and Application event logs"),
+    ("Services", ["services.msc"], "Start, stop and configure services"),
+    ("Device Manager", ["devmgmt.msc"], "Drivers and problem devices"),
+    ("Disk Management", ["diskmgmt.msc"], "Volumes, partitions and initialisation"),
+    ("Reliability", ["perfmon.exe", "/rel"], "Stability history: crashes and installs by day"),
+    ("System Info", ["msinfo32.exe"], "Full hardware and software inventory"),
+)
+
+
+def launch_tool(argv) -> Optional[str]:
+    """Start one of QUICK_TOOLS. Returns an error message, or None on success."""
+    try:
+        if argv[0].endswith(".msc"):
+            os.startfile(argv[0])                      # .msc has no exe of its own
+        else:
+            subprocess.Popen(argv, creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+    except OSError as e:
+        logger.warning("could not start %s: %s", argv, e)
+        return f"Could not start {argv[0]}: {e}"
+    return None
 
 
 def heat_level(pct: float) -> str:

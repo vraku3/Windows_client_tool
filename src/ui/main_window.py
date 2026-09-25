@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
         self._filter_panel = FilterPanel(self)
         self._filter_panel.setAccessibleName("Search filters")
         self._filter_panel.setVisible(False)
-        self._filter_panel.filters_changed.connect(self._on_filters_changed)
+        self._setup_filter_search_debounce()
         root_layout.insertWidget(root_layout.indexOf(splitter), self._filter_panel)
 
         self._status_bar = AppStatusBar(self)
@@ -650,6 +650,16 @@ class MainWindow(QMainWindow):
     def _on_filter_toggled(self, expanded: bool) -> None:
         self._filter_panel.setVisible(expanded)
 
+    def _setup_filter_search_debounce(self) -> None:
+        """One search per burst of filter changes, not one per checkbox: a
+        Reset that flips several of them used to run that many synchronous
+        searches on the UI thread."""
+        self._filter_search_timer = QTimer(self)
+        self._filter_search_timer.setSingleShot(True)
+        self._filter_search_timer.setInterval(250)
+        self._filter_search_timer.timeout.connect(self._rerun_search_with_filters)
+        self._filter_panel.filters_changed.connect(self._on_filters_changed)
+
     def _on_filters_changed(self, _query) -> None:
         """A filter widget changed -- re-run the active search with it.
 
@@ -660,7 +670,12 @@ class MainWindow(QMainWindow):
         text (`FilterPanel` has no way to know it), so the real text comes
         from the search bar -- the same source `_on_search` always uses.
         `_on_search` already no-ops when there is nothing to search for.
+        Debounced: the search itself runs `_rerun_search_with_filters` once the
+        changes stop arriving.
         """
+        self._filter_search_timer.start()
+
+    def _rerun_search_with_filters(self) -> None:
         self._on_search(self._search_bar.text(), self._search_bar.is_regex())
 
     def _on_result_activated(self, result) -> None:

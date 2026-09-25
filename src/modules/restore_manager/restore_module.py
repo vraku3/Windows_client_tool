@@ -20,6 +20,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+
+#: `Get-ComputerRestorePoint` reports RestorePointType as a number.
+_RESTORE_POINT_TYPES = {
+    0: "Application install",
+    1: "Application uninstall",
+    10: "Device driver install",
+    12: "System settings change",
+    13: "Cancelled operation",
+}
+
+
+def restore_point_type_name(value) -> str:
+    """The name of a restore point type; the number itself if it is unknown."""
+    if value is None or value == "":
+        return "Unknown"
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return _RESTORE_POINT_TYPES.get(number, f"Type {number}")
+
 class RestoreManagerModule(BaseModule):
     # Deliberately NOT "Restore Manager" — that name is used by the Tools ▸ Restore
     # Manager... dialog (ui/restore_manager.py), which undoes THIS app's own tweak
@@ -192,7 +213,7 @@ class RestoreManagerModule(BaseModule):
             else:
                 date_str = str(ctime)[:14] if ctime else "Unknown"
 
-            rptype = pt.get("RestorePointType", "Unknown")
+            rptype = restore_point_type_name(pt.get("RestorePointType"))
             name_item = centered_item(name)
             try:
                 name_item.setData(Qt.ItemDataRole.UserRole, int(pt.get("SequenceNumber")))

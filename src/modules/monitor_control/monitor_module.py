@@ -1151,7 +1151,10 @@ class MonitorControlModule(BaseModule):
         try:
             endpoints = da.list_render_endpoints()
         except Exception:                                # noqa: BLE001
-            logger.debug("Could not read the audio endpoints", exc_info=True)
+            # Warning, not debug: this hides the "Disable all monitor sound"
+            # button, and a button that silently never appears looks like a
+            # missing feature rather than a failed read.
+            logger.warning("Could not read the audio endpoints", exc_info=True)
             return []
         return [e for e in da.display_audio_endpoints(endpoints)
                 if e.is_active

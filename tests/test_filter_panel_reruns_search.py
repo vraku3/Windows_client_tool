@@ -39,7 +39,25 @@ def test_changing_a_filter_reruns_the_active_search(window, monkeypatch):
                         lambda text, regex: calls.append((text, regex)))
 
     window._filter_panel.filters_changed.emit(object())
+    window._filter_search_timer.timeout.emit()      # the debounce elapsing
     assert calls == [("disk error", False)]
+
+
+def test_a_burst_of_filter_changes_runs_one_search_not_one_each(window, monkeypatch, qapp):
+    """A Reset flips several checkboxes; each used to run a full search."""
+    import time
+    window._search_bar._input.setText("disk error")
+    calls = []
+    monkeypatch.setattr(window, "_on_search",
+                        lambda text, regex: calls.append((text, regex)))
+    for _ in range(8):
+        window._filter_panel.filters_changed.emit(object())
+    assert calls == []                              # nothing yet: still debouncing
+    end = time.time() + 0.6
+    while time.time() < end:
+        qapp.processEvents()
+        time.sleep(0.02)
+    assert len(calls) == 1
 
 
 def test_changing_a_filter_with_no_active_search_is_a_no_op(window):
@@ -49,6 +67,7 @@ def test_changing_a_filter_with_no_active_search_is_a_no_op(window):
     window._search_results.setVisible(True)  # prove this gets cleared, not left stale
 
     window._filter_panel.filters_changed.emit(object())
+    window._filter_search_timer.timeout.emit()
     assert window._search_results.isVisible() is False
 
 

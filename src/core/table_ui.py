@@ -64,7 +64,13 @@ class NumericSortItem(QTableWidgetItem):
 
 
 def centered_item(text: str = "", sortable: bool = False) -> QTableWidgetItem:
-    """A table item whose text is centred (optionally sortable A-Z)."""
+    """A table item whose text is centred (optionally sortable A-Z).
+
+    `text` is coerced to `str`. `QTableWidgetItem(9)` is PyQt's item-TYPE
+    overload, not text, so a number handed straight in produced a blank cell
+    with no error -- that is how the Store Apps Architecture and System Restore
+    Type columns came to be empty on every row."""
+    text = "" if text is None else str(text)
     item = _SortableItem(text) if sortable else QTableWidgetItem(text)
     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
     return item

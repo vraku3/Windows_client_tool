@@ -164,7 +164,9 @@ class CompositeModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._tabs = QTabWidget()
         for index, child in enumerate(self.children):
-            label = f"{getattr(child, 'icon', '')} {child.name}".strip()
+            # "&" makes the next letter a keyboard mnemonic and is not drawn, so
+            # "Power & Freq" read "Power Freq". Doubled, it is shown as written.
+            label = f"{getattr(child, 'icon', '')} {child.name}".strip().replace("&", "&&")
             # Every tab gets a permanent page with a layout. A lazily built
             # child widget is ADDED to that layout later; the page itself is
             # never swapped out. Swapping (removeTab/insertTab) on the current

@@ -228,6 +228,10 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.installed_apps_tab",
     "modules.dashboard.folder_sizes",
     "modules.dashboard.disk_space_tab",
+    "modules.dashboard.topology",
+    "modules.dashboard.power",
+    "modules.dashboard.power_tab",
+    "modules.dashboard.recycle_watch",
     "modules.process_explorer.process_explorer_module",
     # PerfMon is a Dashboard tab (imported inside DashboardModule.__init__),
     # so PyInstaller's static analysis would otherwise drop it.

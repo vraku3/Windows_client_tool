@@ -20,6 +20,10 @@ def level_colour(pct: float) -> QColor:
     return QColor(semantic(_LEVEL_ROLE[heat_level(pct)]))
 
 
+def index_kind(kinds: List[str], index: int) -> str:
+    return kinds[index] if index < len(kinds) else ""
+
+
 class Sparkline(QWidget):
     """A filled line over the last readings, scaled 0..ceiling."""
 
@@ -101,15 +105,30 @@ class CoreGrid(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._loads: List[float] = []
+        self._kinds: List[str] = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+    def set_kinds(self, kinds: List[str]) -> None:
+        """'P' / 'E' / '' per logical processor; E cores get a mark and a tooltip."""
+        self._kinds = list(kinds)
+        self._refresh_tip()
+        self.update()
 
     def set_loads(self, loads: List[float]) -> None:
         resized = len(loads) != len(self._loads)
         self._loads = list(loads)
         if resized:
             self.updateGeometry()
-        self.setToolTip("\n".join(f"Core {i}: {v:.0f}%" for i, v in enumerate(self._loads)))
+        self._refresh_tip()
         self.update()
+
+    def _refresh_tip(self) -> None:
+        self.setToolTip("\n".join(
+            f"Core {i}: {v:.0f}%" + self._kind_note(i) for i, v in enumerate(self._loads)))
+
+    def _kind_note(self, index: int) -> str:
+        kind = self._kinds[index] if index < len(self._kinds) else ""
+        return {"P": "  (performance core)", "E": "  (efficiency core)"}.get(kind, "")
 
     def _columns(self, width: int) -> int:
         return max(1, (width + self.GAP) // (self.CELL + self.GAP))
@@ -138,6 +157,10 @@ class CoreGrid(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(base)
             painter.drawRoundedRect(rect, 4, 4)
+            if index_kind(self._kinds, i) == "E":
+                painter.setPen(QPen(self.palette().text().color(), 1.2))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 4, 4)
             if load >= 1:       # a wall of zeros is noise; idle cores stay blank
                 painter.setPen(self.palette().text().color())
                 painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(int(load)))

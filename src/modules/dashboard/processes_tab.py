@@ -30,6 +30,7 @@ from core.procengine.grouping import group_processes, totals
 from core.procengine.snapshot import SnapshotSource
 from ui.error_banner import ErrorBanner
 from . import process_view as pv
+from .recycle_watch import RecycleWatch
 from .process_menu import ProcessMenu
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class ProcessesTab(QWidget):
         #: Which app rows the user had opened, so a refresh does not fold
         #: the tree shut once a second.
         self._expanded: set = set()
+        self._recycle = RecycleWatch()
         self._filter = "all"
         self._sort = None            # (column, descending) or None
         self._visible_extra = set(pv.DEFAULT_VISIBLE)
@@ -295,6 +297,7 @@ class ProcessesTab(QWidget):
         snapshot, groups = result
         self._snapshot = snapshot
         self._groups = groups
+        self._recycle.update(snapshot)
         self._refresh_chip_counts()
         self._rebuild()
         self.snapshot_taken.emit(snapshot)
@@ -374,6 +377,8 @@ class ProcessesTab(QWidget):
         item = QTreeWidgetItem(parent, [label])
         item.setData(0, PID_ROLE, info.pid)
         flags = pv.badges(info)
+        if self._recycle.recently_reused(info.pid, 120.0, self._snapshot.taken_at):
+            flags = flags + ["PID reused"]
         item.setToolTip(0, (info.details.path or info.name)
                         + (f"\n[{', '.join(flags)}]" if flags else ""))
         if "elevated" in flags:
@@ -515,6 +520,10 @@ class ProcessesTab(QWidget):
             return
         total = len(self._snapshot.by_pid)
         parts = [f"{shown:,} of {total:,} processes"]
+        if self._recycle.total:
+            last = self._recycle.events[-1]
+            parts.append(f"{self._recycle.total} PID reuse(s) seen (latest: {last.pid} "
+                         f"{last.old_name} -> {last.new_name})")
         if self._snapshot.refused:
             parts.append(f"{self._snapshot.refused:,} could not be read "
                          f"(run as administrator to see them)")

@@ -207,6 +207,7 @@ class _DashboardWidget(QWidget):
         self._top_busy = False
         self._findings: list = []
         self._top_source = None
+        self._topology = None
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self._refresh)
@@ -438,6 +439,11 @@ class _DashboardWidget(QWidget):
         cap = f"{len(per)} logical cores" + (f"  •  {freq.current / 1000:.2f} GHz" if freq else "")
         self._tiles["cpu"].show_reading(f"{total:.0f}%", cap, total, self._push("cpu", total))
         self._core_grid.set_loads(per)
+        if self._topology is None:
+            from modules.dashboard.topology import read_topology
+            self._topology = read_topology() or False      # False: asked, no answer
+        if self._topology:
+            self._core_grid.set_kinds([self._topology.kind_of(i) for i in range(len(per))])
 
     def _refresh_memory(self) -> None:
         vm = psutil.virtual_memory()
@@ -750,6 +756,7 @@ class DashboardModule(CompositeModule):
         from modules.dashboard.sysinfo_tab import SystemInfoModule
         from modules.dashboard.installed_apps_tab import InstalledAppsModule
         from modules.dashboard.disk_space_tab import DiskSpaceModule
+        from modules.dashboard.power_tab import PowerModule
         from modules.perfmon.perfmon_module import PerfMonModule
         from modules.process_explorer.process_explorer_module import (
             ProcessExplorerModule)
@@ -767,6 +774,7 @@ class DashboardModule(CompositeModule):
             SystemInfoModule(),
             InstalledAppsModule(),
             DiskSpaceModule(),
+            PowerModule(),
             ProcessExplorerModule(),
             PerfMonModule(),
         ]

@@ -113,6 +113,11 @@ class ServicesTab(QWidget):
         self._table.setSelectionMode(
             QTableWidget.SelectionMode.SingleSelection)
         self._table.setSortingEnabled(False)
+        # Items wrap by default, and a long path has no spaces to wrap at, so
+        # Qt elided "C:\Program Files\..." to "C:..." -- hiding the one part
+        # (the exe name at the end) a reader wants. Middle-elide keeps it.
+        self._table.setWordWrap(False)
+        self._table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(22)
         self._table.setAlternatingRowColors(True)

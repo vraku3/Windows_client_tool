@@ -28,6 +28,17 @@ _RUNONCE_APPROVED_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Sta
 _STARTUP_FOLDER_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
 
 
+
+def last_run_text(value) -> str:
+    """'Last: 2026-09-23', or 'Never run'. The Task Scheduler reports a task
+    that has not run as 1999-11-30 (its zero date), which read as a real
+    date twenty-five years ago."""
+    text = str(value or "")[:10]
+    if not text or text < "2000-01-01":
+        return "Never run"
+    return f"Last: {text}"
+
+
 def _collect_disabled_names(approved_key: str) -> set:
     """Return the set of entry names marked disabled (0x03) under StartupApproved."""
     disabled = set()
@@ -215,7 +226,7 @@ def get_scheduled_task_entries() -> List[StartupEntry]:
                 command=path,
                 enabled=task.Enabled,
                 source="task",
-                extra=f"Last: {str(task.LastRunTime)[:10]}",
+                extra=last_run_text(task.LastRunTime),
             ))
     except Exception as e:
         logger.warning("Failed to load scheduled task entries: %s", e)

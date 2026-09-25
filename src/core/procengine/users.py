@@ -75,6 +75,8 @@ def group_by_user(snapshot) -> List[UserGroup]:
     buckets: Dict[str, UserGroup] = {}
     unknown: List = []
     for info in snapshot.by_pid.values():
+        if info.pid == 0:       # idle time is not anybody's CPU
+            continue
         user = getattr(info.details, "user", None)
         if not user:
             unknown.append(info)

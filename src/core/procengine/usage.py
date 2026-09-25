@@ -61,6 +61,10 @@ def app_usage(snapshot) -> List[AppUsage]:
     """
     buckets: Dict[str, AppUsage] = {}
     for info in snapshot.by_pid.values():
+        # PID 0 is the idle "process": its CPU time is the time nothing ran,
+        # so it always topped the list with days of "usage".
+        if info.pid == 0:
+            continue
         name = getattr(info.details, "description", None) or info.name
         path = getattr(info.details, "path", None)
         key = (path or name).lower()

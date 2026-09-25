@@ -23,7 +23,8 @@ def test_the_dashboard_hosts_the_process_views(module):
     place for the live performance picture."""
     assert [child.name for child in module.children] == \
         ["Overview", "Processes", "Performance", "Details", "Users",
-         "App history", "Startup apps", "Services", "Process Explorer",
+         "App history", "Startup apps", "Services", "Connections",
+         "System Info", "Installed Apps", "Disk Space", "Process Explorer",
          "PerfMon"]
 
 

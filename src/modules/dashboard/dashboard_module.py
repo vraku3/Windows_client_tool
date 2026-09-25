@@ -746,6 +746,10 @@ class DashboardModule(CompositeModule):
         from modules.dashboard.users_module import UsersModule
         from modules.dashboard.startup_module import StartupModule
         from modules.dashboard.services_module import ServicesModule
+        from modules.dashboard.connections_tab import ConnectionsModule
+        from modules.dashboard.sysinfo_tab import SystemInfoModule
+        from modules.dashboard.installed_apps_tab import InstalledAppsModule
+        from modules.dashboard.disk_space_tab import DiskSpaceModule
         from modules.perfmon.perfmon_module import PerfMonModule
         from modules.process_explorer.process_explorer_module import (
             ProcessExplorerModule)
@@ -759,6 +763,10 @@ class DashboardModule(CompositeModule):
             AppHistoryModule(),
             StartupModule(),
             ServicesModule(),
+            ConnectionsModule(),
+            SystemInfoModule(),
+            InstalledAppsModule(),
+            DiskSpaceModule(),
             ProcessExplorerModule(),
             PerfMonModule(),
         ]

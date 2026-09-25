@@ -13,6 +13,7 @@ Refresh interval: 3 seconds (configurable)
 import logging
 import os
 import platform
+import time
 
 from datetime import datetime
 from typing import Optional
@@ -29,6 +30,7 @@ from PyQt6.QtWidgets import (
     QSlider,
     QVBoxLayout,
     QWidget,
+    QApplication,
 )
 
 from core.base_module import BaseModule
@@ -36,6 +38,9 @@ from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
 from core.composite_module import CompositeModule
 from core.events import NAV_REQUEST_MODULE, NavRequestData
+from core.worker import Worker
+from modules.dashboard.overview_health import History, collect_findings, summary_text
+from modules.dashboard.overview_widgets import CoreGrid, FindingRow, MetricTile
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +135,9 @@ class _Card(QFrame):
         self._body = QVBoxLayout()
         self._body.setSpacing(6)
         vbox.addLayout(self._body)
+        # Cards are stretched to their row's height; without this the extra
+        # space is shared out between the title and the body, so titles floated.
+        vbox.addStretch(1)
 
     def body(self) -> QVBoxLayout:
         return self._body
@@ -184,10 +192,19 @@ class _StatBar(QWidget):
 
 class _DashboardWidget(QWidget):
     _first_refresh_requested = False
+    FINDINGS_EVERY_S = 60
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.app = None
+        self._workers: list = []
+        self._histories = {k: History() for k in ("cpu", "mem", "disk", "net")}
+        self._last_io = None
+        self._last_findings_at = 0.0
+        self._findings_busy = False
+        self._top_busy = False
+        self._findings: list = []
+        self._top_source = None
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self._refresh)
@@ -223,117 +240,121 @@ class _DashboardWidget(QWidget):
             self._refresh()
             self._timer.start()
 
+    # ---- layout -----------------------------------------------------------
+
     def _setup_ui(self) -> None:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-
         inner = QWidget()
-        grid = QGridLayout(inner)
-        grid.setSpacing(12)
-        grid.setContentsMargins(12, 12, 12, 12)
-
-        # --- System Info card (row 0, col 0-1) ---
-        self._sys_card = _Card("System Information")
-        self._os_lbl = QLabel("—")
-        self._host_lbl = QLabel("—")
-        self._cpu_name_lbl = QLabel("—")
-        self._uptime_lbl = QLabel("—")
-        self._boot_lbl = QLabel("—")
-        for lbl in (
-            self._os_lbl,
-            self._host_lbl,
-            self._cpu_name_lbl,
-            self._uptime_lbl,
-            self._boot_lbl,
-        ):
-            lbl.setWordWrap(True)
-            self._sys_card.body().addWidget(lbl)
-        grid.addWidget(self._sys_card, 0, 0, 1, 2)
-
-        # --- CPU card (row 1, col 0) ---
-        self._cpu_card = _Card("CPU")
-        self._cpu_total = _StatBar("Total")
-        self._cpu_card.body().addWidget(self._cpu_total)
-        self._cpu_per_bars: list[_StatBar] = []
-        grid.addWidget(self._cpu_card, 1, 0)
-
-        # --- Memory card (row 1, col 1) ---
-        self._mem_card = _Card("Memory")
-        self._ram_bar = _StatBar("RAM")
-        self._swap_bar = _StatBar("Swap / Page")
-        self._mem_card.body().addWidget(self._ram_bar)
-        self._mem_card.body().addWidget(self._swap_bar)
-        self._mem_detail = QLabel("—")
-        self._mem_detail.setStyleSheet("color: gray; font-size: 11px;")
-        self._mem_card.body().addWidget(self._mem_detail)
-        grid.addWidget(self._mem_card, 1, 1)
-
-        # --- Disk card (row 2, col 0-1) ---
-        self._disk_card = _Card("Disk Usage")
-        self._disk_bars: dict[str, _StatBar] = {}
-        grid.addWidget(self._disk_card, 2, 0, 1, 2)
-
-        # --- Network card (row 3, col 0-1) ---
-        self._net_card = _Card("Network (cumulative)")
-        self._net_sent = QLabel("Sent: —")
-        self._net_recv = QLabel("Received: —")
-        self._net_card.body().addWidget(self._net_sent)
-        self._net_card.body().addWidget(self._net_recv)
-        grid.addWidget(self._net_card, 3, 0, 1, 2)
-
-        # --- Driver Health card (row 4, col 0) ---
-        # Read-only: shows Driver Manager's already-fetched driver list via
-        # the module registry, never triggers a scan of its own.
-        self._driver_card = _Card("Driver Health")
-        self._driver_problems_lbl = QLabel("—")
-        self._driver_card.body().addWidget(self._driver_problems_lbl)
-        grid.addWidget(self._driver_card, 4, 0)
-
-        grid.setRowStretch(5, 1)
+        col = QVBoxLayout(inner)
+        col.setContentsMargins(14, 12, 14, 12)
+        col.setSpacing(12)
+        col.addLayout(self._build_header())
+        col.addLayout(self._build_tiles())
+        col.addLayout(self._build_middle())
+        col.addLayout(self._build_bottom())
+        col.addStretch(1)
         scroll.setWidget(inner)
-
-        # --- Low disk space warning banner (hidden unless below threshold) ---
-        self._space_banner = QFrame()
-        self._space_banner.setStyleSheet("background: #FF8800; border-radius: 4px;")
-        banner_lay = QHBoxLayout(self._space_banner)
-        banner_lay.setContentsMargins(10, 6, 10, 6)
-        self._space_banner_lbl = QLabel("")
-        self._space_banner_lbl.setStyleSheet("color: white;")
-        self._space_banner_lbl.setWordWrap(True)
-        banner_lay.addWidget(self._space_banner_lbl, 1)
-        self._clean_now_btn = QPushButton("Clean now")
-        self._clean_now_btn.clicked.connect(self._on_clean_now)
-        banner_lay.addWidget(self._clean_now_btn)
-        self._space_banner.hide()
-
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(self._space_banner)
+        outer.addWidget(scroll)
 
-        # Refresh-rate slider: how fast the live numbers repaint.
-        refresh_row = QHBoxLayout()
-        refresh_row.setContentsMargins(10, 6, 10, 0)
-        refresh_lbl = QLabel("Refresh rate")
-        refresh_lbl.setStyleSheet("color: #888;")
+    def _build_header(self) -> QVBoxLayout:
+        box = QVBoxLayout()
+        box.setSpacing(2)
+        top = QHBoxLayout()
+        self._host_lbl = QLabel(platform.node())
+        font = self._host_lbl.font()
+        font.setPointSize(font.pointSize() + 8)
+        font.setBold(True)
+        self._host_lbl.setFont(font)
+        top.addWidget(self._host_lbl)
+        top.addStretch(1)
+        self._copy_btn = QPushButton("Copy summary")
+        self._copy_btn.setToolTip("Copy a plain-text snapshot of this machine for a ticket")
+        self._copy_btn.clicked.connect(self._copy_summary)
+        top.addWidget(self._copy_btn)
+        top.addSpacing(12)
+        top.addWidget(self._build_refresh_control())
+        box.addLayout(top)
+        self._os_lbl = QLabel("—")
+        self._os_lbl.setStyleSheet("color: gray;")
+        self._os_lbl.setWordWrap(True)
+        box.addWidget(self._os_lbl)
+        return box
+
+    def _build_refresh_control(self) -> QWidget:
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
+        label = QLabel("Refresh")
+        label.setStyleSheet("color: gray;")
         self._refresh_slider = QSlider(Qt.Orientation.Horizontal)
         self._refresh_slider.setRange(1, 60)
-        self._refresh_slider.setSingleStep(1)
+        self._refresh_slider.setFixedWidth(140)
         self._refresh_slider.setToolTip("How often the live metrics update")
         self._refresh_slider.valueChanged.connect(self._on_refresh_slider)
         self._refresh_val = QLabel("5 s")
-        self._refresh_val.setMinimumWidth(36)
-        self._refresh_val.setAlignment(Qt.AlignmentFlag.AlignRight)
-        refresh_row.addWidget(refresh_lbl)
-        refresh_row.addWidget(self._refresh_slider, 1)
-        refresh_row.addWidget(self._refresh_val)
-        outer.addLayout(refresh_row)
+        self._refresh_val.setMinimumWidth(34)
+        for w in (label, self._refresh_slider, self._refresh_val):
+            row.addWidget(w)
+        return holder
 
-        outer.addWidget(scroll)
+    def _build_tiles(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self._tiles = {
+            "cpu": MetricTile("CPU"), "mem": MetricTile("Memory"),
+            "disk": MetricTile("Disk activity", ceiling=50.0),
+            "net": MetricTile("Network", ceiling=1.0),
+        }
+        for tile in self._tiles.values():
+            row.addWidget(tile, 1)
+        return row
 
-    def _on_clean_now(self) -> None:
-        if self.app is not None:
-            self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name="Quick Cleanup"))
+    def _build_middle(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self._attention_card = _Card("Needs attention")
+        self._attention_box = QVBoxLayout()
+        self._attention_box.setSpacing(4)
+        self._attention_card.body().addLayout(self._attention_box)
+        self._attention_status = QLabel("Checking…")
+        self._attention_status.setStyleSheet("color: gray;")
+        self._attention_card.body().addWidget(self._attention_status)
+        recheck = QPushButton("Re-check now")
+        recheck.clicked.connect(lambda: self._start_findings(force=True))
+        self._attention_card.body().addWidget(recheck, 0, Qt.AlignmentFlag.AlignLeft)
+        row.addWidget(self._attention_card, 3)
+        self._top_card = _Card("Top consumers")
+        self._top_cpu_lbl = QLabel("—")
+        self._top_mem_lbl = QLabel("—")
+        for text, lbl in (("By CPU", self._top_cpu_lbl), ("By memory", self._top_mem_lbl)):
+            head = QLabel(text)
+            head.setStyleSheet("color: gray; font-weight: bold;")
+            self._top_card.body().addWidget(head)
+            lbl.setTextFormat(Qt.TextFormat.PlainText)
+            lbl.setStyleSheet("font-family: Consolas, monospace;")
+            self._top_card.body().addWidget(lbl)
+        self._top_card.body().addStretch(1)
+        row.addWidget(self._top_card, 2)
+        return row
+
+    def _build_bottom(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        self._disk_card = _Card("Drives")
+        self._disk_bars: dict[str, _StatBar] = {}
+        row.addWidget(self._disk_card, 3)
+        self._cores_card = _Card("CPU cores")
+        self._core_grid = CoreGrid()
+        self._cores_card.body().addWidget(self._core_grid)
+        self._cores_card.body().addStretch(1)
+        row.addWidget(self._cores_card, 2)
+        return row
+
+    # ---- refresh ----------------------------------------------------------
 
     def _refresh(self) -> None:
         if not _PSUTIL:
@@ -341,53 +362,66 @@ class _DashboardWidget(QWidget):
         self._refresh_system()
         self._refresh_cpu()
         self._refresh_memory()
+        self._refresh_io()
         self._refresh_disk()
-        self._refresh_network()
-        self._refresh_driver_health()
+        self._start_top()
+        self._start_findings()
 
     def _refresh_system(self) -> None:
         from core.windows_utils import cpu_brand_name, windows_display_name
-        self._os_lbl.setText(f"OS: {windows_display_name()}")
-        self._host_lbl.setText(f"Host: {platform.node()}")
-        cpu = (
-            cpu_brand_name()
-            or psutil.cpu_freq()
-            and f"{psutil.cpu_freq().current:.0f} MHz"
-        )
-        self._cpu_name_lbl.setText(f"CPU: {cpu or '—'}")
-        boot_ts = psutil.boot_time()
-        boot_dt = datetime.fromtimestamp(boot_ts)
-        uptime = datetime.now() - boot_dt
-        h, rem = divmod(int(uptime.total_seconds()), 3600)
-        m = rem // 60
-        self._uptime_lbl.setText(f"Uptime: {h}h {m}m")
-        self._boot_lbl.setText(f"Last boot: {boot_dt.strftime('%Y-%m-%d  %H:%M')}")
+        cpu = cpu_brand_name() or "CPU unknown"
+        boot_dt = datetime.fromtimestamp(psutil.boot_time())
+        secs = int((datetime.now() - boot_dt).total_seconds())
+        self._uptime_text = _uptime_text(secs)
+        self._cpu_text = cpu
+        self._os_text = windows_display_name()
+        self._os_lbl.setText(
+            f"{self._os_text}   •   {cpu}   •   up {self._uptime_text}"
+            f"   •   booted {boot_dt.strftime('%Y-%m-%d %H:%M')}")
+
+    def _push(self, key: str, value: float) -> list:
+        self._histories[key].add(value)
+        return self._histories[key].values()
 
     def _refresh_cpu(self) -> None:
         total = psutil.cpu_percent(interval=None)
-        self._cpu_total.update(total, f"{total:.1f}%")
         per = psutil.cpu_percent(percpu=True, interval=None)
-        # Add per-core bars lazily
-        while len(self._cpu_per_bars) < len(per):
-            idx = len(self._cpu_per_bars)
-            bar = _StatBar(f"Core {idx}")
-            self._cpu_per_bars.append(bar)
-            self._cpu_card.body().addWidget(bar)
-        for i, pct in enumerate(per):
-            self._cpu_per_bars[i].update(pct, f"{pct:.0f}%")
+        freq = psutil.cpu_freq()
+        cap = f"{len(per)} logical cores" + (f"  •  {freq.current / 1000:.2f} GHz" if freq else "")
+        self._tiles["cpu"].show_reading(f"{total:.0f}%", cap, total, self._push("cpu", total))
+        self._core_grid.set_loads(per)
 
     def _refresh_memory(self) -> None:
         vm = psutil.virtual_memory()
         sw = psutil.swap_memory()
-        self._ram_bar.update(
-            vm.percent, f"{vm.percent:.0f}%  ({_fmt(vm.used)}/{_fmt(vm.total)})"
-        )
-        self._swap_bar.update(
-            sw.percent, f"{sw.percent:.0f}%  ({_fmt(sw.used)}/{_fmt(sw.total)})"
-        )
-        self._mem_detail.setText(
-            f"Available: {_fmt(vm.available)}   Free: {_fmt(vm.free)}"
-        )
+        cap = (f"{_fmt(vm.used)} of {_fmt(vm.total)}  •  {_fmt(vm.available)} free"
+               f"  •  page file {sw.percent:.0f}%")
+        self._tiles["mem"].show_reading(f"{vm.percent:.0f}%", cap, vm.percent,
+                                        self._push("mem", vm.percent))
+
+    def _refresh_io(self) -> None:
+        now = time.monotonic()
+        try:
+            disk, net = psutil.disk_io_counters(), psutil.net_io_counters()
+        except Exception:
+            logger.warning("io counters unreadable", exc_info=True)
+            return
+        last, self._last_io = self._last_io, (now, disk, net)
+        if last is None or now <= last[0]:
+            return
+        dt = now - last[0]
+        d_bps = ((disk.read_bytes - last[1].read_bytes) + (disk.write_bytes - last[1].write_bytes)) / dt
+        rx = (net.bytes_recv - last[2].bytes_recv) / dt
+        tx = (net.bytes_sent - last[2].bytes_sent) / dt
+        disk_mb = d_bps / 1048576
+        self._tiles["disk"].show_reading(
+            f"{disk_mb:.1f} MB/s",
+            f"read {_fmt(disk.read_bytes)} • written {_fmt(disk.write_bytes)} since boot",
+            min(100.0, disk_mb * 2), self._push("disk", disk_mb))
+        self._tiles["net"].show_reading(
+            f"↓ {_rate(rx)}   ↑ {_rate(tx)}",
+            f"received {_fmt(net.bytes_recv)} • sent {_fmt(net.bytes_sent)} since boot",
+            0.0, self._push("net", (rx + tx) / 1048576))
 
     def _refresh_disk(self) -> None:
         try:
@@ -410,7 +444,7 @@ class _DashboardWidget(QWidget):
                 self._disk_card.body().addWidget(bar)
             self._disk_bars[label].update(
                 usage.percent,
-                f"{usage.percent:.0f}%  ({_fmt(usage.used)}/{_fmt(usage.total)})",
+                f"{usage.percent:.0f}%  ({_fmt(usage.free)} free of {_fmt(usage.total)})",
             )
 
         # A volume that has gone away (USB pulled, card ejected) must lose its
@@ -422,45 +456,130 @@ class _DashboardWidget(QWidget):
             bar.setParent(None)
             bar.deleteLater()
 
-        self._refresh_space_warning()
+    # ---- background reads -------------------------------------------------
 
-    def _refresh_space_warning(self) -> None:
-        if self.app is None:
+    def _pool(self):
+        return getattr(self.app, "thread_pool", None) if self.app is not None else None
+
+    def _start_top(self) -> None:
+        pool = self._pool()
+        if pool is None or self._top_busy:
             return
-        try:
-            system_drive = os.environ.get("SystemDrive", "C:") + "\\"
-            usage = psutil.disk_usage(system_drive)
-        except Exception:
-            logger.warning("Ignored Exception in system-drive disk_usage", exc_info=True)
+        self._top_busy = True
+        if self._top_source is None:
+            from core.procengine.snapshot import SnapshotSource
+            self._top_source = SnapshotSource()
+        worker = Worker(lambda _w: _top_consumers(self._top_source.read()))
+        worker.signals.result.connect(self._on_top)
+        worker.signals.error.connect(self._on_top_error)
+        self._workers.append(worker)
+        pool.start(worker)
+
+    def _on_top_error(self, message) -> None:
+        self._top_busy = False
+        logger.warning("top consumers unreadable: %s", message)
+        self._top_cpu_lbl.setText("Could not read the process list")
+        self._top_mem_lbl.setText("")
+
+    def _on_top(self, result) -> None:
+        self._top_busy = False
+        if not _alive(self):
             return
-        threshold_gb = self.app.config.get("app.free_space_warn_gb", 10)
-        free_gb = usage.free / (1024 ** 3)
-        if free_gb < threshold_gb:
-            self._space_banner_lbl.setText(
-                f"Low disk space on {system_drive} — {free_gb:.1f} GB free "
-                f"(warning threshold: {threshold_gb} GB)."
-            )
-            self._space_banner.show()
-        else:
-            self._space_banner.hide()
+        by_cpu, by_mem = result
+        self._top_cpu_lbl.setText("\n".join(f"{c:5.1f}%   {n}" for n, c, _ in by_cpu)
+                                  or "Measuring…")
+        self._top_mem_lbl.setText("\n".join(f"{_fmt(m):>10}   {n}" for n, _, m in by_mem))
 
-    def _refresh_network(self) -> None:
-        io = psutil.net_io_counters()
-        self._net_sent.setText(f"Sent:       {_fmt(io.bytes_sent)}")
-        self._net_recv.setText(f"Received:  {_fmt(io.bytes_recv)}")
+    def _start_findings(self, force: bool = False) -> None:
+        pool = self._pool()
+        if pool is None or self._findings_busy:
+            return
+        if not force and time.monotonic() - self._last_findings_at < self.FINDINGS_EVERY_S:
+            return
+        self._findings_busy = True
+        drivers = _driver_problem_count(self.app)
+        worker = Worker(lambda _w: collect_findings(driver_problems=drivers))
+        worker.signals.result.connect(self._on_findings)
+        worker.signals.error.connect(self._on_findings_error)
+        self._workers.append(worker)
+        pool.start(worker)
 
-    def _refresh_driver_health(self) -> None:
-        count = _driver_problem_count(self.app)
-        if count is None:
-            text = "Not scanned yet — open Driver Manager"
-        elif count:
-            text = f"{count} driver(s) need attention"
-        else:
-            text = "No driver problems detected"
-        self._driver_problems_lbl.setText(text)
+    def _on_findings_error(self, message) -> None:
+        self._findings_busy = False
+        logger.warning("health checks failed: %s", message)
+        self._attention_status.setText(f"The health checks failed: {message}")
+
+    def _on_findings(self, findings) -> None:
+        self._findings_busy = False
+        if not _alive(self):
+            return
+        self._last_findings_at = time.monotonic()
+        self._findings = findings
+        while self._attention_box.count():
+            item = self._attention_box.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for finding in findings:
+            row = FindingRow(finding)
+            row.action_requested.connect(self._navigate)
+            self._attention_box.addWidget(row)
+        real = [f for f in findings if f.severity != "unknown"]
+        self._attention_status.setText(
+            "Nothing needs attention." if not findings else
+            f"{len(real)} item(s) need attention." if real else "")
+
+    def _navigate(self, module_name: str) -> None:
+        if self.app is not None:
+            self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name=module_name))
+
+    def _copy_summary(self) -> None:
+        vm = psutil.virtual_memory()
+        lines = [f"RAM: {vm.percent:.0f}% ({_fmt(vm.used)} of {_fmt(vm.total)})"]
+        lines += [f"Drive {label.split()[0]}: {bar._val.text()}"
+                  for label, bar in self._disk_bars.items()]
+        text = summary_text(platform.node(), getattr(self, "_os_text", ""),
+                            getattr(self, "_cpu_text", ""), getattr(self, "_uptime_text", ""),
+                            self._findings, lines)
+        QApplication.clipboard().setText(text)
+        self._copy_btn.setText("Copied ✓")
+        QTimer.singleShot(1500, lambda: _alive(self) and self._copy_btn.setText("Copy summary"))
 
     def stop_timer(self) -> None:
         self._timer.stop()
+        for w in self._workers:
+            w.cancel()
+        self._workers.clear()
+
+
+def _alive(widget) -> bool:
+    try:
+        from PyQt6 import sip
+        return not sip.isdeleted(widget)
+    except ImportError:
+        return True
+
+
+def _uptime_text(seconds: int) -> str:
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    return (f"{days}d " if days else "") + f"{hours}h {rem // 60}m"
+
+
+def _rate(bytes_per_s: float) -> str:
+    return f"{_fmt(bytes_per_s)}/s"
+
+
+def _top_consumers(snapshot, count: int = 5):
+    """(name, cpu %, private bytes) for the busiest and the largest processes."""
+    rows = []
+    for info in snapshot.by_pid.values():
+        if info.pid == 0:
+            continue
+        cpu = info.rates.cpu_percent
+        rows.append((info.name, cpu or 0.0, info.raw.working_set_private))
+    by_cpu = [r for r in sorted(rows, key=lambda r: r[1], reverse=True)[:count] if r[1] > 0]
+    by_mem = sorted(rows, key=lambda r: r[2], reverse=True)[:count]
+    return by_cpu, by_mem
 
 
 def _mounted_partitions(parts):

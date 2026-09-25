@@ -14,8 +14,9 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor
-from PyQt6.QtWidgets import (QHeaderView, QLabel, QTreeWidget,
-                             QTreeWidgetItem, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
+                             QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
+                             QVBoxLayout, QWidget)
 
 from core.semantic_colors import semantic
 from core.worker import Worker
@@ -23,6 +24,7 @@ from core.worker import Worker
 from core.procengine.columns import fmt_bytes, fmt_percent, fmt_rate
 from core.procengine.snapshot import SnapshotSource
 from core.procengine.users import UNKNOWN, group_by_user
+from .sessions import list_sessions
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,23 @@ class UsersTab(QWidget):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+
+        heading = QLabel("Logged-on sessions", self)
+        heading.setStyleSheet("font-weight: bold; padding: 4px 4px 0 4px;")
+        layout.addWidget(heading)
+        self.sessions_table = QTableWidget(0, 5, self)
+        self.sessions_table.setHorizontalHeaderLabels(
+            ["Session", "User", "State", "Type", "Client"])
+        self.sessions_table.verticalHeader().setVisible(False)
+        self.sessions_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.sessions_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.sessions_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch)
+        self.sessions_table.setMaximumHeight(120)
+        layout.addWidget(self.sessions_table)
+        self.sessions_note = QLabel("", self)
+        self.sessions_note.setStyleSheet("color: gray; padding: 0 4px;")
+        layout.addWidget(self.sessions_note)
 
         self.tree = QTreeWidget(self)
         self.tree.setColumnCount(len(COLUMNS))
@@ -112,15 +131,37 @@ class UsersTab(QWidget):
 
     def _read(self):
         snapshot = self._source.read()
-        return snapshot, group_by_user(snapshot)
+        return snapshot, group_by_user(snapshot), list_sessions()
 
     def _apply(self, result) -> None:
         self._busy = False
-        snapshot, groups = result
+        snapshot, groups, *rest = result
         self._snapshot = snapshot
         self._groups = groups
+        if rest:
+            self._show_sessions(rest[0])
         self._rebuild()
         self.snapshot_taken.emit(snapshot)
+
+    def _show_sessions(self, sessions) -> None:
+        """A failed read says so; it is never shown as an empty table."""
+        table = self.sessions_table
+        if sessions is None:
+            table.setRowCount(0)
+            self.sessions_note.setText(
+                "Could not ask Windows who is logged on (Terminal Services API refused).")
+            return
+        table.setRowCount(len(sessions))
+        for row, sess in enumerate(sessions):
+            values = (str(sess.id), sess.account, sess.state,
+                      "Remote (RDP)" if sess.is_remote else "Console",
+                      sess.client or "")
+            for column, text in enumerate(values):
+                table.setItem(row, column, QTableWidgetItem(text))
+        remote = sum(1 for sess in sessions if sess.is_remote)
+        self.sessions_note.setText(
+            f"{len(sessions)} session(s)" + (f", {remote} remote" if remote else "")
+            + ". A Disconnected session keeps its processes running.")
 
     def _failed(self, message) -> None:
         self._busy = False

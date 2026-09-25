@@ -15,16 +15,19 @@ import logging
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QMenu,
-                             QMessageBox, QPushButton, QTableWidget,
-                             QTableWidgetItem, QVBoxLayout, QWidget)
+from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout,
+                             QHeaderView, QLabel, QLineEdit, QMenu,
+                             QMessageBox, QPlainTextEdit, QPushButton,
+                             QSplitter, QTableWidget, QTableWidgetItem,
+                             QVBoxLayout, QWidget)
 
 from core.confirm import confirm_destructive
 from core.semantic_colors import semantic
 from core.worker import COMWorker, Worker
 
 from modules.services_manager import services_module
+from . import service_view as sv
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +36,8 @@ REFRESH_MS = 5000
 #: Task Manager column order. Path is stretched because it is prose; the
 #: status and the short codes hug their content.
 _HEADERS = ("Status", "Name", "Display Name", "Start Type", "PID",
-            "Impact", "Path")
-STATUS, NAME, DISPLAY, START_TYPE, PID, IMPACT, PATH = range(len(_HEADERS))
+            "Impact", "Path", "Log on as")
+STATUS, NAME, DISPLAY, START_TYPE, PID, IMPACT, PATH, LOGON = range(len(_HEADERS))
 
 #: WMI state word -> semantic colour name. Anything not listed (the pending
 #: states, Unknown) keeps the theme's plain foreground rather than being
@@ -83,6 +86,8 @@ class ServicesTab(QWidget):
         self._app = None
         self._busy = False
         self._services: List[Dict] = []
+        self._filter = "all"
+        self._required_by: Dict[str, List[str]] = {}
         self._setup_ui()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
@@ -100,8 +105,14 @@ class ServicesTab(QWidget):
         self._refresh_btn = QPushButton("Refresh", self)
         self._refresh_btn.clicked.connect(self.refresh)
         top.addWidget(self._refresh_btn)
-        top.addStretch(1)
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText(
+            "Filter by name, description, path or account…")
+        self._search.setClearButtonEnabled(True)
+        self._search.textChanged.connect(self._repopulate)
+        top.addWidget(self._search, 1)
         layout.addLayout(top)
+        layout.addLayout(self._build_chips())
 
         self._table = QTableWidget(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(list(_HEADERS))
@@ -131,10 +142,115 @@ class ServicesTab(QWidget):
         for column in (STATUS, NAME, DISPLAY, START_TYPE, PID, IMPACT):
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.ResizeToContents)
-        layout.addWidget(self._table, 1)
+        split = QSplitter(Qt.Orientation.Vertical, self)
+        split.addWidget(self._table)
+        split.addWidget(self._build_detail())
+        split.setStretchFactor(0, 4)
+        split.setStretchFactor(1, 1)
+        split.setChildrenCollapsible(False)
+        layout.addWidget(split, 1)
+        self._table.itemSelectionChanged.connect(self._show_detail)
 
         self.status = QLabel("", self)
         layout.addWidget(self.status)
+
+    def _build_chips(self) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setContentsMargins(4, 0, 4, 0)
+        self._chips = {}
+        group = QButtonGroup(self)
+        group.setExclusive(True)
+        for key, label, _fn in sv.FILTERS:
+            chip = QPushButton(label, self)
+            chip.setCheckable(True)
+            chip.setChecked(key == "all")
+            chip.clicked.connect(lambda _=False, k=key: self._set_filter(k))
+            group.addButton(chip)
+            self._chips[key] = (chip, label)
+            row.addWidget(chip)
+        row.addStretch(1)
+        return row
+
+    def _build_detail(self) -> QPlainTextEdit:
+        self.detail = QPlainTextEdit(self)
+        self.detail.setReadOnly(True)
+        self.detail.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        mono = QFont("Consolas")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        self.detail.setFont(mono)
+        self.detail.setMinimumHeight(130)
+        self.detail.setPlaceholderText(
+            "Select a service to see what it does, which account it runs "
+            "as, and what depends on it.")
+        return self.detail
+
+    def _set_filter(self, key: str) -> None:
+        self._filter = key
+        self._repopulate()
+
+    def _refresh_chip_counts(self) -> None:
+        counts = sv.filter_counts(self._services)
+        for key, (chip, label) in self._chips.items():
+            chip.setText(label if key == "all" else f"{label} ({counts[key]})")
+
+    def _selected_name(self) -> Optional[str]:
+        rows = self._table.selectionModel().selectedRows() \
+            if self._table.selectionModel() else []
+        svc = self._service_at(rows[0].row()) if rows else None
+        return (svc or {}).get("Name")
+
+    def _repopulate(self, *_args) -> None:
+        """Filter, redraw, and keep whichever service was selected."""
+        keep = self._selected_name()
+        shown = sv.visible(self._services, self._filter, self._search.text())
+        self._table.blockSignals(True)
+        self._populate(shown)
+        if keep:
+            for row in range(self._table.rowCount()):
+                svc = self._service_at(row)
+                if svc and svc.get("Name") == keep:
+                    self._table.selectRow(row)
+                    break
+        self._table.blockSignals(False)
+        self._show_detail()
+        self.status.setText(f"{len(shown):,} of {len(self._services):,} services")
+
+    def _show_detail(self) -> None:
+        name = self._selected_name()
+        svc = next((s for s in self._services if s.get("Name") == name), None)
+        if svc is None:
+            self.detail.setPlainText("")
+            return
+        scroll = self.detail.verticalScrollBar().value()
+        self.detail.setPlainText(sv.detail_text(svc, self._required_by.get(name)))
+        self.detail.verticalScrollBar().setValue(scroll)
+        if name not in self._required_by:
+            self._fetch_required_by(name)
+
+    def _fetch_required_by(self, name: str) -> None:
+        """`sc enumdepend` runs on a worker; the detail re-renders when it lands."""
+        pool = getattr(self._app, "thread_pool", None) if self._app else None
+        if pool is None:
+            return
+        self._required_by[name] = None      # in flight: do not ask twice
+        worker = Worker(lambda _w, n=name: [
+            d.get("display") or d.get("name")
+            for d in services_module.query_required_by(n)])
+        worker.signals.result.connect(
+            lambda names, n=name: self._on_required_by(n, names))
+        worker.signals.error.connect(
+            lambda message, n=name: self._on_required_by_error(n, message))
+        self._workers.append(worker)
+        pool.start(worker)
+
+    def _on_required_by(self, name: str, names) -> None:
+        self._required_by[name] = list(names)
+        if self._selected_name() == name:
+            self._show_detail()
+
+    def _on_required_by_error(self, name: str, message) -> None:
+        logger.warning("dependents of %s unreadable: %s", name, message)
+        self._required_by.pop(name, None)
 
     def set_app(self, app) -> None:
         self._app = app
@@ -186,8 +302,8 @@ class ServicesTab(QWidget):
     def _apply(self, result) -> None:
         self._busy = False
         self._services = list(result)
-        self._populate(self._services)
-        self.status.setText(f"{len(self._services):,} services")
+        self._refresh_chip_counts()
+        self._repopulate()
 
     def _failed(self, message) -> None:
         self._busy = False
@@ -210,7 +326,8 @@ class ServicesTab(QWidget):
                       svc.get("Start Type") or "—",
                       pid,
                       svc.get("Impact") or "—",
-                      svc.get("Path") or "—")
+                      svc.get("Path") or "—",
+                      svc.get("StartName") or "—")
             for column, text in enumerate(values):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(
@@ -255,6 +372,19 @@ class ServicesTab(QWidget):
         restart = menu.addAction("Restart service")
         restart.triggered.connect(
             lambda _=False: self._confirmed_action("restart", svc))
+        startup = menu.addMenu("Startup type")
+        for label, _arg in sv.START_MODES:
+            action = startup.addAction(label)
+            action.triggered.connect(
+                lambda _=False, lb=label: self._confirmed_startup(svc, lb))
+        menu.addSeparator()
+        copy_name = menu.addAction("Copy service name")
+        copy_name.triggered.connect(
+            lambda _=False: QApplication.clipboard().setText(svc.get("Name") or ""))
+        copy_path = menu.addAction("Copy path")
+        copy_path.setEnabled(bool(svc.get("Path")))
+        copy_path.triggered.connect(
+            lambda _=False: QApplication.clipboard().setText(svc.get("Path") or ""))
         menu.addSeparator()
         pid = _pid_of(svc)
         if pid:
@@ -281,6 +411,42 @@ class ServicesTab(QWidget):
                                    irreversible=False):
             return
         self._run_service_action(action, name, display)
+
+    def _confirmed_startup(self, svc: Dict, label: str) -> None:
+        display = svc.get("Display Name") or svc.get("Name") or ""
+        if not confirm_destructive(
+                self, "Change startup type",
+                f"Set '{display}' to start: {label}?",
+                irreversible=False):
+            return
+        pool = getattr(self._app, "thread_pool", None) if self._app else None
+        if pool is None:
+            from PyQt6.QtCore import QThreadPool
+            pool = QThreadPool.globalInstance()
+        name = svc.get("Name") or ""
+        worker = Worker(lambda _w: sv.set_start_type(name, label))
+        worker.signals.result.connect(
+            lambda result, d=display, lb=label: self._on_startup_done(d, lb, result))
+        worker.signals.error.connect(
+            lambda message, d=display: self._message(
+                "Change startup type", f"Could not change '{d}'.\n\n{message}",
+                QMessageBox.Icon.Warning))
+        self._workers.append(worker)
+        pool.start(worker)
+
+    def _on_startup_done(self, display: str, label: str, result) -> None:
+        ok, detail = result
+        if ok:
+            self._message("Change startup type",
+                          f"'{display}' is now set to start: {label}.",
+                          QMessageBox.Icon.Information)
+        else:
+            self._message("Change startup type",
+                          f"Could not change '{display}'.\n\n{detail}\n\n"
+                          "This needs Administrator rights.",
+                          QMessageBox.Icon.Warning)
+        self._required_by.clear()
+        self.refresh()
 
     def _run_service_action(self, action: str, name: str,
                             display: str) -> None:

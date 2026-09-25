@@ -1094,6 +1094,26 @@ permission-restricted folder do.
   discovery path is ever found — the FILE hosting itself is not the
   obstacle.
 
+### Dashboard Overview / Processes (`src/modules/dashboard/`)
+
+Both panes were reworked 2026-09-25. Qt-free logic is split from widgets, as
+elsewhere: `overview_health.py` (findings engine), `process_view.py` (extra
+columns, filter chips, badges, detail text) are testable headless;
+`overview_widgets.py` and `processes_tab.py` are the Qt side.
+
+- **Overview's "Needs attention" is computed, and a refused read is an
+  `unknown` finding, never silence.** Checks run on a Worker, at most once a
+  minute (`FINDINGS_EVERY_S`), not on every refresh tick; `wevtutil` for the
+  event log costs real time.
+- **Processes' extra columns are hidden by default** (only User shows) and the
+  choice persists in `modules.dashboard.process_columns`. Values we were refused
+  are blank, never guessed.
+- **`_rebuild` blocks tree signals.** `tree.clear()` fires selection-changed,
+  which blanked the detail panel every second; one `_selection_changed()` runs
+  after the tree is whole again.
+- **The Name column is Interactive, not Stretch** -- a stretched one is squeezed
+  to ~100px the moment Path/Command line are shown.
+
 ### Debloat (`src/modules/debloat/`)
 
 126 catalogued apps plus 219 tweaks across two tabs, and four builtin

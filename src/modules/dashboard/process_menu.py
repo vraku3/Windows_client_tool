@@ -122,6 +122,13 @@ class ProcessMenu(QObject):
         copy = menu.addAction("Copy details")
         copy.triggered.connect(lambda: self._copy(info))
 
+        cmd = menu.addAction("Copy command line")
+        cmd.setEnabled(not many and bool(getattr(getattr(info, "details", None), "cmdline", None)))
+        cmd.triggered.connect(lambda: self._copy_text(info.details.cmdline))
+        path = menu.addAction("Copy path")
+        path.setEnabled(not many and bool(_path_of(info)))
+        path.triggered.connect(lambda: self._copy_text(_path_of(info)))
+
         menu.exec(position)
 
     # ---- the destructive ones -------------------------------------------
@@ -318,6 +325,10 @@ class ProcessMenu(QObject):
         QMessageBox.information(
             self._widget, "VirusTotal",
             f"{icon} {result.score}\nSHA-256: {result.sha256}")
+
+    def _copy_text(self, text) -> None:
+        if text:
+            QApplication.clipboard().setText(text)
 
     def _copy(self, info) -> None:
         if info is None:

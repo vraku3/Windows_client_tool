@@ -114,3 +114,13 @@ def test_recent_chip_exists_and_fresh_processes_pass_it():
     src = SnapshotSource(); src.read()
     me = src.read().by_pid[os.getpid()]
     assert isinstance(pv.passes("recent", me), bool)
+
+
+def test_overview_cpu_tile_shows_package_power_when_the_hardware_has_it(qapp):
+    from modules.dashboard.dashboard_module import _DashboardWidget
+    w = _DashboardWidget()
+    first = w._power_text()                     # primes the meter
+    import time; time.sleep(1.1)
+    text = w._power_text()
+    assert text == "" or text.strip().endswith(" W")
+    w.stop_timer()

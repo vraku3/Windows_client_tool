@@ -66,6 +66,7 @@ class ProcessesTab(QWidget):
         #: the tree shut once a second.
         self._expanded: set = set()
         self._recycle = RecycleWatch()
+        self._net_wanted = False
         self._filter = "all"
         self._sort = None            # (column, descending) or None
         self._visible_extra = set(pv.DEFAULT_VISIBLE)
@@ -92,6 +93,13 @@ class ProcessesTab(QWidget):
         self.filter_box.textChanged.connect(self._rebuild)
         top.addWidget(self.filter_box, 1)
 
+        self.net_button = QPushButton("Track network", self)
+        self.net_button.setCheckable(True)
+        self.net_button.setToolTip(
+            "Show each process's network throughput. Uses a kernel event trace, which "
+            "needs administrator rights; results arrive about 2 seconds behind the traffic.")
+        self.net_button.toggled.connect(self._toggle_network)
+        top.addWidget(self.net_button)
         self.end_button = QPushButton("End task", self)
         self.end_button.setEnabled(False)
         self.end_button.clicked.connect(self._end_selected)
@@ -258,12 +266,46 @@ class ProcessesTab(QWidget):
         self._load_saved_columns()
 
     def start(self) -> None:
+        if self._net_wanted:
+            self._begin_network()          # left the tab with it on: resume
         self.refresh()
         self._timer.start(REFRESH_MS)
 
     def stop(self) -> None:
         self._timer.stop()
         self.cancel_all()
+        from . import net_trace
+        net_trace.shared().stop()          # a kernel trace nobody is looking at is pure cost
+
+    # ---- per-process network (ETW) ---------------------------------------
+
+    def _toggle_network(self, on: bool) -> None:
+        self._net_wanted = on
+        if on:
+            self._begin_network()
+        else:
+            from . import net_trace
+            net_trace.shared().stop()
+            self._set_column_visible("network", False)
+            self.status.setText("Network tracking stopped.")
+
+    def _begin_network(self) -> None:
+        from . import net_trace
+        ok, message = net_trace.shared().start()
+        if not ok:
+            self._net_wanted = False
+            self.net_button.blockSignals(True)
+            self.net_button.setChecked(False)
+            self.net_button.blockSignals(False)
+            self.status.setText(f"Network tracking not started: {message}")
+            return
+        self._set_column_visible("network", True)
+        self.status.setText("Tracking network per process (about 2 s behind the traffic).")
+
+    def _set_column_visible(self, key: str, shown: bool) -> None:
+        if (key in self._visible_extra) != shown:
+            self._toggle_column(key, shown)
+            self._rebuild()
 
     def cancel_all(self) -> None:
         for worker in self._workers:
@@ -298,6 +340,9 @@ class ProcessesTab(QWidget):
         self._snapshot = snapshot
         self._groups = groups
         self._recycle.update(snapshot)
+        from . import net_trace
+        if net_trace.shared().running:
+            net_trace.shared().sample_rates()
         self._refresh_chip_counts()
         self._rebuild()
         self.snapshot_taken.emit(snapshot)

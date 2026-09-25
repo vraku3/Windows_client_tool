@@ -59,7 +59,17 @@ def _integrity(info) -> str:
     return info.details.integrity or ""
 
 
+def _rate_text(bytes_per_s: float) -> str:
+    return f"{_fmt_bytes(bytes_per_s)}/s" if bytes_per_s >= 1 else ""
+
+
+def _net_rate(info) -> float:
+    from . import net_trace           # only stdlib inside; imported lazily anyway
+    return net_trace.rate_of(info.pid)
+
+
 COLUMNS: Tuple[Column, ...] = (
+    Column("network", "Network", 90, lambda i: _rate_text(_net_rate(i)), _net_rate, summable=True),
     Column("user", "User", 130, lambda i: i.details.user or "",
            lambda i: (i.details.user or "").lower()),
     Column("session", "Session", 64, lambda i: str(i.raw.session),
@@ -96,6 +106,8 @@ def aggregate_text(column: Column, members) -> str:
         total = sum(column.value(m) for m in members)
         if column.key == "cpu_time":
             return format_duration(total)
+        if column.key == "network":
+            return _rate_text(total)
         return f"{int(total):,}"
     unique = {column.text(m) for m in members if column.text(m)}
     return unique.pop() if len(unique) == 1 else ("(varies)" if unique else "")

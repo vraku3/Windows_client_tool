@@ -8,6 +8,7 @@ psutil>=5.9
 pywin32>=306
 WMI>=1.5.1
 requests>=2.31
+pywintrace>=0.2      # ETW consumer: per-process network throughput (Dashboard > Processes)
 
 # Optional — enables packet capture in Network Diagnostics; the app degrades
 # gracefully without it (see network_diagnostics/network_tools.py).

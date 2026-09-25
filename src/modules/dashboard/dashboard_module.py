@@ -208,6 +208,7 @@ class _DashboardWidget(QWidget):
         self._findings: list = []
         self._top_source = None
         self._topology = None
+        self._energy = None          # None: not tried; False: this hardware has no meter
         self._timer = QTimer(self)
         self._timer.setInterval(3000)
         self._timer.timeout.connect(self._refresh)
@@ -428,6 +429,23 @@ class _DashboardWidget(QWidget):
             f"{self._os_text}   •   {cpu}   •   up {self._uptime_text}"
             f"   •   booted {boot_dt.strftime('%Y-%m-%d %H:%M')}")
 
+    def _power_text(self) -> str:
+        """"  •  76 W" from the CPU's energy meter, or nothing where there is none."""
+        if self._energy is None:
+            from modules.dashboard.energy import EnergyMeter
+            try:
+                self._energy = EnergyMeter()
+            except OSError as e:
+                logger.info("no energy meter for the Overview: %s", e)
+                self._energy = False
+        if not self._energy:
+            return ""
+        reading = self._energy.read()
+        if reading is None:
+            return ""
+        watts = reading.package_w if reading.package_w is not None else reading.cores_total_w
+        return f"  •  {watts:.0f} W"
+
     def _push(self, key: str, value: float) -> list:
         self._histories[key].add(value)
         return self._histories[key].values()
@@ -436,7 +454,8 @@ class _DashboardWidget(QWidget):
         total = psutil.cpu_percent(interval=None)
         per = psutil.cpu_percent(percpu=True, interval=None)
         freq = psutil.cpu_freq()
-        cap = f"{len(per)} logical cores" + (f"  •  {freq.current / 1000:.2f} GHz" if freq else "")
+        cap = (f"{len(per)} logical cores" + (f"  •  {freq.current / 1000:.2f} GHz" if freq else "")
+               + self._power_text())
         self._tiles["cpu"].show_reading(f"{total:.0f}%", cap, total, self._push("cpu", total))
         self._core_grid.set_loads(per)
         if self._topology is None:
@@ -600,6 +619,9 @@ class _DashboardWidget(QWidget):
 
     def stop_timer(self) -> None:
         self._timer.stop()
+        if self._energy:
+            self._energy.close()
+            self._energy = None
         for w in self._workers:
             w.cancel()
         self._workers.clear()

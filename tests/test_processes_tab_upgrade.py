@@ -82,3 +82,25 @@ def test_a_refresh_keeps_the_selected_process_and_its_detail(tab):
 
 def test_name_column_is_not_squeezed_by_the_extra_columns(tab):
     assert tab.tree.header().sectionSize(0) >= 200
+
+
+def test_network_column_and_toggle_refuse_cleanly_without_admin(tab, monkeypatch):
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: False)
+    tab.net_button.setChecked(True)
+    assert not tab.net_button.isChecked()                       # bounced back off
+    assert "administrator" in tab.status.text()
+    assert "network" not in tab._visible_extra
+
+
+def test_network_column_renders_rates_and_sorts_on_the_number(tab):
+    from modules.dashboard import net_trace, process_view as pv
+    info = next(i for i in tab._snapshot.by_pid.values() if i.pid > 4)
+    trace = net_trace.shared()
+    trace.rates = {info.pid: (1024.0, 2048.0)}
+    try:
+        col = pv.BY_KEY["network"]
+        assert col.text(info) == "3.0 KB/s" and col.value(info) == 3072.0
+        assert pv.aggregate_text(col, [info, info]) == "6.0 KB/s"
+    finally:
+        trace.rates = {}
+    assert pv.BY_KEY["network"].text(info) == ""

@@ -16,6 +16,14 @@ from core.table_ui import centered_item, fit_table, fit_last
 from modules.hardware_inventory import hardware_reader as hr
 
 
+def _fit_height(table) -> None:
+    """Cap a table at exactly its rows, so a fixed pixel cap can never hide one
+    (100px showed 2 of the 3 memory summary rows)."""
+    rows = sum(table.rowHeight(r) for r in range(table.rowCount()))
+    table.setMaximumHeight(table.horizontalHeader().height() + rows
+                           + 2 * table.frameWidth() + 4)
+
+
 def _make_kv_table(parent=None) -> QTableWidget:
     t = QTableWidget(0, 2, parent)
     t.setHorizontalHeaderLabels(["Property", "Value"])
@@ -161,7 +169,7 @@ class HardwareModule(BaseModule):
             layout.addWidget(lbl)
             t1 = _make_kv_table()
             _fill_kv(t1, summary)
-            t1.setMaximumHeight(100)
+            _fit_height(t1)
             layout.addWidget(t1)
             lbl2 = QLabel("Memory Sticks")
             lbl2.setStyleSheet("font-weight:bold")
@@ -182,7 +190,7 @@ class HardwareModule(BaseModule):
             cols = ["Model", "Size", "Interface", "Serial", "Partitions"]
             t1 = _make_dict_table(cols)
             _fill_dict(t1, drives, cols)
-            t1.setMaximumHeight(150)
+            _fit_height(t1)
             layout.addWidget(t1)
             lbl2 = QLabel("Partitions")
             lbl2.setStyleSheet("font-weight:bold")

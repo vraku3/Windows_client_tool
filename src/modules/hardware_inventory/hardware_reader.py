@@ -101,6 +101,19 @@ def get_cpu_info(worker=None):
     return rows
 
 
+def _stick_speed(stick) -> str:
+    """The speed it RUNS at (XMP/EXPO), not the JEDEC one it advertises: these
+    sticks are F5-6800 parts and Speed said 4800."""
+    speed = getattr(stick, "ConfiguredClockSpeed", None) or stick.Speed
+    return f"{speed} MHz" if speed else "N/A"
+
+
+def _stick_maker(name) -> str:
+    """SMBIOS often leaves the maker as 'Unknown' or a hex JEDEC id."""
+    text = (name or "").strip()
+    return "" if text.lower() in ("unknown", "undefined") else text
+
+
 def get_memory_info(worker=None):
     vm = psutil.virtual_memory()
     summary = [
@@ -115,8 +128,8 @@ def get_memory_info(worker=None):
             sticks.append({
                 "Bank": stick.BankLabel or "",
                 "Capacity": _fmt_bytes(int(stick.Capacity)) if stick.Capacity else "N/A",
-                "Speed": f"{stick.Speed} MHz" if stick.Speed else "N/A",
-                "Manufacturer": stick.Manufacturer or "",
+                "Speed": _stick_speed(stick),
+                "Manufacturer": _stick_maker(stick.Manufacturer),
                 "PartNumber": (stick.PartNumber or "").strip(),
             })
     except Exception as e:
@@ -185,7 +198,8 @@ def _registry_vram(name):
             for i in range(64):
                 try:
                     sub = winreg.EnumKey(root, i)
-                except OSError:
+                except OSError as e:     # EnumKey past the last subkey
+                    logger.debug("display class enumeration ended at %d: %s", i, e)
                     break
                 try:
                     with winreg.OpenKey(root, sub) as key:
@@ -196,10 +210,11 @@ def _registry_vram(name):
                             key, "HardwareInformation.qwMemorySize")[0]
                         return int.from_bytes(size, "little") if isinstance(
                             size, (bytes, bytearray)) else int(size)
-                except OSError:
+                except OSError as e:
+                    logger.debug("display class key %s unreadable: %s", sub, e)
                     continue
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("display class registry key unreadable: %s", e)
     return None
 
 

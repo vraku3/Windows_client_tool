@@ -191,6 +191,7 @@ def run_all(folder: str, cancelled=lambda: False, on_step: Callable[[str], None]
         try:
             results += step()
         except Cancelled:
+            logger.info("benchmarks cancelled during %s", label)
             break
         except OSError as e:
             logger.warning("benchmark %s failed: %s", label, e)

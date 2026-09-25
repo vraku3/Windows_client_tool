@@ -24,7 +24,7 @@ def test_the_dashboard_hosts_the_process_views(module):
     assert [child.name for child in module.children] == \
         ["Overview", "Processes", "Performance", "Details", "Users",
          "App history", "Startup apps", "Services", "Connections",
-         "System Info", "Installed Apps", "Disk Space", "Power & Freq", "Benchmarks", "Flight Recorder",
+         "System Info", "Installed Apps", "Disk Space", "Power & Freq", "Benchmarks", "Flight Recorder", "Energy", "Thermals",
          "Process Explorer",
          "PerfMon"]
 

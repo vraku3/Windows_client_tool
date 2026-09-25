@@ -759,6 +759,8 @@ class DashboardModule(CompositeModule):
         from modules.dashboard.power_tab import PowerModule
         from modules.dashboard.benchmarks_tab import BenchmarksModule
         from modules.dashboard.flight_tab import FlightModule
+        from modules.dashboard.energy_tab import EnergyModule
+        from modules.dashboard.thermal_tab import ThermalModule
         from modules.perfmon.perfmon_module import PerfMonModule
         from modules.process_explorer.process_explorer_module import (
             ProcessExplorerModule)
@@ -779,6 +781,8 @@ class DashboardModule(CompositeModule):
             PowerModule(),
             BenchmarksModule(),
             FlightModule(),
+            EnergyModule(),
+            ThermalModule(),
             ProcessExplorerModule(),
             PerfMonModule(),
         ]

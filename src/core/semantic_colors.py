@@ -87,6 +87,17 @@ CHROME_PALETTES: Dict[str, Dict[str, str]] = {
     },
 }
 
+# The phosphor themes are derived from dark, so their palettes are built rather
+# than typed: see core/phosphor.py. They join the same dicts, so every reader
+# (semantic(), chrome(), the contrast tests) treats them like dark and light.
+from core import phosphor as _phosphor       # noqa: E402  (after the dicts it extends)
+
+for _name in _phosphor.PHOSPHOR_THEMES:
+    _sem, _chr, _bg = _phosphor.palettes(_name)
+    SEMANTIC_PALETTES[_name] = _sem
+    CHROME_PALETTES[_name] = _chr
+    PANE_BACKGROUND[_name] = _bg
+
 _current_theme = "dark"
 
 

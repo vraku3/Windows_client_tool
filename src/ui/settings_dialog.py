@@ -32,8 +32,11 @@ class SettingsDialog(QDialog):
         general_layout = QFormLayout(general_group)
 
         self._theme_combo = QComboBox()
-        self._theme_combo.addItems(["dark", "light"])
-        self._theme_combo.setCurrentText(self._app.config.get("app.theme", "dark"))
+        from core.phosphor import LABELS
+        for name in self._app.theme.THEMES:
+            self._theme_combo.addItem(LABELS.get(name, name), name)
+        current = self._theme_combo.findData(self._app.config.get("app.theme", "dark"))
+        self._theme_combo.setCurrentIndex(max(0, current))
         general_layout.addRow("Theme:", self._theme_combo)
 
         self._log_level_combo = QComboBox()
@@ -82,14 +85,14 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _save_and_close(self):
-        self._app.config.set("app.theme", self._theme_combo.currentText())
+        self._app.config.set("app.theme", self._theme_combo.currentData())
         self._app.config.set("app.log_level", self._log_level_combo.currentText())
         self._app.config.set("app.start_minimized", self._start_minimized.isChecked())
         self._app.config.set(
             "app.check_admin_on_start", self._admin_check.isChecked()
         )
         self._app.config.set("app.minimize_to_tray", self._tray_check.isChecked())
-        self._app.theme.apply_theme(self._theme_combo.currentText())
+        self._app.theme.apply_theme(self._theme_combo.currentData())
         self._app.logger.set_level(self._log_level_combo.currentText())
         self._app.config.save()
         self.accept()

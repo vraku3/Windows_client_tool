@@ -176,11 +176,11 @@ class _StatBar(QWidget):
         self._bar.setValue(int(pct))
         # Color the bar based on usage level
         if pct >= 90:
-            color = "#e06c75"
+            color = semantic("error")
         elif pct >= 70:
             color = semantic("warning")
         else:
-            color = "#98c379"
+            color = semantic("success")
         self._bar.setStyleSheet(
             f"QProgressBar::chunk {{ background-color: {color}; border-radius: 2px; }}"
         )

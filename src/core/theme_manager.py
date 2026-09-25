@@ -4,6 +4,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core import phosphor
 from core.semantic_colors import set_theme as _set_semantic_theme
 from PyQt6.QtWidgets import QApplication
 
@@ -21,7 +22,7 @@ class ThemeManager(QObject):
     #: would be acting on a theme that is not in force.
     theme_changed = pyqtSignal(str)
 
-    THEMES = ("dark", "light")
+    THEMES = ("dark", "light") + tuple(phosphor.PHOSPHOR_THEMES)
 
     def __init__(self, styles_dir: str):
         super().__init__()
@@ -36,8 +37,13 @@ class ThemeManager(QObject):
         if theme not in self.THEMES:
             logger.warning("Unknown theme '%s', falling back to dark", theme)
             theme = "dark"
-        qss_path = os.path.join(self._styles_dir, f"{theme}.qss")
+        derived = theme in phosphor.PHOSPHOR_THEMES
+        # A phosphor theme is dark.qss recoloured, so it can never fall out of
+        # step with the dark theme's rules.
+        qss_path = os.path.join(self._styles_dir, "dark.qss" if derived else f"{theme}.qss")
         stylesheet = self._load_qss(qss_path)
+        if stylesheet is not None and derived:
+            stylesheet = phosphor.recolour_qss(stylesheet, theme)
         if stylesheet is not None:
             app = QApplication.instance()
             if app:

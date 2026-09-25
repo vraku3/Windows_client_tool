@@ -23,20 +23,23 @@ def _restore_theme():
     yield
     set_theme("dark")
 
+#: dark and light, plus the four phosphor themes derived from dark (core/phosphor.py).
+ALL_THEMES = {"dark", "light", "green", "amber", "blue", "mono"}
+
 
 def test_both_themes_offer_the_same_chrome_roles():
-    assert set(CHROME_PALETTES) == {"dark", "light"}
+    assert set(CHROME_PALETTES) == ALL_THEMES
     assert CHROME_PALETTES["dark"].keys() == CHROME_PALETTES["light"].keys()
 
 
-@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("theme", sorted(ALL_THEMES))
 def test_every_chrome_value_is_a_colour(theme):
     for role, value in CHROME_PALETTES[theme].items():
         assert value.startswith("#") and len(value) == 7, f"{theme}/{role}"
         int(value[1:], 16)
 
 
-@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("theme", sorted(ALL_THEMES))
 def test_the_text_roles_are_readable_on_their_own_surface(theme):
     """`text` and `text_muted` are read, so they answer to the ratio."""
     surface = CHROME_PALETTES[theme]["surface"]
@@ -46,7 +49,7 @@ def test_the_text_roles_are_readable_on_their_own_surface(theme):
             f"{theme}/{role} is {ratio:.2f}:1 on its own surface")
 
 
-@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("theme", sorted(ALL_THEMES))
 def test_the_overlay_text_is_readable_on_the_overlay(theme):
     """The overlay stays dark in both themes; its text must still read."""
     surface = CHROME_PALETTES[theme]["overlay_surface"]
@@ -55,7 +58,7 @@ def test_the_overlay_text_is_readable_on_the_overlay(theme):
         assert ratio >= 4.5, f"{theme}/{role} is {ratio:.2f}:1"
 
 
-@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("theme", sorted(ALL_THEMES))
 def test_a_surface_is_distinguishable_from_the_pane_behind_it(theme):
     """A panel the same colour as the pane is an invisible panel."""
     pane = PANE_BACKGROUND[theme]

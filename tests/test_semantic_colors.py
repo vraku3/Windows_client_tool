@@ -14,6 +14,9 @@ from core.semantic_colors import (
     PANE_BACKGROUND, SEMANTIC_PALETTES, semantic, set_theme,
 )
 
+#: dark and light, plus the four phosphor themes derived from dark (core/phosphor.py).
+ALL_THEMES = {"dark", "light", "green", "amber", "blue", "mono"}
+
 
 def _luminance(hex_colour: str) -> float:
     h = hex_colour.lstrip("#")
@@ -30,12 +33,12 @@ def _contrast(a: str, b: str) -> float:
 
 
 def test_both_themes_offer_the_same_meanings():
-    assert set(SEMANTIC_PALETTES) == {"dark", "light"}
+    assert set(SEMANTIC_PALETTES) == ALL_THEMES
     assert SEMANTIC_PALETTES["dark"].keys() == SEMANTIC_PALETTES["light"].keys()
     assert "success" in SEMANTIC_PALETTES["dark"]
 
 
-@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("theme", sorted(ALL_THEMES))
 def test_every_meaning_is_readable_on_its_own_pane(theme):
     background = PANE_BACKGROUND[theme]
     for meaning, colour in SEMANTIC_PALETTES[theme].items():

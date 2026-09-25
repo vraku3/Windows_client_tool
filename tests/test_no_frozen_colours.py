@@ -24,7 +24,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 HEX = re.compile(r"#[0-9a-fA-F]{6}\b")
 
 #: The palette module is the one place a colour literal belongs.
-EXEMPT = {"core/semantic_colors.py"}
+EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette sources
 
 #: Only ever lower this, in the same commit that removes literals.
 #: 400 when the ratchet was introduced; 373 after the status colours in
@@ -42,7 +42,7 @@ EXEMPT = {"core/semantic_colors.py"}
 #: collapse (the tuples were never a status colour or theme-able chrome,
 #: just a decorative pie-chart accent per category, so semantic() and the
 #: .qss role system both apply to nothing here).
-BUDGET = 269
+BUDGET = 266
 
 
 def frozen_colour_literals():

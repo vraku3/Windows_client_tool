@@ -62,6 +62,11 @@ class LogTableWidget(QWidget):
             QHeaderView.ResizeMode.Interactive
         )
         center_header(self._table)
+        # The default 100px cut the Time column to "2026-09-25 ...".
+        for col, name in enumerate(self._columns):
+            width = {"Time": 150, "Source": 170, "Level": 70}.get(name)
+            if width:
+                self._table.setColumnWidth(col, width)
         self._table.verticalHeader().setDefaultSectionSize(24)
         self._table.clicked.connect(self._on_clicked)
         self._table.doubleClicked.connect(self._on_double_clicked)

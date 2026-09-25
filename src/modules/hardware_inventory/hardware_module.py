@@ -234,6 +234,7 @@ class HardwareModule(BaseModule):
         export_btn.clicked.connect(do_export)
 
         self._hw_tabs = tabs
+        tabs.currentChanged.connect(self._on_hw_tab_changed)   # after every addTab
         return outer
 
     def get_refresh_interval(self) -> Optional[int]:
@@ -248,9 +249,19 @@ class HardwareModule(BaseModule):
 
     def on_activate(self) -> None:
         if hasattr(self, "_hw_tabs"):
-            tab = self._hw_tabs.currentWidget()
-            if hasattr(tab, "_load") and hasattr(tab, "_status") and tab._status.text() == "Click Refresh to load.":
-                tab._load()
+            self._load_if_unloaded(self._hw_tabs.currentWidget())
+
+    def _on_hw_tab_changed(self, index: int) -> None:
+        """Load a sub-tab the first time it is shown. Only the tab that was
+        current when the module opened used to load; CPU, Memory, Storage, GPU,
+        Network and BIOS each sat on "Click Refresh to load." until clicked."""
+        self._load_if_unloaded(self._hw_tabs.widget(index))
+
+    @staticmethod
+    def _load_if_unloaded(tab) -> None:
+        if (hasattr(tab, "_load") and hasattr(tab, "_status")
+                and tab._status.text() == "Click Refresh to load."):
+            tab._load()
 
     def on_deactivate(self) -> None:
         self._cancel_all_tabs()

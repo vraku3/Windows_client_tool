@@ -18,6 +18,26 @@ DEFAULT_LOGS = ["System", "Application"]
 ADMIN_LOGS = ["Security"]
 
 
+def event_message(event, log_name: str, event_id: int) -> str:
+    """Text for one event, never blank.
+
+    The insert strings are what the event carries; an event whose inserts are
+    all empty (`['']`, which is a non-empty LIST) produced a blank Message
+    cell, and roughly a third of a real System log looked like that. Those are
+    formatted by Windows from the provider's own message table; if that is not
+    possible, the event ID is at least something to search on."""
+    inserts = [str(part) for part in (event.StringInserts or []) if str(part).strip()]
+    if inserts:
+        return " | ".join(inserts)
+    try:
+        import win32evtlogutil
+        formatted = (win32evtlogutil.FormatMessage(event, log_name) or "").strip()
+    except Exception:
+        logger.debug("No message table for event %s in %s", event_id, log_name)
+        formatted = ""
+    return " ".join(formatted.split()) or f"Event ID {event_id}"
+
+
 def read_event_log(
     log_name: str = "System",
     hours_back: int = 24,
@@ -55,8 +75,7 @@ def read_event_log(
 
                 level = EVENT_TYPE_MAP.get(event.EventType, "Info")
                 event_id = event.EventID & 0xFFFF
-                message_parts = event.StringInserts or []
-                message = " | ".join(str(s) for s in message_parts) if message_parts else f"Event ID {event_id}"
+                message = event_message(event, log_name, event_id)
 
                 entries.append(LogEntry(
                     timestamp=event_time,

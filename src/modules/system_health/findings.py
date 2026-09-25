@@ -2,10 +2,15 @@
 here is safe to call unelevated and safe to call from --unattended
 --stages health.
 """
+import logging
 import os
 import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
+
+from core.windows_utils import system_root
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -67,10 +72,19 @@ def check_orphaned_scheduled_tasks() -> List[Finding]:
     import io
     task_names = []
     for row in csv.reader(io.StringIO(result.stdout)):
-        if row:
+        if row and row[0].strip():
             task_names.append(row[0])
+    # schtasks lists a task once per trigger, so one with several triggers
+    # (USO_UxBroker) came back -- and was reported -- more than once.
+    task_names = list(dict.fromkeys(task_names))
 
     for name in task_names:
+        from_file = _task_xml_from_file(name)
+        if from_file is not None:
+            program = _extract_command_path(from_file)
+            if program and not _program_exists(program):
+                findings.append(_orphan_finding(name, program))
+            continue
         try:
             xml_result = subprocess.run(
                 ["schtasks", "/query", "/tn", name, "/xml"],
@@ -92,13 +106,45 @@ def check_orphaned_scheduled_tasks() -> List[Finding]:
             continue
         program = _extract_command_path(xml_result.stdout)
         if program and not _program_exists(program):
-            findings.append(Finding(
-                id=f"orphaned_task:{name}",
-                title="Scheduled task points at a missing program",
-                detail=f"Task {name!r} runs {program!r}, which does not exist.",
-                severity="info",
-            ))
+            findings.append(_orphan_finding(name, program))
     return findings
+
+
+def _orphan_finding(name: str, program: str) -> Finding:
+    # Plain quotes, not repr(): repr doubled every backslash in the path.
+    return Finding(
+        id=f"orphaned_task:{name}",
+        title="Scheduled task points at a missing program",
+        detail=f"Task '{name}' runs '{program}', which does not exist.",
+        severity="info",
+    )
+
+
+def _task_xml_from_file(name: str) -> Optional[str]:
+    """The task's definition read straight from the System32 Tasks folder, or None.
+
+    `schtasks /query /xml` writes through the console's legacy codepage, so a
+    character it cannot represent came back as `?` ("Aplica?ii" for "Aplicatii"
+    with a comma-below t) -- and the mangled path does not exist, so a task that
+    points at a real program was reported as pointing at a missing one. The
+    files Windows keeps are UTF-16 and lose nothing. Unreadable (they are
+    admin-only) is simply None, and the caller falls back to schtasks."""
+    root = os.path.join(system_root(), "System32", "Tasks")
+    parts = [part for part in name.split("\\") if part]
+    if not parts:
+        return None
+    try:
+        with open(os.path.join(root, *parts), "rb") as handle:
+            raw = handle.read()
+    except OSError as exc:
+        logger.debug("Task file %s not readable (%s); using schtasks", name, exc)
+        return None
+    for encoding in ("utf-16", "utf-8-sig"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeError:
+            logger.debug("Task file %s is not %s", name, encoding)
+    return None
 
 
 def _extract_command_path(task_xml: str) -> Optional[str]:

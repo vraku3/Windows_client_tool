@@ -134,7 +134,11 @@ class RegistryExplorerModule(BaseModule):
         splitter.addWidget(right)
         splitter.setSizes([380, 620])
 
-        layout.addWidget(splitter)
+        # Stretch 1: the splitter owns every spare pixel of height. A horizontal
+        # QSplitter is only Preferred vertically, and the search row's status
+        # label is flexible too, so without this Qt shared the leftover height
+        # between them: the tree started ~400px down a mostly empty page.
+        layout.addWidget(splitter, 1)
 
         # Keyboard shortcut: Ctrl+C copies selected value data
         QShortcut(QKeySequence("Ctrl+C"), self._values_table).activated.connect(self._copy_selected_value)

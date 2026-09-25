@@ -409,6 +409,22 @@ def test_show_all_reveals_uninstalled_catalog_entries(monkeypatch):
     assert "Not installed" in table.item(0, 3).text()
 
 
+def test_an_installed_app_says_installed_not_just_a_size(monkeypatch):
+    """The Status column held a bare "24.4 MB"; it now says what it means."""
+    mod = _module()
+    monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {
+        "e1": {"id": "e1", "package": "Pkg.Here", "name": "Here", "category": "X"},
+        "e2": {"id": "e2", "package": "Pkg.NoSize", "name": "NoSize", "category": "X"}})
+    monkeypatch.setattr(mod, "_install_location_by_package", lambda: {"Pkg.Here": "sized"})
+    monkeypatch.setattr(dm, "dir_size",
+                        lambda path: 25_600_000 if path == "sized" else 0)
+    mod._populate_apps_table(["Pkg.Here", "Pkg.NoSize"])
+    texts = {mod._apps_table.item(r, 1).text(): mod._apps_table.item(r, 3).text()
+             for r in range(mod._apps_table.rowCount())}
+    assert texts["Here"].startswith("Installed — ") and "MB" in texts["Here"]
+    assert texts["NoSize"] == "Installed"
+
+
 def test_select_all_checks_every_visible_row(monkeypatch):
     mod = _module()
     monkeypatch.setattr(mod, "_load_debloat_entries", lambda: {

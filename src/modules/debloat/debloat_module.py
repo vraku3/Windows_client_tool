@@ -553,8 +553,13 @@ class DebloatToolsModule(BaseModule):
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._apps_table.setItem(row, 2, cat_item)
             if present:
+                # The column is headed "Status" but held a bare size ("24.4 MB"),
+                # which read as a value with no meaning. It says what it is; an
+                # unknown size is simply "Installed", never "0 B".
                 size_bytes = dir_size(locations.get(pkg, ""))
-                status_item = QTableWidgetItem(human_size(size_bytes))
+                status_item = QTableWidgetItem(
+                    f"Installed — {human_size(size_bytes)}" if size_bytes > 0
+                    else "Installed")
             else:
                 status_item = QTableWidgetItem("Not installed")
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)

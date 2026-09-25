@@ -12,6 +12,7 @@ from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 _FILETIME_UNIX_EPOCH = 116444736000000000
 
+RECENT_SECONDS = 300
 HIGH_CPU_PERCENT = 5.0
 HIGH_MEMORY_BYTES = 500 * 1024 * 1024
 
@@ -123,6 +124,15 @@ def _third_party(info) -> bool:
     return not _is_microsoft(info) and info.pid > 4
 
 
+def _recent(info) -> bool:
+    """Started in the last five minutes: the quickest way to spot what just
+    launched itself, or what a click or a logon script just spawned."""
+    when = started_at(info)
+    if when is None:
+        return False
+    return (datetime.now(timezone.utc) - when).total_seconds() <= RECENT_SECONDS
+
+
 def _unreadable(info) -> bool:
     return info.details.path is None and info.pid > 4
 
@@ -131,6 +141,7 @@ FILTERS: Tuple[Tuple[str, str, Callable], ...] = (
     ("all", "All", lambda i: True),
     ("cpu", "High CPU", _cpu_hot),
     ("memory", "High memory", _mem_hot),
+    ("recent", "Started <5 min", _recent),
     ("elevated", "Elevated", _elevated),
     ("thirdparty", "Not Microsoft", _third_party),
     ("unreadable", "Unreadable", _unreadable),

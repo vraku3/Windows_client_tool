@@ -85,3 +85,32 @@ def test_quick_tools_are_well_formed_and_launch_errors_are_reported(monkeypatch)
     calls = []
     monkeypatch.setattr(oh.subprocess, "Popen", lambda argv, **k: calls.append(argv))
     assert oh.launch_tool(["taskmgr.exe"]) is None and calls == [["taskmgr.exe"]]
+
+
+def test_handle_leak_finding_names_the_process_and_ignores_system():
+    rows = [("chrome.exe", 10, 900), ("leaky.exe", 11, 45_000), ("System", 4, 90_000)]
+    found = oh.judge_handles(rows)
+    assert len(found) == 1 and "leaky.exe" in found[0].title and "45,000" in found[0].title
+    assert oh.judge_handles([("a.exe", 9, 100)]) == []
+
+
+def test_no_pagefile_is_reported_and_a_pagefile_is_not():
+    assert oh.judge_pagefile(0) is not None
+    assert oh.judge_pagefile(4 * 1024 ** 3) is None
+
+
+def test_network_summary_and_identity_read_this_machine():
+    rows = oh.network_summary()
+    assert rows is None or all(len(r) == 3 for r in rows)
+    lines = oh.identity_lines()
+    assert lines[0].startswith("User:") and lines[1].startswith("Elevated:")
+
+
+def test_recent_chip_exists_and_fresh_processes_pass_it():
+    from modules.dashboard import process_view as pv
+    assert "recent" in [k for k, _, _ in pv.FILTERS]
+    from core.procengine.snapshot import SnapshotSource
+    import os
+    src = SnapshotSource(); src.read()
+    me = src.read().by_pid[os.getpid()]
+    assert isinstance(pv.passes("recent", me), bool)

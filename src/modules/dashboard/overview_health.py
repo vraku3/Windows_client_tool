@@ -72,6 +72,47 @@ def judge_commit(percent: float, used: int, total: int) -> Optional[Finding]:
                    "allocations start failing at 100%")
 
 
+HANDLE_LEAK_COUNT = 20_000
+
+
+def judge_handles(rows) -> List[Finding]:
+    """Processes holding an unusual number of handles: the classic leak signal.
+
+    `rows` is (name, pid, handle_count). A few legitimate processes (System,
+    a browser with many tabs) sit high, so this is a warning to look, and it
+    names the process so the look takes seconds."""
+    hot = sorted((r for r in rows if r[2] >= HANDLE_LEAK_COUNT and r[1] > 4),
+                 key=lambda r: r[2], reverse=True)
+    return [Finding(WARNING, f"{name} holds {count:,} handles",
+                    f"PID {pid}. Past {HANDLE_LEAK_COUNT:,} usually means a handle leak; "
+                    "it will eventually fail to open files or sockets",
+                    "Dashboard", "See processes")
+            for name, pid, count in hot[:3]]
+
+
+def judge_pagefile(total_bytes: int) -> Optional[Finding]:
+    if total_bytes > 0:
+        return None
+    return Finding(INFO, "No page file is configured",
+                   "Without one, an application that commits more than physical RAM "
+                   "is killed, and crash dumps cannot be written")
+
+
+def read_handle_counts():
+    """(name, pid, handles) for every process that would tell us, or None."""
+    import psutil
+    rows = []
+    try:
+        for proc in psutil.process_iter(["name", "pid", "num_handles"]):
+            count = proc.info.get("num_handles")
+            if count:
+                rows.append((proc.info.get("name") or "?", proc.info["pid"], count))
+    except psutil.Error as e:
+        logger.warning("handle counts unreadable: %s", e)
+        return None
+    return rows
+
+
 def judge_uptime(seconds: float) -> Optional[Finding]:
     days = seconds / 86400
     if days < LONG_UPTIME_DAYS:
@@ -193,7 +234,13 @@ def collect_findings(driver_problems: Optional[int] = None,
     found.append(judge_memory(vm.percent, vm.used, vm.total))
     sw = psutil.swap_memory()
     found.append(judge_commit(sw.percent, sw.used, sw.total))
+    found.append(judge_pagefile(sw.total))
     found.append(judge_uptime(time.time() - psutil.boot_time()))
+    handle_rows = read_handle_counts()
+    if handle_rows is None:
+        found.append(Finding(UNKNOWN, "Could not read process handle counts"))
+    else:
+        found.extend(judge_handles(handle_rows))
     found.append(judge_reboot(reboot_reader()))
     found.append(judge_shutdowns(shutdown_counter()))
     found.append(judge_drivers(driver_problems))
@@ -252,6 +299,42 @@ def launch_tool(argv) -> Optional[str]:
         logger.warning("could not start %s: %s", argv, e)
         return f"Could not start {argv[0]}: {e}"
     return None
+
+
+def network_summary():
+    """Up, non-loopback adapters as (name, ipv4 or '', speed Mbit/s), or None."""
+    import socket
+    import psutil
+    try:
+        addrs, stats = psutil.net_if_addrs(), psutil.net_if_stats()
+    except OSError as e:
+        logger.warning("network adapters unreadable: %s", e)
+        return None
+    rows = []
+    for name, st in stats.items():
+        if not st.isup or "loopback" in name.lower():
+            continue
+        ipv4 = next((a.address for a in addrs.get(name, [])
+                     if a.family == socket.AF_INET), "")
+        if ipv4.startswith("169.254."):          # self-assigned: no real address
+            ipv4 = ""
+        rows.append((name, ipv4, st.speed))
+    return sorted(rows, key=lambda r: (not r[1], r[0]))
+
+
+def identity_lines():
+    """Who and where this session is: account, domain or workgroup, elevation."""
+    import ctypes
+    import getpass
+    domain = os.environ.get("USERDOMAIN", "")
+    host = os.environ.get("COMPUTERNAME", "")
+    joined = "workgroup / local account" if domain.lower() == host.lower() else f"domain {domain}"
+    try:
+        elevated = bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (OSError, AttributeError):
+        elevated = False
+    return [f"User: {getpass.getuser()}  ({joined})",
+            "Elevated: " + ("yes" if elevated else "no")]
 
 
 def heat_level(pct: float) -> str:

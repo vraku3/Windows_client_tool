@@ -139,7 +139,7 @@ class ServicesTab(QWidget):
         # The path column is prose and takes the free width; the short codes
         # hug their content.
         header.setSectionResizeMode(PATH, QHeaderView.ResizeMode.Stretch)
-        for column in (STATUS, NAME, DISPLAY, START_TYPE, PID, IMPACT):
+        for column in (STATUS, NAME, DISPLAY, START_TYPE, PID, IMPACT, LOGON):
             header.setSectionResizeMode(
                 column, QHeaderView.ResizeMode.ResizeToContents)
         split = QSplitter(Qt.Orientation.Vertical, self)
@@ -286,7 +286,8 @@ class ServicesTab(QWidget):
                 self.status.setText(f"Could not read the service list: {exc}")
             return
         self._busy = True
-        self.status.setText("Reading services…")
+        if not self._services:      # only the first read; after that it just flickers
+            self.status.setText("Reading services…")
         worker = COMWorker(lambda _worker: self._read())
         worker.signals.result.connect(self._apply)
         worker.signals.error.connect(self._failed)

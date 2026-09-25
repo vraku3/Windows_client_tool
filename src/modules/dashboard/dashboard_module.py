@@ -40,7 +40,8 @@ from core.composite_module import CompositeModule
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.worker import Worker
 from modules.dashboard.overview_health import (
-    QUICK_TOOLS, History, collect_findings, launch_tool, summary_text)
+    QUICK_TOOLS, History, collect_findings, identity_lines, launch_tool,
+    network_summary, summary_text)
 from modules.dashboard.overview_widgets import CoreGrid, FindingRow, MetricTile
 
 logger = logging.getLogger(__name__)
@@ -255,6 +256,7 @@ class _DashboardWidget(QWidget):
         col.addLayout(self._build_tiles())
         col.addLayout(self._build_middle())
         col.addLayout(self._build_bottom())
+        col.addWidget(self._build_network_card())
         col.addWidget(self._build_tools())
         col.addStretch(1)
         scroll.setWidget(inner)
@@ -356,6 +358,30 @@ class _DashboardWidget(QWidget):
         row.addWidget(self._cores_card, 2)
         return row
 
+    def _build_network_card(self) -> QWidget:
+        card = _Card("Network and identity")
+        self._identity_lbl = QLabel("—")
+        self._adapters_lbl = QLabel("—")
+        for lbl in (self._identity_lbl, self._adapters_lbl):
+            lbl.setTextFormat(Qt.TextFormat.PlainText)
+            lbl.setStyleSheet("font-family: Consolas, monospace;")
+            lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            card.body().addWidget(lbl)
+        return card
+
+    def _refresh_network_card(self) -> None:
+        self._identity_lbl.setText("\n".join(identity_lines()))
+        rows = network_summary()
+        if rows is None:
+            self._adapters_lbl.setText("Could not read the network adapters.")
+        elif not rows:
+            self._adapters_lbl.setText("No network adapter is up.")
+        else:
+            self._adapters_lbl.setText("\n".join(
+                f"{name:<28} {ip or 'no address':<16} {speed:>6,} Mbit/s"
+                if speed else f"{name:<28} {ip or 'no address':<16}"
+                for name, ip, speed in rows))
+
     def _build_tools(self) -> QWidget:
         card = _Card("Quick tools")
         row = QHBoxLayout()
@@ -385,6 +411,7 @@ class _DashboardWidget(QWidget):
         self._refresh_memory()
         self._refresh_io()
         self._refresh_disk()
+        self._refresh_network_card()
         self._start_top()
         self._start_findings()
 

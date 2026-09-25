@@ -8,6 +8,21 @@ import psutil
 logger = logging.getLogger(__name__)
 
 
+
+# Win32_Processor.Architecture is a number; showing "9" told nobody anything.
+_CPU_ARCHITECTURES = {0: "x86", 1: "MIPS", 2: "Alpha", 3: "PowerPC", 5: "ARM",
+                      6: "Itanium", 9: "x64 (AMD64)", 12: "ARM64"}
+
+
+def cpu_architecture_name(code) -> str:
+    if code is None:
+        return ""
+    try:
+        return _CPU_ARCHITECTURES.get(int(code), f"Unknown ({code})")
+    except (TypeError, ValueError):
+        return str(code)
+
+
 def _wmi():
     import wmi
     return wmi.WMI()
@@ -78,7 +93,7 @@ def get_cpu_info(worker=None):
         cpu = c.Win32_Processor()[0]
         rows.append(("Model", cpu.Name.strip()))
         rows.append(("Socket", cpu.SocketDesignation or ""))
-        rows.append(("Architecture", str(cpu.Architecture) if cpu.Architecture is not None else ""))
+        rows.append(("Architecture", cpu_architecture_name(cpu.Architecture)))
         rows.append(("L2 Cache", f"{cpu.L2CacheSize} KB" if cpu.L2CacheSize else "N/A"))
         rows.append(("L3 Cache", f"{cpu.L3CacheSize} KB" if cpu.L3CacheSize else "N/A"))
     except Exception as e:
@@ -140,6 +155,66 @@ def get_storage_info(worker=None):
     return drives, partitions
 
 
+def wmi_date_text(value) -> str:
+    """'20221202000000.000000+000' (or a datetime) as 2022-12-02."""
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d")
+    text = str(value or "")[:8]
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    return text
+
+
+def video_mode_text(desc) -> str:
+    """'2560 x 1440 x 4294967296 colors' -> '2560 x 1440'; the colour count
+    is a raw enum-ish number nobody can read."""
+    text = str(desc or "")
+    parts = text.split(" x ")
+    if len(parts) >= 3:
+        return " x ".join(parts[:2])
+    return text
+
+
+def _registry_vram(name):
+    """Dedicated video memory from the display class key (64-bit, so it is
+    right above 4 GB, where Win32_VideoController.AdapterRAM is not)."""
+    import winreg
+    base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as root:
+            for i in range(64):
+                try:
+                    sub = winreg.EnumKey(root, i)
+                except OSError:
+                    break
+                try:
+                    with winreg.OpenKey(root, sub) as key:
+                        desc = winreg.QueryValueEx(key, "DriverDesc")[0]
+                        if desc != name:
+                            continue
+                        size = winreg.QueryValueEx(
+                            key, "HardwareInformation.qwMemorySize")[0]
+                        return int.from_bytes(size, "little") if isinstance(
+                            size, (bytes, bytearray)) else int(size)
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return None
+
+
+def gpu_memory_text(name, adapter_ram) -> str:
+    """AdapterRAM is a uint32 that COM hands back signed, so 24 GB read as
+    -1 MB. Prefer the registry's 64-bit size; else mask and say it is a floor."""
+    real = _registry_vram(name)
+    if real:
+        return _fmt_bytes(real)
+    if not adapter_ram:
+        return "N/A"
+    masked = int(adapter_ram) & 0xFFFFFFFF
+    return _fmt_bytes(masked) + (" (at least)" if masked >= 0xFFFFF000 else "")
+
+
 def get_gpu_info(worker=None):
     gpus = []
     try:
@@ -147,10 +222,10 @@ def get_gpu_info(worker=None):
         for gpu in c.Win32_VideoController():
             gpus.append({
                 "Name": gpu.Name or "",
-                "RAM": _fmt_bytes(int(gpu.AdapterRAM)) if gpu.AdapterRAM else "N/A",
+                "RAM": gpu_memory_text(gpu.Name, gpu.AdapterRAM),
                 "Driver Version": gpu.DriverVersion or "",
-                "Driver Date": str(gpu.DriverDate or "")[:8],
-                "Resolution": gpu.VideoModeDescription or "",
+                "Driver Date": wmi_date_text(gpu.DriverDate),
+                "Resolution": video_mode_text(gpu.VideoModeDescription),
             })
     except Exception as e:
         logger.debug("get_gpu_info WMI failed: %s", e)
@@ -187,7 +262,7 @@ def get_bios_info(worker=None):
         bios = c.Win32_BIOS()[0]
         rows.append(("Manufacturer", bios.Manufacturer or ""))
         rows.append(("Version", bios.SMBIOSBIOSVersion or ""))
-        rows.append(("Release Date", str(bios.ReleaseDate or "")[:8]))
+        rows.append(("Release Date", wmi_date_text(bios.ReleaseDate)))
         rows.append(("Serial Number", bios.SerialNumber or ""))
     except Exception as e:
         logger.debug("WMI BIOS info not available: %s", e)

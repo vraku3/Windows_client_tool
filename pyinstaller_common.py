@@ -238,6 +238,8 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.flight_tab",
     "modules.dashboard.pdh_util",
     "modules.dashboard.net_trace",
+    "core.audio_switch",
+    "ui.audio_outputs_dialog",
     "etw", "etw.etw", "etw.common", "etw.evntrace", "etw.evntcons", "etw.evntprov",
     "etw.tdh", "etw.wmistr", "etw.in6addr",
     "modules.dashboard.energy",

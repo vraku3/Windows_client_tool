@@ -865,6 +865,76 @@ def set_endpoint_enabled(endpoint_id: str, enabled: bool, *,
             f"SetEndpointVisibility({endpoint_id}) raised: {exc}") from exc
 
 
+# ── making an endpoint the default output -----------------------------------
+
+#: `IPolicyConfig::SetDefaultEndpoint(PCWSTR id, ERole role)`. It sits one slot
+#: before SetEndpointVisibility in both interface layouts (Win7+: 13 next to
+#: visibility's 14; Vista, which drops ResetDeviceFormat: 12 next to 13).
+IPOLICYCONFIG_SET_DEFAULT_ENDPOINT_VTBL_INDEX = 13
+IPOLICYCONFIG_VISTA_SET_DEFAULT_ENDPOINT_VTBL_INDEX = 12
+
+#: eConsole, eMultimedia, eCommunications: Windows' own "Set as default device"
+#: sets all three, so apps that follow the multimedia or the communications
+#: default follow the switch too.
+ALL_ROLES = (0, 1, 2)
+_MMDEVICE_PREFIX = "{0.0.0.00000000}."
+
+
+def full_endpoint_id(endpoint_id: str) -> str:
+    """The `{0.0.0.00000000}.{guid}` form IPolicyConfig wants, from either form."""
+    text = (endpoint_id or "").strip()
+    return text if text.count("}.{") == 1 else _MMDEVICE_PREFIX + text
+
+
+def set_default_endpoint(endpoint_id: str, *, user_requested: bool = False,
+                         roles: Sequence[int] = ALL_ROLES) -> bool:
+    """Make `endpoint_id` the default output device, for every role.
+
+    Same undocumented interface and the same discipline as
+    `set_endpoint_enabled`: True only on S_OK for every role, otherwise it
+    raises `AudioPolicyError` with the HRESULT. `user_requested` must be True --
+    this re-routes every app's sound, so it is only ever done because a person
+    asked (the hotkeys, the menu), never as a side effect. The caller should
+    read `default_render_endpoint_detail()` back to prove it took.
+    """
+    if not user_requested:
+        raise SupervisionRequired(
+            "set_default_endpoint refused: switching the default output "
+            "re-routes every app's sound and is only done when a person asked.")
+    if not endpoint_id:
+        raise AudioPolicyError("no endpoint id given")
+    full = full_endpoint_id(endpoint_id)
+    try:
+        with _Apartment():
+            policy = None
+            try:
+                policy, hr = _create_instance(CLSID_POLICY_CONFIG_CLIENT, IID_IPOLICY_CONFIG)
+                index = IPOLICYCONFIG_SET_DEFAULT_ENDPOINT_VTBL_INDEX
+                which = "IPolicyConfig"
+                if policy is None:
+                    first_hr = hr
+                    policy, hr = _create_instance(CLSID_POLICY_CONFIG_CLIENT,
+                                                  IID_IPOLICY_CONFIG_VISTA)
+                    index = IPOLICYCONFIG_VISTA_SET_DEFAULT_ENDPOINT_VTBL_INDEX
+                    which = "IPolicyConfigVista"
+                    if policy is None:
+                        raise AudioPolicyError(
+                            f"PolicyConfigClient unavailable: IPolicyConfig "
+                            f"{_hr(first_hr)}, IPolicyConfigVista {_hr(hr)}")
+                for role in roles:
+                    hr = _com_call(policy, index, (wintypes.LPCWSTR, wintypes.DWORD), full, role)
+                    if hr != _S_OK:
+                        raise AudioPolicyError(
+                            f"{which}::SetDefaultEndpoint({full}, role {role}) failed: {_hr(hr)}")
+                logger.info("%s::SetDefaultEndpoint(%s) returned S_OK for roles %s",
+                            which, full, tuple(roles))
+                return True
+            finally:
+                _release(policy)
+    except OSError as exc:
+        raise AudioPolicyError(f"SetDefaultEndpoint({full}) raised: {exc}") from exc
+
+
 @dataclass(frozen=True)
 class RegistryStateWrite:
     """What the registry fallback did, and when it will be visible."""

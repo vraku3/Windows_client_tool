@@ -468,6 +468,9 @@ class MainWindow(QMainWindow):
         restore_action = QAction("&Restore Manager...", self)
         restore_action.triggered.connect(self._open_restore_manager)
         tools_menu.addAction(restore_action)
+        audio_action = QAction("&Audio outputs... (Ctrl+1 to Ctrl+0)", self)
+        audio_action.triggered.connect(self._open_audio_outputs)
+        tools_menu.addAction(audio_action)
 
         view_menu = menu_bar.addMenu("&View")
         theme_action = QAction("Toggle &Theme", self)
@@ -495,6 +498,24 @@ class MainWindow(QMainWindow):
             self._search_bar.focus_search_with_filters)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._clear_search)
         QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self._open_command_palette)
+        # Ctrl+1 .. Ctrl+9 pick the 1st .. 9th sound output, Ctrl+0 the 10th.
+        for digit in range(10):
+            QShortcut(QKeySequence(f"Ctrl+{digit}"), self).activated.connect(
+                lambda d=digit: self._switch_audio_output(d))
+
+    def _switch_audio_output(self, digit: int) -> None:
+        from core import audio_switch
+        order = self._app.config.get("audio.output_order", [])
+        result = audio_switch.switch_to_number(
+            audio_switch.number_for_key(digit), order if isinstance(order, list) else [])
+        # The status bar is the answer on both paths: a hotkey has no dialog to
+        # report a refusal in, and silence would look like it worked.
+        self._status_bar.showMessage(result.message, 6000)
+        logger.info("audio hotkey Ctrl+%d: %s (%s)", digit, result.message, result.ok)
+
+    def _open_audio_outputs(self) -> None:
+        from ui.audio_outputs_dialog import AudioOutputsDialog
+        AudioOutputsDialog(self._app, self).exec()
 
     def _setup_tray(self) -> None:
         from PyQt6.QtWidgets import QStyle

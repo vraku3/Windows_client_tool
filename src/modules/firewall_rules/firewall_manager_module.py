@@ -530,7 +530,7 @@ class FirewallManagerModule(BaseModule):
         self._zoom_in_btn.setToolTip("Larger text (Ctrl++ or Ctrl+wheel up)")
         self._zoom_in_btn.setFixedWidth(32)
         self._zoom_reset_btn = QPushButton("A")
-        self._zoom_reset_btn.setToolTip("Reset text size (Ctrl+0)")
+        self._zoom_reset_btn.setToolTip("Reset text size (Ctrl+Alt+0)")
         self._zoom_reset_btn.setFixedWidth(28)
         self._fit_btn = QPushButton("Fit Columns")
         self._fit_btn.setToolTip(
@@ -715,7 +715,9 @@ class FirewallManagerModule(BaseModule):
         for keys, slot in (
             (("Ctrl++", "Ctrl+="), lambda: self._nudge_font(1)),
             (("Ctrl+-",), lambda: self._nudge_font(-1)),
-            (("Ctrl+0",), self._reset_font),
+            # Ctrl+0 is the app-wide "tenth sound output" hotkey; a widget-level
+            # Ctrl+0 as well would be an ambiguous shortcut and neither would fire.
+            (("Ctrl+Alt+0",), self._reset_font),
         ):
             for key in keys:
                 shortcut = QShortcut(QKeySequence(key), widget)

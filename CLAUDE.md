@@ -1156,6 +1156,23 @@ plumbing. Every one is in `HIDDEN_IMPORTS`.
   page-aligned `mmap` buffer) so the figure is the disk, not the cache; write is
   `fsync`ed; the temp file is removed in a `finally`.
 
+### Audio output hotkeys (`src/core/audio_switch.py`)
+
+Ctrl+1..Ctrl+9 make the 1st..9th active sound output the default, Ctrl+0 the
+10th (`MainWindow._switch_audio_output`; Tools > Audio outputs... arranges the
+order, saved as `audio.output_order`). Built on `display_audio.set_default_endpoint`
+(`IPolicyConfig::SetDefaultEndpoint`, vtable 13, Vista layout 12, all three
+roles) and verified live 2026-09-25: switch, read back, restore.
+
+- **A switch is only "done" once the default is READ BACK.** S_OK is not proof;
+  the status bar says "read back" when Windows accepted and did not comply.
+- **Numbers close up over unplugged devices**, so Ctrl+2 is always the second
+  device that is actually present. Order = the user's, then alphabetical.
+- **`set_default_endpoint` refuses without `user_requested=True`.** It
+  re-routes every app's sound; only a person's keypress or click may call it.
+- **Firewall Rules' text-size reset moved from Ctrl+0 to Ctrl+Alt+0.** Two
+  matching shortcuts (window + widget) are ambiguous in Qt and neither fires.
+
 ### Debloat (`src/modules/debloat/`)
 
 126 catalogued apps plus 219 tweaks across two tabs, and four builtin

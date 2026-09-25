@@ -12,7 +12,7 @@ import logging
 import struct
 from ctypes import wintypes
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +63,19 @@ class Topology:
         nodes = len(self.numa_nodes)
         text += f"   ·   {nodes} NUMA node" + ("s" if nodes != 1 else "")
         return text
+
+
+def node_loads(topo: "Topology", loads: List[float]) -> List[Tuple[int, float]]:
+    """(NUMA node, average load) for each node, from per-logical-processor loads.
+
+    A node with no reading for any of its processors is left out rather than
+    shown as 0%: "no data" and "idle" are different answers."""
+    out = []
+    for node in sorted(topo.numa_nodes):
+        values = [loads[i] for i in topo.numa_nodes[node] if i < len(loads) and loads[i] is not None]
+        if values:
+            out.append((node, sum(values) / len(values)))
+    return out
 
 
 def _threads_from_masks(buffer: bytes, offset: int, count: int) -> List[int]:

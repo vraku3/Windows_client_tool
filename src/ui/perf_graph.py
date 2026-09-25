@@ -173,6 +173,8 @@ class CoreGrid(QWidget):
         super().__init__(parent)
         self._histories: List[deque] = []
         self._colour = None
+        self._kinds: List[str] = []       # "P" / "E" / "" per plot
+        self._labels: List[str] = []
         self.setMinimumHeight(140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
                            QSizePolicy.Policy.Expanding)
@@ -183,6 +185,16 @@ class CoreGrid(QWidget):
             self._histories = [deque(maxlen=HISTORY) for _ in loads]
         for history, value in zip(self._histories, loads):
             history.append(None if value is None else float(value))
+        self.update()
+
+    def set_kinds(self, kinds) -> None:
+        """Mark efficiency cores (drawn in the warning hue) on a hybrid CPU."""
+        self._kinds = list(kinds)
+        self.update()
+
+    def set_labels(self, labels) -> None:
+        """A short caption in the corner of each plot ("Node 0", "P3")."""
+        self._labels = list(labels)
         self.update()
 
     def cores(self) -> int:
@@ -206,7 +218,14 @@ class CoreGrid(QWidget):
             column, row = index % columns, index // columns
             cell = QRect(int(column * cell_w) + 1, int(row * cell_h) + 1,
                          int(cell_w) - 3, int(cell_h) - 3)
-            self._paint_core(painter, cell, history, colour)
+            kind = self._kinds[index] if index < len(self._kinds) else ""
+            self._paint_core(painter, cell, history,
+                             QColor(semantic("warning")) if kind == "E" else colour)
+            if index < len(self._labels) and self._labels[index]:
+                painter.setPen(self.palette().text().color())
+                painter.drawText(cell.adjusted(4, 2, 0, 0),
+                                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop,
+                                 self._labels[index])
         painter.end()
 
     def _shape(self):

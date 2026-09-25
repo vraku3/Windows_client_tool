@@ -127,3 +127,43 @@ def test_effective_frequency_reads_a_plausible_clock_after_priming():
         eff.close()
     assert out is not None and len(out) == len(freqs)
     assert all(500 <= mhz <= 8000 for mhz in out), out
+
+
+def test_node_loads_average_per_node_and_skip_nodes_without_data():
+    buf = (_core_record(0, 0b1) + _core_record(0, 0b10) + _core_record(0, 0b100)
+           + _numa_record(0, 0b11) + _numa_record(1, 0b100))
+    topo = tp.parse(buf)
+    assert tp.node_loads(topo, [10.0, 30.0, 50.0]) == [(0, 20.0), (1, 50.0)]
+    assert tp.node_loads(topo, [10.0, 30.0]) == [(0, 20.0)]          # node 1 has no reading: omitted
+    assert tp.node_loads(topo, [None, None, 5.0]) == [(1, 5.0)]
+
+
+def test_performance_tab_switches_cpu_views_and_feeds_the_numa_plot(qapp):
+    from modules.dashboard.performance_tab import PerformanceTab
+    tab = PerformanceTab()
+    tab.show()
+    tab.cpu_view.setCurrentIndex(2)
+    assert tab.numa_grid.isVisibleTo(tab) and not tab.core_grid.isVisibleTo(tab)
+    tab.cpu_view.setCurrentIndex(0)
+    assert not tab.numa_grid.isVisibleTo(tab) and not tab.core_grid.isVisibleTo(tab)
+    tab.cpu_view.setCurrentIndex(1)
+    tab._update_topology_views([5.0] * 32)
+    assert tab.numa_grid.cores() >= 1 and "logical processors" in tab.topology_label.text()
+
+
+def test_core_grid_paints_efficiency_cores_in_the_warning_hue_and_labels(qapp):
+    from ui.perf_graph import CoreGrid
+    grid = CoreGrid()
+    grid.resize(400, 200)
+    grid.push([10.0, 20.0, 30.0])
+    grid.set_kinds(["P", "E", "E"])
+    grid.set_labels(["P0", "E1", "E2"])
+    assert grid.grab().width() == 400                     # paints without raising
+
+
+def test_the_cpu_view_caption_survives_a_refresh(qapp):
+    from modules.dashboard.performance_tab import PerformanceTab
+    tab = PerformanceTab()
+    tab.cpu_view.setCurrentIndex(2)
+    tab._refresh_cpu(); tab._refresh_cpu()
+    assert tab.core_label.text() == "NUMA nodes"

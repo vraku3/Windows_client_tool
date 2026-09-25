@@ -15,11 +15,12 @@ import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtWidgets import (QFormLayout, QGridLayout, QHBoxLayout, QLabel,
+from PyQt6.QtWidgets import (QComboBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel,
                              QListWidget, QListWidgetItem, QScrollArea,
                              QStackedWidget, QVBoxLayout, QWidget)
 
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 
 from ui.perf_graph import CoreGrid, PerfGraph
 from core.procengine.columns import fmt_bytes
@@ -43,6 +44,7 @@ class PerformanceTab(QWidget):
         self._workers: list = []
         self._app = None
         self._previous_cores = None
+        self._topology = None
         self._previous_disks = None
         self._previous_nics = None
         self._static = None
@@ -91,10 +93,25 @@ class PerformanceTab(QWidget):
         self.cpu_graph = PerfGraph(semantic("info"), 100.0, panel)
         column.addWidget(self.cpu_graph, 2)
 
+        view_row = QHBoxLayout()
         self.core_label = QLabel("Logical processors", panel)
-        column.addWidget(self.core_label)
+        view_row.addWidget(self.core_label, 1)
+        self.cpu_view = QComboBox(panel)
+        for label in ("Overall", "Logical processors", "NUMA nodes"):
+            self.cpu_view.addItem(label)
+        self.cpu_view.setCurrentIndex(1)
+        self.cpu_view.currentIndexChanged.connect(self._apply_cpu_view)
+        view_row.addWidget(QLabel("View:", panel))
+        view_row.addWidget(self.cpu_view)
+        column.addLayout(view_row)
+        self.topology_label = QLabel("", panel)
+        set_role(self.topology_label, "muted")
+        column.addWidget(self.topology_label)
         self.core_grid = CoreGrid(panel)
         column.addWidget(self.core_grid, 3)
+        self.numa_grid = CoreGrid(panel)
+        self.numa_grid.hide()
+        column.addWidget(self.numa_grid, 3)
 
         self.cpu_figures = QGridLayout()
         self._cpu_values = {}
@@ -472,13 +489,42 @@ class PerformanceTab(QWidget):
         average = sum(load.total for load in loads) / len(loads)
         self.cpu_graph.push(average)
         self.core_grid.push([load.total for load in loads])
-        self.core_label.setText(f"{len(loads)} logical processors")
+        if self.cpu_view.currentIndex() == 1:      # the other views keep their own caption
+            self.core_label.setText(f"{len(loads)} logical processors")
+        self._update_topology_views([load.total for load in loads])
 
         self._cpu_values["Utilisation"].setText(f"{average:.0f}%")
         static = self._static
         self._cpu_values["Speed"].setText(
             _speed(static.base_speed_mhz) if static else "—")
         self._cpu_values["Up time"].setText(_uptime(uptime_seconds()))
+
+    def _apply_cpu_view(self, index: int = None) -> None:
+        """Overall = the big graph alone; Logical = one plot per thread;
+        NUMA = one plot per node (average of its threads)."""
+        mode = self.cpu_view.currentIndex() if index is None else index
+        self.core_grid.setVisible(mode == 1)
+        self.numa_grid.setVisible(mode == 2)
+        self.core_label.setText(("Whole CPU", "Logical processors", "NUMA nodes")[mode])
+
+    def _update_topology_views(self, loads) -> None:
+        """P/E colouring and the NUMA plots, from the (cached) CPU topology."""
+        if self._topology is None:
+            from modules.dashboard.topology import read_topology
+            self._topology = read_topology() or False      # False: asked, no answer
+            if self._topology:
+                self.topology_label.setText(self._topology.summary())
+                kinds = [self._topology.kind_of(i) for i in range(len(loads))]
+                self.core_grid.set_kinds(kinds)
+                self.core_grid.set_labels(
+                    [f"{k or ''}{i}" for i, k in enumerate(kinds)] if self._topology.is_hybrid else [])
+            else:
+                self.topology_label.setText("CPU topology could not be read.")
+        if self._topology:
+            from modules.dashboard.topology import node_loads
+            nodes = node_loads(self._topology, loads)
+            self.numa_grid.push([load for _, load in nodes])
+            self.numa_grid.set_labels([f"Node {n}" for n, _ in nodes])
 
     def _refresh_memory(self) -> None:
         status = memory_status()

@@ -542,19 +542,26 @@ class FirewallManagerModule(BaseModule):
                     self._unblock_folder_btn, self._open_port_btn,
                     self._delete_btn, self._export_btn, self._import_btn):
             toolbar.addWidget(btn)
-        toolbar.addWidget(QLabel("Direction:"))
-        toolbar.addWidget(self._dir_combo)
-        toolbar.addWidget(QLabel("Action:"))
-        toolbar.addWidget(self._action_combo)
-        toolbar.addWidget(QLabel("Profile:"))
-        toolbar.addWidget(self._profile_combo)
-        toolbar.addWidget(self._search_edit)
         toolbar.addStretch()
-        toolbar.addWidget(self._fit_btn)
         toolbar.addWidget(self._zoom_out_btn)
         toolbar.addWidget(self._zoom_reset_btn)
         toolbar.addWidget(self._zoom_in_btn)
         layout.addLayout(toolbar)
+
+        # Filters on their own row: eight action buttons plus three combos, a
+        # search box and four more buttons never fit one row at an ordinary
+        # window width, and the overflow ran off the right edge.
+        filters = QHBoxLayout()
+        filters.addWidget(QLabel("Direction:"))
+        filters.addWidget(self._dir_combo)
+        filters.addWidget(QLabel("Action:"))
+        filters.addWidget(self._action_combo)
+        filters.addWidget(QLabel("Profile:"))
+        filters.addWidget(self._profile_combo)
+        filters.addWidget(self._search_edit)
+        filters.addStretch()
+        filters.addWidget(self._fit_btn)
+        layout.addLayout(filters)
 
         # ---- Progress ----
         self._progress = QProgressBar()

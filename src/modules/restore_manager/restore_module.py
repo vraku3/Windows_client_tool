@@ -116,9 +116,12 @@ class RestoreManagerModule(BaseModule):
 
         # Restore points table
         self._table = QTableWidget()
-        self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["Name", "Date", "Type", "Size"])
-        fit_table(self._table, stretch=[0], content=[1, 2, 3])
+        # No Size column: Windows does not report a per-restore-point size, and
+        # the column that stood here showed "~" on every row -- a placeholder
+        # dressed up as data.
+        self._table.setColumnCount(3)
+        self._table.setHorizontalHeaderLabels(["Name", "Date", "Type"])
+        fit_table(self._table, stretch=[0], content=[1, 2])
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -224,7 +227,6 @@ class RestoreManagerModule(BaseModule):
             self._table.setItem(row, 0, name_item)
             self._table.setItem(row, 1, centered_item(date_str))
             self._table.setItem(row, 2, centered_item(rptype))
-            self._table.setItem(row, 3, centered_item("~"))
 
         self._update_delete_buttons()
 

@@ -15,7 +15,7 @@ import os
 from datetime import timedelta
 from typing import Optional
 
-from PyQt6.QtCore import (Qt, QTimer, QDateTime, QStringListModel,
+from PyQt6.QtCore import (Qt, QTimer, QDate, QDateTime, QTime, QStringListModel,
                           pyqtSignal)
 from PyQt6.QtGui import QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -95,6 +95,16 @@ def _size(count: int) -> str:
             return f"{step:.1f} {unit}"
         step /= 1024
     return f"{step:.1f} TB"
+
+
+
+def _open_ended(box) -> None:
+    """A range box with nothing entered read "2000-01-01 00:00:00", Qt's
+    default, which looks like a real (and absurd) filter. Its minimum now
+    stands for "no bound" and says so."""
+    box.setMinimumDateTime(QDateTime(QDate(2000, 1, 1), QTime(0, 0)))
+    box.setDateTime(box.minimumDateTime())
+    box.setSpecialValueText("any time")
 
 
 class LogViewerWidget(QWidget):
@@ -387,6 +397,7 @@ class LogViewerWidget(QWidget):
         range_row.addWidget(QLabel("From:", self))
         self.time_from = QDateTimeEdit(self)
         self.time_from.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        _open_ended(self.time_from)
         # Only a genuine user edit reaches this slot: both programmatic
         # writers (_reset_range, anchor_range) already blockSignals() around
         # setDateTime(). A real edit is what turns the range on.
@@ -395,6 +406,7 @@ class LogViewerWidget(QWidget):
         range_row.addWidget(QLabel("To:", self))
         self.time_to = QDateTimeEdit(self)
         self.time_to.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        _open_ended(self.time_to)
         self.time_to.dateTimeChanged.connect(self._on_range_edited)
         range_row.addWidget(self.time_to)
         # Jumping is not filtering. The range boxes HIDE everything outside

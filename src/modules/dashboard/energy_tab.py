@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget, QVBoxLayout,
                              QHBoxLayout)
 
+from core.table_ui import set_role
 from core.semantic_colors import semantic
 
 from . import energy
@@ -38,7 +39,7 @@ class EnergyTab(DashTab):
         self._headline.setFont(font)
         layout.addWidget(self._headline)
         self._detail = QLabel("", self)
-        self._detail.setStyleSheet("color: gray;")
+        set_role(self._detail, "muted")
         self._detail.setWordWrap(True)
         layout.addWidget(self._detail)
         self._spark = Sparkline(ceiling=1.0)
@@ -71,12 +72,12 @@ class EnergyTab(DashTab):
             "process's share of CPU time to the package power, so they show who is "
             "responsible, not what an instrument measured. Idle draw is not attributed.", self)
         self._note.setWordWrap(True)
-        self._note.setStyleSheet("color: gray;")
+        set_role(self._note, "muted")
         layout.addWidget(self._note)
 
     def _heading(self, text: str) -> QLabel:
         label = QLabel(text, self)
-        label.setStyleSheet("font-weight: bold;")
+        set_role(label, "sectionTitle")
         return label
 
     # ---- lifecycle ----------------------------------------------------------------

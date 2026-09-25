@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QHBoxLayout,
                              QSplitter, QTableWidget, QTableWidgetItem,
                              QVBoxLayout, QWidget)
 
+from core.table_ui import set_role
 from core.confirm import confirm_destructive
 from core.semantic_colors import semantic
 from core.worker import COMWorker, Worker
@@ -98,7 +99,7 @@ class ServicesTab(QWidget):
 
         self.note = QLabel(_NOTE, self)
         self.note.setWordWrap(True)
-        self.note.setStyleSheet("color: #888; font-size: 11px;")
+        set_role(self.note, "muted")
         layout.addWidget(self.note)
 
         top = QHBoxLayout()

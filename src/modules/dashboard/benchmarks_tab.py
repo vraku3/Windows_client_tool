@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QHBoxLayout,
                              QHeaderView, QLabel, QProgressBar, QPushButton,
                              QTableWidget, QTableWidgetItem, QVBoxLayout)
 
+from core.table_ui import set_role
 from core.semantic_colors import semantic
 from core.worker import Worker
 
@@ -71,7 +72,7 @@ class BenchmarksTab(DashTab):
             "setting or power-plan change. These are quick sanity checks, not a "
             "substitute for a published benchmark suite.", self)
         self.status.setWordWrap(True)
-        self.status.setStyleSheet("color: gray;")
+        set_role(self.status, "muted")
         layout.addWidget(self.status)
         self._fill_drives()
         self._show_last_run()

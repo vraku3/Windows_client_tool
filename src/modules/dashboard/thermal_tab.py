@@ -6,6 +6,7 @@ from typing import Optional
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QHeaderView, QLabel, QTableWidget, QVBoxLayout
 
+from core.table_ui import set_role
 from core.semantic_colors import semantic
 
 from . import power, thermal
@@ -37,7 +38,7 @@ class ThermalTab(DashTab):
         layout.addWidget(self._headline)
         self._explain = QLabel("", self)
         self._explain.setWordWrap(True)
-        self._explain.setStyleSheet("color: gray;")
+        set_role(self._explain, "muted")
         layout.addWidget(self._explain)
         self._zones = QTableWidget(0, 2, self)
         self._zones.setHorizontalHeaderLabels(["Sensor", "Temperature"])
@@ -53,13 +54,13 @@ class ThermalTab(DashTab):
         self._spark.setMinimumHeight(80)
         layout.addWidget(self._spark)
         self._spark_note = QLabel("Effective clock as a fraction of nominal, last few minutes.", self)
-        self._spark_note.setStyleSheet("color: gray;")
+        set_role(self._spark_note, "muted")
         layout.addWidget(self._spark_note)
         layout.addStretch(1)
 
     def _label(self, text: str) -> QLabel:
         label = QLabel(text, self)
-        label.setStyleSheet("font-weight: bold;")
+        set_role(label, "sectionTitle")
         return label
 
     def start(self) -> None:

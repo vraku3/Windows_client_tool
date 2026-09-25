@@ -183,6 +183,18 @@ QLabel#muted {
     color: #5a5a5a;
 }
 
+/* Roles the Dashboard's newer tabs ask for instead of inline sheets. */
+QLabel#mutedTitle {
+    color: #5a5a5a;
+    font-weight: bold;
+}
+QLabel#sectionTitle {
+    font-weight: bold;
+}
+QLabel#mono {
+    font-family: Consolas, "Courier New", monospace;
+}
+
 /* Network Diagnostics' collapsible _ToolCard header -- the light half of
    the role in dark.qss. */
 QPushButton#toolCardHeader {

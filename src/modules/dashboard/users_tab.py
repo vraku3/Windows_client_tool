@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
                              QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout, QWidget)
 
+from core.table_ui import set_role
 from core.semantic_colors import semantic
 from core.worker import Worker
 
@@ -60,7 +61,7 @@ class UsersTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         heading = QLabel("Logged-on sessions", self)
-        heading.setStyleSheet("font-weight: bold; padding: 4px 4px 0 4px;")
+        set_role(heading, "sectionTitle")
         layout.addWidget(heading)
         self.sessions_table = QTableWidget(0, 5, self)
         self.sessions_table.setHorizontalHeaderLabels(
@@ -73,7 +74,7 @@ class UsersTab(QWidget):
         self.sessions_table.setMaximumHeight(120)
         layout.addWidget(self.sessions_table)
         self.sessions_note = QLabel("", self)
-        self.sessions_note.setStyleSheet("color: gray; padding: 0 4px;")
+        set_role(self.sessions_note, "muted")
         layout.addWidget(self.sessions_note)
 
         self.tree = QTreeWidget(self)

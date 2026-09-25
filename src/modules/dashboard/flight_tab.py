@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (QComboBox, QFileDialog, QGridLayout, QHBoxLayout,
                              QLabel, QPushButton, QSlider, QVBoxLayout, QWidget)
 
+from core.table_ui import set_role
 from core.semantic_colors import semantic
 
 from . import flight_recorder as fr
@@ -40,10 +41,14 @@ class TraceChart(QWidget):
 
     def mousePressEvent(self, event) -> None:
         self.cursor_requested.emit(self._fraction(event.position().x()))
+        event.accept()
 
     def mouseMoveEvent(self, event) -> None:
         if event.buttons() & Qt.MouseButton.LeftButton:
             self.cursor_requested.emit(self._fraction(event.position().x()))
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
@@ -134,11 +139,11 @@ class FlightTab(DashTab):
         self._slider.valueChanged.connect(self._slider_moved)
         layout.addWidget(self._slider)
         self._readout = QLabel("Press Record to start capturing, or Open a saved .trace to look back.", self)
-        self._readout.setStyleSheet("font-family: Consolas, monospace;")
+        set_role(self._readout, "mono")
         self._readout.setWordWrap(True)
         layout.addWidget(self._readout)
         self.status = QLabel("", self)
-        self.status.setStyleSheet("color: gray;")
+        set_role(self.status, "muted")
         layout.addWidget(self.status)
 
     # ---- DashTab hooks ---------------------------------------------------------------

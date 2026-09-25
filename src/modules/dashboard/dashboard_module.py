@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QApplication,
 )
 
+from core.table_ui import set_role
 from core.base_module import BaseModule
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
@@ -132,7 +133,7 @@ class _Card(QFrame):
         if _pt > 0:
             font.setPointSize(_pt - 1)
         title_lbl.setFont(font)
-        title_lbl.setStyleSheet("color: gray;")
+        set_role(title_lbl, "muted")
         vbox.addWidget(title_lbl)
         self._body = QVBoxLayout()
         self._body.setSpacing(6)
@@ -285,11 +286,11 @@ class _DashboardWidget(QWidget):
         top.addWidget(self._build_refresh_control())
         box.addLayout(top)
         self._os_lbl = QLabel("—")
-        self._os_lbl.setStyleSheet("color: gray;")
+        set_role(self._os_lbl, "muted")
         self._os_lbl.setWordWrap(True)
         box.addWidget(self._os_lbl)
         self._self_lbl = QLabel("", self)
-        self._self_lbl.setStyleSheet("color: gray;")
+        set_role(self._self_lbl, "muted")
         self._self_lbl.setToolTip("The monitor's own resource use: a tool that watches "
                                   "the machine should be held to the same standard.")
         box.addWidget(self._self_lbl)
@@ -300,7 +301,7 @@ class _DashboardWidget(QWidget):
         row = QHBoxLayout(holder)
         row.setContentsMargins(0, 0, 0, 0)
         label = QLabel("Refresh")
-        label.setStyleSheet("color: gray;")
+        set_role(label, "muted")
         self._refresh_slider = QSlider(Qt.Orientation.Horizontal)
         self._refresh_slider.setRange(1, 60)
         self._refresh_slider.setFixedWidth(140)
@@ -332,7 +333,7 @@ class _DashboardWidget(QWidget):
         self._attention_box.setSpacing(4)
         self._attention_card.body().addLayout(self._attention_box)
         self._attention_status = QLabel("Checking…")
-        self._attention_status.setStyleSheet("color: gray;")
+        set_role(self._attention_status, "muted")
         self._attention_card.body().addWidget(self._attention_status)
         recheck = QPushButton("Re-check now")
         recheck.clicked.connect(lambda: self._start_findings(force=True))
@@ -343,10 +344,10 @@ class _DashboardWidget(QWidget):
         self._top_mem_lbl = QLabel("—")
         for text, lbl in (("By CPU", self._top_cpu_lbl), ("By memory", self._top_mem_lbl)):
             head = QLabel(text)
-            head.setStyleSheet("color: gray; font-weight: bold;")
+            set_role(head, "mutedTitle")
             self._top_card.body().addWidget(head)
             lbl.setTextFormat(Qt.TextFormat.PlainText)
-            lbl.setStyleSheet("font-family: Consolas, monospace;")
+            set_role(lbl, "mono")
             self._top_card.body().addWidget(lbl)
         self._top_card.body().addStretch(1)
         row.addWidget(self._top_card, 2)
@@ -371,7 +372,7 @@ class _DashboardWidget(QWidget):
         self._adapters_lbl = QLabel("—")
         for lbl in (self._identity_lbl, self._adapters_lbl):
             lbl.setTextFormat(Qt.TextFormat.PlainText)
-            lbl.setStyleSheet("font-family: Consolas, monospace;")
+            set_role(lbl, "mono")
             lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             card.body().addWidget(lbl)
         return card
@@ -401,7 +402,7 @@ class _DashboardWidget(QWidget):
         row.addStretch(1)
         card.body().addLayout(row)
         self._tools_status = QLabel("")
-        self._tools_status.setStyleSheet("color: gray;")
+        set_role(self._tools_status, "muted")
         card.body().addWidget(self._tools_status)
         return card
 

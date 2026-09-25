@@ -26,6 +26,7 @@ REQUIREMENTS = os.path.join(REPO_ROOT, "requirements.txt")
 
 #: Distributions whose import name differs from the name pip installs under.
 IMPORT_NAME = {
+    "pywintrace": "etw",
     "pywin32": "win32api",
     "WMI": "wmi",
 }

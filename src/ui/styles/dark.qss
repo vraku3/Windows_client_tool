@@ -415,6 +415,18 @@ QLabel#muted {
     color: #858585;
 }
 
+/* Roles the Dashboard's newer tabs ask for instead of inline sheets. */
+QLabel#mutedTitle {
+    color: #858585;
+    font-weight: bold;
+}
+QLabel#sectionTitle {
+    font-weight: bold;
+}
+QLabel#mono {
+    font-family: Consolas, "Courier New", monospace;
+}
+
 /* Network Diagnostics' collapsible _ToolCard header -- a flat title bar,
    deliberately unlike the default QPushButton (no border, left-aligned
    text). A role rather than an inline sheet so it still follows a theme

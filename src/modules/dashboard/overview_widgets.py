@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
                              QSizePolicy, QVBoxLayout, QWidget)
 
+from core.table_ui import set_role
 from core.semantic_colors import semantic
 from modules.dashboard.overview_health import Finding, heat_level
 
@@ -74,14 +75,14 @@ class MetricTile(QFrame):
         lay.setContentsMargins(14, 10, 14, 10)
         lay.setSpacing(2)
         self._title = QLabel(title)
-        self._title.setStyleSheet("color: gray; font-weight: bold;")
+        set_role(self._title, "mutedTitle")
         self._value = QLabel("—")
         font = self._value.font()
         font.setPointSize(font.pointSize() + 9)
         font.setBold(True)
         self._value.setFont(font)
         self._caption = QLabel("")
-        self._caption.setStyleSheet("color: gray;")
+        set_role(self._caption, "muted")
         self._caption.setWordWrap(True)
         self.spark = Sparkline(ceiling)
         for w in (self._title, self._value, self._caption, self.spark):
@@ -184,11 +185,11 @@ class FindingRow(QFrame):
         text = QVBoxLayout()
         text.setSpacing(0)
         title = QLabel(finding.title)
-        title.setStyleSheet("font-weight: bold;")
+        set_role(title, "sectionTitle")
         text.addWidget(title)
         if finding.detail:
             detail = QLabel(finding.detail)
-            detail.setStyleSheet("color: gray;")
+            set_role(detail, "muted")
             detail.setWordWrap(True)
             text.addWidget(detail)
         lay.addLayout(text, 1)

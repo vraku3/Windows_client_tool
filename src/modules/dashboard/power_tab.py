@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QComboBox, QHBoxLayout, QHeaderView, QLabel,
                              QPushButton, QTableWidget, QVBoxLayout)
 
+from core.table_ui import set_role
 from core.confirm import confirm_destructive
 from core.semantic_colors import semantic
 
@@ -68,7 +69,7 @@ class PowerTab(DashTab):
             "Windows reports as the base clock and does not move when the CPU boosts.",
             self)
         self._note.setWordWrap(True)
-        self._note.setStyleSheet("color: gray;")
+        set_role(self._note, "muted")
         layout.addWidget(self._note)
 
     # ---- lifecycle ----------------------------------------------------------------

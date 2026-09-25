@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QLabel, QFrame, QProgressBar, QCheckBox, QLineEdit,
     QPlainTextEdit, QTabWidget, QTableWidget, QGroupBox, QScrollArea, QSizePolicy,
 )
-from PyQt6.QtCore import QThreadPool, pyqtSignal
+from PyQt6.QtCore import QSize, QThreadPool, pyqtSignal
 from PyQt6.QtGui import QColor
 
 import logging
@@ -320,7 +320,6 @@ class _StatusCard(QFrame):
     def __init__(self, title: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setMinimumHeight(120)
         layout = QVBoxLayout(self)
 
         self._title_lbl = QLabel(title)
@@ -339,6 +338,18 @@ class _StatusCard(QFrame):
         self._details_layout = QVBoxLayout()
         layout.addLayout(self._details_layout)
         layout.addStretch()
+
+    _MIN_HEIGHT = 120
+
+    def minimumSizeHint(self):
+        """At least 120px, and never less than the contents need.
+
+        This was `setMinimumHeight(120)`, but an EXPLICIT minimum replaces the
+        one Qt derives from the layout, so a card with three detail rows (BitLocker,
+        HVCI) could not grow past 120 and its rows were squashed until half
+        their text was cut off."""
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), max(self._MIN_HEIGHT, hint.height()))
 
     def update_status(self, data: dict):
         color = COLOR_MAP.get(data.get("color", "amber"), "#888")
@@ -365,6 +376,7 @@ class _StatusCard(QFrame):
             container = QWidget()
             container.setLayout(row)
             self._details_layout.addWidget(container)
+        self.updateGeometry()          # the rows changed, so the needed height did
 
 
 # ── Main Module ────────────────────────────────────────────────────────────

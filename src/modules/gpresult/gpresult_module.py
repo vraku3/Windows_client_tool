@@ -45,6 +45,7 @@ from modules.gpresult.policy_drift import (
     APPLIED, DIFFERENT, DriftReport, MISSING, UNREADABLE, drift_report,
 )
 from modules.gpresult.pol_parser import PolFile, local_policy_files
+from modules.gpresult.rsop_parser import local_read_time
 from modules.gpresult.rsop_parser import (
     GpoInfo, PolicySetting, RsopResult, RsopScope,
 )
@@ -341,7 +342,7 @@ class GPResultModule(BaseModule):
 
         parts = []
         if result.read_time:
-            parts.append("Collected %s" % result.read_time.replace("T", " ")[:19])
+            parts.append("Collected %s" % local_read_time(result.read_time))
         if result.data_type:
             parts.append(result.data_type)
         self._info_lbl.setText("  |  ".join(parts))

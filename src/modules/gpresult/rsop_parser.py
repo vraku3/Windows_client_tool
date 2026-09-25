@@ -194,6 +194,29 @@ class RsopScope:
         return [g for g in self.gpos if not g.applied]
 
 
+def local_read_time(raw: str) -> str:
+    """`2026-09-25T07:26:49.97Z` -> `2026-09-25 10:26:49` in local time.
+
+    gpresult stamps its report in UTC (the trailing Z) and the pane printed it
+    as though it were local, so on this machine (UTC+3) "Collected" read three
+    hours before the clock. Only the DISPLAY is converted: the stored value is
+    left exactly as gpresult wrote it, so saved snapshots stay comparable. An
+    unparseable value is shown as it came rather than guessed at."""
+    import datetime
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    try:
+        # Python 3.12 reads the trailing Z and truncates gpresult's 7-digit
+        # fraction itself.
+        moment = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return text.replace("T", " ")[:19]
+    if moment.tzinfo is None:
+        return text.replace("T", " ")[:19]          # no zone stated: leave alone
+    return moment.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
 @dataclass
 class RsopResult:
     computer: RsopScope = field(default_factory=lambda: RsopScope("Computer"))

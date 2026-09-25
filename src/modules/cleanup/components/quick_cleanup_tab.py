@@ -221,6 +221,21 @@ ADVANCED_CATEGORIES = [
 
 # ── Pie Chart ────────────────────────────────────────────────────────────────
 
+
+def largest_slice_text(slices, format_size) -> str:
+    """"Largest: Package Cache -- 32.1 GB", or "" with nothing to show.
+
+    The legend beside the donut lists only the main categories, but the donut
+    also carries every advanced category's slice: on the real machine the
+    listed categories summed to 2.2 GB of a 34.8 GB total, and the biggest
+    slice was one nobody could name without opening "Show Advanced"."""
+    if not slices:
+        return ""
+    label, size, _color = max(slices, key=lambda s: s[1])
+    if size <= 0:
+        return ""
+    return f"Largest: {label} — {format_size(size)}"
+
 class _PieChart(QWidget):
     """Pure-Qt donut chart showing reclaimable space by category."""
 
@@ -730,6 +745,11 @@ class QuickCleanupTab(QWidget):
         stats_lay.addWidget(self._safe_lbl)
         stats_lay.addWidget(self._item_lbl)
         stats_lay.addWidget(self._cat_lbl)
+        self._largest_lbl = QLabel("")
+        self._largest_lbl.setObjectName("muted")
+        self._largest_lbl.setStyleSheet("font-size: 12px;")
+        self._largest_lbl.setWordWrap(True)
+        stats_lay.addWidget(self._largest_lbl)
         stats_lay.addStretch()
         dash_lay.addLayout(stats_lay)
         dash_lay.addStretch()
@@ -978,6 +998,7 @@ class QuickCleanupTab(QWidget):
                     self._adv_cards[i].set_size(0)
 
         self._pie_chart.set_slices(slices)
+        self._largest_lbl.setText(largest_slice_text(slices, cs.format_size))
         self._total_lbl.setText(f"Total: {cs.format_size(total_size)}")
         self._safe_lbl.setText(f"Safe to clean: {cs.format_size(total_safe)}")
         self._item_lbl.setText(f"Items found: {total_items}")

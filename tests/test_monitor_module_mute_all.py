@@ -14,9 +14,20 @@ from __future__ import annotations
 from PyQt6.QtWidgets import QMessageBox
 
 from modules.monitor_control import display_audio as da
+import pytest
+
 from modules.monitor_control import monitor_module as mm
 
 HIDDEN = 0x10000000
+
+
+@pytest.fixture(autouse=True)
+def _no_real_display_read(monkeypatch):
+    """`create_widget()` starts a real display read on a worker. Left running it
+    finishes during a LATER, unrelated test, where `_offer_window_restore` can
+    open a real modal `QMessageBox.question` and hang the whole run (seen
+    2026-09-25, in test_startup_tab). These tests never need real hardware."""
+    monkeypatch.setattr(mm.MonitorControlModule, "refresh_data", lambda self: None)
 
 
 def _endpoint(guid, *, state=da.EndpointState.ACTIVE, raw=1,

@@ -346,12 +346,11 @@ class _DashboardWidget(QWidget):
         self._refresh_driver_health()
 
     def _refresh_system(self) -> None:
-        self._os_lbl.setText(
-            f"OS: {platform.system()} {platform.release()} ({platform.version()[:40]})"
-        )
+        from core.windows_utils import cpu_brand_name, windows_display_name
+        self._os_lbl.setText(f"OS: {windows_display_name()}")
         self._host_lbl.setText(f"Host: {platform.node()}")
         cpu = (
-            platform.processor()
+            cpu_brand_name()
             or psutil.cpu_freq()
             and f"{psutil.cpu_freq().current:.0f} MHz"
         )

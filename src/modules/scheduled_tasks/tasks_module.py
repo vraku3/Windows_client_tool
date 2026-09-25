@@ -64,8 +64,7 @@ class TasksModule(BaseModule):
     # ------------------------------------------------------------------
 
     def create_widget(self) -> QWidget:
-        w = QWidget()
-        self._widget = w
+        w = self._widget = QWidget()
         main_layout = QVBoxLayout(w)
         main_layout.setContentsMargins(8, 8, 8, 8)
 
@@ -135,7 +134,6 @@ class TasksModule(BaseModule):
 
         # Mutable reference to the current task list
         tasks_ref: list = [[]]  # tasks_ref[0] = List[TaskInfo]
-
         # ── Folder tree loading ───────────────────────────────────────
         def load_folder_tree():
             refresh_btn.setEnabled(False)
@@ -162,7 +160,9 @@ class TasksModule(BaseModule):
 
                 root_item = add_folder(None, root_folder)
                 folder_tree.expandItem(root_item)
-                status_lbl.setText("Select a folder.")
+                # Show the root's tasks at once; the tab used to open empty.
+                folder_tree.setCurrentItem(root_item)
+                folder_tree.itemClicked.emit(root_item, 0)
 
             def on_error(err: str):
                 refresh_btn.setEnabled(True)

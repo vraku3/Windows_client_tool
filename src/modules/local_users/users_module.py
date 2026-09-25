@@ -36,6 +36,17 @@ def _fmt_time(t) -> str:
         return str(t)
 
 
+def format_password_age(seconds) -> str:
+    """Days since the password was set. NetUserEnum reports 0 seconds for an
+    account whose password was NEVER set (the built-in Administrator, Guest,
+    DefaultAccount...), which is not the same as "changed today" -- that is a
+    small positive number of seconds. The 0 read as "0 days" on every one of
+    them; it is a dash."""
+    if not seconds:
+        return "—"
+    return str(int(seconds / 86400))
+
+
 def get_users() -> List[Dict]:
     import win32net
     users = []
@@ -46,14 +57,13 @@ def get_users() -> List[Dict]:
             flags = u.get("flags", 0)
             enabled = not bool(flags & _UF_ACCOUNTDISABLE)
             logon_ts = u.get("last_logon", 0)
-            pw_age_sec = u.get("password_age", 0)
-            pw_age_days = int(pw_age_sec / 86400) if pw_age_sec else 0
+            pw_age_days = format_password_age(u.get("password_age", 0))
             users.append({
                 "Username": u.get("name", ""),
                 "Full Name": u.get("full_name", ""),
                 "Enabled": "Yes" if enabled else "No",
                 "Last Logon": _fmt_time(logon_ts),
-                "Password Age (days)": str(pw_age_days),
+                "Password Age (days)": pw_age_days,
                 "Comment": u.get("comment", ""),
             })
         if not resume:

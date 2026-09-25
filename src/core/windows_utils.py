@@ -81,3 +81,61 @@ def program_data() -> str:
 def system32() -> str:
     r"""The 64-bit system directory, e.g. C:\Windows\System32."""
     return os.path.join(system_root(), "System32")
+
+
+def format_windows_name(product_name: str, display_version: str,
+                        build: str, ubr: str) -> str:
+    """"Windows 11 Pro 25H2 (build 26200.9550)" from the raw registry values.
+
+    `ProductName` still says "Windows 10 ..." on Windows 11 (it never changed),
+    so the major version comes from the build number: 22000 and above is 11.
+    Whatever the registry gave is used as-is when it cannot be interpreted."""
+    product_name = (product_name or "").strip()
+    try:
+        build_number = int(build)
+    except (TypeError, ValueError):
+        return product_name or "Windows"
+    major = "11" if build_number >= 22000 else "10"
+    edition = product_name
+    for prefix in ("Windows 10 ", "Windows 11 "):
+        if edition.startswith(prefix):
+            edition = edition[len(prefix):]
+    name = f"Windows {major} {edition}".strip()
+    if display_version:
+        name += f" {display_version}"
+    build_text = f"{build_number}.{ubr}" if str(ubr or "").strip() else str(build_number)
+    return f"{name} (build {build_text})"
+
+
+def windows_display_name() -> str:
+    """This machine's Windows name, e.g. "Windows 11 Pro 25H2 (build 26200.9550)"."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+            def value(name):
+                try:
+                    return str(winreg.QueryValueEx(key, name)[0])
+                except OSError:
+                    return ""
+            return format_windows_name(value("ProductName"), value("DisplayVersion"),
+                                       value("CurrentBuild"), value("UBR"))
+    except OSError:
+        logger.warning("Could not read the Windows version from the registry",
+                       exc_info=True)
+        import platform
+        return f"{platform.system()} {platform.release()}"
+
+
+def cpu_brand_name() -> str:
+    """"AMD Ryzen 9 9950X3D 16-Core Processor", not "AMD64 Family 26 Model 68
+    Stepping 0, AuthenticAMD" (which is what `platform.processor()` returns)."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+            name = str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip()
+            if name:
+                return " ".join(name.split())
+    except OSError:
+        logger.warning("Could not read the CPU name from the registry", exc_info=True)
+    import platform
+    return platform.processor()

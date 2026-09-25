@@ -31,6 +31,33 @@ class SoftwareEntry:
     uninstall_string: str = ""
 
 
+def format_install_date(raw: str) -> str:
+    """`20260907` -> `2026-09-07`. Anything that is not a real YYYYMMDD date is
+    shown as it was written: installers put all sorts of things in this value,
+    and a guess would be worse than the original text."""
+    import datetime
+    raw = (raw or "").strip()
+    if len(raw) == 8 and raw.isdigit():
+        try:
+            return datetime.datetime.strptime(raw, "%Y%m%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return raw
+    return raw
+
+
+def format_estimated_size(raw: str) -> str:
+    """The registry's `EstimatedSize` is in KB. A missing value or a 0 means
+    the installer never said -- not that the program takes no space -- so it
+    is shown as a dash rather than as "0.0 MB", which read as a measurement."""
+    try:
+        kilobytes = int((raw or "").strip())
+    except ValueError:
+        return "—"
+    if kilobytes <= 0:
+        return "—"
+    return f"{kilobytes / 1024:.1f} MB"
+
+
 def _read_registry_uninstall(hive, key_path: str, type_label: str) -> List[SoftwareEntry]:
     entries = []
     try:
@@ -49,17 +76,12 @@ def _read_registry_uninstall(hive, key_path: str, type_label: str) -> List[Softw
                         if not name:
                             i += 1
                             continue
-                        size_bytes = rv("EstimatedSize", "0")
-                        try:
-                            size_mb = f"{int(size_bytes) / 1024:.1f} MB"
-                        except (ValueError, ZeroDivisionError):
-                            size_mb = ""
                         entries.append(SoftwareEntry(
                             name=name,
                             version=rv("DisplayVersion"),
                             publisher=rv("Publisher"),
-                            install_date=rv("InstallDate"),
-                            size_mb=size_mb,
+                            install_date=format_install_date(rv("InstallDate")),
+                            size_mb=format_estimated_size(rv("EstimatedSize")),
                             type_=type_label,
                             source="registry",
                             uninstall_string=rv("UninstallString"),

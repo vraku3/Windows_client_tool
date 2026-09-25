@@ -29,7 +29,8 @@ def get_overview(worker=None):
     """Returns list of (label, value) tuples."""
     rows = []
     rows.append(("Hostname", socket.gethostname()))
-    rows.append(("OS", platform.platform()))
+    from core.windows_utils import windows_display_name
+    rows.append(("OS", windows_display_name()))
     uptime_secs = datetime.datetime.now().timestamp() - psutil.boot_time()
     days, rem = divmod(int(uptime_secs), 86400)
     hours, rem = divmod(rem, 3600)

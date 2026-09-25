@@ -479,6 +479,7 @@ class DiskHealthModule(BaseModule):
     description = "S.M.A.R.T. drive health, temperature, reallocated sectors, failure prediction"
     requires_admin = True
     group = ModuleGroup.SYSTEM
+    _scanned_once = False
 
     def create_widget(self) -> QWidget:
         self._widget = _DiskHealthWidget()
@@ -491,7 +492,15 @@ class DiskHealthModule(BaseModule):
         self.cancel_all_workers()
 
     def on_activate(self) -> None:
-        pass
+        # First open used to show "No drives scanned yet" and wait for a click
+        # (or for the 5-minute auto-refresh, whose first tick is a full
+        # interval after the tab opens). The tab exists to show drive health,
+        # so it scans the first time it is opened, and only then.
+        widget = getattr(self, "_widget", None)
+        if widget is None or self._scanned_once:
+            return
+        self._scanned_once = True
+        widget._do_scan()
 
     def on_deactivate(self) -> None:
         if hasattr(self, "_widget"):

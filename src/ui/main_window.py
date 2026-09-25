@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
         self._filter_panel.setAccessibleName("Search filters")
         self._filter_panel.setVisible(False)
         self._setup_filter_search_debounce()
+        self._setup_status_info_refresh()
         root_layout.insertWidget(root_layout.indexOf(splitter), self._filter_panel)
 
         self._status_bar = AppStatusBar(self)
@@ -649,6 +650,29 @@ class MainWindow(QMainWindow):
 
     def _on_filter_toggled(self, expanded: bool) -> None:
         self._filter_panel.setVisible(expanded)
+
+    def _setup_status_info_refresh(self) -> None:
+        """Keep the module's status-bar text current.
+
+        `get_status_info()` was read once, when a tab was selected -- before an
+        asynchronous load had finished -- so a tab that fills in a moment later
+        kept saying "Restore Manager -- 0 points" above a list of three. It is
+        a string per call, so re-reading it every couple of seconds is cheap."""
+        self._status_info_timer = QTimer(self)
+        self._status_info_timer.setInterval(2000)
+        self._status_info_timer.timeout.connect(self._refresh_status_info)
+        self._status_info_timer.start()
+
+    def _refresh_status_info(self) -> None:
+        module = self._active_module
+        if module is None or module in self._app.module_registry.disabled_modules:
+            return
+        try:
+            text = module.get_status_info()
+        except Exception:
+            logger.exception("get_status_info failed for %s", module.name)
+            return
+        self._status_bar.set_module_info(text)
 
     def _setup_filter_search_debounce(self) -> None:
         """One search per burst of filter changes, not one per checkbox: a

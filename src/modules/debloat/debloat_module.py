@@ -340,9 +340,9 @@ class DebloatToolsModule(BaseModule):
         layout.addLayout(preset_layout)
 
         legend = QLabel(
-            "● Applied &nbsp;&nbsp; ○ Not Applied &nbsp;&nbsp; "
-            "◑ Partially Applied &nbsp;&nbsp; – Not Applicable "
-            "&nbsp;&nbsp; ❓ Unknown — hover a row for why")
+            "● Applied     ○ Not Applied     "
+            "◑ Partially Applied     – Not Applicable     "
+            "❓ Unknown — hover a row for why")
         # setObjectName("muted"), not an inline setStyleSheet: an inline
         # sheet beats the app stylesheet and never changes again, so it
         # would survive a theme switch unchanged (see the "muted" role in

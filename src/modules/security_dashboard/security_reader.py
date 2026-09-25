@@ -991,15 +991,26 @@ def run_update_definitions() -> Dict[str, Any]:
     }
 
 
+class SecurityLogUnreadable(Exception):
+    """The Security log could not be read (almost always: not elevated)."""
+
+
 def get_security_events(count: int = 30) -> List[Dict[str, str]]:
-    """Retrieve recent security events from the Security log."""
+    """Retrieve recent security events from the Security log.
+
+    Raises SecurityLogUnreadable when the read is refused. It used to return
+    [] for that, so an unelevated session was told "Nothing found in the
+    Security log" about a log it was never allowed to open.
+    """
     try:
         rc, out, err = _cmd_run(
             ["wevtutil", "qe", "Security", f"/c:{count}", "/f:text", "/rd:true"],
             timeout=30
         )
         if rc != 0:
-            return []
+            reason = (err or out or "").strip().splitlines()
+            raise SecurityLogUnreadable(
+                reason[0] if reason else f"wevtutil exited {rc}")
         events = []
         current = {}
         for line in out.splitlines():
@@ -1068,7 +1079,10 @@ def get_security_events(count: int = 30) -> List[Dict[str, str]]:
                      "4720", "4722", "4723", "4724", "4725", "4726", "4740",
                      "1102", "5140", "5156", "5157"}
         return [e for e in events if e.get("event_id") in known_ids]
+    except SecurityLogUnreadable:
+        raise
     except Exception:
+        logger.warning("could not parse the Security log output", exc_info=True)
         return []
 
 

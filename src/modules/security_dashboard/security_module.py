@@ -1172,8 +1172,11 @@ class SecurityDashboardModule(BaseModule):
                 return
             self._events_progress.hide()
             emsg = str(err[1]) if isinstance(err, tuple) else str(err)
-            self._error_banner.set_error(f"Failed to load events: {emsg}")
+            self._error_banner.set_error(f"Could not read the Security event log: {emsg}. "
+                                         "Run as administrator to see these events.")
             self._error_banner.show()
+            self._events_table.hide()
+            self._events_empty.hide()
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)

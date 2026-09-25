@@ -228,3 +228,14 @@ def test_a_read_only_card_says_so_in_words_not_just_by_omission(qapp):
     assert card.reason_label.text().startswith("Read-only")
     assert card.reason_label.font().italic()
     assert not card.description_label.font().italic()
+
+
+def test_a_numeric_control_already_at_its_target_offers_no_no_op_button(qapp):
+    """The Cached domain logons card read 4 and still offered "Set to 4"."""
+    card = ControlCard(_numeric())
+    card.set_reading(5)
+    assert card.toggle_button.text() == "At recommended value"
+    assert not card.toggle_button.isEnabled()
+    card.set_reading(3)
+    assert card.toggle_button.text() == "Set to 5"
+    assert card.toggle_button.isEnabled()

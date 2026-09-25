@@ -189,6 +189,8 @@ class ControlCard(QFrame):
         if not self._control.writable:
             return None
         if self._is_numeric():
+            if self._reading == self._control.desired:
+                return None      # already there: "Set to 4" on a 4 does nothing
             return self._control.desired
         if isinstance(self._reading, bool):
             return not self._reading
@@ -196,8 +198,14 @@ class ControlCard(QFrame):
             return self._control.desired
         return True
 
+    def _at_recommended(self) -> bool:
+        return (self._control.writable and self._is_numeric()
+                and self._reading == self._control.desired)
+
     def _action_text(self) -> str:
         target = self._target()
+        if target is None and self._at_recommended():
+            return "At recommended value"
         if target is None:
             return "Not changeable"
         if self._is_numeric():

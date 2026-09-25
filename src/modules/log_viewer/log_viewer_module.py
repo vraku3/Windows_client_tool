@@ -201,10 +201,6 @@ class LogViewerWidget(QWidget):
 
     def _build_toolbar(self, layout) -> None:
         """The open/reload/follow row, and the source and severity filters."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
-
         top = QHBoxLayout()
         # A split button: pressing it browses, the arrow lists the logs this
         # machine actually has. Same idea as TreeSize's scan target -- offer

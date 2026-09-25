@@ -757,6 +757,8 @@ class DashboardModule(CompositeModule):
         from modules.dashboard.installed_apps_tab import InstalledAppsModule
         from modules.dashboard.disk_space_tab import DiskSpaceModule
         from modules.dashboard.power_tab import PowerModule
+        from modules.dashboard.benchmarks_tab import BenchmarksModule
+        from modules.dashboard.flight_tab import FlightModule
         from modules.perfmon.perfmon_module import PerfMonModule
         from modules.process_explorer.process_explorer_module import (
             ProcessExplorerModule)
@@ -775,6 +777,8 @@ class DashboardModule(CompositeModule):
             InstalledAppsModule(),
             DiskSpaceModule(),
             PowerModule(),
+            BenchmarksModule(),
+            FlightModule(),
             ProcessExplorerModule(),
             PerfMonModule(),
         ]

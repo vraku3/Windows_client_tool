@@ -23,6 +23,7 @@ from core.semantic_colors import semantic
 from core.table_ui import set_role
 
 from ui.perf_graph import CoreGrid, PerfGraph
+from .overview_widgets import VfdMeter
 from core.procengine.columns import fmt_bytes
 from core.procengine.cpuinfo import (core_loads, cpu_static, processor_times,
                                  uptime_seconds)
@@ -90,6 +91,8 @@ class PerformanceTab(QWidget):
             f"color: {semantic('info')};")
         column.addWidget(self.cpu_subtitle)
 
+        self.cpu_meter = VfdMeter(panel)
+        column.addWidget(self.cpu_meter)
         self.cpu_graph = PerfGraph(semantic("info"), 100.0, panel)
         column.addWidget(self.cpu_graph, 2)
 
@@ -488,6 +491,7 @@ class PerformanceTab(QWidget):
             return
         average = sum(load.total for load in loads) / len(loads)
         self.cpu_graph.push(average)
+        self.cpu_meter.set_value(average)
         self.core_grid.push([load.total for load in loads])
         if self.cpu_view.currentIndex() == 1:      # the other views keep their own caption
             self.core_label.setText(f"{len(loads)} logical processors")

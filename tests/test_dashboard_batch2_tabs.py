@@ -47,3 +47,19 @@ def test_a_tab_named_with_an_ampersand_shows_it(qapp):
     w = m.create_widget()
     labels = [m._tabs.tabText(i) for i in range(m._tabs.count())]
     assert any("Power && Freq" in t for t in labels), labels
+
+
+def test_vfd_meter_lights_segments_in_proportion_and_holds_a_falling_peak(qapp):
+    from modules.dashboard.overview_widgets import VfdMeter
+    m = VfdMeter()
+    m.resize(400, 34)
+    m.set_value(50)
+    assert m.lit == 20 and m.peak_segment == 20
+    m.set_value(10)                                   # load drops: the peak lags behind
+    assert m.lit == 4 and m.peak_segment > m.lit
+    for _ in range(60):
+        m.set_value(10)
+    assert m.peak_segment == m.lit                    # ...and eventually falls back
+    m.set_value(500)                                  # out-of-range is clamped, not painted off the end
+    assert m.lit == m.SEGMENTS
+    assert m.grab().width() == 400

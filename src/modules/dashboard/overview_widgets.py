@@ -198,3 +198,61 @@ class FindingRow(QFrame):
             button.clicked.connect(
                 lambda _=False, m=finding.action_module: self.action_requested.emit(m))
             lay.addWidget(button)
+
+
+class VfdMeter(QWidget):
+    """A segmented bar in the style of a vacuum-fluorescent display.
+
+    Segments light from the left in the theme's success, then warning, then
+    error colour as the reading climbs; unlit ones stay faintly visible, as on
+    the real thing. A single brighter segment holds the recent peak and falls
+    back slowly, which shows a spike that was over before anyone looked.
+    """
+
+    SEGMENTS = 40
+    PEAK_FALL_PER_TICK = 0.6          # segments the held peak drops per update
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._value = 0.0
+        self._peak = 0.0
+        self.setMinimumHeight(34)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_value(self, percent: float) -> None:
+        self._value = max(0.0, min(100.0, float(percent)))
+        level = self._value * self.SEGMENTS / 100.0
+        self._peak = level if level >= self._peak else max(level, self._peak - self.PEAK_FALL_PER_TICK)
+        self.update()
+
+    @property
+    def lit(self) -> int:
+        return int(round(self._value * self.SEGMENTS / 100.0))
+
+    @property
+    def peak_segment(self) -> int:
+        return int(round(self._peak))
+
+    def _colour_for(self, index: int) -> QColor:
+        share = index / self.SEGMENTS
+        role = "success" if share < 0.6 else ("warning" if share < 0.85 else "error")
+        return QColor(semantic(role))
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        gap = 2.0
+        width = (self.width() - gap * (self.SEGMENTS - 1)) / self.SEGMENTS
+        height = self.height() - 4
+        lit, peak = self.lit, self.peak_segment
+        p.setPen(Qt.PenStyle.NoPen)
+        for i in range(self.SEGMENTS):
+            colour = self._colour_for(i)
+            if i < lit:
+                colour.setAlpha(255)
+            elif i == peak - 1 and peak > lit:
+                colour.setAlpha(200)                  # the held peak
+            else:
+                colour.setAlpha(38)                   # unlit, still faintly there
+            p.setBrush(colour)
+            p.drawRoundedRect(QRectF(i * (width + gap), 2, width, height), 1.5, 1.5)

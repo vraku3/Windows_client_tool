@@ -41,7 +41,7 @@ from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.worker import Worker
 from modules.dashboard.overview_health import (
     QUICK_TOOLS, History, collect_findings, identity_lines, launch_tool,
-    network_summary, summary_text)
+    network_summary, self_usage, summary_text)
 from modules.dashboard.overview_widgets import CoreGrid, FindingRow, MetricTile
 
 logger = logging.getLogger(__name__)
@@ -288,6 +288,11 @@ class _DashboardWidget(QWidget):
         self._os_lbl.setStyleSheet("color: gray;")
         self._os_lbl.setWordWrap(True)
         box.addWidget(self._os_lbl)
+        self._self_lbl = QLabel("", self)
+        self._self_lbl.setStyleSheet("color: gray;")
+        self._self_lbl.setToolTip("The monitor's own resource use: a tool that watches "
+                                  "the machine should be held to the same standard.")
+        box.addWidget(self._self_lbl)
         return box
 
     def _build_refresh_control(self) -> QWidget:
@@ -428,6 +433,7 @@ class _DashboardWidget(QWidget):
         self._os_lbl.setText(
             f"{self._os_text}   •   {cpu}   •   up {self._uptime_text}"
             f"   •   booted {boot_dt.strftime('%Y-%m-%d %H:%M')}")
+        self._self_lbl.setText("This tool - " + self_usage())
 
     def _power_text(self) -> str:
         """"  •  76 W" from the CPU's energy meter, or nothing where there is none."""

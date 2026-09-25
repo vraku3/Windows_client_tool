@@ -1114,6 +1114,48 @@ columns, filter chips, badges, detail text) are testable headless;
 - **The Name column is Interactive, not Stretch** -- a stretched one is squeezed
   to ~100px the moment Path/Command line are shown.
 
+### Dashboard tmog-parity tabs (`src/modules/dashboard/`)
+
+Added 2026-09-25 to match the feature list at tmog.org: Connections, System
+Info, Installed Apps, Disk Space, Power & Freq, Benchmarks, Flight Recorder,
+Energy, Thermals, plus a Network column in Processes, phosphor themes and a
+self-usage line on Overview. Each has a Qt-free engine (`connections.py`,
+`sysinfo.py`, `installed_apps.py`, `folder_sizes.py`, `power.py`,
+`topology.py`, `benchmarks.py`, `flight_recorder.py`, `energy.py`,
+`thermal.py`, `net_trace.py`, `pdh_util.py`, `recycle_watch.py`) tested
+headless and a `*_tab.py`; `tab_base.py`'s `DashTab`/`DashModule` is the shared
+plumbing. Every one is in `HIDDEN_IMPORTS`.
+
+- **Some of tmog's readings do not exist on Windows, and the tabs say so
+  instead of estimating.** Thermals: this ASRock board publishes no ACPI
+  thermal zones (`Thermal Zone Information` counter and `MSAcpi_ThermalZoneTemperature`
+  both empty), so the tab reports that plainly and shows the real throttle
+  signals (Windows' per-core MHz LIMIT, effective/nominal clock). Energy:
+  package/core power is REAL (the `Energy Meter` RAPL counters, milliwatts);
+  per-process energy is NOT measurable, so it is labelled "~" / "ESTIMATED"
+  (share of CPU time x package power).
+- **`CallNtPowerInformation` reports the nominal clock and never boosts** --
+  4300 MHz flat while the CPU ran 5200. Effective clock =
+  nominal x `\Processor Information(0,n)\% Processor Performance` (PDH).
+- **Per-process network needs an ETW kernel trace, which needs admin**
+  (`net_trace.py`, via `pywintrace`, now in requirements.txt). Unelevated it
+  refuses with the reason. A trace session outlives the process, so `start()`
+  first stops any stale session by NAME, `stop()` is on `atexit`, and the
+  Processes tab stops it whenever the tab is left. Events arrive ~2 s behind
+  the traffic (buffering, measured) and loopback is not reliably traced; the
+  live test only runs elevated (`tests/test_net_trace.py`, skipped otherwise).
+- **A PID is not an identity.** `recycle_watch.py` keys on (PID, creation
+  time) and reports reuse; Windows recycles PIDs.
+- **The phosphor themes are `dark.qss` recoloured at load** (`core/phosphor.py`),
+  not extra stylesheets, so a new dark rule is themed for free. Their palettes
+  join `SEMANTIC_PALETTES`/`CHROME_PALETTES` and the contrast tests cover all six.
+- **Flight Recorder keeps recording when you leave the tab** (its `stop()` only
+  pauses playback); `FlightModule.on_stop` finalises and saves it at shutdown.
+  Traces are JSON Lines so a cut-off recording still loads to its last line.
+- **Benchmarks read the disk unbuffered** (`FILE_FLAG_NO_BUFFERING` into a
+  page-aligned `mmap` buffer) so the figure is the disk, not the cache; write is
+  `fsync`ed; the temp file is removed in a `finally`.
+
 ### Debloat (`src/modules/debloat/`)
 
 126 catalogued apps plus 219 tweaks across two tabs, and four builtin

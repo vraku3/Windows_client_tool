@@ -124,3 +124,24 @@ def test_overview_cpu_tile_shows_package_power_when_the_hardware_has_it(qapp):
     text = w._power_text()
     assert text == "" or text.strip().endswith(" W")
     w.stop_timer()
+
+
+def test_self_usage_reports_this_process_and_cpu_is_a_delta_not_always_zero():
+    import time
+    first = oh.self_usage()
+    assert "MB" in first and "threads" in first and "handles" in first
+    end = time.time() + 0.4
+    while time.time() < end:                    # burn a little CPU so the delta is non-zero
+        sum(range(20000))
+    second = oh.self_usage()
+    cpu = float(second.split("% CPU")[0].split(",")[-1])
+    assert cpu > 0.0, second
+
+
+def test_self_usage_of_a_vanished_process_says_so_instead_of_crashing():
+    import psutil
+
+    class Gone:
+        def oneshot(self):
+            raise psutil.NoSuchProcess(1)
+    assert "could not be read" in oh.self_usage(Gone())

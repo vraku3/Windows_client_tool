@@ -337,6 +337,42 @@ def identity_lines():
             "Elevated: " + ("yes" if elevated else "no")]
 
 
+def self_usage(process=None) -> str:
+    """This app's own footprint, so a monitoring tool can be held to its own
+    standard: "WinClientTool: 212 MB, 0.4% CPU, 61 threads, 540 handles".
+
+    CPU is the share of the WHOLE machine (process CPU / logical CPUs), which is
+    what Task Manager shows and what "is this tool heavy" actually asks.
+    """
+    import psutil
+    try:
+        proc = process or _own_process()
+        with proc.oneshot():
+            rss = proc.memory_info().rss
+            threads = proc.num_threads()
+            handles = proc.num_handles()
+            cpu = proc.cpu_percent(interval=None) / (psutil.cpu_count(logical=True) or 1)
+        return (f"{proc.name()}: {format_size(rss)}, {cpu:.1f}% CPU, "
+                f"{threads} threads, {handles:,} handles")
+    except psutil.Error as e:
+        logger.warning("own process unreadable: %s", e)
+        return "this app's own usage could not be read"
+
+
+_OWN = None
+
+
+def _own_process():
+    """One Process object for the app's lifetime: cpu_percent is a delta from
+    the previous call ON THE SAME OBJECT, so a fresh one each tick reads 0."""
+    global _OWN
+    if _OWN is None:
+        import psutil
+        _OWN = psutil.Process()
+        _OWN.cpu_percent(interval=None)
+    return _OWN
+
+
 def heat_level(pct: float) -> str:
     """'ok' / 'warn' / 'hot' -- one place decides where the colours change."""
     if pct >= 90:

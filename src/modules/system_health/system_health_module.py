@@ -9,10 +9,11 @@ which is the closer fit.
 """
 import logging
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QListWidget, QListWidgetItem, QMessageBox,
+    QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
 )
 
 from core.base_module import BaseModule
@@ -103,21 +104,41 @@ class SystemHealthModule(BaseModule):
         toolbar.addWidget(self._findings_status_lbl)
         lay.addLayout(toolbar)
 
-        self._findings_list = QListWidget()
-        lay.addWidget(self._findings_list, 1)
+        self._copy_finding_btn = QPushButton("Copy finding")
+        self._jump_btn = QPushButton("Open related tab")
+        self._copy_finding_btn.setEnabled(False)
+        self._jump_btn.setEnabled(False)
+        self._copy_finding_btn.clicked.connect(self._copy_finding)
+        self._jump_btn.clicked.connect(self._jump_to_finding)
+        toolbar.insertWidget(1, self._copy_finding_btn)
+        toolbar.insertWidget(2, self._jump_btn)
 
+        self._findings_data = []
+        self._findings_list = QListWidget()
+        self._findings_list.setWordWrap(True)
+        self._findings_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._findings_list.currentRowChanged.connect(self._on_finding_selected)
+        self._finding_detail = QPlainTextEdit()
+        self._finding_detail.setReadOnly(True)
+        self._finding_detail.setMaximumHeight(200)
+        self._finding_detail.setPlaceholderText("Select a finding to see the evidence behind it.")
+        lay.addWidget(self._findings_list, 1)
+        lay.addWidget(self._finding_detail)
         return tab
 
     def _refresh_findings(self) -> None:
         self._refresh_findings_btn.setEnabled(False)
-        self._findings_status_lbl.setText("Checking...")
+        self._findings_status_lbl.setText("Checking (this reads disks, services, the System log)...")
 
-        def _run(_worker):
+        def _run(worker):
             from modules.system_health import findings
-            return findings.all_findings()
+            return findings.full_findings(is_cancelled=lambda: worker.is_cancelled)
 
         def _done(results):
+            if not widget_is_valid(self._findings_list):
+                return
             self._refresh_findings_btn.setEnabled(True)
+            self._findings_data = list(results)
             self._findings_list.clear()
             for finding in results:
                 icon = "⚠️" if finding.severity == "warning" else "ℹ️"
@@ -125,17 +146,42 @@ class SystemHealthModule(BaseModule):
                 color = semantic("warning") if finding.severity == "warning" else semantic("info")
                 item.setForeground(QColor(color))
                 self._findings_list.addItem(item)
+            warnings = sum(1 for f in results if f.severity == "warning")
             self._findings_status_lbl.setText(
-                f"{len(results)} finding(s)" if results else "No issues found")
+                f"{len(results)} finding(s), {warnings} warning(s)" if results else "No issues found")
 
         def _err(e: str):
-            self._refresh_findings_btn.setEnabled(True)
-            self._findings_status_lbl.setText(f"Error: {e}")
+            if widget_is_valid(self._findings_list):
+                self._refresh_findings_btn.setEnabled(True)
+                self._findings_status_lbl.setText(f"Error: {e}")
 
         self._findings_worker = Worker(_run)
         self._findings_worker.signals.result.connect(_done)
         self._findings_worker.signals.error.connect(_err)
         self.app.thread_pool.start(self._findings_worker)
+
+    def _current_finding(self):
+        row = self._findings_list.currentRow()
+        return self._findings_data[row] if 0 <= row < len(self._findings_data) else None
+
+    def _on_finding_selected(self, _row: int) -> None:
+        finding = self._current_finding()
+        self._copy_finding_btn.setEnabled(finding is not None)
+        self._jump_btn.setEnabled(bool(finding and finding.jump))
+        self._finding_detail.setPlainText(finding.copy_text() if finding else "")
+
+    def _copy_finding(self) -> None:
+        from PyQt6.QtWidgets import QApplication
+        finding = self._current_finding()
+        if finding:
+            QApplication.clipboard().setText(finding.copy_text())
+            self._findings_status_lbl.setText("Copied to the clipboard")
+
+    def _jump_to_finding(self) -> None:
+        from core.events import NAV_REQUEST_MODULE, NavRequestData
+        finding = self._current_finding()
+        if finding and finding.jump:
+            self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name=finding.jump))
 
     # ── Servicing tab ────────────────────────────────────────────────
 

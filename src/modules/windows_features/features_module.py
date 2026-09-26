@@ -4,13 +4,14 @@ from typing import Callable, List, Tuple, Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTreeWidget, QTreeWidgetItem, QSplitter, QPlainTextEdit, QLabel,
-    QLineEdit, QProgressBar, QHeaderView, QMessageBox)
+    QLineEdit, QProgressBar, QHeaderView, QMessageBox, QComboBox)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
+from core.semantic_colors import semantic
 from core.windows_utils import is_reboot_pending
 import logging
 logger = logging.getLogger(__name__)
@@ -159,9 +160,12 @@ class WindowsFeaturesModule(BaseModule):
         filter_edit = QLineEdit()
         filter_edit.setPlaceholderText("Filter features...")
         status_lbl = QLabel("Click Refresh to load features.")
+        state_combo = QComboBox()
+        state_combo.addItems(["All states", "Enabled", "Disabled"])
         toolbar.addWidget(refresh_btn)
         toolbar.addWidget(QLabel("Filter:"))
         toolbar.addWidget(filter_edit, 1)
+        toolbar.addWidget(state_combo)
         toolbar.addStretch()
         toolbar.addWidget(status_lbl)
         layout.addLayout(toolbar)
@@ -214,17 +218,20 @@ class WindowsFeaturesModule(BaseModule):
         selected_name_ref: list = [None]
 
         def _color_item(item: QTreeWidgetItem, state: str) -> None:
-            color = QColor("#27AE60") if "Enable" in state else QColor("#888888")
+            color = QColor(semantic("success") if "Enable" in state else semantic("info"))
             for col in range(2):
                 item.setForeground(col, color)
 
         def populate(features: List[Tuple[str, str]], filter_text: str = "") -> None:
             ft = filter_text.lower()
+            want = state_combo.currentText()
             tree.clear()
             pinned = []
             rest = []
             for feat_name, state in features:
                 if ft and ft not in feat_name.lower():
+                    continue
+                if want != "All states" and not state.startswith(want):
                     continue
                 if feat_name in PINNED_FEATURES:
                     pinned.append((feat_name, state))
@@ -333,6 +340,7 @@ class WindowsFeaturesModule(BaseModule):
         refresh_btn.clicked.connect(load_features)
         tree.itemClicked.connect(on_item_clicked)
         filter_edit.textChanged.connect(lambda txt: populate(features_ref[0], txt))
+        state_combo.currentIndexChanged.connect(lambda _i: populate(features_ref[0], filter_edit.text()))
 
         def _confirm_enable():
             feat_name = selected_name_ref[0]

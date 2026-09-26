@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from core.table_ui import set_role
 from core.worker import Worker
 from ui.detail_panel import DetailPanel
 from ui.error_banner import ErrorBanner
@@ -44,6 +45,10 @@ class LogPane(QWidget):
         *,
         empty_text: str = "No data — click Refresh",
         extra_controls: Optional[Callable[[QHBoxLayout, dict], None]] = None,
+        extra_columns: Optional[List[str]] = None,
+        extra_values: Optional[Callable[[object], list]] = None,
+        detail_enricher: Optional[Callable[[object], str]] = None,
+        summarizer: Optional[Callable[[list], str]] = None,
         thread_pool=None,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -51,7 +56,11 @@ class LogPane(QWidget):
         self._loader = loader
         self._thread_pool = thread_pool
         self._worker: Optional[Worker] = None
-        self._entries: List[object] = []
+        self._entries: List[object] = []      # what the table shows
+        self._source: List[object] = []       # everything the loader returned
+        self._view_transform: Optional[Callable[[list], list]] = None
+        self._detail_enricher = detail_enricher
+        self._summarizer = summarizer
         self.extra: dict = {}
         self.loaded = False
 
@@ -73,14 +82,29 @@ class LogPane(QWidget):
         self._refresh_btn = QPushButton("Refresh")
         self._refresh_btn.setObjectName("refreshBtn")
         self._refresh_btn.clicked.connect(lambda: self.load(force=True))
+        self._copy_btn = QPushButton("Copy row")
+        self._copy_btn.setToolTip("Copy the selected row to the clipboard")
+        self._copy_btn.clicked.connect(lambda: self._table.copy_selected_to_clipboard())
+        toolbar.addWidget(self._copy_btn)
+        self._export_btn = QPushButton("Export CSV...")
+        self._export_btn.setToolTip("Export the rows currently shown")
+        self._export_btn.clicked.connect(lambda: self._table.export_csv())
+        toolbar.addWidget(self._export_btn)
         toolbar.addWidget(self._refresh_btn)
         root.addLayout(toolbar)
+
+        # A one-paragraph read of what was loaded (counts, findings, caveats).
+        self._note = QLabel()
+        self._note.setWordWrap(True)
+        set_role(self._note, "statusInfo")
+        self._note.setVisible(False)
+        root.addWidget(self._note)
 
         self._error_banner = ErrorBanner(parent=self)
         root.addWidget(self._error_banner)
 
         splitter = QSplitter()
-        self._table = LogTableWidget()
+        self._table = LogTableWidget(extra_columns=extra_columns, extra_values=extra_values)
         splitter.addWidget(self._table)
         self._detail = DetailPanel()
         splitter.addWidget(self._detail)
@@ -90,7 +114,7 @@ class LogPane(QWidget):
         self._stack.addWidget(splitter)
         empty = QLabel(empty_text)
         empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty.setStyleSheet("color: #888; font-size: 14px;")
+        set_role(empty, "muted")
         self._stack.addWidget(empty)
         self._stack.setCurrentIndex(_PAGE_EMPTY)
         root.addWidget(self._stack, 1)
@@ -130,7 +154,8 @@ class LogPane(QWidget):
         self._worker = None
         self.loaded = True
         self.set_entries(entries or [])
-        self.entries_loaded.emit(self._entries)
+        self._update_note()
+        self.entries_loaded.emit(self._source)
 
     def _on_error(self, error_info) -> None:
         self._worker = None
@@ -138,10 +163,52 @@ class LogPane(QWidget):
 
     # -- content ---------------------------------------------------------
     def set_entries(self, entries) -> None:
-        self._entries = list(entries or [])
+        self._source = list(entries or [])
         self._progress.setVisible(False)
+        self.refresh_view()
+
+    def refresh_view(self) -> None:
+        """Re-derive what the table shows from everything that was loaded."""
+        shown = self._source
+        if self._view_transform is not None:
+            try:
+                shown = list(self._view_transform(list(self._source)))
+            except Exception:
+                logger.warning("The view transform failed; showing every entry", exc_info=True)
+                shown = self._source
+        self._entries = list(shown)
         self._table.set_entries(self._entries)
-        self._stack.setCurrentIndex(_PAGE_TABLE if self._entries else _PAGE_EMPTY)
+        # The empty page is for "nothing loaded"; a filter that matches nothing
+        # must still show the (empty) table and its count.
+        self._stack.setCurrentIndex(_PAGE_TABLE if self._source else _PAGE_EMPTY)
+
+    def set_view_transform(self, transform: Optional[Callable[[list], list]]) -> None:
+        """Filter/group what is shown without touching what was loaded."""
+        self._view_transform = transform
+        self.refresh_view()
+
+    def source_entries(self) -> List[object]:
+        """Every entry the loader returned, before any view transform."""
+        return list(self._source)
+
+    def set_note(self, text: str) -> None:
+        self._note.setText(text or "")
+        self._note.setVisible(bool(text))
+
+    def note_text(self) -> str:
+        return self._note.text()
+
+    def _update_note(self) -> None:
+        if self._summarizer is None:
+            return
+        try:
+            self.set_note(self._summarizer(list(self._source)))
+        except Exception:
+            logger.warning("The summariser failed", exc_info=True)
+            self.set_note("")
+
+    def selected_entry(self):
+        return self._table.selected_entry()
 
     def show_error(self, message: str) -> None:
         self._progress.setVisible(False)
@@ -151,7 +218,13 @@ class LogPane(QWidget):
         self._error_banner.clear()
 
     def _on_row_selected(self, entry) -> None:
-        self._detail.show_entry(entry)
+        extra = ""
+        if self._detail_enricher is not None:
+            try:
+                extra = self._detail_enricher(entry) or ""
+            except Exception:
+                logger.warning("The detail enricher failed", exc_info=True)
+        self._detail.show_entry(entry, extra)
         self.entry_selected.emit(entry)
 
     # -- introspection, for tests and for get_status_info ----------------

@@ -457,3 +457,39 @@ def record_to_csv(rec: Dict[str, str]) -> str:
 
 def record_to_json(rec: Dict[str, str]) -> str:
     return json.dumps(rec, indent=2, ensure_ascii=False)
+
+
+# --------------------------------------------------------------------------
+# Firmware rows for display / reports
+# --------------------------------------------------------------------------
+
+def _tri_text(value, yes="Yes", no="No", unknown="Unknown (could not read)") -> str:
+    return unknown if value is None else (yes if value else no)
+
+
+def firmware_rows(fw: FirmwareInfo, battery, battery_note: str, bios_rows) -> list:
+    rows = [
+        ("Firmware mode", fw.firmware_mode or "Unknown (could not read)"),
+        ("Secure Boot", _tri_text(fw.secure_boot, "Enabled", "Disabled")),
+        ("TPM", (f"Present, spec {fw.tpm_version}" if fw.tpm_version else "Present")
+         if fw.tpm_present else _tri_text(fw.tpm_present, unknown=fw.tpm_reason or "Unknown")),
+        ("Hardware virtualization", _tri_text(fw.virtualization, "Enabled in firmware", "Disabled in firmware")),
+    ]
+    if battery is not None:
+        rows += [
+            ("Battery design capacity", f"{battery.design_mwh:,} mWh"),
+            ("Battery full-charge capacity", f"{battery.full_charge_mwh:,} mWh"),
+            ("Battery health", f"{battery.health_percent}% ({battery.wear_percent}% worn)"),
+        ]
+        if battery.cycle_count is not None:
+            rows.append(("Battery cycle count", str(battery.cycle_count)))
+    else:
+        rows.append(("Battery", battery_note))
+    return rows + [(k, _flag_placeholder(k, v)) for k, v in bios_rows]
+
+
+def _flag_placeholder(key: str, value) -> str:
+    """Board makers often leave SMBIOS strings at their defaults; say so."""
+    if key.lower().startswith("serial") and is_placeholder(str(value)):
+        return f"{value} (not filled in by the manufacturer)"
+    return str(value)

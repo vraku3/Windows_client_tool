@@ -286,6 +286,7 @@ def read_policy_disabled() -> Optional[bool]:
                 if int(winreg.QueryValueEx(k, "DisableSR")[0]) == 1:
                     return True
         except FileNotFoundError:
+            logger.debug("no DisableSR value under %s", key)
             continue
         except (OSError, ValueError) as e:
             logger.warning("DisableSR unreadable under %s: %s", key, e)

@@ -222,43 +222,11 @@ def load_firmware(worker=None):
     return fw, battery, battery_note, hr.get_bios_info()
 
 
-def _tri(value, yes="Yes", no="No", unknown="Unknown (could not read)") -> str:
-    return unknown if value is None else (yes if value else no)
-
-
-def firmware_rows(fw: ap.FirmwareInfo, battery, battery_note: str, bios_rows) -> list:
-    rows = [
-        ("Firmware mode", fw.firmware_mode or "Unknown (could not read)"),
-        ("Secure Boot", _tri(fw.secure_boot, "Enabled", "Disabled")),
-        ("TPM", (f"Present, spec {fw.tpm_version}" if fw.tpm_version else "Present")
-         if fw.tpm_present else _tri(fw.tpm_present, unknown=fw.tpm_reason or "Unknown")),
-        ("Hardware virtualization", _tri(fw.virtualization, "Enabled in firmware", "Disabled in firmware")),
-    ]
-    if battery is not None:
-        rows += [
-            ("Battery design capacity", f"{battery.design_mwh:,} mWh"),
-            ("Battery full-charge capacity", f"{battery.full_charge_mwh:,} mWh"),
-            ("Battery health", f"{battery.health_percent}% ({battery.wear_percent}% worn)"),
-        ]
-        if battery.cycle_count is not None:
-            rows.append(("Battery cycle count", str(battery.cycle_count)))
-    else:
-        rows.append(("Battery", battery_note))
-    return rows + [(k, _flag_placeholder(k, v)) for k, v in bios_rows]
-
-
-def _flag_placeholder(key: str, value) -> str:
-    """Board makers often leave SMBIOS strings at their defaults; say so."""
-    if key.lower().startswith("serial") and ap.is_placeholder(str(value)):
-        return f"{value} (not filled in by the manufacturer)"
-    return str(value)
-
-
 def setup_firmware(layout, data) -> None:
     fw, battery, battery_note, bios_rows = data
     layout.addWidget(heading("Firmware, boot security and battery"))
     t = make_kv_table()
-    fill_kv(t, firmware_rows(fw, battery, battery_note, bios_rows))
+    fill_kv(t, ap.firmware_rows(fw, battery, battery_note, bios_rows))
     fit_table_height(t, 20)
     layout.addWidget(t)
     layout.addWidget(heading("Needs attention"))

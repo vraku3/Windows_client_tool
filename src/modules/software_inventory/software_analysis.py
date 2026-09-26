@@ -34,6 +34,7 @@ def parse_install_date(text: str) -> Optional[date]:
         try:
             return datetime.strptime(t, fmt).date()
         except ValueError:
+            logger.debug("install date %r does not match %s", t, fmt)
             continue
     return None
 

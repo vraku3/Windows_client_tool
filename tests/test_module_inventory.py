@@ -134,7 +134,7 @@ def test_the_network_tools_are_tabs_of_network_diagnostics(registered):
         assert gone not in names
     host = next(m for m in registered if m.name == "Network Diagnostics")
     assert [c.name for c in host.children] == [
-        "Network Diagnostics", "Wi-Fi Analyzer", "Hosts Editor", "Network Extras",
+        "Health", "Network Diagnostics", "Wi-Fi Analyzer", "Hosts Editor", "Network Extras",
     ]
 
 

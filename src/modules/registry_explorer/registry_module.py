@@ -1,12 +1,13 @@
 # src/modules/registry_explorer/registry_module.py
+import datetime
 import logging
 import subprocess
 
 from PyQt6.QtCore import QModelIndex, Qt, QThreadPool
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMenu, QMessageBox, QPushButton, QSplitter,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QListWidget,
+    QLineEdit, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
     QTableWidget, QTreeView, QVBoxLayout, QWidget,
 )
 
@@ -14,19 +15,12 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
 from core.worker import Worker
+from modules.registry_explorer import registry_scan
 from modules.registry_explorer.registry_model import RegistryTreeModel
 
 logger = logging.getLogger(__name__)
 
-# Common keys for quick navigation
-_QUICK_NAV = {
-    "Run (HKCU)":    r"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run",
-    "Run (HKLM)":    r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run",
-    "Uninstall":     r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Uninstall",
-    "Environment":   r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
-    "Services":      r"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services",
-    "Policies":      r"HKEY_LOCAL_MACHINE\SOFTWARE\Policies",
-}
+_QUICK_NAV = registry_scan.BOOKMARKS
 
 
 class RegistryExplorerModule(BaseModule):
@@ -61,7 +55,7 @@ class RegistryExplorerModule(BaseModule):
         tb.addWidget(nav_btn)
 
         # Quick-nav dropdown
-        quick_btn = QPushButton("Quick Nav ▾")
+        quick_btn = QPushButton("Bookmarks ▾")
         quick_menu = QMenu(quick_btn)
         for label, path in _QUICK_NAV.items():
             quick_menu.addAction(label, lambda p=path: self._path_bar.setText(p) or self._nav_to_path())
@@ -82,14 +76,27 @@ class RegistryExplorerModule(BaseModule):
         search_row = QHBoxLayout()
         search_row.setContentsMargins(4, 0, 4, 0)
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("Search key names (searches within current hive)…")
+        self._search_input.setPlaceholderText("Search text (under the current key)...")
+        self._search_input.returnPressed.connect(self._run_search)
         search_row.addWidget(self._search_input, stretch=1)
+        self._search_values = QCheckBox("Value data")
+        search_row.addWidget(self._search_values)
+        search_row.addWidget(QLabel("or changed in"))
+        self._recent_combo = QComboBox()
+        for label, days in (("(any time)", 0), ("last 1 day", 1), ("last 7 days", 7), ("last 30 days", 30)):
+            self._recent_combo.addItem(label, days)
+        search_row.addWidget(self._recent_combo)
         search_btn = QPushButton("Search")
         search_btn.clicked.connect(self._run_search)
         search_row.addWidget(search_btn)
         self._search_status = QLabel("")
         search_row.addWidget(self._search_status)
         layout.addLayout(search_row)
+        self._results = QListWidget()
+        self._results.setMaximumHeight(150)
+        self._results.hide()
+        self._results.itemActivated.connect(self._open_result)
+        layout.addWidget(self._results)
 
         # Main splitter: tree (left) + values (right)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -119,7 +126,7 @@ class RegistryExplorerModule(BaseModule):
         splitter.addWidget(right)
         splitter.setSizes([380, 620])
 
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, 1)
 
         # Keyboard shortcut: Ctrl+C copies selected value data
         QShortcut(QKeySequence("Ctrl+C"), self._values_table).activated.connect(self._copy_selected_value)
@@ -200,47 +207,51 @@ class RegistryExplorerModule(BaseModule):
                 self._tree.scrollTo(idx)
                 return
 
+    def _open_result(self, item) -> None:
+        self._path_bar.setText(item.data(Qt.ItemDataRole.UserRole))
+        self._nav_to_path()
+
     def _run_search(self) -> None:
         text = self._search_input.text().strip()
-        if not text:
+        days = self._recent_combo.currentData()
+        root = self._path_bar.text().strip()
+        if not root:
+            self._search_status.setText("Select a key (or type a path) to search under first.")
             return
-        self._search_status.setText("Searching…")
-        hive_idx = self._tree.currentIndex()
-        if not hive_idx.isValid():
-            hive_idx = self._model.index(0, 0) if self._model else QModelIndex()
-
-        # Walk to find matching key names — runs in worker thread
-        node = hive_idx.internalPointer() if hive_idx.isValid() else None
+        if not text and not days:
+            return
+        self._search_status.setText("Searching...")
+        since = (datetime.datetime.utcnow() - datetime.timedelta(days=days)) if days else None
+        in_values = self._search_values.isChecked()
 
         def work(worker):
-            results = []
-            if node is None:
-                return results
-            stack = [node]
-            while stack:
-                if worker.is_cancelled:
-                    break
-                n = stack.pop()
-                if text.lower() in n.name.lower():
-                    results.append(f"{n.hive}\\{n.path}" if n.path else n.name)
-                    if len(results) >= 100:
-                        break
-                try:
-                    stack.extend(n.children())
-                except Exception:
-                    logger.warning("Ignored Exception", exc_info=True)
-            return results
-
-        def on_result(paths):
-            count = len(paths)
-            self._search_status.setText(
-                f"{count} result(s){' (first 100)' if count == 100 else ''}"
-            )
+            return registry_scan.scan(root, text=text, in_values=in_values, modified_since=since,
+                                      is_cancelled=lambda: worker.is_cancelled)
 
         w = Worker(work)
-        w.signals.result.connect(on_result)
+        w.signals.result.connect(self._on_search_result)
+        w.signals.error.connect(lambda e: self._search_status.setText(f"Search failed: {e}"))
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
+
+    def _on_search_result(self, res) -> None:
+        if self._widget is None:
+            return
+        self._results.clear()
+        for h in sorted(res.hits, key=lambda h: h.last_write, reverse=True):
+            label = f"{h.path}   [{h.what}, {h.last_write:%Y-%m-%d %H:%M} UTC]"
+            if h.detail:
+                label += f"  {h.detail}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, h.path)
+            self._results.addItem(item)
+        self._results.setVisible(bool(res.hits))
+        note = f"{len(res.hits)} hit(s) in {res.keys_visited} keys"
+        if res.truncated:
+            note += " (stopped at a limit)"
+        if res.refused:
+            note += f"; {len(res.refused)} key(s) could not be read"
+        self._search_status.setText(note)
 
     def _tree_context_menu(self, pos) -> None:
         idx = self._tree.indexAt(pos)

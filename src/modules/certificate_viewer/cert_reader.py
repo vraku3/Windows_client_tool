@@ -4,7 +4,7 @@ import json
 import logging
 import subprocess
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,14 @@ class CertInfo:
     raw_der: bytes         # raw certificate bytes for export
     days_until_expiry: int
     flag: str              # "" | "🔴 Expired" | "🟠 Expiring Soon"
+    not_before: Optional[datetime.datetime] = None
+    sig_algorithm: str = ""    # e.g. "sha256RSA"; "" = not read
+    key_algorithm: str = ""    # e.g. "RSA", "ECC"
+    key_size: int = 0          # 0 = not read
+    is_ca: Optional[bool] = None
+    self_signed: bool = False
+    store_name: str = ""
+    store_location: str = ""
 
 
 _STORE_PATHS = {
@@ -28,11 +36,22 @@ _STORE_PATHS = {
     ("ROOT",             "user"):    r"Cert:\CurrentUser\Root",
     ("CA",               "user"):   r"Cert:\CurrentUser\CA",
     ("TrustedPublisher", "user"):   r"Cert:\CurrentUser\TrustedPublisher",
+    ("Disallowed",       "machine"): r"Cert:\LocalMachine\Disallowed",
     ("MY",               "machine"): r"Cert:\LocalMachine\My",
     ("ROOT",             "machine"): r"Cert:\LocalMachine\Root",
     ("CA",               "machine"): r"Cert:\LocalMachine\CA",
     ("TrustedPublisher", "machine"): r"Cert:\LocalMachine\TrustedPublisher",
 }
+
+
+def _parse_time(text) -> Optional[datetime.datetime]:
+    if not text:
+        return None
+    try:
+        return datetime.datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        logger.warning("Unparseable certificate date %r", text)
+        return None
 
 
 def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]:
@@ -55,6 +74,11 @@ foreach ($cert in $certs) {{
     $keyUsage = 'N/A'
     $ext = $cert.Extensions | Where-Object {{ $_.Oid.FriendlyName -eq 'Key Usage' }}
     if ($ext) {{ $keyUsage = $ext.Format($false) }}
+    $keySize = 0
+    try {{ $keySize = [int]$cert.PublicKey.Key.KeySize }} catch {{ $keySize = 0 }}
+    $isCa = $null
+    $bc = $cert.Extensions | Where-Object {{ $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] }}
+    if ($bc) {{ $isCa = [bool]$bc.CertificateAuthority }}
     try {{
         $derB64 = [Convert]::ToBase64String(
             $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
@@ -64,10 +88,16 @@ foreach ($cert in $certs) {{
         SubjectCN     = $cn
         SubjectFull   = $cert.Subject
         Issuer        = $issuer
+        IssuerFull    = $cert.Issuer
         Expiry        = $cert.NotAfter.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
         Thumbprint    = $cert.Thumbprint
         KeyUsage      = $keyUsage
         HasPrivateKey = [bool]$cert.HasPrivateKey
+        NotBefore     = $cert.NotBefore.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+        SigAlg        = $cert.SignatureAlgorithm.FriendlyName
+        KeyAlg        = $cert.PublicKey.Oid.FriendlyName
+        KeySize       = $keySize
+        IsCA          = $isCa
         DerBase64     = $derB64
     }}
 }}
@@ -120,6 +150,14 @@ $result | ConvertTo-Json -Depth 3 -Compress
                 raw_der=raw_der,
                 days_until_expiry=days,
                 flag=flag,
+                not_before=_parse_time(item.get("NotBefore")),
+                sig_algorithm=item.get("SigAlg") or "",
+                key_algorithm=item.get("KeyAlg") or "",
+                key_size=int(item.get("KeySize") or 0),
+                is_ca=item.get("IsCA"),
+                self_signed=(item.get("SubjectFull") or "") == (item.get("IssuerFull") or "<none>"),
+                store_name=store_name,
+                store_location=store_location,
             ))
         except Exception:
             logger.warning("Ignored Exception reading certificate", exc_info=True)

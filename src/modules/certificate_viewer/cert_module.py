@@ -4,27 +4,31 @@ from typing import List, Optional
 
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QHeaderView, QLabel,
+    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QProgressBar, QPushButton, QTableWidget,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QTabWidget, QPlainTextEdit, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
 from core.worker import Worker
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
+from modules.certificate_viewer import cert_findings as cf
 from modules.certificate_viewer.cert_reader import CertInfo, fetch_certs
+from PyQt6.QtGui import QGuiApplication
 
 COLUMNS = [
-    "Subject CN", "Issuer", "Expiry", "Thumbprint",
-    "Key Usage", "Has Private Key", "Status",
+    "Subject CN", "Issuer", "Expiry", "Days", "Thumbprint",
+    "Key Usage", "Has Private Key", "Status", "Findings",
 ]
 STORES = [
     ("Personal",          "MY",   "user"),
     ("Computer",          "MY",   "machine"),
     ("Trusted Root",      "ROOT", "machine"),
     ("Intermediate CAs",  "CA",   "machine"),
+    ("Disallowed",        "Disallowed", "machine"),
+    ("Trusted Publishers", "TrustedPublisher", "machine"),
 ]
 
 
@@ -38,6 +42,9 @@ class _CertTab(QWidget):
         self._certs: List[CertInfo] = []
         self._worker: Optional[Worker] = None
         self._all_certs: List[CertInfo] = []
+        self._chip = "All"
+        self._attempted = False
+        self._chip_buttons = {}
         self._setup_ui()
 
     def _setup_ui(self):
@@ -46,7 +53,6 @@ class _CertTab(QWidget):
 
         # Toolbar: filter input + buttons
         tb = QWidget()
-        from PyQt6.QtWidgets import QHBoxLayout
         tb_layout = QHBoxLayout(tb)
         tb_layout.setContentsMargins(0, 0, 0, 0)
         tb_layout.setSpacing(4)
@@ -65,7 +71,22 @@ class _CertTab(QWidget):
         tb_layout.addWidget(self._refresh_btn)
         tb_layout.addWidget(self._export_btn)
         tb_layout.addWidget(self._view_btn)
+        self._copy_btn = QPushButton("Copy details")
+        self._copy_btn.setEnabled(False)
+        self._copy_btn.clicked.connect(self._copy_details)
+        tb_layout.addWidget(self._copy_btn)
         layout.addWidget(tb)
+
+        chip_row = QHBoxLayout()
+        for chip in cf.CHIPS:
+            b = QPushButton(chip)
+            b.setCheckable(True)
+            b.setChecked(chip == "All")
+            b.clicked.connect(lambda _=False, name=chip: self._set_chip(name))
+            self._chip_buttons[chip] = b
+            chip_row.addWidget(b)
+        chip_row.addStretch()
+        layout.addLayout(chip_row)
 
         # Progress bar
         self._progress = QProgressBar()
@@ -83,6 +104,8 @@ class _CertTab(QWidget):
         for i in range(1, len(COLUMNS)):
             self._table.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(
+            len(COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)
         self._table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(
@@ -91,7 +114,7 @@ class _CertTab(QWidget):
 
         # Status bar
         self._status = QLabel("Click Refresh to load certificates.")
-        self._status.setStyleSheet("color: #888; font-size: 12px;")
+        set_role(self._status, "muted")
         layout.addWidget(self._status)
 
         # Connections
@@ -103,7 +126,12 @@ class _CertTab(QWidget):
 
     # ── worker ────────────────────────────────────────────────────────────
 
+    def ensure_loaded(self):
+        if not self._all_certs and self._worker is None and not self._attempted:
+            self._load()
+
     def _load(self):
+        self._attempted = True
         self._stop()
         self._refresh_btn.setEnabled(False)
         self._status.setText("Loading certificates…")
@@ -131,8 +159,10 @@ class _CertTab(QWidget):
 
     def _on_result(self, certs: List[CertInfo]):
         self._all_certs = certs
-        self._certs = certs
-        self._populate_table(certs)
+        counts = cf.chip_counts(certs)
+        for chip, b in self._chip_buttons.items():
+            b.setText(f"{chip} ({counts[chip]})")
+        self._apply_filter(self._filter_input.text())
 
     def _populate_table(self, certs: List[CertInfo]):
         self._table.setRowCount(len(certs))
@@ -141,56 +171,42 @@ class _CertTab(QWidget):
                 c.expiry.strftime("%Y-%m-%d")
                 if c.expiry != datetime.datetime.min else "N/A"
             )
-            thumb_display = (
-                c.thumbprint[:20] + "..."
-                if len(c.thumbprint) > 20 else c.thumbprint
-            )
             vals = [
-                c.subject_cn,
-                c.issuer,
-                expiry_str,
-                thumb_display,
-                c.key_usage,
+                c.subject_cn, c.issuer, expiry_str, str(c.days_until_expiry),
+                c.thumbprint, c.key_usage,
                 "Yes" if c.has_private_key else "No",
-                c.flag,
+                c.flag, cf.findings_text(c),
             ]
+            problem = c.days_until_expiry < 0 or bool(cf.weakness(c))
+            soon = c.days_until_expiry < 90 or cf.self_signed_non_root(c)
+            fg = None
+            if problem:
+                fg = QColor(semantic("error"))
+            elif soon:
+                fg = QColor(semantic("warning"))
             for col, val in enumerate(vals):
                 item = centered_item(str(val))
+                if fg is not None:
+                    item.setForeground(fg)
                 self._table.setItem(r, col, item)
 
-            if "🔴" in c.flag:
-                fg = QColor("#CC2222")
-            elif "🟠" in c.flag:
-                fg = QColor("#CC7700")
-            elif "🟢" in c.flag:
-                fg = QColor(semantic("success"))
-            else:
-                fg = QColor("#e0e0e0")
-            for col in range(len(COLUMNS)):
-                cell = self._table.item(r, col)
-                if cell:
-                    cell.setForeground(fg)
-
-        expired = sum(1 for c in certs if c.days_until_expiry < 0)
-        expiring = sum(1 for c in certs if 0 <= c.days_until_expiry <= 30)
+        by_store = f"{self._store_name}/{self._store_location}"
         self._status.setText(
-            f"{len(certs)} shown ({len(self._all_certs)} total)"
-            f" — {expired} expired, {expiring} expiring soon"
+            f"{len(certs)} shown of {len(self._all_certs)} in {by_store}"
         )
 
+    def _set_chip(self, name: str):
+        self._chip = name
+        for chip, b in self._chip_buttons.items():
+            b.setChecked(chip == name)
+        self._apply_filter(self._filter_input.text())
+
     def _apply_filter(self, text: str):
-        if not self._all_certs:
-            return
-        if not text:
-            self._certs = list(self._all_certs)
-        else:
-            q = text.lower()
-            self._certs = [
-                c for c in self._all_certs
-                if (q in c.subject_cn.lower() or
-                    q in c.issuer.lower() or
-                    q in c.thumbprint.lower())
-            ]
+        q = text.strip()
+        self._certs = [
+            c for c in self._all_certs
+            if cf.matches_chip(c, self._chip) and (not q or cf.search_match(c, q))
+        ]
         self._populate_table(self._certs)
 
     def _on_error(self, err_str: str):
@@ -203,17 +219,22 @@ class _CertTab(QWidget):
         has_sel = bool(self._table.selectedItems())
         self._export_btn.setEnabled(has_sel)
         self._view_btn.setEnabled(has_sel)
+        self._copy_btn.setEnabled(has_sel)
 
     # ── cert lookup ─────────────────────────────────────────────────────
 
     def _find_cert(self, row: int) -> Optional[CertInfo]:
+        # self._certs is exactly what the table shows, in row order.
         if 0 <= row < len(self._certs):
-            cn = self._table.item(row, 0)
-            if cn:
-                for c in self._all_certs:
-                    if c.subject_cn == cn.text():
-                        return c
+            return self._certs[row]
         return None
+
+    def _copy_details(self):
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        cert = self._find_cert(min(rows)) if rows else None
+        if cert:
+            QGuiApplication.clipboard().setText(cf.details_text(cert))
+            self._status.setText("Details copied to the clipboard.")
 
     # ── actions ─────────────────────────────────────────────────────────
 
@@ -242,48 +263,9 @@ class _CertTab(QWidget):
         dlg.resize(650, 480)
         layout = QVBoxLayout(dlg)
 
-        expiry_str = (
-            cert.expiry.strftime("%Y-%m-%d %H:%M UTC")
-            if cert.expiry != datetime.datetime.min else "N/A")
-
-        flag_color = {
-            "🔴 Expired": "#CC2222",
-            "🟠 Expiring Soon": "#CC7700",
-            "🟢 Valid": "#2ecc71",
-        }.get(cert.flag.strip(), "#e0e0e0")
-
-        html = f"""
-        <html><body style="font-family:Consolas,monospace;
-              font-size:13px; background:#252525; color:#e0e0e0; padding:12px;">
-        <h3 style="color:#4488FF; margin-top:0;">
-            &#x1F510; {cert.subject_cn}
-        </h3>
-        <table style="width:100%; border-collapse:collapse;">
-        <tr><td style="color:#888; width:150px;">Subject</td>
-            <td>{cert.subject_full or '&mdash;'}</td></tr>
-        <tr><td style="color:#888;">Issuer</td>
-            <td>{cert.issuer or '&mdash;'}</td></tr>
-        <tr><td style="color:#888;">Expiry</td>
-            <td style="color:{flag_color};">{expiry_str}</td></tr>
-        <tr><td style="color:#888;">Days Remaining</td>
-            <td>{cert.days_until_expiry}</td></tr>
-        <tr><td style="color:#888;">Thumbprint</td>
-            <td style="font-size:11px; color:#aaa; word-break:break-all;">
-                {cert.thumbprint}</td></tr>
-        <tr><td style="color:#888;">Key Usage</td>
-            <td>{cert.key_usage or '&mdash;'}</td></tr>
-        <tr><td style="color:#888;">Has Private Key</td>
-            <td>{'Yes' if cert.has_private_key else 'No'}</td></tr>
-        <tr><td style="color:#888;">Status</td>
-            <td style="color:{flag_color}; font-weight:bold;">
-                {cert.flag or 'Valid'}</td></tr>
-        </table>
-        </body></html>
-        """
-
-        text = QTextEdit()
+        text = QPlainTextEdit(cf.details_text(cert))
         text.setReadOnly(True)
-        text.setHtml(html)
+        set_role(text, "mono")
         layout.addWidget(text)
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
@@ -323,8 +305,15 @@ class CertModule(BaseModule):
             tab = _CertTab(store_name, store_location, self.thread_pool)
             self._tabs.addTab(tab, label)
 
+        self._tabs.currentChanged.connect(lambda _i: self._load_current())
         outer_layout.addWidget(self._tabs)
         return outer
+
+    def _load_current(self):
+        if self._tabs is not None:
+            page = self._tabs.currentWidget()
+            if hasattr(page, "ensure_loaded"):
+                page.ensure_loaded()
 
     def get_refresh_interval(self) -> Optional[int]:
         return 60_000
@@ -335,7 +324,7 @@ class CertModule(BaseModule):
                 tab._load()
 
     def on_activate(self) -> None:
-        pass
+        self._load_current()
 
     def on_deactivate(self) -> None:
         for tab in self._each_tab():

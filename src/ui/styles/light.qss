@@ -183,6 +183,10 @@ QLabel#muted {
     color: #5a5a5a;
 }
 
+QPlainTextEdit#mono {
+    font-family: Consolas, "Cascadia Mono", monospace;
+}
+
 /* ============================================================
    Parity block — the 61 selectors dark.qss styled and this sheet
    did not.

@@ -415,6 +415,10 @@ QLabel#muted {
     color: #858585;
 }
 
+QPlainTextEdit#mono {
+    font-family: Consolas, "Cascadia Mono", monospace;
+}
+
 /* ---- Semantic label roles ----------------------------------------------
    Set with `label.setObjectName("statusError")` rather than an inline
    stylesheet. An inline sheet beats this one and never changes again, so a

@@ -1,26 +1,36 @@
-r"""Hosts File Editor — manage C:\Windows\System32\drivers\etc\hosts entries."""
-import os
-import re
-import shutil
-import time
-from typing import List, Tuple
+r"""Hosts File Editor — manage C:\Windows\System32\drivers\etc\hosts entries.
 
+Saves are lossless (comments and headers survive), backed up first, verified by
+reading the file back, and rolled back if the read-back disagrees. The model
+lives in `hosts_analysis.py`.
+"""
+import logging
+import os
+from typing import Dict, List, Tuple
+
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QMessageBox,
-    QPushButton, QStackedWidget, QTableWidget, QVBoxLayout, QWidget,
+    QCheckBox, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMessageBox, QPushButton, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
-from core.windows_utils import system32
+from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, fit_table
-from ui.empty_state import EmptyState
-from ui.error_banner import ErrorBanner
-import logging
+from core.semantic_colors import semantic
+from core.table_ui import centered_item, fit_table, set_role
+from core.windows_utils import system32
+from modules.hosts_editor import hosts_analysis as ha
 
 logger = logging.getLogger(__name__)
 
 HOSTS_PATH = os.path.join(system32(), "drivers", "etc", "hosts")
+
+
+def backup_dir() -> str:
+    return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
+                        "WindowsTweaker", "hosts_backups")
+
 
 # Pre-built telemetry blocklist
 TELEMETRY_BLOCKLIST = [
@@ -50,66 +60,51 @@ class HostsEditorModule(BaseModule):
     def __init__(self):
         super().__init__()
         self._widget: QWidget = None
-        self._entries: List[Tuple[bool, str, str, str]] = []
+        self._orig_lines: List[ha.HostLine] = []
         self._modified = False
         self._loaded = False
+        self._filling = False
+        self._current_findings: list = []
 
     def create_widget(self) -> QWidget:
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        self._error_banner = ErrorBanner()
-        self._error_banner.hide()
-        layout.addWidget(self._error_banner)
-
-        # Toolbar
         toolbar = QHBoxLayout()
-        save_btn = QPushButton("💾 Save")
-        save_btn.clicked.connect(self._save)
-        toolbar.addWidget(save_btn)
-
-        backup_btn = QPushButton("📦 Backup")
-        backup_btn.clicked.connect(self._backup)
-        toolbar.addWidget(backup_btn)
-
-        add_btn = QPushButton("➕ Add Entry")
-        add_btn.clicked.connect(self._add_entry)
-        toolbar.addWidget(add_btn)
-
-        import_btn = QPushButton("📥 Import Blocklist")
-        import_btn.setToolTip("Import telemetry blocklist")
-        import_btn.clicked.connect(self._import_blocklist)
-        toolbar.addWidget(import_btn)
-
+        for text, tip, slot in (
+            ("Save", "Back up, write, then read the file back to verify", self._save),
+            ("Backup", "Copy the current hosts file to the backup folder", self._backup),
+            ("Restore...", "Restore the hosts file from a backup", self._restore),
+            ("Reload", "Discard edits and re-read the file", self._reload),
+            ("Add Entry", "", self._add_entry),
+            ("Delete Selected", "", self._delete_selected),
+            ("Import Blocklist", "Import telemetry blocklist", self._import_blocklist),
+        ):
+            b = QPushButton(text)
+            if tip:
+                b.setToolTip(tip)
+            b.clicked.connect(slot)
+            toolbar.addWidget(b)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
-        # Table
         self._table = QTableWidget()
         self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["Enabled", "IP Address", "Hostname", "Comment"])
+        self._table.setHorizontalHeaderLabels(["Enabled", "IP Address", "Hostname(s)", "Comment"])
         fit_table(self._table, stretch=[2, 3], content=[0, 1])
         self._table.setAlternatingRowColors(True)
-        # No inline setStyleSheet() here: dark.qss / light.qss already style
-        # QTableView (QTableWidget's base class) and QHeaderView::section
-        # globally -- this used to duplicate them with a slightly different,
-        # outdated palette that would survive a theme switch unchanged (see
-        # tests/test_no_inline_stylesheets.py).
+        self._table.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self._table, 1)
 
-        self._table_stack = QStackedWidget()
-        self._table_stack.addWidget(self._table)
-        self._empty = EmptyState(
-            "🌐", "No entries in the hosts file",
-            "The hosts file has no entries yet. Click Refresh to reload, "
-            "or use Add Entry / Import Blocklist to add some.",
-            "Refresh",
-        )
-        self._empty.action_triggered.connect(self._load)
-        self._table_stack.addWidget(self._empty)
-        self._table_stack.setCurrentIndex(1)
-        layout.addWidget(self._table_stack)
+        self._findings = QListWidget()
+        self._findings.setMaximumHeight(130)
+        self._findings.itemSelectionChanged.connect(self._select_finding_rows)
+        layout.addWidget(self._findings)
 
+        self._status = QLabel("")
+        set_role(self._status, "muted")
+        layout.addWidget(self._status)
         return self._widget
 
     def on_start(self, app) -> None:
@@ -132,134 +127,231 @@ class HostsEditorModule(BaseModule):
         self.cancel_all_workers()
 
     def get_status_info(self) -> str:
-        enabled = sum(1 for e in self._entries if e[0])
-        return f"Hosts Editor — {enabled}/{len(self._entries)} entries active"
+        rows = self._rows() if self._widget is not None else []
+        enabled = sum(1 for r in rows if r["enabled"])
+        return f"Hosts Editor — {enabled}/{len(rows)} entries active"
 
-    # ── implementation ──────────────────────────────────────────────────────
+    # ── loading ─────────────────────────────────────────────────────────────
 
-    def _load(self):
-        self._entries = []
-        self._table.setRowCount(0)
+    def _read_file(self) -> Tuple[str, str]:
+        """(text, error). A refusal is an error, never an empty file."""
         if not os.path.exists(HOSTS_PATH):
-            self._table.setRowCount(1)
-            self._table.setItem(0, 1, centered_item("Hosts file not found — run as admin"))
-            self._table_stack.setCurrentIndex(0)
-            return
+            return "", "Hosts file not found"
         try:
             with open(HOSTS_PATH, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
+                return f.read(), ""
         except PermissionError:
-            self._table.setRowCount(1)
-            self._table.setItem(0, 1, centered_item("Permission denied — run as Administrator"))
-            self._table_stack.setCurrentIndex(0)
+            return "", "Permission denied — run as Administrator"
+        except OSError as exc:
+            logger.warning("Cannot read hosts file: %s", exc)
+            return "", "Could not read the hosts file: %s" % exc
+
+    def _load(self) -> None:
+        text, err = self._read_file()
+        self._filling = True
+        self._table.setRowCount(0)
+        self._filling = False
+        self._orig_lines = []
+        if err:
+            self._status.setText(err)
+            self._findings.clear()
             return
+        self._orig_lines = ha.parse_hosts(text)
+        self._filling = True
+        for ln in ha.entries(self._orig_lines):
+            self._add_row(ln.enabled, ln.ip, " ".join(ln.hosts), ln.comment, ln.index)
+        self._filling = False
+        self._modified = False
+        self._status.setText("%d entries; %d other line(s) (comments) are preserved on save."
+                             % (len(ha.entries(self._orig_lines)),
+                                len(self._orig_lines) - len(ha.entries(self._orig_lines))))
+        self._update_findings()
 
-        for line in lines:
-            line = line.rstrip()
-            if not line.strip() or line.strip().startswith("#"):
-                if line.strip().startswith("#") and " " in line.strip()[1:]:
-                    parts = line.strip()[1:].split(None, 2)
-                    if len(parts) >= 2:
-                        self._entries.append((False, parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
-                continue
-            parts = line.split(None, 2)
-            if len(parts) >= 2:
-                self._entries.append((True, parts[0], parts[1], parts[2] if len(parts) > 2 else ""))
+    def _reload(self) -> None:
+        if self._modified and not confirm_destructive(
+                self._widget, "Discard changes", "Discard unsaved edits and re-read the hosts file?",
+                irreversible=False):
+            return
+        self._load()
 
-        for i, (enabled, ip, hostname, comment) in enumerate(self._entries):
-            self._table.insertRow(i)
-            cb = QCheckBox()
-            cb.setChecked(enabled)
-            cb.stateChanged.connect(lambda _, r=i: self._mark_modified(r))
-            self._table.setCellWidget(i, 0, cb)
-            self._table.setItem(i, 1, centered_item(ip))
-            self._table.setItem(i, 2, centered_item(hostname))
-            self._table.setItem(i, 3, centered_item(comment))
+    # ── table <-> model ─────────────────────────────────────────────────────
 
-        self._table_stack.setCurrentIndex(0 if self._table.rowCount() else 1)
-
-    def _mark_modified(self, row):
-        del row
-        self._modified = True
-
-    def _get_table_entries(self) -> List[Tuple[bool, str, str, str]]:
-        entries = []
-        for i in range(self._table.rowCount()):
-            cb = self._table.cellWidget(i, 0)
-            enabled = cb.isChecked() if cb else True
-            ip = self._table.item(i, 1).text().strip() if self._table.item(i, 1) else ""
-            hostname = self._table.item(i, 2).text().strip() if self._table.item(i, 2) else ""
-            comment = self._table.item(i, 3).text().strip() if self._table.item(i, 3) else ""
-            if hostname:
-                entries.append((enabled, ip, hostname, comment))
-        return entries
-
-    def _save(self):
-        entries = self._get_table_entries()
-        # Validate IP format
-        ip_pat = re.compile(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$|^\[[\da-fA-F:]+\]$|^::1$|^fe80:.+$|^::')
-        for enabled, ip, hostname, comment in entries:
-            if not ip_pat.match(ip):
-                QMessageBox.warning(self._widget, "Invalid IP", f"Invalid IP address: {ip}")
-                return
-
-        try:
-            bak_path = HOSTS_PATH + ".bak"
-            shutil.copy2(HOSTS_PATH, bak_path)
-            with open(HOSTS_PATH, "w", encoding="utf-8") as f:
-                f.write("# Hosts file managed by Windows Client Tool\n\n")
-                for enabled, ip, hostname, comment in entries:
-                    prefix = "" if enabled else "# "
-                    cmt = f"  # {comment}" if comment else ""
-                    f.write(f"{prefix}{ip}\t{hostname}{cmt}\n")
-            QMessageBox.information(self._widget, "Saved", f"Hosts file saved.\nBackup: {bak_path}")
-        except PermissionError:
-            self._error_banner.set_error("Run as Administrator to save hosts file.")
-        except Exception as e:
-            self._error_banner.set_error(str(e))
-
-    def _backup(self):
-        try:
-            bak = HOSTS_PATH + f".backup_{int(time.time())}.txt"
-            shutil.copy2(HOSTS_PATH, bak)
-            QMessageBox.information(self._widget, "Backup Created", f"Backed up to:\n{bak}")
-        except Exception as e:
-            QMessageBox.warning(self._widget, "Backup Failed", str(e))
-
-    def _add_entry(self):
+    def _add_row(self, enabled: bool, ip: str, hosts: str, comment: str, origin: int) -> None:
         row = self._table.rowCount()
         self._table.insertRow(row)
         cb = QCheckBox()
-        cb.setChecked(True)
-        cb.stateChanged.connect(lambda _: self._mark_modified(row))
+        cb.setChecked(enabled)
+        cb.stateChanged.connect(self._on_edited)
         self._table.setCellWidget(row, 0, cb)
-        self._table.setItem(row, 1, centered_item("0.0.0.0"))
-        self._table.setItem(row, 2, centered_item("example.com"))
-        self._table.setItem(row, 3, centered_item(""))
-        self._modified = True
-        self._table_stack.setCurrentIndex(0)
+        ip_item = centered_item(ip)
+        ip_item.setData(Qt.ItemDataRole.UserRole, origin)
+        self._table.setItem(row, 1, ip_item)
+        self._table.setItem(row, 2, centered_item(hosts))
+        self._table.setItem(row, 3, centered_item(comment))
 
-    def _import_blocklist(self):
-        reply = QMessageBox.question(
-            self._widget, "Import Blocklist",
-            "This will add the telemetry blocklist entries. Some may already exist.\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        for enabled, ip, hostname, comment in TELEMETRY_BLOCKLIST:
-            existing = any(h == hostname for _, _, h, _ in self._get_table_entries())
-            if existing:
+    def _rows(self) -> List[Dict]:
+        rows = []
+        for i in range(self._table.rowCount()):
+            cb = self._table.cellWidget(i, 0)
+            ip_item = self._table.item(i, 1)
+            text = lambda c: self._table.item(i, c).text().strip() if self._table.item(i, c) else ""  # noqa: E731
+            origin = ip_item.data(Qt.ItemDataRole.UserRole) if ip_item else None
+            hosts = text(2).split()
+            if not hosts:
                 continue
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-            cb = QCheckBox()
-            cb.setChecked(bool(enabled))
-            cb.stateChanged.connect(lambda _, r=row: self._mark_modified(r))
-            self._table.setCellWidget(row, 0, cb)
-            self._table.setItem(row, 1, centered_item(ip))
-            self._table.setItem(row, 2, centered_item(hostname))
-            self._table.setItem(row, 3, centered_item(comment))
+            rows.append({"origin": -1 if origin is None else int(origin),
+                         "enabled": cb.isChecked() if cb else True,
+                         "ip": text(1), "hosts": hosts, "comment": text(3), "row": i})
+        return rows
+
+    def _on_item_changed(self, _item) -> None:
+        self._on_edited()
+
+    def _on_edited(self, *_a) -> None:
+        if self._filling:
+            return
         self._modified = True
-        self._table_stack.setCurrentIndex(0 if self._table.rowCount() else 1)
-        QMessageBox.information(self._widget, "Import Complete", f"Added {len(TELEMETRY_BLOCKLIST)} entries.")
+        self._update_findings()
+
+    def _update_findings(self) -> None:
+        lines = [ha.HostLine("", True, r["enabled"], r["ip"], r["hosts"], r["comment"], r["row"])
+                 for r in self._rows()]
+        self._current_findings = ha.analyse(lines)
+        self._findings.clear()
+        for f in self._current_findings:
+            item = QListWidgetItem("[%s] %s" % (f.severity.upper(), f.title))
+            item.setToolTip(f.detail)
+            item.setData(Qt.ItemDataRole.UserRole, f)
+            self._findings.addItem(item)
+        if not self._current_findings:
+            self._findings.addItem("No problems found.")
+
+    def _select_finding_rows(self) -> None:
+        items = self._findings.selectedItems()
+        f = items[0].data(Qt.ItemDataRole.UserRole) if items else None
+        self._table.clearSelection()
+        if f is None:
+            return
+        for r in f.lines:
+            if 0 <= r < self._table.rowCount():
+                self._table.selectRow(r)
+                self._table.item(r, 1).setForeground(self._colour(f.severity))
+        self._status.setText("%s — %s" % (f.title, f.detail))
+
+    @staticmethod
+    def _colour(sev: str):
+        from PyQt6.QtGui import QColor
+        return QColor(semantic("error" if sev == ha.SEV_HIGH else "warning"))
+
+    # ── actions ─────────────────────────────────────────────────────────────
+
+    def _save(self) -> None:
+        rows = self._rows()
+        blocking = [f for f in self._current_findings if f.key in ("bad_ip", "bad_host")]
+        if blocking:
+            QMessageBox.warning(self._widget, "Cannot save",
+                                "Fix these first:\n" + "\n".join(f.title for f in blocking))
+            return
+        text = ha.serialize(self._orig_lines, rows)
+        warn = [f.title for f in self._current_findings
+                if f.severity in (ha.SEV_HIGH, ha.SEV_MEDIUM)]
+        if not confirm_destructive(
+                self._widget, "Save hosts file",
+                "Write %d entries to the hosts file? A backup is taken first." % len(rows),
+                detail=("Warnings:\n" + "\n".join(warn[:10])) if warn else "",
+                irreversible=False):
+            return
+        try:
+            bak = ha.backup_hosts(HOSTS_PATH, backup_dir())
+        except OSError as exc:
+            logger.warning("Hosts backup failed: %s", exc)
+            QMessageBox.critical(self._widget, "Backup failed",
+                                 "Nothing was written, because the backup failed:\n%s" % exc)
+            return
+        err = ha.write_and_verify(HOSTS_PATH, text)
+        if err:
+            with open(bak, encoding="utf-8", errors="replace") as fh:
+                rolled = ha.write_and_verify(HOSTS_PATH, fh.read())
+            QMessageBox.critical(
+                self._widget, "Save failed",
+                "The hosts file was not saved: %s\n%s" % (
+                    err, "It was restored from the backup." if not rolled
+                    else "Restoring the backup ALSO failed (%s); copy it back by hand:\n%s" % (rolled, bak)))
+            return
+        self._load()
+        self._status.setText("Saved and verified. Backup: %s" % bak)
+
+    def _backup(self) -> None:
+        try:
+            bak = ha.backup_hosts(HOSTS_PATH, backup_dir())
+        except OSError as exc:
+            logger.warning("Hosts backup failed: %s", exc)
+            QMessageBox.warning(self._widget, "Backup Failed", str(exc))
+            return
+        self._status.setText("Backed up to %s" % bak)
+
+    def _restore(self) -> None:
+        start = backup_dir() if os.path.isdir(backup_dir()) else ""
+        path, _ = QFileDialog.getOpenFileName(self._widget, "Restore hosts file from...", start,
+                                              "Hosts backups (hosts_*.txt);;All files (*)")
+        if not path:
+            return
+        if not confirm_destructive(
+                self._widget, "Restore hosts file",
+                "Replace the current hosts file with:\n%s\n\nThe current file is backed up first." % path,
+                irreversible=False):
+            return
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+            ha.backup_hosts(HOSTS_PATH, backup_dir())
+        except OSError as exc:
+            logger.warning("Hosts restore failed before write: %s", exc)
+            QMessageBox.critical(self._widget, "Restore failed", str(exc))
+            return
+        err = ha.write_and_verify(HOSTS_PATH, text)
+        if err:
+            QMessageBox.critical(self._widget, "Restore failed", err)
+            return
+        self._load()
+        self._status.setText("Restored from %s (read back and verified)." % path)
+
+    def _add_entry(self) -> None:
+        self._filling = True
+        self._add_row(True, "0.0.0.0", "example.com", "", -1)
+        self._filling = False
+        self._on_edited()
+
+    def _delete_selected(self) -> None:
+        rows = sorted({i.row() for i in self._table.selectedItems()}, reverse=True)
+        if not rows:
+            return
+        if not confirm_destructive(self._widget, "Delete entries",
+                                   "Remove %d entr%s from the list? Nothing is written until you Save."
+                                   % (len(rows), "y" if len(rows) == 1 else "ies"),
+                                   irreversible=False):
+            return
+        self._filling = True
+        for r in rows:
+            self._table.removeRow(r)
+        self._filling = False
+        self._on_edited()
+
+    def _import_blocklist(self) -> None:
+        if not confirm_destructive(
+                self._widget, "Import Blocklist",
+                "Add the telemetry blocklist entries that are not already present?",
+                irreversible=False):
+            return
+        have = {h.lower() for r in self._rows() for h in r["hosts"]}
+        added = 0
+        self._filling = True
+        for ip, hostname, comment in TELEMETRY_BLOCKLIST:
+            if hostname.lower() in have:
+                continue
+            self._add_row(True, ip, hostname, comment, -1)
+            added += 1
+        self._filling = False
+        self._on_edited()
+        self._status.setText("Added %d entries (%d already present). Save to apply."
+                             % (added, len(TELEMETRY_BLOCKLIST) - added))

@@ -13,42 +13,60 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _smb_data(need: str):
+    """The shared SMB read, or an exception carrying WHY a section is missing.
+
+    Raising is what makes the tab say "could not read: ..." instead of
+    showing an empty table that reads as "no shares".
+    """
+    from modules.shared_resources import share_audit as sa
+    data = sa.collect_cached(max_age=3.0)
+    if data.fatal:
+        raise RuntimeError(data.fatal)
+    if getattr(data, need) is None:
+        raise RuntimeError("Could not read %s: %s" % (need.replace("_", " "),
+                                                      data.errors.get(need, "no answer")))
+    return data
+
+
 def get_shares() -> List[Dict]:
-    shares = []
-    try:
-        import win32net
-        share_type_map = {0: "Disk", 1: "Print", 3: "IPC", 2147483648: "Special"}
-        result, _, _ = win32net.NetShareEnum(None, 2)
-        for s in result:
-            shares.append({
-                "Name": s["netname"],
-                "Type": share_type_map.get(s["type"] & 0x7FFFFFFF, str(s["type"])),
-                "Path": s.get("path", ""),
-                "Comment": s.get("remark", ""),
-                "Max Users": str(s.get("max_uses", -1)) if s.get("max_uses", -1) != -1 else "Unlimited",
-                "Current Users": str(s.get("current_uses", 0)),
-            })
-    except Exception as e:
-        shares.append({"Name": f"Error: {e}", "Type": "", "Path": "", "Comment": "", "Max Users": "", "Current Users": ""})
-    return shares
+    from modules.shared_resources import share_audit as sa
+    return sa.rows_shares(_smb_data("shares"))
 
 
 def get_sessions() -> List[Dict]:
-    sessions = []
-    try:
-        import win32net
-        result, _, _ = win32net.NetSessionEnum(None, None, 10)
-        for s in result:
-            sessions.append({
-                "Client": s.get("cname", ""),
-                "User": s.get("username", ""),
-                "Opens": str(s.get("num_opens", 0)),
-                "Connected (sec)": str(s.get("time", 0)),
-                "Idle (sec)": str(s.get("idle_time", 0)),
-            })
-    except Exception as e:
-        sessions.append({"Client": f"Error: {e}", "User": "", "Opens": "", "Connected (sec)": "", "Idle (sec)": ""})
-    return sessions
+    data = _smb_data("sessions")
+    return [{"Client": s.get("Client", ""), "User": s.get("User", ""),
+             "Opens": str(s.get("Opens", 0)), "Connected (sec)": str(s.get("Seconds", 0)),
+             "Idle (sec)": str(s.get("Idle", 0)), "Dialect": s.get("Dialect", "")}
+            for s in data.sessions]
+
+
+def get_open_files() -> List[Dict]:
+    data = _smb_data("open_files")
+    return [{"Client": f.get("Client", ""), "User": f.get("User", ""), "Path": f.get("Path", "")}
+            for f in data.open_files]
+
+
+def get_exposure() -> List[Dict]:
+    """Findings first (most severe first); the settings behind them last."""
+    from modules.shared_resources import share_audit as sa
+    data = sa.collect_cached(max_age=3.0)
+    rows = [{"Severity": f.severity.upper(), "Finding": f.title, "Detail": f.detail}
+            for f in sa.audit(data)]
+    if not data.fatal and not rows:
+        rows.append({"Severity": "OK", "Finding": "No SMB exposure findings", "Detail": ""})
+    srv, cli = data.server, data.client
+    if srv:
+        rows.append({"Severity": "SETTING", "Finding": "SMB server",
+                     "Detail": "SMB1 %s, SMB2 %s, signing required %s, encryption %s" % tuple(
+                         "on" if srv.get(k) else "off" for k in ("Smb1", "Smb2", "RequireSigning", "Encrypt"))})
+    if cli:
+        rows.append({"Severity": "SETTING", "Finding": "SMB client",
+                     "Detail": "signing required %s, insecure guest logons %s" % (
+                         "yes" if cli.get("RequireSigning") else "no",
+                         "allowed" if cli.get("InsecureGuest") else "blocked")})
+    return rows
 
 
 def get_mapped_drives() -> List[Dict]:
@@ -198,13 +216,16 @@ class SharesModule(BaseModule):
         tabs = QTabWidget()
         tp = self.thread_pool
         tabs.addTab(
-            _RefreshTab(get_shares, ["Name", "Type", "Path", "Comment", "Max Users", "Current Users"], tp),
+            _RefreshTab(get_exposure, ["Severity", "Finding", "Detail"], tp), "Exposure")
+        tabs.addTab(
+            _RefreshTab(get_shares, ["Name", "Kind", "Path", "Access", "Users", "Comment"], tp),
             "Network Shares"
         )
         tabs.addTab(
-            _RefreshTab(get_sessions, ["Client", "User", "Opens", "Connected (sec)", "Idle (sec)"], tp),
+            _RefreshTab(get_sessions, ["Client", "User", "Opens", "Connected (sec)", "Idle (sec)", "Dialect"], tp),
             "Connected Sessions"
         )
+        tabs.addTab(_RefreshTab(get_open_files, ["Client", "User", "Path"], tp), "Open Files")
         tabs.addTab(
             _RefreshTab(get_mapped_drives, ["Drive", "Remote Path", "Status", "Type"], tp),
             "Mapped Drives"

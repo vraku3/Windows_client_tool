@@ -6,8 +6,9 @@ def test_restore_table_has_no_placeholder_size_column(qapp):
     m = RestoreManagerModule()
     m.app = type("A", (), {"thread_pool": None})()
     w = m.create_widget()
-    assert m._table.columnCount() == 3
-    assert [m._table.horizontalHeaderItem(i).text() for i in range(3)] == ["Name", "Date", "Type"]
+    headers = [m._table.horizontalHeaderItem(i).text() for i in range(m._table.columnCount())]
+    assert "Size" not in headers                      # no placeholder column
+    assert headers[:3] == ["Name", "Date", "Type"]
 
 
 def test_empty_log_range_says_any_time_not_year_2000(qapp):

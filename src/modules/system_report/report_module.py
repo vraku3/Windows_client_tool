@@ -1,16 +1,21 @@
 import datetime
+import html as _html
 import os
 import platform
 import socket
 
+from typing import Optional
+
+from PyQt6 import sip
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QProgressBar,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QProgressBar,
     QFileDialog, QTextEdit,
 )
 from PyQt6.QtCore import QThreadPool
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.table_ui import set_role
 from core.worker import COMWorker
 import logging
 logger = logging.getLogger(__name__)
@@ -124,6 +129,17 @@ def _collect_report_data(_worker) -> dict:
     except Exception:
         logger.warning("Ignored Exception", exc_info=True)
     data["software_count"] = sw_count
+    try:
+        # Count NAMED entries, the same set the Software Inventory pane lists;
+        # the raw key count above includes nameless helper keys.
+        from modules.software_inventory.software_reader import fetch_software_inventory
+        data["software_count"] = len(fetch_software_inventory())
+    except OSError:
+        logger.warning("Named software count failed; using the raw key count", exc_info=True)
+
+    # Asset, disk, restore and software sections; each contains its own failure.
+    from modules.system_report import report_sections
+    data["sections"], data["findings"] = report_sections.collect_sections()
 
     return data
 
@@ -137,23 +153,27 @@ def _render_html(data: dict) -> str:
         )
 
     disk_rows = "".join(
-        f"<tr><td>{d['mount']}</td><td>{d['total_gb']} GB</td>"
+        f"<tr><td>{_html.escape(d['mount'])}</td><td>{d['total_gb']} GB</td>"
         f"<td>{d['used_gb']} GB</td><td>{d['free_gb']} GB</td>"
         f"<td>{_bar(d['percent'])}</td></tr>"
         for d in data.get("disks", [])
     )
     gpu_rows = "".join(
-        f"<tr><td>{g['name']}</td><td>{g['ram_mb']} MB</td></tr>"
+        f"<tr><td>{_html.escape(g['name'])}</td><td>{g['ram_mb']} MB</td></tr>"
         for g in data.get("gpus", [])
     )
     adapter_rows = "".join(
-        f"<tr><td>{a['name']}</td><td>{a['ip']}</td></tr>"
+        f"<tr><td>{_html.escape(a['name'])}</td><td>{_html.escape(a['ip'])}</td></tr>"
         for a in data.get("adapters", [])
     )
     proc_rows = "".join(
-        f"<tr><td>{p['name']}</td><td>{p['mem_pct']}%</td></tr>"
+        f"<tr><td>{_html.escape(str(p['name']))}</td><td>{p['mem_pct']}%</td></tr>"
         for p in data.get("top_procs", [])
     )
+
+    from modules.system_report import report_sections as rs
+    findings_block = rs.findings_html(data.get("findings", []))
+    extra_html = rs.sections_html(data.get("sections", []))
 
     return f"""<!DOCTYPE html>
 <html>
@@ -172,6 +192,7 @@ def _render_html(data: dict) -> str:
 <body>
 <h1>&#x1f4bb; System Report</h1>
 <p>Generated: {data.get('generated','')} &nbsp;|&nbsp; Host: <b>{data.get('hostname','')}</b></p>
+{findings_block}
 <h2>System</h2>
 <table class="kv">
 <tr><td>OS</td><td>{data.get('os_name','')} ({data.get('architecture','')})</td></tr>
@@ -204,13 +225,14 @@ def _render_html(data: dict) -> str:
 </table>
 <h2>Top Processes by Memory</h2>
 <table><tr><th>Process</th><th>Memory %</th></tr>{proc_rows}</table>
+{extra_html}
 </body></html>"""
 
 
 class SystemReportModule(BaseModule):
     name = "System Report"
     icon = "📋"
-    description = "Generate a full HTML system report"
+    description = "System report: hardware, disks, restore points, software and computed findings; HTML or Markdown"
     requires_admin = False
     group = ModuleGroup.TOOLS
 
@@ -220,18 +242,25 @@ class SystemReportModule(BaseModule):
         layout.setContentsMargins(12, 12, 12, 12)
 
         info_label = QLabel(
-            "Generates a comprehensive HTML report covering CPU, memory, disks, GPU, "
-            "network adapters, security products, and top processes."
+            "Collects CPU, memory, disks and volumes (health, TRIM, BitLocker), restore points and "
+            "shadow storage, memory slots, monitors, firmware and security state, installed software "
+            "(runtimes, duplicates, end-of-life) and top processes, with a computed \"needs attention\" list. "
+            "Each section is read independently; one that cannot be read says so."
         )
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
 
         btn_row = QHBoxLayout()
-        self._gen_btn = QPushButton("Generate Report…")
-        self._gen_btn.setFixedWidth(180)
+        self._gen_btn = QPushButton("Generate Report")
+        self._save_btn = QPushButton("Save HTML...")
+        self._copy_btn = QPushButton("Copy as Markdown")
+        self._copy_btn.setToolTip("Ticket-ready Markdown of the whole report")
+        self._save_btn.setEnabled(False)
+        self._copy_btn.setEnabled(False)
         self._status_label = QLabel("")
-        btn_row.addWidget(self._gen_btn)
-        btn_row.addWidget(self._status_label)
+        set_role(self._status_label, "muted")
+        for w in (self._gen_btn, self._save_btn, self._copy_btn, self._status_label):
+            btn_row.addWidget(w)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -243,44 +272,65 @@ class SystemReportModule(BaseModule):
 
         self._preview = QTextEdit()
         self._preview.setReadOnly(True)
-        self._preview.setPlaceholderText("Report preview will appear here after generation…")
+        self._preview.setPlaceholderText("Press Generate Report; the report appears here.")
         layout.addWidget(self._preview, 1)
 
         self._outer = outer
+        self._data: Optional[dict] = None
         self._gen_btn.clicked.connect(self._do_generate)
+        self._save_btn.clicked.connect(self._save_html)
+        self._copy_btn.clicked.connect(self._copy_markdown)
         return outer
 
     def _do_generate(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self._outer, "Save Report", "system_report.html", "HTML (*.html)"
-        )
-        if not path:
-            return
         self._gen_btn.setEnabled(False)
-        self._status_label.setText("Collecting data...")
+        self._status_label.setText("Collecting data (about ten seconds)...")
         self._progress.show()
-
         worker = COMWorker(_collect_report_data)
-        worker.signals.result.connect(lambda data: self._on_data(data, path))
-        worker.signals.error.connect(self._on_error)
+        worker.signals.result.connect(lambda data: self._on_data(data))
+        worker.signals.error.connect(lambda err: self._on_error(err))
         self._workers.append(worker)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_data(self, data: dict, path: str):
-        html = _render_html(data)
+    def _on_data(self, data: dict):
+        if sip.isdeleted(self._outer):
+            return
+        self._data = data
+        self._preview.setHtml(_render_html(data))
+        self._gen_btn.setEnabled(True)
+        self._save_btn.setEnabled(True)
+        self._copy_btn.setEnabled(True)
+        self._progress.hide()
+        flagged = sum(1 for f in data.get("findings", []) if f.severity in ("error", "warning"))
+        self._status_label.setText(f"Generated {data.get('generated', '')}: {flagged} item(s) need attention.")
+
+    def _save_html(self):
+        if self._data is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self._outer, "Save Report", f"system_report_{self._data.get('hostname', 'pc')}.html", "HTML (*.html)")
+        if not path:
+            return
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(html)
-            os.startfile(path)
-            self._status_label.setText(f"Saved to {os.path.basename(path)}")
-            self._preview.setHtml(html)
-        except Exception as e:
+                f.write(_render_html(self._data))
+        except OSError as e:
             self._status_label.setText(f"Save error: {e}")
-        finally:
-            self._gen_btn.setEnabled(True)
-            self._progress.hide()
+            logger.warning("Report save failed: %s", e)
+            return
+        self._status_label.setText(f"Saved to {os.path.basename(path)}")
+        os.startfile(path)
+
+    def _copy_markdown(self):
+        if self._data is None:
+            return
+        from modules.system_report import report_sections
+        QApplication.clipboard().setText(report_sections.build_markdown(self._data))
+        self._status_label.setText("Copied the report as Markdown.")
 
     def _on_error(self, err: str):
+        if sip.isdeleted(self._outer):
+            return
         self._gen_btn.setEnabled(True)
         self._progress.hide()
         self._status_label.setText(f"Error: {err}")

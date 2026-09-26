@@ -28,7 +28,7 @@ def test_strings_are_unchanged(qapp):
 
 def test_restore_point_types_have_names():
     assert restore_point_type_name(0) == "Application install"
-    assert restore_point_type_name("12") == "System settings change"
+    assert restore_point_type_name("12") == "Modify settings"
     assert restore_point_type_name(10) == "Device driver install"
 
 

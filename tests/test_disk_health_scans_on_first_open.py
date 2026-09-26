@@ -6,12 +6,26 @@ the first time it is opened -- once, not on every visit.
 from modules.disk_health.disk_health_module import DiskHealthModule
 
 
-class _Widget:
-    def __init__(self):
-        self.scans = 0
+from PyQt6.QtWidgets import QWidget
+import pytest
 
-    def _do_scan(self):
+
+@pytest.fixture(autouse=True)
+def _qt_app(qapp):
+    return qapp
+
+
+class _Widget(QWidget):
+    """A real widget: the module guards with sip.isdeleted(), which rejects fakes."""
+
+    def __init__(self):
+        super().__init__()
+        self.scans = 0
+        self._report = None           # the module scans on activation while there is no report
+
+    def refresh(self):
         self.scans += 1
+        self._report = object()       # a scan produced a report: later visits must not rescan
 
 
 def _module():

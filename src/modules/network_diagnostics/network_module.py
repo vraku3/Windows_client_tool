@@ -1063,12 +1063,14 @@ class NetworkDiagnosticsModule(CompositeModule):
     def __init__(self):
         super().__init__()
         from modules.hosts_editor.hosts_editor_module import HostsEditorModule
+        from modules.network_diagnostics.network_health_module import NetworkHealthModule
         from modules.network_extras.net_extras_module import NetExtrasModule
         from modules.remote_tools.remote_module import RemoteToolsModule
         from modules.shared_resources.shares_module import SharesModule
         from modules.wifi_analyzer.wifi_module import WifiAnalyzerModule
 
         self.children = [
+            NetworkHealthModule(),
             NetworkToolsModule(),
             WifiAnalyzerModule(),
             HostsEditorModule(),

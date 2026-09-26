@@ -1,6 +1,6 @@
 import subprocess
 
-from modules.dashboard import service_view as sv
+from modules.services_manager import service_view as sv
 
 
 def svc(**kw):

@@ -29,7 +29,7 @@ class CBSLogModule(LogReaderModule):
     provider_class = CBSSearchProvider
 
     def pane_options(self) -> dict:
-        from modules.diagnose import servicing_summary as ss
+        from core import servicing_summary as ss
         return {
             "detail_enricher": ss.detail_html,
             "summarizer": lambda entries: ss.summarize(entries, "cbs"),

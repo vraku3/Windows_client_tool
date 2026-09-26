@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Tuple
 
 from modules.system_health.findings import Finding
+from core.windows_utils import system_root
 
 logger = logging.getLogger(__name__)
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -274,7 +275,7 @@ def scan_cbs_text(text: str) -> List[str]:
 
 
 def check_cbs_log(tail_bytes: int = 8 * 1024 * 1024) -> List[Finding]:
-    path = os.path.join(os.environ.get("windir", r"C:\Windows"), "Logs", "CBS", "CBS.log")
+    path = os.path.join(system_root(), "Logs", "CBS", "CBS.log")
     try:
         with open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
@@ -307,7 +308,7 @@ def evaluate_services(rows: List[Dict], failures: Optional[Dict[str, int]]) -> L
         out.append(Finding(
             id="unquoted_service_paths",
             title=f"{len(unquoted)} service(s) have an unquoted path with spaces",
-            detail="Windows tries C:\\Program.exe, C:\\Program Files\\X.exe ... before the real file, so anyone "
+            detail="Windows tries Program.exe at the drive root, then Program Files\\X.exe ... before the real file, so anyone "
                    "who can write to one of those locations gets code run as the service. Fix: put quotes "
                    "around the path in the service's ImagePath (HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name>).",
             severity="warning", evidence=evidence, jump="Services"))

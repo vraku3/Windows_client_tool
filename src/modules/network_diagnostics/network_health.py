@@ -30,6 +30,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from modules.network_diagnostics import dns_client
+from core.windows_utils import system32
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,7 @@ DNS_SLOW_MS = 200.0
 MTU_TEST_PAYLOAD = 1472  # 1472 + 28 header bytes = 1500
 NTP_HOST = "time.windows.com"
 
-HOSTS_PATH = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
-                          "System32", "drivers", "etc", "hosts")
+HOSTS_PATH = os.path.join(system32(), "drivers", "etc", "hosts")
 
 # Names where a hosts-file redirect to a real address deserves a warning.
 WELL_KNOWN_SUFFIXES = (

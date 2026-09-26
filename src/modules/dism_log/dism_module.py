@@ -28,7 +28,7 @@ class DISMLogModule(LogReaderModule):
     provider_class = DISMSearchProvider
 
     def pane_options(self) -> dict:
-        from modules.diagnose import servicing_summary as ss
+        from core import servicing_summary as ss
 
         def summarise(entries):
             if entries and all(e.source == "DISM/HotFix" for e in entries):

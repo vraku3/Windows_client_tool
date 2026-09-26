@@ -20,7 +20,7 @@ from core.table_ui import centered_item, center_header
 from core.worker import COMWorker, Worker
 from ui.error_banner import ErrorBanner
 from modules.services_manager import service_audit
-from modules.dashboard import service_view
+from modules.services_manager import service_view
 
 CREATE_NO_WINDOW = 0x08000000
 

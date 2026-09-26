@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from modules.startup_manager import trust as trustlib
+from core.windows_utils import program_data, system_root
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,7 @@ def read_run_keys(inv: Inventory) -> None:
 
 def startup_folders() -> List[Tuple[str, str]]:
     appdata = os.environ.get("APPDATA", "")
-    programdata = os.environ.get("ProgramData", r"C:\ProgramData")
+    programdata = program_data()
     tail = os.path.join("Microsoft", "Windows", "Start Menu", "Programs", "Startup")
     return [("User", os.path.join(appdata, tail)), ("Machine", os.path.join(programdata, tail))]
 
@@ -391,7 +392,7 @@ def location_note(exe: str) -> Optional[Note]:
     if not exe:
         return None
     hot = [_env("TEMP"), _env("TMP"), os.path.join(_env("USERPROFILE"), "Downloads"),
-           os.path.join(_env("LOCALAPPDATA"), "Temp"), _env("PUBLIC"), r"C:\Windows\Temp"]
+           os.path.join(_env("LOCALAPPDATA"), "Temp"), _env("PUBLIC"), os.path.join(system_root(), "Temp")]
     if _under(exe, hot):
         return Note("tempdir", "warn", "Runs from a temporary, Downloads or Public folder, "
                     "which is unusual for anything meant to start with Windows.")

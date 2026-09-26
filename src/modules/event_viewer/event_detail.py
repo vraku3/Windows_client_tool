@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from core.types import LogEntry
-from modules.diagnose.knowledge import lookup_event
+from core.diag_knowledge import lookup_event
 from modules.event_viewer import event_analysis as ea
 
 

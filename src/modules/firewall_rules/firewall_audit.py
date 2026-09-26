@@ -18,6 +18,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from core.windows_utils import system_root
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,7 @@ def is_builtin(rule, extra: Optional[RuleExtra] = None) -> bool:
     if rule.name.startswith("@") or (extra and extra.grouping.startswith("@")):
         return True
     prog = expand_program(rule.program).lower()
-    root = os.environ.get("SystemRoot", r"C:\Windows").lower()
+    root = system_root().lower()
     return bool(prog) and prog.startswith(root + "\\")
 
 

@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 
 from core.types import LogEntry
-from modules.diagnose import servicing_summary as ss
+from core import servicing_summary as ss
 from modules.reliability import reliability_analysis as ra
 from modules.windows_update import wu_analysis
 from modules.windows_update.wu_parser import WUParser

@@ -28,7 +28,7 @@ from core.semantic_colors import semantic
 from core.worker import COMWorker, Worker
 
 from modules.services_manager import services_module
-from . import service_view as sv
+from modules.services_manager import service_view as sv
 
 logger = logging.getLogger(__name__)
 

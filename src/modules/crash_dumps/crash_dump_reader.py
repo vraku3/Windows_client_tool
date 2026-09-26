@@ -23,7 +23,7 @@ from core.types import LogEntry
 from core.windows_utils import system_root
 
 from modules.crash_dumps.dump_parser import DumpInfo, read_dump_info
-from modules.diagnose.knowledge import bugcheck_info, bugcheck_label, is_live_kernel_event
+from core.diag_knowledge import bugcheck_info, bugcheck_label, is_live_kernel_event
 
 logger = logging.getLogger(__name__)
 

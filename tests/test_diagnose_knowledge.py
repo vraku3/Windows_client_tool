@@ -1,5 +1,5 @@
 """The event-ID and bugcheck knowledge tables (Qt-free)."""
-from modules.diagnose import knowledge as k
+from core import diag_knowledge as k
 
 
 def test_kernel_power_41_is_known_under_both_spellings():

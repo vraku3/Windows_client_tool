@@ -4,9 +4,17 @@ Renders the actual pane rather than asserting on helper functions: the bugs
 this catches (a button that never enables, a sequence number that never
 reaches the row) only exist in the wiring.
 """
+from datetime import datetime, timezone
+
 import pytest
 
 from modules.restore_manager import restore_module as rm
+
+
+def _local_text(y, mo, d, h, mi):
+    """A DMTF '-000' stamp is UTC; the pane shows it in local time."""
+    utc = datetime(y, mo, d, h, mi, tzinfo=timezone.utc)
+    return utc.astimezone().strftime("%Y-%m-%d %H:%M")
 
 
 def _pt(seq, when, desc):
@@ -31,7 +39,8 @@ class _AppStub:
 
 
 @pytest.fixture
-def pane(qapp):
+def pane(qapp, monkeypatch):
+    monkeypatch.setattr(rm, "is_admin", lambda: True)   # deletion is gated on elevation
     module = rm.RestoreManagerModule()
     module.on_start(_AppStub())
     module.create_widget()
@@ -57,7 +66,7 @@ def test_four_points_render_with_their_sequence_numbers_attached(pane):
 
     assert pane._table.rowCount() == 4
     assert pane._table.item(0, 0).text() == "Before driver install"
-    assert pane._table.item(0, 1).text() == "2026-08-20 10:00"
+    assert pane._table.item(0, 1).text() == _local_text(2026, 8, 20, 10, 0)
     assert [pane._sequence_number_at(r) for r in range(4)] == [11, 12, 13, 14]
 
 
@@ -190,3 +199,51 @@ def test_buttons_are_locked_while_a_delete_is_running(pane):
     pane._update_delete_buttons()
     assert pane._delete_btn.isEnabled() is False
     assert pane._prune_btn.isEnabled() is False
+
+
+# ── read-back and gating ────────────────────────────────────────────────────
+
+def test_a_deletion_is_verified_by_reading_the_list_back(pane, monkeypatch):
+    pane._on_points_loaded(FOUR_POINTS)
+    pane._pending_verify = [11, 12]
+    pane._on_points_loaded(FOUR_POINTS[1:])          # Windows still lists 12
+    text = pane._status_label.text()
+    assert "1 confirmed gone" in text and "still lists 1" in text and "12" in text
+    assert pane._pending_verify == []
+
+
+def test_a_clean_read_back_says_so(pane):
+    pane._on_points_loaded(FOUR_POINTS)
+    pane._pending_verify = [11]
+    pane._on_points_loaded(FOUR_POINTS[1:])
+    assert "confirmed gone" in pane._status_label.text() and "still lists" not in pane._status_label.text()
+
+
+def test_deleting_without_elevation_is_refused_with_the_reason(pane, monkeypatch):
+    pane._on_points_loaded(FOUR_POINTS)
+    _select_row(pane, 1)
+    monkeypatch.setattr(rm, "is_admin", lambda: False)
+    shown = []
+    monkeypatch.setattr(rm.QMessageBox, "information",
+                        staticmethod(lambda parent, title, text, *a, **k: shown.append(text)))
+    monkeypatch.setattr(rm, "confirm_destructive", lambda *a, **k: pytest.fail("asked without admin"))
+    pane._delete_selected()
+    assert shown and "administrator" in shown[0].lower()
+
+
+def test_a_failed_list_read_does_not_blank_the_table(pane):
+    pane._on_points_loaded(FOUR_POINTS)
+    pane._on_snapshot(rm._Snapshot(points=None, points_error="boom"))
+    assert pane._table.rowCount() == 4
+    assert "boom" in pane._status_label.text()
+
+
+def test_findings_render_for_a_stale_unprotected_machine(pane):
+    from modules.restore_manager import restore_analysis as ra
+    snap = rm._Snapshot(points=FOUR_POINTS, protection=ra.Protection(mounts=["E:"]),
+                        storage=[], mounts=["C:", "E:"])
+    pane._on_snapshot(snap)
+    labels = [pane._findings_box.itemAt(i).widget().text() for i in range(pane._findings_box.count())]
+    assert any("days old" in t for t in labels)
+    assert pane._drive_table.rowCount() == 2
+    assert pane._drive_table.item(0, 1).text() == "Off" and pane._drive_table.item(1, 1).text() == "On"

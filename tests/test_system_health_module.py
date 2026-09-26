@@ -43,7 +43,7 @@ def test_refresh_findings_populates_the_list(qapp, monkeypatch):
     module, app = _module(qapp)
     try:
         fake_findings = [Finding(id="x", title="Test Finding", detail="detail text", severity="info")]
-        monkeypatch.setattr("modules.system_health.findings.full_findings", lambda: fake_findings)
+        monkeypatch.setattr("modules.system_health.findings.full_findings", lambda **kw: fake_findings)
 
         module._refresh_findings()
         # Worker runs on a thread pool -- settle it.

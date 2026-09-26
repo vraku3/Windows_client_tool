@@ -12,6 +12,8 @@ from PyQt6.QtWidgets import (
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
+from modules.boot_analyzer import boot_history
+from modules.boot_analyzer.boot_history_view import BootHistoryPanel
 import logging
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,9 @@ class BootAnalyzerModule(BaseModule):
         title = QLabel("Boot Performance Analysis")
         title.setObjectName("heading")
         content_layout.addWidget(title)
+
+        self._history_panel = BootHistoryPanel()
+        content_layout.addWidget(self._history_panel)
 
         # Info cards container
         self._info_cards = QVBoxLayout()
@@ -92,6 +97,9 @@ class BootAnalyzerModule(BaseModule):
 
     def on_deactivate(self) -> None:
         self.cancel_all_workers()
+        # A cancelled worker never reaches _display_info, which is the only
+        # place this was cleared: leaving it set froze every later refresh.
+        self._scanning = False
 
     def on_stop(self) -> None:
         self.cancel_all_workers()
@@ -135,35 +143,28 @@ class BootAnalyzerModule(BaseModule):
                     capture_output=True, text=True, timeout=10,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
-                info["boot_type"] = "UEFI" if "UEFI" in result.stdout else "BIOS/Legacy"
+                if result.returncode != 0:
+                    info["boot_type"] = "Unknown"      # refused: not proof of BIOS
+                else:
+                    info["boot_type"] = "UEFI" if "UEFI" in result.stdout else "BIOS/Legacy"
             except Exception:
                 logger.debug("Failed to detect boot type", exc_info=True)
                 info["boot_type"] = "Unknown"
 
-            # Boot timeout
+            # Boot timeout and entry count from one bcdedit run. A refusal
+            # (bcdedit needs elevation) stays None -- never a made-up "Optimal".
             try:
                 result = subprocess.run(
                     ["bcdedit", "/enum", "all"],
                     capture_output=True, text=True, timeout=10,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
-                timeout_m = re.search(r'timeout\s*:\s*(\d+)', result.stdout, re.IGNORECASE)
-                info["boot_timeout"] = int(timeout_m.group(1)) if timeout_m else "N/A"
+                bcd = boot_history.parse_bcd(result.stdout)
             except Exception:
-                logger.debug("Failed to detect boot timeout", exc_info=True)
-                info["boot_timeout"] = "N/A"
-
-            # Number of boot entries
-            try:
-                result = subprocess.run(
-                    ["bcdedit", "/enum", "all"],
-                    capture_output=True, text=True, timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                info["boot_entries"] = result.stdout.count("bootloader")
-            except Exception:
-                logger.debug("Failed to count boot entries", exc_info=True)
-                info["boot_entries"] = "N/A"
+                logger.warning("Failed to read the boot configuration", exc_info=True)
+                bcd = {"timeout": None, "entries": None}
+            info["boot_timeout"] = bcd["timeout"]
+            info["boot_entries"] = bcd["entries"]
 
             # Last boot time
             try:
@@ -204,6 +205,11 @@ class BootAnalyzerModule(BaseModule):
                 logger.debug("Failed to get uptime", exc_info=True)
                 info["uptime_days"] = "N/A"
 
+            try:
+                info["facts"] = boot_history.read_boot_facts()
+            except Exception as error:  # noqa: BLE001 - shown in the panel, not swallowed
+                logger.warning("Boot history failed: %s", error, exc_info=True)
+                info["facts"] = boot_history.BootFacts(problems=[f"boot history failed: {error}"])
             return info
 
         self._worker = Worker(do_analyze)
@@ -213,6 +219,11 @@ class BootAnalyzerModule(BaseModule):
 
     def _display_info(self, info: dict) -> None:
         self._scanning = False
+        facts = info.get("facts")
+        if facts is not None:
+            if facts.fast_startup is not None:
+                info["fast_startup"] = "Enabled" if facts.fast_startup else "Disabled"
+            self._history_panel.set_facts(facts)
         # Clear
         while self._info_cards.count():
             item = self._info_cards.takeAt(0)
@@ -224,20 +235,25 @@ class BootAnalyzerModule(BaseModule):
                 "🖥️ Boot Mode",
                 info.get("boot_type", "N/A"),
                 "UEFI is faster and more secure" if info.get("boot_type") == "UEFI"
+                else "Could not read the firmware configuration (bcdedit needs administrator)"
+                if info.get("boot_type") == "Unknown"
                 else "BIOS/Legacy mode — consider migrating to UEFI for better performance"
             ),
             (
                 "⏱️ Boot Timeout",
-                f"{info.get('boot_timeout', 'N/A')} seconds",
-                "⚠️ Consider reducing to 3 seconds"
-                if isinstance(info.get("boot_timeout"), int) and info.get("boot_timeout", 0) > 3
+                f"{info['boot_timeout']} seconds" if isinstance(info.get("boot_timeout"), int)
+                else "Could not read",
+                "Could not read the boot configuration (bcdedit needs administrator)"
+                if not isinstance(info.get("boot_timeout"), int)
+                else "⚠️ Consider reducing to 3 seconds" if info["boot_timeout"] > 3
                 else "✅ Optimal"
             ),
             (
                 "📋 Boot Entries",
-                str(info.get("boot_entries", "N/A")),
-                "More entries = longer boot menu delay"
-                if isinstance(info.get("boot_entries"), int) and info.get("boot_entries", 0) > 2
+                str(info["boot_entries"]) if isinstance(info.get("boot_entries"), int) else "Could not read",
+                "Could not read the boot configuration (bcdedit needs administrator)"
+                if not isinstance(info.get("boot_entries"), int)
+                else "More entries = longer boot menu delay" if info["boot_entries"] > 2
                 else "✅ Normal"
             ),
             (

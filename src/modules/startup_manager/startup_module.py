@@ -31,6 +31,8 @@ from modules.startup_manager.startup_reader import (
     get_browser_extensions,
 )
 
+from modules.startup_manager.unified_tab import UnifiedStartupTab
+
 logger = logging.getLogger(__name__)
 
 COLUMNS = ["Name", "Command/Path", "Status", "Notes"]
@@ -366,6 +368,9 @@ class StartupItemsModule(BaseModule):
 
         tabs = QTabWidget()
 
+        app_dir = getattr(getattr(self, "app", None), "app_data_dir", None)
+        history = os.path.join(app_dir, "startup_history.json") if app_dir else None
+        tabs.addTab(UnifiedStartupTab(history), "Everything")
         tabs.addTab(
             _StartupTab(
                 get_registry_entries,

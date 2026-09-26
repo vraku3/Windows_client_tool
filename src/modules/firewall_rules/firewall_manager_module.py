@@ -24,6 +24,8 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import centered_item, center_header
 from core.worker import Worker
+from core.table_ui import set_role
+from modules.firewall_rules import firewall_audit as fa
 
 logger = logging.getLogger(__name__)
 
@@ -597,6 +599,10 @@ class FirewallManagerModule(BaseModule):
 
         self._all_rules: List[FirewallRule] = []
         self._outer = outer
+        self._snap = fa.Snapshot()
+        self._extras_map: dict = {}
+        self._chip = "all"
+        self._build_audit_ui(layout, toolbar)
 
         # ---- Signal connections ----
         self._refresh_btn.clicked.connect(self._do_refresh)
@@ -721,22 +727,130 @@ class FirewallManagerModule(BaseModule):
     # Actions
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Exposure audit (chips, findings, detail, CSV)
+    # ------------------------------------------------------------------
+
+    def _build_audit_ui(self, layout: QVBoxLayout, toolbar: QHBoxLayout) -> None:
+        from PyQt6.QtWidgets import QListWidget
+        self._csv_btn = QPushButton("Export CSV")
+        self._csv_btn.setToolTip("Save the rules currently shown as a CSV file")
+        self._csv_btn.clicked.connect(self._export_csv)
+        toolbar.insertWidget(toolbar.count() - 5, self._csv_btn)
+
+        chip_row = QHBoxLayout()
+        self._chip_buttons = {}
+        for key, label in fa.CHIPS:
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.setAutoExclusive(True)
+            b.setChecked(key == "all")
+            b.clicked.connect(lambda _c=False, k=key: self._set_chip(k))
+            self._chip_buttons[key] = b
+            chip_row.addWidget(b)
+        chip_row.addStretch()
+        layout.insertLayout(2, chip_row)
+
+        self._profile_lbl = QLabel("")
+        set_role(self._profile_lbl, "muted")
+        layout.insertWidget(3, self._profile_lbl)
+        self._findings = QListWidget()
+        self._findings.setMaximumHeight(120)
+        self._findings.setToolTip("Computed exposure findings; select one to show its rules")
+        self._findings.itemSelectionChanged.connect(self._on_finding_selected)
+        layout.insertWidget(4, self._findings)
+
+        self._detail_lbl = QLabel("Select a rule to see its details.")
+        self._detail_lbl.setWordWrap(True)
+        self._detail_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        set_role(self._detail_lbl, "muted")
+        layout.addWidget(self._detail_lbl)
+        self._finding_names: set = set()
+
+    def _extra_for(self, rule: FirewallRule) -> "fa.RuleExtra":
+        return self._extras_map.get(fa.rule_key(rule), fa.RuleExtra())
+
+    def _set_chip(self, key: str) -> None:
+        self._chip = key
+        self._finding_names = set()
+        self._apply_filter()
+
+    def _on_finding_selected(self) -> None:
+        items = self._findings.selectedItems()
+        if not items:
+            self._finding_names = set()
+        else:
+            finding = items[0].data(Qt.ItemDataRole.UserRole)
+            self._finding_names = {n.lower() for n in finding.rule_names}
+            self._detail_lbl.setText(
+                "%s\n%s%s" % (finding.title, finding.detail,
+                              ("\nFix: " + finding.fix) if finding.fix else ""))
+        self._apply_filter()
+
+    def _refresh_audit_view(self) -> None:
+        snap = self._snap
+        self._extras_map = fa.extras_index(snap.rules, snap.extras) if snap.rules else {}
+        counts = fa.chip_counts(self._all_rules,
+                                [self._extra_for(r) for r in self._all_rules])
+        for key, label in fa.CHIPS:
+            self._chip_buttons[key].setText("%s (%d)" % (label, counts[key]))
+        if snap.error:
+            self._profile_lbl.setText(snap.error + " -- findings unavailable, not 'none'.")
+        else:
+            self._profile_lbl.setText("   ".join(
+                "%s: %s, inbound %s, outbound %s" % (
+                    p.name, "on" if p.enabled else ("OFF" if p.enabled is False else "unknown"),
+                    p.default_inbound or "?", p.default_outbound or "?")
+                for p in snap.profiles))
+        self._findings.blockSignals(True)
+        self._findings.clear()
+        from PyQt6.QtWidgets import QListWidgetItem
+        for f in snap.findings:
+            item = QListWidgetItem("[%s] %s" % (f.severity.upper(), f.title))
+            item.setData(Qt.ItemDataRole.UserRole, f)
+            item.setToolTip(f.detail)
+            self._findings.addItem(item)
+        if not snap.findings and not snap.error:
+            self._findings.addItem("No exposure findings.")
+        self._findings.blockSignals(False)
+
+    def _export_csv(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self._outer, "Export rules as CSV", "firewall_rules.csv", "CSV (*.csv)")
+        if not path:
+            return
+        rules = self._visible_rules()
+        text = fa.rules_to_csv(rules, [self._extra_for(r) for r in rules])
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                fh.write(text)
+            self._status_lbl.setText("Exported %d rule(s) to %s" % (len(rules), path))
+        except OSError as exc:
+            logger.warning("CSV export failed: %s", exc)
+            QMessageBox.warning(self._outer, "Export failed", str(exc))
+
     def _do_refresh(self) -> None:
         self._set_buttons_enabled(False)
         self._progress.show()
         self._status_lbl.setText("Loading firewall rules...")
 
         def work(_w):
-            return fetch_firewall_rules()
+            return fetch_firewall_rules(), fa.take_snapshot()
+
+        def on_done(result):
+            rules, snap = result
+            self._snap = snap
+            self._on_rules_loaded(rules)
 
         worker = Worker(work)
-        worker.signals.result.connect(self._on_rules_loaded)
+        worker.signals.result.connect(on_done)
         worker.signals.error.connect(self._on_error)
         self._workers.append(worker)
         QThreadPool.globalInstance().start(worker)
 
     def _on_rules_loaded(self, rules: List[FirewallRule]) -> None:
         self._all_rules = rules
+        self._refresh_audit_view()
         self._progress.hide()
         self._set_buttons_enabled(True)
         self._apply_filter()
@@ -1079,7 +1193,7 @@ class FirewallManagerModule(BaseModule):
     # Filtering / table population
     # ------------------------------------------------------------------
 
-    def _apply_filter(self) -> None:
+    def _visible_rules(self) -> List[FirewallRule]:
         search = self._search_edit.text().lower()
         dir_f = self._dir_combo.currentText()
         action_f = self._action_combo.currentText()
@@ -1087,7 +1201,14 @@ class FirewallManagerModule(BaseModule):
 
         visible = []
         for r in self._all_rules:
-            if search and search not in r.name.lower() and search not in r.program.lower():
+            extra = self._extra_for(r)
+            if search and not any(search in s.lower() for s in (
+                    r.name, r.program, r.local_port, r.remote_port, r.protocol,
+                    extra.service, extra.package, extra.remote_ip)):
+                continue
+            if not fa.chip_matches(self._chip, r, extra):
+                continue
+            if self._finding_names and r.name.lower() not in self._finding_names:
                 continue
             if dir_f != "All" and r.direction != dir_f:
                 continue
@@ -1096,7 +1217,10 @@ class FirewallManagerModule(BaseModule):
             if profile_f != "All" and profile_f not in r.profile:
                 continue
             visible.append(r)
+        return visible
 
+    def _apply_filter(self) -> None:
+        visible = self._visible_rules()
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(visible))
         for row, rule in enumerate(visible):
@@ -1166,6 +1290,13 @@ class FirewallManagerModule(BaseModule):
     def _on_selection_changed(self) -> None:
         has_selection = bool(self._table.selectedItems())
         self._delete_btn.setEnabled(has_selection)
+        if not has_selection:
+            return
+        row = self._table.selectedItems()[0].row()
+        cell = lambda c: (self._table.item(row, c).text() if self._table.item(row, c) else "")  # noqa: E731
+        rule = FirewallRule(cell(0), cell(1), cell(2), cell(3), cell(4),
+                            cell(5), cell(6), cell(7), cell(8))
+        self._detail_lbl.setText(fa.rule_detail(rule, self._extra_for(rule)))
 
     def _get_selected_name(self) -> Optional[str]:
         items = self._table.selectedItems()

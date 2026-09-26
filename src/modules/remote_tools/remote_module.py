@@ -6,15 +6,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
 from PyQt6.QtCore import Qt, QThreadPool
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QCompleter, QFormLayout, QHBoxLayout, QHeaderView,
+    QCompleter, QFormLayout, QHBoxLayout, QHeaderView, QTableWidgetItem,
     QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton,
     QSpinBox, QTableWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.semantic_colors import semantic
+from core.table_ui import centered_item, center_header, set_role
+from modules.remote_tools import remote_audit as ra
 from core.worker import Worker
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,7 @@ class RemoteToolsModule(BaseModule):
         layout.setContentsMargins(4, 4, 4, 4)
 
         tabs = QTabWidget()
+        tabs.addTab(self._build_exposure_tab(), "🔒 Exposure")
         tabs.addTab(self._build_rdp_tab(), "🖥️ RDP")
         tabs.addTab(self._build_winrs_tab(), "💻 WinRS")
         tabs.addTab(self._build_ping_sweep_tab(), "📡 Ping Sweep")
@@ -68,6 +72,88 @@ class RemoteToolsModule(BaseModule):
 
         self._widget = root
         return root
+
+    # ------------------------------------------------------------------
+    # Exposure tab (what remote access is switched on here)
+    # ------------------------------------------------------------------
+
+    def _build_exposure_tab(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        top = QHBoxLayout()
+        self._exp_refresh = QPushButton("Refresh")
+        self._exp_refresh.clicked.connect(self._load_exposure)
+        self._exp_jump = QPushButton("Open related page")
+        self._exp_jump.setEnabled(False)
+        self._exp_jump.clicked.connect(self._jump_selected)
+        self._exp_status = QLabel("")
+        set_role(self._exp_status, "muted")
+        top.addWidget(self._exp_refresh)
+        top.addWidget(self._exp_jump)
+        top.addWidget(self._exp_status, 1)
+        layout.addLayout(top)
+        self._exp_table = QTableWidget(0, 4)
+        self._exp_table.setHorizontalHeaderLabels(["Feature", "Status", "Details", "Findings"])
+        self._exp_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._exp_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._exp_table.verticalHeader().setVisible(False)
+        hh = self._exp_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._exp_table.itemSelectionChanged.connect(self._exp_selection)
+        layout.addWidget(self._exp_table, 1)
+        self._exp_rows: list = []
+        self._exp_loaded = False
+        return w
+
+    def _load_exposure(self) -> None:
+        self._exp_refresh.setEnabled(False)
+        self._exp_status.setText("Reading remote-access settings...")
+        w = Worker(lambda _w: ra.evaluate(ra.gather()))
+        w.signals.result.connect(self._on_exposure)
+        w.signals.error.connect(self._on_exposure_error)
+        self._workers.append(w)
+        QThreadPool.globalInstance().start(w)
+
+    def _on_exposure_error(self, err: str) -> None:
+        if self._widget is None:
+            return
+        self._exp_refresh.setEnabled(True)
+        self._exp_status.setText("Could not read remote-access state: %s" % err)
+
+    def _on_exposure(self, rows) -> None:
+        if self._widget is None:
+            return
+        self._exp_refresh.setEnabled(True)
+        self._exp_rows = rows
+        self._exp_table.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            cells = [r.feature, r.status, r.summary, " ".join(r.findings)]
+            for c, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setToolTip(text)
+                if r.severity in ("high", "medium"):
+                    item.setForeground(QColor(semantic("error" if r.severity == "high" else "warning")))
+                self._exp_table.setItem(i, c, item)
+        n = sum(1 for r in rows if r.status == "On")
+        self._exp_status.setText("%d of %d remote-access features are on." % (n, len(rows)))
+
+    def _exp_selection(self) -> None:
+        rows = self._exp_table.selectionModel().selectedRows() if self._exp_table.selectionModel() else []
+        target = self._exp_rows[rows[0].row()].jump if rows and rows[0].row() < len(self._exp_rows) else ""
+        self._exp_jump.setEnabled(bool(target))
+        self._exp_jump.setText("Open %s" % target if target else "Open related page")
+
+    def _jump_selected(self) -> None:
+        rows = self._exp_table.selectionModel().selectedRows()
+        if not rows or self.app is None:
+            return
+        target = self._exp_rows[rows[0].row()].jump
+        if target:
+            from core.events import NAV_REQUEST_MODULE, NavRequestData
+            self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name=target))
 
     # ------------------------------------------------------------------
     # RDP tab
@@ -297,6 +383,9 @@ class RemoteToolsModule(BaseModule):
     # ------------------------------------------------------------------
 
     def on_activate(self) -> None:
+        if self._widget is not None and not getattr(self, "_exp_loaded", True):
+            self._exp_loaded = True
+            self._load_exposure()
         if self.app:
             self._history = self.app.config.get("remote_tools.history", [])
 

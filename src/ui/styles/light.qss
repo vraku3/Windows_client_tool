@@ -545,3 +545,8 @@ QLabel#noticeBanner {
 }
 QLabel#monitorActive   { color: #00695c; }
 QLabel#monitorInactive { color: #5f5f5f; }
+
+/* Read-only monospace text panes (log-style detail views). */
+QPlainTextEdit#mono {
+    font-family: Consolas, "Cascadia Mono", monospace;
+}

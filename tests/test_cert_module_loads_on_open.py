@@ -20,7 +20,7 @@ class _Pool:
 def module(qapp, monkeypatch):
     loads = []
     monkeypatch.setattr(cm._CertTab, "_load",
-                        lambda self: (setattr(self, "_loaded_once", True),
+                        lambda self: (setattr(self, "_attempted", True),
                                       loads.append(self._store_name)))
     module = cm.CertModule()
     module.app = type("App", (), {"thread_pool": _Pool()})()

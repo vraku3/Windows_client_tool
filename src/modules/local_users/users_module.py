@@ -1,39 +1,58 @@
 import datetime
-from typing import List, Dict, Optional
+import logging
+from typing import List, Optional
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, QTableWidget,
-    QHeaderView, QLabel, QProgressBar, QTabWidget,
+    QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QPlainTextEdit,
+    QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
-from PyQt6.QtCore import QThreadPool
-from PyQt6.QtGui import QColor
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.semantic_colors import semantic
+from core.table_ui import center_header, centered_item, fit_table, set_role
 from core.worker import Worker
-from ui.empty_state import EmptyState
-import logging
+from modules.local_users import accounts as acc
+
 logger = logging.getLogger(__name__)
 
-_USER_COLS = ["Username", "Full Name", "Enabled", "Last Logon", "Password Age (days)", "Comment"]
-_GROUP_COLS = ["Group Name", "Members", "Comment"]
+_USER_COLS = ["Username", "Full Name", "Enabled", "Last Logon", "Days Idle",
+              "Password Age (days)", "Groups", "Flags"]
+_GROUP_COLS = ["Group Name", "Members", "Member list", "Comment"]
 
-_UF_ACCOUNTDISABLE = 0x0002
+
+class _NumItem(QTableWidgetItem):
+    """Shows text, sorts on a number stored in UserRole."""
+
+    def __init__(self, text: str, number: float):
+        super().__init__(text)
+        self.setData(Qt.ItemDataRole.UserRole, number)
+        self.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    def __lt__(self, other) -> bool:
+        a, b = self.data(Qt.ItemDataRole.UserRole), other.data(Qt.ItemDataRole.UserRole)
+        if isinstance(other, _NumItem) and a is not None and b is not None:
+            return a < b
+        return super().__lt__(other)
 
 
-def _fmt_time(t) -> str:
-    if not t:
+def _fmt_time(epoch: int) -> str:
+    if not epoch:
         return "Never"
-    try:
-        if isinstance(t, datetime.datetime):
-            if t.year < 1970:
-                return "Never"
-            return t.strftime("%Y-%m-%d %H:%M")
-        return datetime.datetime.fromtimestamp(int(t)).strftime("%Y-%m-%d %H:%M")
-    except Exception:
-        logger.warning("Ignored Exception", exc_info=True)
-        return str(t)
+    return datetime.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M")
+
+
+def flag_text(a: acc.Account) -> str:
+    bits = []
+    if a.flags & acc.UF_DONT_EXPIRE_PASSWD:
+        bits.append("pw never expires")
+    if a.flags & acc.UF_PASSWD_NOTREQD:
+        bits.append("pw not required")
+    if a.flags & acc.UF_LOCKOUT:
+        bits.append("locked out")
+    return ", ".join(bits)
 
 
 def format_password_age(seconds) -> str:
@@ -47,68 +66,39 @@ def format_password_age(seconds) -> str:
     return str(int(seconds / 86400))
 
 
-def get_users() -> List[Dict]:
-    import win32net
-    users = []
-    resume = 0
-    while True:
-        data, _, resume = win32net.NetUserEnum(None, 2, 0, resume)
-        for u in data:
-            flags = u.get("flags", 0)
-            enabled = not bool(flags & _UF_ACCOUNTDISABLE)
-            logon_ts = u.get("last_logon", 0)
-            pw_age_days = format_password_age(u.get("password_age", 0))
-            users.append({
-                "Username": u.get("name", ""),
-                "Full Name": u.get("full_name", ""),
-                "Enabled": "Yes" if enabled else "No",
-                "Last Logon": _fmt_time(logon_ts),
-                "Password Age (days)": pw_age_days,
-                "Comment": u.get("comment", ""),
-            })
-        if not resume:
-            break
-    return sorted(users, key=lambda u: u["Username"].lower())
-
-
-def get_groups() -> List[Dict]:
-    import win32net
-    groups = []
-    resume = 0
-    while True:
-        data, _, resume = win32net.NetLocalGroupEnum(None, 1, resume)
-        for g in data:
-            gname = g.get("name", "")
-            # get members
-            members = []
-            try:
-                mem_data, _, _ = win32net.NetLocalGroupGetMembers(None, gname, 1)
-                members = [m.get("name", "") for m in mem_data]
-            except Exception:
-                logger.warning("Ignored Exception", exc_info=True)
-            groups.append({
-                "Group Name": gname,
-                "Members": ", ".join(members),
-                "Comment": g.get("comment", ""),
-            })
-        if not resume:
-            break
-    return sorted(groups, key=lambda g: g["Group Name"].lower())
-
-
-def _fill_table(table: QTableWidget, rows: List[Dict], cols: List[str]):
-    table.setRowCount(len(rows))
-    for r, row in enumerate(rows):
-        for c, col in enumerate(cols):
-            table.setItem(r, c, centered_item(str(row.get(col, ""))))
+def detail_text(a: acc.Account, snap: acc.Snapshot) -> str:
+    age = a.password_age_days
+    lines = [
+        f"Account:        {a.name}" + ("" if a.enabled else "  (disabled)"),
+        f"Full name:      {a.full_name or '-'}",
+        f"SID:            {a.sid or 'could not be resolved'}",
+        f"RID:            {a.rid}",
+        f"Last logon:     {_fmt_time(a.last_logon)}   (logon count {a.num_logons}; local record only, "
+        "not updated by Microsoft-account or domain sign-ins)",
+        f"Password age:   {'never set' if age is None else f'{age} days'}",
+        f"Profile path:   {a.profile or '(none recorded)'}",
+        f"Flags:          {flag_text(a) or 'none of interest'}",
+        f"Comment:        {a.comment or '-'}",
+        "Member of:      " + (f"unreadable ({a.groups_error})" if a.groups_error else ", ".join(a.groups) or "(no local groups)"),
+    ]
+    return "\n".join(lines)
 
 
 class LocalUsersModule(BaseModule):
     name = "Local Users & Groups"
     icon = "👥"
-    description = "View local user accounts and group memberships"
+    description = "Local accounts, group membership in both directions, and findings"
     requires_admin = False
     group = ModuleGroup.MANAGE
+
+    def __init__(self):
+        super().__init__()
+        self._snap: Optional[acc.Snapshot] = None
+        self._chip = "All"
+        self._chips: dict = {}
+        self._rows: List[acc.Account] = []
+        self._widget: Optional[QWidget] = None
+        self._loaded = False
 
     def create_widget(self) -> QWidget:
         outer = QWidget()
@@ -117,11 +107,29 @@ class LocalUsersModule(BaseModule):
 
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
-        self._status_label = QLabel("Click Refresh to load.")
-        toolbar.addWidget(self._refresh_btn)
-        toolbar.addStretch()
+        self._copy_btn = QPushButton("Copy details")
+        self._copy_btn.clicked.connect(self._copy_details)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search name, full name, SID, group, profile...")
+        self._search.textChanged.connect(self._render_users)
+        self._status_label = QLabel("Loading...")
+        set_role(self._status_label, "muted")
+        for w in (self._refresh_btn, self._copy_btn):
+            toolbar.addWidget(w)
+        toolbar.addWidget(self._search, 1)
         toolbar.addWidget(self._status_label)
         layout.addLayout(toolbar)
+
+        chip_row = QHBoxLayout()
+        for c in acc.CHIPS:
+            b = QPushButton(c)
+            b.setCheckable(True)
+            b.setChecked(c == "All")
+            b.clicked.connect(lambda _=False, name=c: self._set_chip(name))
+            self._chips[c] = b
+            chip_row.addWidget(b)
+        chip_row.addStretch()
+        layout.addLayout(chip_row)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
@@ -132,97 +140,174 @@ class LocalUsersModule(BaseModule):
         tabs = QTabWidget()
         layout.addWidget(tabs, 1)
 
-        self._user_table = QTableWidget(0, len(_USER_COLS))
-        self._user_table.setHorizontalHeaderLabels(_USER_COLS)
-        self._user_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._user_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self._user_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._user_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self._user_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self._user_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        center_header(self._user_table)
-        self._user_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._user_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._user_table.setAlternatingRowColors(True)
+        split = QSplitter(Qt.Orientation.Vertical)
+        self._user_table = self._make_table(_USER_COLS, stretch=[6, 7], content=[0, 1, 2, 3, 4, 5])
+        self._user_table.itemSelectionChanged.connect(self._on_user_selected)
+        split.addWidget(self._user_table)
+        self._detail = QPlainTextEdit()
+        self._detail.setReadOnly(True)
+        set_role(self._detail, "mono")
+        split.addWidget(self._detail)
+        split.setSizes([380, 170])
+        tabs.addTab(split, "Users")
 
-        self._user_stack = QStackedWidget()
-        self._user_stack.addWidget(self._user_table)
-        self._user_empty = EmptyState(
-            "👤", "No local users found",
-            "Click Refresh to load local user accounts.",
-            "Refresh",
-        )
-        self._user_empty.action_triggered.connect(self._do_refresh)
-        self._user_stack.addWidget(self._user_empty)
-        self._user_stack.setCurrentIndex(1)
-        tabs.addTab(self._user_stack, "Users")
+        self._group_table = self._make_table(_GROUP_COLS, stretch=[2, 3], content=[0, 1])
+        tabs.addTab(self._group_table, "Groups")
 
-        self._group_table = QTableWidget(0, len(_GROUP_COLS))
-        self._group_table.setHorizontalHeaderLabels(_GROUP_COLS)
-        self._group_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self._group_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._group_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        center_header(self._group_table)
-        self._group_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._group_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._group_table.setAlternatingRowColors(True)
-
-        self._group_stack = QStackedWidget()
-        self._group_stack.addWidget(self._group_table)
-        self._group_empty = EmptyState(
-            "👥", "No local groups found",
-            "Click Refresh to load local groups.",
-            "Refresh",
-        )
-        self._group_empty.action_triggered.connect(self._do_refresh)
-        self._group_stack.addWidget(self._group_empty)
-        self._group_stack.setCurrentIndex(1)
-        tabs.addTab(self._group_stack, "Groups")
+        self._findings_table = self._make_table(["Severity", "Account", "Finding"], stretch=[2], content=[0, 1])
+        self._findings_tab_index = tabs.addTab(self._findings_table, "Findings")
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._lu_tabs = tabs
+        self._widget = outer
         return outer
 
+    @staticmethod
+    def _make_table(cols, stretch, content) -> QTableWidget:
+        t = QTableWidget(0, len(cols))
+        t.setHorizontalHeaderLabels(cols)
+        fit_table(t, stretch=stretch, content=content)
+        center_header(t)
+        t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        t.setAlternatingRowColors(True)
+        t.setSortingEnabled(True)
+        t.verticalHeader().setVisible(False)
+        return t
+
+    # ── loading ──────────────────────────────────────────────────────────
+
     def _do_refresh(self):
+        if self._widget is None:
+            return
         self._refresh_btn.setEnabled(False)
         self._status_label.setText("Loading...")
         self._progress.show()
-
-        def _load(_w):
-            return get_users(), get_groups()
-
-        worker = Worker(_load)
+        worker = Worker(lambda _w: acc.read_snapshot())
         worker.signals.result.connect(self._on_result)
         worker.signals.error.connect(self._on_error)
+        worker.signals.cancelled.connect(self._on_cancelled)
         self._workers.append(worker)
-        QThreadPool.globalInstance().start(worker)
+        self.thread_pool.start(worker)
 
-    def _on_result(self, data):
-        users, groups = data
+    def _on_result(self, snap: acc.Snapshot):
+        if self._widget is None:
+            return
+        self._snap = snap
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
-        _fill_table(self._user_table, users, _USER_COLS)
-        # Colour disabled accounts
-        for r in range(self._user_table.rowCount()):
-            item = self._user_table.item(r, 2)
-            if item and item.text() == "No":
-                for c in range(self._user_table.columnCount()):
-                    cell = self._user_table.item(r, c)
-                    if cell:
-                        cell.setForeground(QColor("#888888"))
-        _fill_table(self._group_table, groups, _GROUP_COLS)
-        self._user_stack.setCurrentIndex(0 if self._user_table.rowCount() else 1)
-        self._group_stack.setCurrentIndex(0 if self._group_table.rowCount() else 1)
-        self._status_label.setText(f"{len(users)} user(s), {len(groups)} group(s)")
+        counts = acc.chip_counts(snap.accounts)
+        for c, b in self._chips.items():
+            b.setText(f"{c} ({counts[c]})")
+        self._render_users()
+        self._render_groups()
+        self._render_findings()
+
+    def _on_cancelled(self):
+        if self._widget is None:
+            return
+        self._refresh_btn.setEnabled(True)
+        self._progress.hide()
 
     def _on_error(self, err: str):
+        if self._widget is None:
+            return
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
-        self._status_label.setText(f"Error: {err}")
+        self._status_label.setText(f"Could not read accounts: {err}")
+
+    # ── rendering ────────────────────────────────────────────────────────
+
+    def _set_chip(self, name: str) -> None:
+        self._chip = name
+        for c, b in self._chips.items():
+            b.setChecked(c == name)
+        self._render_users()
+
+    def _render_users(self, *_):
+        if self._snap is None:
+            return
+        q = self._search.text().strip().lower()
+        rows = [a for a in self._snap.accounts
+                if acc.matches_chip(a, self._chip) and (not q or q in acc.search_text(a))]
+        self._rows = rows
+        t = self._user_table
+        t.setSortingEnabled(False)
+        t.setRowCount(len(rows))
+        for r, a in enumerate(rows):
+            idle = acc.days_since(a.last_logon)
+            age = a.password_age_days
+            cells = [
+                centered_item(a.name), centered_item(a.full_name),
+                centered_item("Yes" if a.enabled else "No"),
+                _NumItem(_fmt_time(a.last_logon), a.last_logon),
+                _NumItem("" if idle is None else str(idle), -1 if idle is None else idle),
+                _NumItem(format_password_age(a.password_age_s), -1 if age is None else age),
+                centered_item(", ".join(a.groups) if not a.groups_error else "unreadable"),
+                centered_item(flag_text(a)),
+            ]
+            for c, item in enumerate(cells):
+                t.setItem(r, c, item)
+        t.setSortingEnabled(True)
+        self._status_label.setText(f"{len(rows)} of {len(self._snap.accounts)} account(s), "
+                                   f"{len(self._snap.group_members)} group(s)")
+
+    def _render_groups(self):
+        snap = self._snap
+        t = self._group_table
+        t.setSortingEnabled(False)
+        names = sorted(snap.group_members, key=str.lower)
+        t.setRowCount(len(names))
+        for r, g in enumerate(names):
+            members, why = snap.group_members[g]
+            count = _NumItem("unreadable" if members is None else str(len(members)),
+                             -1 if members is None else len(members))
+            text = f"Could not read: {why}" if members is None else ", ".join(members)
+            for c, item in enumerate([centered_item(g), count, centered_item(text),
+                                      centered_item(snap.group_comments.get(g, ""))]):
+                t.setItem(r, c, item)
+        t.setSortingEnabled(True)
+
+    def _render_findings(self):
+        fs = acc.findings(self._snap)
+        t = self._findings_table
+        t.setSortingEnabled(False)
+        t.setRowCount(len(fs))
+        colours = {"warning": "warning", "unknown": "info", "info": "info"}
+        for r, f in enumerate(fs):
+            for c, txt in enumerate((f.severity, f.account, f.message)):
+                item = centered_item(txt)
+                if c == 0:
+                    item.setForeground(QColor(semantic(colours.get(f.severity, "info"))))
+                t.setItem(r, c, item)
+        t.setSortingEnabled(True)
+        self._lu_tabs.setTabText(self._findings_tab_index, f"Findings ({len(fs)})")
+
+    def _selected_account(self) -> Optional[acc.Account]:
+        row = self._user_table.currentRow()
+        item = self._user_table.item(row, 0) if row >= 0 else None
+        if item is None or self._snap is None:
+            return None
+        return next((a for a in self._snap.accounts if a.name == item.text()), None)
+
+    def _on_user_selected(self):
+        a = self._selected_account()
+        self._detail.setPlainText(detail_text(a, self._snap) if a else "")
+
+    def _copy_details(self):
+        text = self._detail.toPlainText()
+        if text:
+            QGuiApplication.clipboard().setText(text)
+
+    # ── lifecycle ────────────────────────────────────────────────────────
 
     def on_activate(self):
-        if not getattr(self, "_loaded", False):
+        if not self._loaded and self._widget is not None:
             self._loaded = True
+            self._do_refresh()
+
+    def refresh_data(self):
+        if self._widget is not None and self._loaded:
             self._do_refresh()
 
     def on_start(self, app): self.app = app
@@ -230,5 +315,4 @@ class LocalUsersModule(BaseModule):
     def on_deactivate(self): self.cancel_all_workers()
 
     def get_refresh_interval(self) -> Optional[int]:
-        """Auto-refresh every 60 seconds."""
         return 60_000

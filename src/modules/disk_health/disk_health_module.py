@@ -1,354 +1,220 @@
 # src/modules/disk_health/disk_health_module.py
+"""Disk Health pane: computed findings, a drive table, a detail panel and a
+volume table.  All logic lives in ``disk_reader`` (Qt-free); this only draws."""
 import logging
-import subprocess
-from dataclasses import dataclass, field
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt, QThreadPool
+from PyQt6 import sip
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QProgressBar,
-    QPushButton, QScrollArea, QTableWidget,
-    QVBoxLayout, QWidget,
+    QApplication, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QProgressBar,
+    QPushButton, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
 )
 
+from core.admin_utils import is_admin
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, fit_table, set_role
 from core.worker import Worker
+from modules.disk_health import disk_reader as dr
+from modules.disk_health.smart_reader import DiskInfo, SmartAttribute, _query_disks  # noqa: F401
 from ui.empty_state import EmptyState
+from ui.table_items import fit_table_height, numeric_item, paint_severity
 
 logger = logging.getLogger(__name__)
 
-
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-@dataclass
-class SmartAttribute:
-    id: int
-    name: str
-    value: int       # normalised 0-255
-    worst: int
-    threshold: int
-    raw: str
-    failing: bool    # value <= threshold
+_ROLE_FOR = {"error": "statusError", "warning": "statusWarning", "info": "statusInfo"}
+DRIVE_COLUMNS = ["Drive", "Bus", "Media", "Size", "Health", "Temp", "Life used",
+                 "Power-on", "Verdict"]
+VOLUME_COLUMNS = ["Volume", "Label", "FS", "Size", "Free", "Free %", "BitLocker",
+                  "TRIM", "Health"]
 
 
-@dataclass
-class DiskInfo:
-    index: int
-    model: str
-    serial: str
-    size_gb: float
-    interface: str   # e.g. SATA, NVMe, USB
-    status: str      # OK / Pred. Fail / Unknown
-    temperature: Optional[int]       # °C, may be None
-    power_on_hours: Optional[int]
-    reallocated_sectors: Optional[int]
-    pending_sectors: Optional[int]
-    smart_attrs: List[SmartAttribute] = field(default_factory=list)
-    raw_output: str = ""
+def _alive(widget) -> bool:
+    return widget is not None and not sip.isdeleted(widget)
 
 
-# ---------------------------------------------------------------------------
-# WMI / PowerShell SMART reader
-# ---------------------------------------------------------------------------
-
-_PS_SCRIPT = r"""
-$ErrorActionPreference = 'SilentlyContinue'
-$disks = Get-WmiObject -Class Win32_DiskDrive
-foreach ($d in $disks) {
-    $smart = Get-WmiObject -Namespace root\wmi -Class MSStorageDriver_FailurePredictStatus `
-             | Where-Object { $_.InstanceName -like "*$($d.PNPDeviceID.Replace('\','_'))*" }
-    $data  = Get-WmiObject -Namespace root\wmi -Class MSStorageDriver_FailurePredictData `
-             | Where-Object { $_.InstanceName -like "*$($d.PNPDeviceID.Replace('\','_'))*" }
-    $thresh= Get-WmiObject -Namespace root\wmi -Class MSStorageDriver_FailurePredictThresholds `
-             | Where-Object { $_.InstanceName -like "*$($d.PNPDeviceID.Replace('\','_'))*" }
-    $predFail = if ($smart) { $smart.PredictFailure } else { $false }
-    $sizeGB = [math]::Round($d.Size / 1GB, 1)
-    Write-Output "DISK_START"
-    Write-Output "Index=$($d.Index)"
-    Write-Output "Model=$($d.Model)"
-    Write-Output "Serial=$($d.SerialNumber)"
-    Write-Output "SizeGB=$sizeGB"
-    Write-Output "Interface=$($d.InterfaceType)"
-    Write-Output "Status=$($d.Status)"
-    Write-Output "PredFail=$predFail"
-    if ($data -and $thresh) {
-        $rawBytes   = $data.VendorSpecific
-        $threshBytes= $thresh.VendorSpecific
-        $offset = 2
-        for ($i = 0; $i -lt 30; $i++) {
-            $base = $offset + $i * 12
-            if ($base + 12 -gt $rawBytes.Length) { break }
-            $attrId = $rawBytes[$base]
-            if ($attrId -eq 0) { continue }
-            $val    = $rawBytes[$base + 3]
-            $worst  = $rawBytes[$base + 4]
-            $thr    = $threshBytes[$base + 1]
-            $raw5   = [uint64]0
-            for ($b = 5; $b -le 10; $b++) { $raw5 = $raw5 + ([uint64]$rawBytes[$base + $b] -shl (($b-5)*8)) }
-            Write-Output "ATTR=$attrId,$val,$worst,$thr,$raw5"
-        }
-    }
-    Write-Output "DISK_END"
-}
-"""
-
-# Well-known SMART attribute names
-_ATTR_NAMES = {
-    1:   "Read Error Rate",
-    3:   "Spin Up Time",
-    4:   "Start/Stop Count",
-    5:   "Reallocated Sectors",
-    7:   "Seek Error Rate",
-    9:   "Power-On Hours",
-    10:  "Spin Retry Count",
-    12:  "Power Cycle Count",
-    177: "Wear Leveling Count",
-    179: "Used Reserved Block Count",
-    181: "Program Fail Count",
-    182: "Erase Fail Count",
-    183: "Runtime Bad Block",
-    187: "Uncorrectable Error Count",
-    190: "Airflow Temperature",
-    194: "Temperature",
-    195: "Hardware ECC Recovered",
-    196: "Reallocation Event Count",
-    197: "Pending Sector Count",
-    198: "Uncorrectable Sector Count",
-    199: "UltraDMA CRC Error Count",
-    200: "Write Error Rate",
-    231: "SSD Life Left",
-    232: "Endurance Remaining",
-    233: "Media Wearout Indicator",
-    240: "Head Flying Hours",
-    241: "Total LBAs Written",
-    242: "Total LBAs Read",
-}
+def _new_table(columns: List[str]) -> QTableWidget:
+    t = QTableWidget(0, len(columns))
+    t.setHorizontalHeaderLabels(columns)
+    t.verticalHeader().setVisible(False)
+    t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+    t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    t.setAlternatingRowColors(True)
+    return t
 
 
-def _query_disks() -> List[DiskInfo]:
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive",
-             "-ExecutionPolicy", "Bypass", "-Command", _PS_SCRIPT],
-            capture_output=True, text=True, timeout=30,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        output = result.stdout
-    except Exception as e:
-        logger.error("SMART query failed: %s", e)
-        return []
-
-    disks: List[DiskInfo] = []
-    current: Optional[dict] = None
-
-    for line in output.splitlines():
-        line = line.strip()
-        if line == "DISK_START":
-            current = {"attrs": [], "raw_lines": []}
-        elif line == "DISK_END":
-            if current is not None:
-                disks.append(_build_disk(current))
-            current = None
-        elif current is not None:
-            current["raw_lines"].append(line)
-            if "=" in line:
-                key, _, val = line.partition("=")
-                key = key.strip()
-                val = val.strip()
-                if key == "ATTR":
-                    parts = val.split(",")
-                    if len(parts) == 5:
-                        try:
-                            attr_id = int(parts[0])
-                            attr_val = int(parts[1])
-                            attr_worst = int(parts[2])
-                            attr_thr = int(parts[3])
-                            attr_raw = str(int(parts[4]))
-                            current["attrs"].append(SmartAttribute(
-                                id=attr_id,
-                                name=_ATTR_NAMES.get(attr_id, f"Attr {attr_id}"),
-                                value=attr_val,
-                                worst=attr_worst,
-                                threshold=attr_thr,
-                                raw=attr_raw,
-                                failing=attr_val <= attr_thr and attr_thr > 0,
-                            ))
-                        except ValueError:
-                            logger.debug("Ignored ValueError", exc_info=True)
-                else:
-                    current[key] = val
-
-    return disks
-
-
-def _build_disk(d: dict) -> DiskInfo:
-    attrs: List[SmartAttribute] = d.get("attrs", [])
-    temp = next((a.raw for a in attrs if a.id == 194), None)
-    if temp is None:
-        temp = next((a.raw for a in attrs if a.id == 190), None)
-    poh = next((a.raw for a in attrs if a.id == 9), None)
-    reallocated = next((a.raw for a in attrs if a.id == 5), None)
-    pending = next((a.raw for a in attrs if a.id == 197), None)
-
-    pred_fail = d.get("PredFail", "False").lower() == "true"
-    status = d.get("Status", "Unknown")
-    if pred_fail:
-        status = "PREDICTED FAILURE"
-    elif status.upper() == "OK":
-        status = "Healthy"
-
-    return DiskInfo(
-        index=_int(d.get("Index", "0")),
-        model=d.get("Model", "Unknown").strip(),
-        serial=d.get("Serial", "—").strip(),
-        size_gb=_float(d.get("SizeGB", "0")),
-        interface=d.get("Interface", "Unknown"),
-        status=status,
-        temperature=_int(temp) if temp is not None else None,
-        power_on_hours=_int(poh) if poh is not None else None,
-        reallocated_sectors=_int(reallocated) if reallocated is not None else None,
-        pending_sectors=_int(pending) if pending is not None else None,
-        smart_attrs=attrs,
-        raw_output="\n".join(d.get("raw_lines", [])),
-    )
-
-
-def _int(v) -> int:
-    try:
-        return int(str(v).split(".")[0])
-    except (ValueError, TypeError):
-        return 0
-
-
-def _float(v) -> float:
-    try:
-        return float(v)
-    except (ValueError, TypeError):
-        return 0.0
-
-
-# ---------------------------------------------------------------------------
-# Disk card widget
-# ---------------------------------------------------------------------------
-
-class _DiskCard(QFrame):
-    def __init__(self, disk: DiskInfo, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self._setup(disk)
-
-    def _setup(self, d: DiskInfo) -> None:
-        vbox = QVBoxLayout(self)
-        vbox.setContentsMargins(12, 10, 12, 10)
-        vbox.setSpacing(6)
-
-        # Header row: model + status badge
-        header = QHBoxLayout()
-        model_lbl = QLabel(f"💽  {d.model}")
-        font = model_lbl.font()
-        font.setBold(True)
-        model_lbl.setFont(font)
-        header.addWidget(model_lbl, stretch=1)
-
-        status_lbl = QLabel(d.status)
-        if "FAIL" in d.status.upper():
-            status_lbl.setStyleSheet(
-                "background:#e06c75; color:white; padding:2px 8px; border-radius:3px; font-weight:bold;")
-        elif d.status == "Healthy":
-            status_lbl.setStyleSheet(
-                "background:#4ec9b0; color:#1e1e1e; padding:2px 8px; border-radius:3px; font-weight:bold;")
-        else:
-            status_lbl.setStyleSheet(
-                "background:#e5c07b; color:#1e1e1e; padding:2px 8px; border-radius:3px;")
-        header.addWidget(status_lbl)
-        vbox.addLayout(header)
-
-        # Details grid
-        details = [
-            ("Serial",    d.serial),
-            ("Size",      f"{d.size_gb:.1f} GB"),
-            ("Interface", d.interface),
-            ("Temp",      f"{d.temperature}°C" if d.temperature is not None else "—"),
-            ("Power-On",  f"{d.power_on_hours:,} hours" if d.power_on_hours is not None else "—"),
-            ("Reallocated sectors", str(d.reallocated_sectors) if d.reallocated_sectors is not None else "—"),
-            ("Pending sectors",     str(d.pending_sectors) if d.pending_sectors is not None else "—"),
+def _fill_drives(table: QTableWidget, disks: List[dr.PhysicalDiskInfo]) -> None:
+    table.setSortingEnabled(False)          # a sorted fill scatters each row's cells
+    table.setRowCount(len(disks))
+    for r, d in enumerate(disks):
+        sev, verdict = dr.disk_verdict(d)
+        temp = d.temperature if d.temperature and not d.is_virtual else None
+        cells = [
+            centered_item(d.name), centered_item(d.bus), centered_item(d.media),
+            numeric_item(d.size_text, d.size_bytes),
+            centered_item(d.health or "unknown"),
+            numeric_item(f"{temp} C" if temp else "n/a", temp),
+            numeric_item("n/a" if d.wear_percent is None else f"{d.wear_percent}%", d.wear_percent),
+            numeric_item(dr.power_on_hours_short(d.power_on_hours), d.power_on_hours),
+            centered_item(verdict),
         ]
-        grid = QHBoxLayout()
-        col1, col2 = QVBoxLayout(), QVBoxLayout()
-        for i, (k, v) in enumerate(details):
-            lbl = QLabel(f"<b>{k}:</b>  {v}")
+        paint_severity(cells[8], sev)
+        for c, item in enumerate(cells):
+            table.setItem(r, c, item)
+        cells[0].setData(Qt.ItemDataRole.UserRole, d.device_id)
+    table.setSortingEnabled(True)
+
+
+def _fill_volumes(table: QTableWidget, report: dr.DiskReport) -> None:
+    vols = [v for v in report.volumes if v.letter]
+    table.setSortingEnabled(False)
+    table.setRowCount(len(vols))
+    for r, v in enumerate(vols):
+        pct = v.free_percent
+        trim = report.trim_enabled.get(v.filesystem)
+        cells = [
+            centered_item(v.display), centered_item(v.label), centered_item(v.filesystem),
+            numeric_item(dr.format_size(v.size_bytes), v.size_bytes),
+            numeric_item(dr.format_size(v.free_bytes), v.free_bytes),
+            numeric_item("n/a" if pct is None else f"{pct:.0f}%", pct),
+            centered_item(v.bitlocker or "not read"),
+            centered_item({True: "on", False: "OFF", None: "n/a"}[trim]),
+            centered_item(v.health or "?"),
+        ]
+        if pct is not None and pct < 5:
+            paint_severity(cells[5], "error")
+        elif pct is not None and pct < 10:
+            paint_severity(cells[5], "warning")
+        for c, item in enumerate(cells):
+            table.setItem(r, c, item)
+    table.setSortingEnabled(True)
+
+
+def detail_text(d: dr.PhysicalDiskInfo, elevated: bool) -> str:
+    lines = [
+        f"{d.name}",
+        f"Serial: {d.serial or 'not reported'}    Firmware: {d.firmware or 'not reported'}",
+        f"Type: {d.media or '?'} over {d.bus or '?'}    Size: {d.size_text}",
+        f"Power-on time: {dr.power_on_text(d.power_on_hours)}",
+    ]
+    if d.temperature and not d.is_virtual:
+        warn, crit = dr.temperature_limits(d)
+        lines.append(f"Temperature: {d.temperature} C (warns at {warn} C, critical {crit} C)")
+    if d.power_on_hours is None and not elevated:
+        lines.append("Power-on hours and some error counters may need administrator rights.")
+    for f in dr.disk_findings(d):
+        lines.append(f"[{f.severity}] {f.title}. {f.detail}".rstrip())
+    if d.smart_attrs:
+        lines.append("")
+        lines.append("S.M.A.R.T. attributes (id, name, value/worst/threshold, raw):")
+        for a in d.smart_attrs:
+            flag = "  <-- at threshold" if a.failing else ""
+            lines.append(f"  {a.id:3d} {a.name:<28} {a.value}/{a.worst}/{a.threshold}  raw {a.raw}{flag}")
+    return "\n".join(lines)
+
+
+class _ResultsView(QWidget):
+    """Everything one scan produced."""
+
+    def __init__(self, report: dr.DiskReport, parent=None):
+        super().__init__(parent)
+        self.report = report
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(8)
+        self._add_findings(box)
+        self._add_drives(box)
+        self._add_volumes(box)
+
+    def _add_findings(self, box: QVBoxLayout) -> None:
+        head = QLabel("Needs attention")
+        set_role(head, "heading")
+        box.addWidget(head)
+        findings = dr.all_findings(self.report)
+        self.finding_labels: List[QLabel] = []
+        if not findings:
+            ok = QLabel("Nothing needs attention. Every drive and volume read is within normal limits.")
+            set_role(ok, "statusSuccess")
+            box.addWidget(ok)
+        for f in findings:
+            lbl = QLabel(f"<b>{f.subject}</b>: {f.title}. {f.detail}")
+            lbl.setWordWrap(True)
             lbl.setTextFormat(Qt.TextFormat.RichText)
-            if i % 2 == 0:
-                col1.addWidget(lbl)
-            else:
-                col2.addWidget(lbl)
-        col1.addStretch()
-        col2.addStretch()
-        grid.addLayout(col1)
-        grid.addLayout(col2)
-        vbox.addLayout(grid)
+            set_role(lbl, _ROLE_FOR.get(f.severity, "statusInfo"))
+            self.finding_labels.append(lbl)
+            box.addWidget(lbl)
 
-        # SMART attribute table
-        if d.smart_attrs:
-            attr_lbl = QLabel("S.M.A.R.T. Attributes")
-            attr_lbl.setStyleSheet("color: gray; font-weight: bold; margin-top: 6px;")
-            vbox.addWidget(attr_lbl)
+    def _add_drives(self, box: QVBoxLayout) -> None:
+        head = QLabel("Drives")
+        set_role(head, "heading")
+        box.addWidget(head)
+        self.drive_table = _new_table(DRIVE_COLUMNS)
+        fit_table(self.drive_table, stretch=[8], content=[0, 1, 2, 3, 4, 5, 6, 7])
+        _fill_drives(self.drive_table, self.report.disks)
+        fit_table_height(self.drive_table)
+        box.addWidget(self.drive_table)
+        self.detail = QPlainTextEdit()
+        self.detail.setReadOnly(True)
+        self.detail.setFixedHeight(170)
+        self.detail.setPlaceholderText("Select a drive for its detail.")
+        box.addWidget(self.detail)
+        self.drive_table.itemSelectionChanged.connect(self._on_select)
 
-            tbl = QTableWidget(len(d.smart_attrs), 5)
-            tbl.setHorizontalHeaderLabels(["ID", "Name", "Value", "Worst", "Threshold"])
-            center_header(tbl)
-            tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-            tbl.verticalHeader().setVisible(False)
-            tbl.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            tbl.setAlternatingRowColors(True)
-            tbl.setMaximumHeight(200)
+    def _add_volumes(self, box: QVBoxLayout) -> None:
+        head = QLabel("Volumes")
+        set_role(head, "heading")
+        box.addWidget(head)
+        self.volume_table = _new_table(VOLUME_COLUMNS)
+        fit_table(self.volume_table, stretch=[1], content=[0, 2, 3, 4, 5, 6, 7, 8])
+        _fill_volumes(self.volume_table, self.report)
+        fit_table_height(self.volume_table)
+        box.addWidget(self.volume_table)
 
-            for row, attr in enumerate(d.smart_attrs):
-                tbl.setItem(row, 0, centered_item(f"{attr.id:03d}"))
-                tbl.setItem(row, 1, centered_item(attr.name))
-                tbl.setItem(row, 2, centered_item(str(attr.value)))
-                tbl.setItem(row, 3, centered_item(str(attr.worst)))
-                tbl.setItem(row, 4, centered_item(str(attr.threshold)))
-                if attr.failing:
-                    for col in range(5):
-                        item = tbl.item(row, col)
-                        if item:
-                            item.setForeground(
-                                tbl.palette().color(tbl.palette().ColorRole.BrightText))
-                            item.setBackground(
-                                tbl.palette().color(tbl.palette().ColorRole.Mid))
+    def selected_disk(self) -> Optional[dr.PhysicalDiskInfo]:
+        rows = self.drive_table.selectionModel().selectedRows()
+        if not rows:
+            return None
+        item = self.drive_table.item(rows[0].row(), 0)
+        wanted = item.data(Qt.ItemDataRole.UserRole) if item else None
+        return next((d for d in self.report.disks if d.device_id == wanted), None)
 
-            vbox.addWidget(tbl)
+    def _on_select(self) -> None:
+        d = self.selected_disk()
+        self.detail.setPlainText(detail_text(d, self.report.elevated) if d else "")
 
-
-# ---------------------------------------------------------------------------
-# Main widget
-# ---------------------------------------------------------------------------
 
 class _DiskHealthWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._workers = []
+        self._workers: list = []
         self._scanning = False
-        self._thread_pool = QThreadPool.globalInstance()
+        self._report: Optional[dr.DiskReport] = None
+        self._thread_pool = None
         self._setup_ui()
+
+    def _pool(self):
+        if self._thread_pool is None:
+            from PyQt6.QtCore import QThreadPool
+            self._thread_pool = QThreadPool.globalInstance()
+        return self._thread_pool
 
     def _setup_ui(self) -> None:
         vbox = QVBoxLayout(self)
         vbox.setContentsMargins(8, 8, 8, 8)
         vbox.setSpacing(8)
 
-        # Toolbar
         tb = QHBoxLayout()
-        self._scan_btn = QPushButton("🔍  Scan Drives")
+        self._scan_btn = QPushButton("Scan Drives")
         self._scan_btn.clicked.connect(self._do_scan)
         tb.addWidget(self._scan_btn)
-        self._status_lbl = QLabel("Click Scan to read S.M.A.R.T. data.")
-        self._status_lbl.setStyleSheet("color: gray;")
+        self._copy_btn = QPushButton("Copy as Markdown")
+        self._copy_btn.setToolTip("Copy the drives, volumes and findings as a ticket-ready table")
+        self._copy_btn.setEnabled(False)
+        self._copy_btn.clicked.connect(self._copy_markdown)
+        tb.addWidget(self._copy_btn)
+        self._status_lbl = QLabel("Click Scan to read drive health.")
+        set_role(self._status_lbl, "muted")
         tb.addWidget(self._status_lbl, stretch=1)
         vbox.addLayout(tb)
 
@@ -359,16 +225,17 @@ class _DiskHealthWidget(QWidget):
         self._progress.hide()
         vbox.addWidget(self._progress)
 
-        # Warning banner
-        warn = QLabel(
-            "ℹ️  S.M.A.R.T. data requires administrator rights and may not be available for "
-            "all drive types (e.g. some USB enclosures, NVMe via third-party controllers)."
-        )
-        warn.setWordWrap(True)
-        warn.setStyleSheet("color: #858585; font-size: 11px;")
-        vbox.addWidget(warn)
+        self._note = QLabel()
+        self._note.setWordWrap(True)
+        set_role(self._note, "infoNote")
+        self._note.setText(
+            "Health, temperature, wear and volume state are read without administrator rights. "
+            "Power-on hours, error counters and S.M.A.R.T. attribute tables may need elevation (and many NVMe drives never report them)."
+            if not is_admin() else
+            "Running elevated: S.M.A.R.T. attributes and failure prediction are included "
+            "where the drive supports them.")
+        vbox.addWidget(self._note)
 
-        # Scroll area for disk cards
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -380,70 +247,77 @@ class _DiskHealthWidget(QWidget):
         self._scroll = scroll
         vbox.addWidget(scroll, stretch=1)
 
-        # The pane needs an explicit scan before it can show anything, so it
-        # says so in the space it is explaining. It takes the scroll area's
-        # place rather than sitting inside it: the cards layout ends in a
-        # stretch, which would pin the message to the top of 800px of nothing.
+        # Takes the scroll area's place until there is something to show: the
+        # cards layout ends in a stretch, which would pin a message to the top.
         self._empty = EmptyState(
-            "💽", "No drives scanned yet",
-            "S.M.A.R.T. data is read on demand. Administrator rights give "
-            "readings for drives that will not answer otherwise.",
-            action_text="🔍  Scan Drives")
+            "\U0001F4BD", "No drives scanned yet",
+            "Drive health is read on demand: Windows' health verdict, temperature, wear, "
+            "volume free space, TRIM and BitLocker state.",
+            action_text="Scan Drives")
         self._empty.action_triggered.connect(self._do_scan)
         vbox.addWidget(self._empty, stretch=1)
         self._update_empty_state()
 
     def refresh(self) -> None:
-        """Trigger a background rescan. Idempotent — skips if already scanning."""
-        if self._scanning:
-            return
-        self._do_scan()
+        """Background rescan; skipped while one is running."""
+        if not self._scanning:
+            self._do_scan()
 
     def _do_scan(self) -> None:
         if self._scanning:
             return
         self._scanning = True
         self._scan_btn.setEnabled(False)
-        self._status_lbl.setText("Scanning drives…")
+        self._status_lbl.setText("Scanning drives...")
         self._progress.show()
-        self._clear_cards()
+        elevated = is_admin()
 
         def work(_w):
-            return _query_disks()
-
-        def on_result(disks: List[DiskInfo]):
-            self._scanning = False
-            self._progress.hide()
-            self._scan_btn.setEnabled(True)
-            self._clear_cards()
-            if not disks:
-                self._status_lbl.setText(
-                    "No drives found — try running as Administrator.")
-                return
-            failing = sum(1 for d in disks if "FAIL" in d.status.upper())
-            self._status_lbl.setText(
-                f"Found {len(disks)} drive(s)"
-                + (f" — ⚠️ {failing} predicted failure(s)!" if failing else " — all healthy"))
-            for d in disks:
-                card = _DiskCard(d)
-                self._cards_layout.insertWidget(self._cards_layout.count() - 1, card)
-            self._update_empty_state()
-
-        def on_error(err: str):
-            self._scanning = False
-            self._progress.hide()
-            self._scan_btn.setEnabled(True)
-            self._status_lbl.setText(f"Error: {err}")
+            return dr.read_disk_report(elevated=elevated)
 
         w = Worker(work)
-        w.signals.result.connect(on_result)
-        w.signals.error.connect(on_error)
+        w.signals.result.connect(lambda rep: self._on_result(rep))
+        w.signals.error.connect(lambda err: self._on_error(err))
         self._workers.append(w)
-        self._thread_pool.start(w)
+        self._pool().start(w)
+
+    def _finish_scan(self) -> None:
+        self._scanning = False
+        self._progress.hide()
+        self._scan_btn.setEnabled(True)
+
+    def _on_result(self, report: dr.DiskReport) -> None:
+        if not _alive(self):
+            return
+        self._finish_scan()
+        self._clear_cards()
+        self._report = report
+        self._cards_layout.insertWidget(self._cards_layout.count() - 1, _ResultsView(report))
+        self._copy_btn.setEnabled(True)
+        real = [d for d in report.disks if not d.is_virtual]
+        findings = dr.all_findings(report)
+        bad = sum(1 for f in findings if f.severity in ("error", "warning"))
+        self._status_lbl.setText(
+            f"{len(real)} drive(s), {len(report.volumes)} volume(s) -- "
+            + (f"{bad} finding(s) need attention" if bad else "nothing needs attention"))
+        self._update_empty_state()
+
+    def _on_error(self, err: str) -> None:
+        if not _alive(self):
+            return
+        self._finish_scan()
+        self._status_lbl.setText(f"Scan failed: {err}")
+        logger.warning("Disk scan failed: %s", err)
+
+    def _copy_markdown(self) -> None:
+        if self._report is None:
+            return
+        import socket
+        QApplication.clipboard().setText(dr.report_to_markdown(self._report, socket.gethostname()))
+        self._status_lbl.setText("Copied the disk report as Markdown.")
 
     def _clear_cards(self) -> None:
-        # Everything except the empty state, which is a fixture of the pane
-        # rather than a result -- the old loop deleted whatever sat at index 0.
+        # Everything except the empty state, which is a fixture of the pane.
         for index in reversed(range(self._cards_layout.count())):
             item = self._cards_layout.itemAt(index)
             widget = item.widget() if item else None
@@ -467,17 +341,19 @@ class _DiskHealthWidget(QWidget):
         for w in self._workers:
             w.cancel()
         self._workers.clear()
+        self._scanning = False
+        self._progress.hide()
+        self._scan_btn.setEnabled(True)
 
-
-# ---------------------------------------------------------------------------
-# Module
-# ---------------------------------------------------------------------------
 
 class DiskHealthModule(BaseModule):
     name = "Disk Health"
-    icon = "💾"
-    description = "S.M.A.R.T. drive health, temperature, reallocated sectors, failure prediction"
+    icon = "\U0001F4BE"
+    description = "Drive health, temperature, wear, TRIM, BitLocker and computed findings"
     requires_admin = True
+    # Health, temperature, wear and volumes read fine unelevated; only power-on
+    # hours, error counters and SMART tables need elevation.
+    read_only_unelevated = True
     group = ModuleGroup.SYSTEM
 
     def create_widget(self) -> QWidget:
@@ -489,20 +365,27 @@ class DiskHealthModule(BaseModule):
 
     def on_stop(self) -> None:
         self.cancel_all_workers()
+        widget = getattr(self, "_widget", None)
+        if widget is not None and _alive(widget):
+            widget.cancel_all_workers()
 
     def on_activate(self) -> None:
-        pass
+        widget = getattr(self, "_widget", None)
+        if widget is not None and _alive(widget) and widget._report is None:
+            widget.refresh()
 
     def on_deactivate(self) -> None:
-        if hasattr(self, "_widget"):
-            self._widget.cancel_all_workers()
+        widget = getattr(self, "_widget", None)
+        if widget is not None and _alive(widget):
+            widget.cancel_all_workers()
 
     def refresh_data(self) -> None:
-        if hasattr(self, "_widget"):
-            self._widget.refresh()
+        widget = getattr(self, "_widget", None)
+        if widget is not None and _alive(widget):
+            widget.refresh()
 
     def get_refresh_interval(self) -> Optional[int]:
-        """Auto-refresh SMART data every 5 minutes."""
+        """Rescan every five minutes."""
         return 300_000
 
     def get_status_info(self) -> str:

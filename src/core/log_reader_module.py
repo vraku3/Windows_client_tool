@@ -47,6 +47,10 @@ class LogReaderModule(BaseModule):
             f"{type(self).__name__} must implement load_entries()"
         )
 
+    def pane_options(self) -> dict:
+        """Extra `LogPane` keyword arguments (columns, detail enricher, summariser)."""
+        return {}
+
     def build_controls(self, toolbar, extra) -> None:
         """Add source-specific widgets to the pane's toolbar. Optional."""
         return None
@@ -54,7 +58,8 @@ class LogReaderModule(BaseModule):
     # -- BaseModule ------------------------------------------------------
     def create_widget(self) -> QWidget:
         self._pane = LogPane(loader=self.load_entries,
-                             extra_controls=self.build_controls)
+                             extra_controls=self.build_controls,
+                             **self.pane_options())
         self._pane.entries_loaded.connect(self._feed_provider)
         if self._activated_slot is not None:
             self._pane.entry_activated.connect(self._activated_slot)

@@ -27,6 +27,17 @@ class DISMLogModule(LogReaderModule):
     requires_admin = False
     provider_class = DISMSearchProvider
 
+    def pane_options(self) -> dict:
+        from modules.diagnose import servicing_summary as ss
+
+        def summarise(entries):
+            if entries and all(e.source == "DISM/HotFix" for e in entries):
+                return ("dism.log does not exist on this machine, so this shows installed "
+                        "hotfixes (Get-HotFix) instead; there is no servicing log to summarise.")
+            return ss.summarize(entries, "dism")
+
+        return {"detail_enricher": ss.detail_html, "summarizer": summarise}
+
     def load_entries(self, worker):
         import os
         import subprocess

@@ -28,6 +28,13 @@ class CBSLogModule(LogReaderModule):
     requires_admin = False
     provider_class = CBSSearchProvider
 
+    def pane_options(self) -> dict:
+        from modules.diagnose import servicing_summary as ss
+        return {
+            "detail_enricher": ss.detail_html,
+            "summarizer": lambda entries: ss.summarize(entries, "cbs"),
+        }
+
     def load_entries(self, worker):
         import os
         import subprocess

@@ -60,11 +60,51 @@ def _classify_level(fields: list) -> str:
     return "Info"
 
 
+_GUID = re.compile(r"^\s*\{[0-9A-Fa-f-]{36}\}\s*$")
+_EVENT_NAME = re.compile(r"(\d+)\s*\[([^\]]*)\]")
+_HEX_FIELD = re.compile(r"^(?:0x)?([0-9A-Fa-f]{1,8})$")
+_FAIL_RESULTS = ("failure", "failed", "error")
+
+
 class WUParser(LogParserBase):
     """Parser for C:\\Windows\\SoftwareDistribution\\ReportingEvents.log.
 
-    Lines are tab-separated. The first field is typically a timestamp string.
+    Lines are tab-separated. The real file's records start with a GUID and are
+    parsed structurally; any other tab-separated line falls back to the older
+    "first field is a timestamp" reading.
     """
+
+    def _parse_reporting_event(self, fields: list) -> Optional[LogEntry]:
+        """The real ReportingEvents.log record.
+
+        `{guid} ts 1 147 [EVENT_NAME] 101 {guid} status hresult product result
+        category message id` -- twelve-plus tab-separated fields, of which the
+        old parser showed the GUID as the "source" and the whole tail as one
+        unreadable message. The HRESULT sits in field 7 as bare hex.
+        """
+        if len(fields) < 12 or not _GUID.match(fields[0]):
+            return None
+        timestamp = _parse_timestamp(fields[1])
+        name = _EVENT_NAME.search(fields[3])
+        if timestamp is None or name is None:
+            return None
+        event_name = name.group(2)
+        product, result, category, text = (f.strip() for f in fields[8:12])
+        code_match = _HEX_FIELD.match(fields[7].strip())
+        code = int(code_match.group(1), 16) if code_match else 0
+        failed = (result.lower() in _FAIL_RESULTS or event_name.endswith("FAILED")
+                  or bool(code & 0x80000000))
+        level = "Error" if failed else "Info"
+        message = f"{product}: {text}" if product and text else (text or product or event_name)
+        return LogEntry(
+            timestamp=timestamp,
+            source=category or "Windows Update",
+            level=level,
+            message=message,
+            raw={"event_name": event_name, "event_id": int(name.group(1)), "product": product,
+                 "result": result, "category": category, "hresult": code,
+                 "update_id": fields[5].strip(), "fields": fields},
+        )
 
     def parse_line(self, line: str) -> Optional[LogEntry]:
         if not line.strip():
@@ -73,6 +113,10 @@ class WUParser(LogParserBase):
         fields = line.split("\t")
         if len(fields) < 2:
             return None
+
+        structured = self._parse_reporting_event(fields)
+        if structured is not None:
+            return structured
 
         # Try to extract timestamp from first field
         timestamp = _parse_timestamp(fields[0])

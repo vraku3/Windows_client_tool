@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 import logging
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,7 @@ class TaskInfo:
     triggers: str
     xml: str
     enabled: bool
+    last_result_code: Optional[int] = None   # unsigned 32-bit, None if unreadable
 
 
 @dataclass
@@ -28,12 +29,21 @@ class TaskFolder:
 def _fmt_date(dt) -> str:
     try:
         s = str(dt)
-        if s.startswith("1899") or s.startswith("1900"):
+        # Task Scheduler reports "never" as 1999-11-30 (or the 1899 COM epoch).
+        if s[:4].isdigit() and int(s[:4]) < 2000:
             return "Never"
         return s[:16].replace("T", " ")
     except Exception:
         logger.warning("Ignored Exception formatting date", exc_info=True)
         return ""
+
+
+def _code(raw) -> Optional[int]:
+    try:
+        return int(raw) & 0xFFFFFFFF
+    except (TypeError, ValueError):
+        logger.debug("LastTaskResult not numeric: %r", raw)
+        return None
 
 
 def get_folder_tree() -> TaskFolder:
@@ -61,11 +71,37 @@ def get_tasks_in_folder(folder_path: str) -> List[TaskInfo]:
     import win32com.client
     svc = win32com.client.Dispatch("Schedule.Service")
     svc.Connect()
-    folder = svc.GetFolder(folder_path)
+    if folder_path == ALL_FOLDERS:
+        return _all_tasks(svc)
+    return _tasks_of(svc.GetFolder(folder_path), folder_path)
+
+
+#: Pseudo folder path meaning "every folder, recursively".
+ALL_FOLDERS = "*"
+
+
+def _all_tasks(svc) -> List[TaskInfo]:
+    out: List[TaskInfo] = []
+
+    def walk(folder, path):
+        out.extend(_tasks_of(folder, path))
+        try:
+            for sub in folder.GetFolders(0):
+                walk(sub, path.rstrip("\\") + "\\" + sub.Name)
+        except Exception as e:
+            logger.warning("Could not enumerate task subfolders for %s: %s", path, e)
+
+    walk(svc.GetFolder("\\"), "\\")
+    return out
+
+
+def _tasks_of(folder, folder_path: str) -> List[TaskInfo]:
     tasks = []
     try:
-        for i in range(folder.GetTasks(0).Count):
-            task = folder.GetTasks(0).Item(i + 1)
+        # Flag 1 = TASK_ENUM_HIDDEN: with 0 the hidden tasks were never listed.
+        collection = folder.GetTasks(1)
+        for i in range(collection.Count):
+            task = collection.Item(i + 1)
             try:
                 state_map = {0: "Unknown", 1: "Disabled", 2: "Queued", 3: "Ready", 4: "Running"}
                 status = state_map.get(task.State, "Unknown")
@@ -104,6 +140,7 @@ def get_tasks_in_folder(folder_path: str) -> List[TaskInfo]:
                     triggers=triggers,
                     xml=task.Xml,
                     enabled=(task.State != 1),
+                    last_result_code=_code(task.LastTaskResult),
                 ))
             except Exception as e:
                 logger.debug("Skipping task due to error: %s", e)

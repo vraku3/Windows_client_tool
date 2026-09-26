@@ -19,6 +19,14 @@ class Finding:
     title: str
     detail: str
     severity: str  # "info" | "warning" -- no "danger": nothing here deletes anything
+    evidence: str = ""   # the raw facts the finding rests on, shown and copied with it
+    jump: str = ""       # name of the module/tab that can act on it ("" = none)
+
+    def copy_text(self) -> str:
+        parts = [f"[{self.severity}] {self.title}", self.detail]
+        if self.evidence:
+            parts.append("Evidence:\n" + self.evidence)
+        return "\n".join(p for p in parts if p)
 
 
 def check_pending_servicing() -> Optional[Finding]:
@@ -202,4 +210,15 @@ def all_findings() -> List[Finding]:
         findings.append(pending)
     findings.extend(check_orphaned_scheduled_tasks())
     findings.append(check_upgrade_headroom())
+    return findings
+
+
+def full_findings(is_cancelled=lambda: False) -> List[Finding]:
+    """The quick set plus every live-machine check (slower: PowerShell, w32tm,
+    the System log). Used by the System Health pane; the unattended stage keeps
+    `all_findings()`."""
+    from modules.system_health import health_checks
+    findings = all_findings()
+    findings.extend(health_checks.run_all(is_cancelled=is_cancelled))
+    findings.sort(key=lambda f: 0 if f.severity == "warning" else 1)
     return findings

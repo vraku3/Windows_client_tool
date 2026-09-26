@@ -1,3 +1,4 @@
+import logging
 import subprocess
 from typing import List, Dict, Optional
 
@@ -5,7 +6,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QHeaderView, QLabel, QProgressBar, QLineEdit,
     QComboBox, QMessageBox, QTabWidget, QGroupBox, QFormLayout,
-    QScrollArea, QTextEdit, QStackedWidget,
+    QScrollArea, QTextEdit, QStackedWidget, QApplication,
 )
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor
@@ -18,6 +19,8 @@ from core.windows_utils import ps_quote
 from core.table_ui import centered_item, center_header
 from core.worker import COMWorker, Worker
 from ui.error_banner import ErrorBanner
+from modules.services_manager import service_audit
+from modules.dashboard import service_view
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -136,40 +139,7 @@ def query_service_config(name: str) -> Dict:
     }
     if result.returncode != 0:
         return cfg
-
-    # Parse key=value lines from sc output
-    depends_lines = []
-    capturing_deps = False
-    for line in result.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("DISPLAY_NAME"):
-            cfg["display_name"] = line.split("=", 1)[1].strip().strip('"')
-        elif line.startswith("TYPE"):
-            cfg["type"] = line.split("=", 1)[1].strip()
-        elif line.startswith("START_TYPE"):
-            cfg["start_type"] = line.split("=", 1)[1].strip()
-        elif line.startswith("ERROR_CONTROL"):
-            cfg["error_control"] = line.split("=", 1)[1].strip()
-        elif line.startswith("BINARY_PATH_NAME"):
-            cfg["binary_path"] = line.split("=", 1)[1].strip().strip('"')
-        elif line.startswith("LOAD_ORDER_GROUP"):
-            cfg["load_order_group"] = line.split("=", 1)[1].strip().strip('"')
-        elif line.startswith("TAG"):
-            cfg["tag_id"] = line.split("=", 1)[1].strip()
-        elif line.startswith("DEPENDENCIES"):
-            raw = line.split("=", 1)[1].strip()
-            capturing_deps = True
-            depends_lines = [raw]
-        elif capturing_deps:
-            depends_lines.append(line)
-
-    # Merge continuation lines and split by comma
-    full_deps = " ".join(depends_lines)
-    raw_deps = full_deps.strip()
-    if raw_deps:
-        deps = [d.strip().strip('"') for d in raw_deps.split("  ") if d.strip()]
-        cfg["dependencies"] = deps
-
+    cfg.update(service_audit.parse_qc(result.stdout))
     return cfg
 
 
@@ -281,6 +251,20 @@ def _service_group(name: str, display_name: str) -> str:
     return "Other"
 
 
+logger = logging.getLogger(__name__)
+
+#: (key, label) for the "worth a second look" filter. Keys other than
+#: unquoted/crashed are service_view's own.
+_AUDIT_FILTERS = (
+    ("any", "Any"),
+    ("unquoted", "Unquoted path"),
+    ("crashed", "Crashed (30 d)"),
+    ("autostopped", "Auto, not running"),
+    ("thirdparty", "Third-party"),
+    ("account", "Custom account"),
+    ("disabled", "Disabled"),
+)
+
 # ----------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------
@@ -294,6 +278,8 @@ class ServicesModule(BaseModule):
     def __init__(self):
         super().__init__()
         self._refreshing = False
+        self._failures: Optional[Dict[str, int]] = None
+        self._failures_requested = False
 
     def create_widget(self) -> QWidget:
         outer = QWidget()
@@ -319,6 +305,10 @@ class ServicesModule(BaseModule):
         self._status_combo.addItems(["All", "Running", "Stopped"])
         self._group_combo = QComboBox()
         self._group_combo.addItems(["All Groups", "Network", "System", "Application", "Other"])
+        self._audit_combo = QComboBox()
+        self._audit_combo.setToolTip("Show only services worth a second look")
+        for key, label in _AUDIT_FILTERS:
+            self._audit_combo.addItem(label, key)
         self._status_label = QLabel("Click Refresh to load.")
         for btn in (self._start_btn, self._stop_btn, self._restart_btn,
                     self._enable_btn, self._disable_btn):
@@ -330,6 +320,7 @@ class ServicesModule(BaseModule):
         toolbar.addWidget(self._filter_edit)
         toolbar.addWidget(self._status_combo)
         toolbar.addWidget(self._group_combo)
+        toolbar.addWidget(self._audit_combo)
         toolbar.addStretch()
         toolbar.addWidget(self._status_label)
         layout.addLayout(toolbar)
@@ -360,6 +351,7 @@ class ServicesModule(BaseModule):
         self._filter_edit.textChanged.connect(self._apply_filter)
         self._status_combo.currentTextChanged.connect(self._apply_filter)
         self._group_combo.currentTextChanged.connect(self._apply_filter)
+        self._audit_combo.currentIndexChanged.connect(self._apply_filter)
         self._table.itemSelectionChanged.connect(self._on_selection_changed)
         self._table.itemDoubleClicked.connect(self._on_double_click)
         self._start_btn.clicked.connect(lambda: self._do_action("start"))
@@ -446,6 +438,14 @@ class ServicesModule(BaseModule):
         info_layout.addRow("Description:", self._detail_desc_value)
         self._detail_layout.addWidget(self._detail_info_group)
 
+        self._detail_audit_group = QGroupBox("Audit (security and reliability)")
+        audit_layout = QVBoxLayout(self._detail_audit_group)
+        self._detail_audit_value = QTextEdit()
+        self._detail_audit_value.setReadOnly(True)
+        self._detail_audit_value.setMaximumHeight(110)
+        audit_layout.addWidget(self._detail_audit_value)
+        self._detail_layout.addWidget(self._detail_audit_group)
+
         # Depends On section
         self._detail_deps_group = QGroupBox("Depends On (services this service requires)")
         deps_layout = QVBoxLayout(self._detail_deps_group)
@@ -474,7 +474,10 @@ class ServicesModule(BaseModule):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         self._detail_refresh_btn = QPushButton("Refresh Details")
+        self._detail_copy_btn = QPushButton("Copy details")
+        btn_row.addWidget(self._detail_copy_btn)
         btn_row.addWidget(self._detail_refresh_btn)
+        self._detail_copy_btn.clicked.connect(self._copy_detail)
         self._detail_layout.addLayout(btn_row)
 
         self._detail_refresh_btn.clicked.connect(self._refresh_detail)
@@ -501,9 +504,11 @@ class ServicesModule(BaseModule):
         text = self._filter_edit.text().lower()
         sf = self._status_combo.currentText()
         group = self._group_combo.currentText()
+        audit = self._audit_combo.currentData()
         rows = [
             s for s in self._all_services
-            if (not text or text in s["Display Name"].lower() or text in s["Name"].lower())
+            if service_view.matches(s, text)
+            and self._passes_audit(s, audit)
             and (sf == "All" or s["Status"] == sf)
             and (group == "All Groups" or _service_group(s["Name"], s["Display Name"]) == group)
         ]
@@ -527,6 +532,15 @@ class ServicesModule(BaseModule):
                 self._table.setItem(r, c, item)
         self._table_stack.setCurrentIndex(0 if rows else 1)
         self._status_label.setText(f"{len(rows)} / {len(self._all_services)} service(s)")
+
+    def _passes_audit(self, svc: Dict, key: str) -> bool:
+        if key in (None, "any"):
+            return True
+        if key == "unquoted":
+            return service_audit.is_unquoted_path(svc.get("Path", ""))
+        if key == "crashed":
+            return bool(service_audit.failures_for(self._failures, svc.get("Display Name", "")))
+        return service_view.passes(key, svc)
 
     def _on_selection_changed(self):
         has = bool(self._table.selectedItems())
@@ -578,8 +592,9 @@ class ServicesModule(BaseModule):
         self._detail_type_value.setText("Loading...")
         self._detail_start_type_value.setText("Loading...")
         self._detail_error_value.setText("Loading...")
-        self._detail_account_value.setText("Loading...")
+        self._detail_account_value.setText(svc.get("StartName") or "-")
         self._detail_path_value.setPlainText("Loading...")
+        self._detail_audit_value.setPlainText("Loading...")
         self._detail_load_group_value.setText("Loading...")
         self._detail_deps_list.setPlainText("Loading dependencies...")
         self._detail_rby_list.setPlainText("Loading required-by...")
@@ -593,7 +608,8 @@ class ServicesModule(BaseModule):
     def _fetch_detail(self, name: str) -> Dict:
         cfg = query_service_config(name)
         req_by = query_required_by(name)
-        return {"config": cfg, "required_by": req_by}
+        return {"config": cfg, "required_by": req_by,
+                "recovery": service_audit.read_recovery(name)}
 
     def _apply_detail(self, data: Dict):
         cfg = data["config"]
@@ -602,10 +618,10 @@ class ServicesModule(BaseModule):
         self._detail_type_value.setText(cfg.get("type", "-"))
         self._detail_start_type_value.setText(cfg.get("start_type", "-"))
         self._detail_error_value.setText(cfg.get("error_control", "-"))
-        self._detail_account_value.setText(cfg.get("start_name", "-"))
         self._detail_path_value.setPlainText(cfg.get("binary_path", "-"))
         self._detail_load_group_value.setText(cfg.get("load_order_group") or "(none)")
 
+        self._apply_audit(data.get("recovery"))
         deps = cfg.get("dependencies", [])
         if deps:
             self._detail_deps_list.setPlainText(
@@ -619,6 +635,37 @@ class ServicesModule(BaseModule):
             self._detail_rby_list.setPlainText("\n".join(lines))
         else:
             self._detail_rby_list.setPlainText("  (no dependent services)")
+
+    def _apply_audit(self, recovery: Optional[Dict]) -> None:
+        svc = self._get_selected_service() or {}
+        failures = service_audit.failures_for(self._failures, svc.get("Display Name", ""))
+        lines = [f"[{sev}] {text}" for sev, text in service_audit.audit_lines(svc, failures)]
+        if failures is None:
+            lines.append("Failure history: could not be read (System log).")
+        elif not failures:
+            lines.append("Failure history: no crash events in the last 30 days.")
+        lines.append("Recovery: " + service_audit.describe_recovery(recovery))
+        self._detail_audit_value.setPlainText("\n".join(lines))
+
+    def _copy_detail(self) -> None:
+        svc = self._get_selected_service()
+        if not svc:
+            return
+        text = service_view.detail_text(svc) + "\n" + self._detail_audit_value.toPlainText()
+        QApplication.clipboard().setText(text)
+        self._status_label.setText(f"Copied details of {svc['Name']}")
+
+    def _load_failures(self) -> None:
+        worker = Worker(lambda _w: service_audit.read_failure_counts())
+        worker.signals.result.connect(self._on_failures)
+        worker.signals.error.connect(lambda e: logger.warning("failure history: %s", e))
+        self._workers.append(worker)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_failures(self, counts) -> None:
+        self._failures = counts
+        if hasattr(self, "_audit_combo"):
+            self._apply_filter()
 
     def _apply_detail_error(self, err: str):
         self._detail_type_value.setText("-")
@@ -702,7 +749,10 @@ class ServicesModule(BaseModule):
 
     def on_start(self, app): self.app = app
     def on_stop(self): self.cancel_all_workers()
-    def on_deactivate(self): self.cancel_all_workers()
+    def on_deactivate(self):
+        self.cancel_all_workers()
+        if self._failures is None:
+            self._failures_requested = False
 
     def get_refresh_interval(self) -> Optional[int]:
         return 30_000
@@ -720,6 +770,9 @@ class ServicesModule(BaseModule):
 
     def _on_result(self, services: List[Dict]):
         self._all_services = services
+        if self._failures is None and not self._failures_requested:
+            self._failures_requested = True
+            self._load_failures()
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._apply_filter()

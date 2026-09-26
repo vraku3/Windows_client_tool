@@ -1173,6 +1173,89 @@ roles) and verified live 2026-09-25: switch, read back, restore.
 - **Firewall Rules' text-size reset moved from Ctrl+0 to Ctrl+Alt+0.** Two
   matching shortcuts (window + widget) are ambiguous in Qt and neither fires.
 
+### Sysadmin upgrades to the other tabs (2026-09-26)
+
+Seven parallel passes gave the remaining modules the same treatment as the
+Dashboard: a Qt-free engine, chips with live counts, search, a detail panel,
+computed findings that state their evidence, and honest "could not read".
+Measured facts and traps found on the real machine, by area:
+
+**Network Health** (`network_diagnostics/network_health*.py`, `dns_client.py`,
+`ping_stats.py`, `network_fixes.py`): APIPA and default routes count only on
+adapters that are UP (five disconnected adapters here carry 169.254.x.x). A VPN's
+`0.0.0.0/1` + `128.0.0.0/1` routes are invisible to a default-route check; the
+path-MTU probe is what shows the VPN carries traffic. A missing hosts file means
+no overrides, not "unreadable". `ipconfig`/`netsh` refuse while exiting 0, so
+detect refusal from the text. A raw DNS reply for big TXT sets is UDP-truncated:
+retry over TCP. Fixes are verified by read-back; Winsock reset is never
+verifiable and says a restart is needed.
+
+**Local Users / Certificates / Env Vars / Registry**: `NetUserEnum` `last_logon`
+is a LOCAL record, 0 for Microsoft-account sign-ins, so "Never logged on" means
+"no local record". `password_age` 0 = never set (see `format_password_age`).
+SHA-1/MD5 on a self-signed cert in a Root store is not a risk (a trust anchor's own
+signature is never validated); a weak KEY size still is. `SetValueEx` must keep
+the existing registry type -- forcing REG_EXPAND_SZ silently retypes REG_SZ
+variables. The old Registry Explorer search computed results and threw them away.
+
+**Firewall / Shares / Remote / Hosts**: the firewall policy under
+`HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules`
+is readable unelevated and matches `netsh` exactly (526 rules, ~0.1 s). Values are
+pipe-separated; `Profile`, `LPort`, `RA4/RA6` repeat; no `Profile` = all profiles.
+`@FirewallAPI.dll,-N` names resolve only via `SHLoadIndirectString` with a FULL dll
+path. "Open inbound allow" must exclude program/service/package-bound rules and
+non-TCP/UDP protocols (13 false highs otherwise); ICMP type is part of a rule's
+identity. The old hosts Save rewrote the file from the table and DROPPED every
+comment (and read prose comments as disabled entries); parsing is now lossless and
+Save backs up, writes, reads back and auto-restores on mismatch. All `Get-Smb*`
+cmdlets answer unelevated.
+
+**Startup & Boot**: `core.procengine.signatures.verify_signature` checks only the
+EMBEDDED signature, so catalog-signed Windows binaries (cmd, notepad, rundll32)
+read "not signed" -- use `startup_manager/trust.py`, which asks the catalog and
+takes the publisher from CompanyName. Task Scheduler command paths arrive with
+doubled quotes. `bcdedit` refuses unelevated and exits non-zero, and the firmware
+manager has its own `timeout` (the one that matters is under "Windows Boot
+Manager"). Diagnostics-Performance/Operational (events 100-103) and Kernel-Boot 27
+are readable unelevated. svchost impact is per SERVICE, not per exe. Enabled state
+is byte 0 of the `StartupApproved` value (odd = disabled).
+
+**System Management / Health**: never enable/disable a task by re-registering it
+(`RegisterTaskDefinition` rewrites the principal and breaks SYSTEM/password tasks);
+set `IRegisteredTask.Enabled`. Hidden tasks need `GetTasks(1)`. "Never run" is
+1999-11-30. `sc qc`/`sc qfailure` use `:` not `=` (the old parser raised on every
+service). Unquoted-service-path checks look at the program part only.
+`TaskScheduler/Operational` is disabled by default. `all_findings()` is the fast
+set the unattended run pins; `full_findings()` adds the slower live checks.
+
+**Hardware / Disk / Restore / Software**: restore-point `CreationTime` is UTC even
+though its offset reads `-000` (`restore_analysis.dmtf_to_local`;
+`core.system_restore.parse_restore_point_time` is only safe for ordering).
+Get-PhysicalDisk/StorageReliabilityCounter answer unelevated; `None` = not
+reported, never 0; `Win32_DiskDrive` omits Storage Spaces members. `DisableDeleteNotify
+= 0` means TRIM is ENABLED. Registry keeps ghost monitor EDIDs (8 keys for 3
+panels): `WmiMonitorID` says connected vs remembered. The software EOL table is a
+dated snapshot (`EOL_TABLE_AS_OF`), worded "past end of support", never "vulnerable".
+`fetch_software()` keeps its old de-duplicated shape (the Dashboard depends on it);
+the pane uses `fetch_software_inventory()`.
+
+**Diagnose**: Event Viewer reads through `wevtutil /f:RenderedXml`, not
+`ReadEventLog` (which returns only raw inserts). Piped wevtutil output is the ANSI
+code page, not UTF-8. Problems (critical/error/warning) are queried separately from
+informational events or chatter fills the cap. The Security log is read only when
+elevated and only for 4625/4740/1102/4719. `LogTableWidget` keeps the entry ON the
+row (`UserRole`); never index `_entries[row]` after a sort. Kernel dump header
+layout (checked on 30 real dumps): bugcheck at 0x38, params at 0x40, exception
+record at 0xF00; anything under `LiveKernelReports` is a live dump, not a crash.
+Reliability level is classified by (source, id): "error" in the text also matches
+MSI success ("...success or error status: 0"). Windows rolls `CBS.log` into
+`CbsPersist_*.cab`.
+
+**Merge note**: these were built in isolated worktrees from an older base. Where a
+rewrite dropped an earlier fix, it was restored (ErrorBanner in Restore,
+`format_install_date`/`format_estimated_size`, `format_password_age`) and the old
+regression tests were updated to the new interfaces rather than deleted.
+
 ### Debloat (`src/modules/debloat/`)
 
 126 catalogued apps plus 219 tweaks across two tabs, and four builtin

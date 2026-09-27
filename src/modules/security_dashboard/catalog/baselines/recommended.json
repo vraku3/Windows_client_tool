@@ -53,6 +53,7 @@
     "feature_work_folders": false,
     "firewall_enabled": true,
     "firewall_inbound_blocked": true,
+    "firewall_outbound_blocked": false,
     "guest_account": false,
     "last_username_hidden": true,
     "llmnr": false,

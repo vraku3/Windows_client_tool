@@ -128,7 +128,12 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         off_steps=(_profile_step("-DefaultOutboundAction NotConfigured",
                                  "-DefaultOutboundAction ${old}",
                                  _REVERT_INBOUND),),
-        desired=True,
+        # False, unlike its inbound sibling: blocking ALL outbound traffic by
+        # default breaks anything without its own allow rule, which is most
+        # software -- too disruptive to recommend to an ordinary user by
+        # default. The hardened baseline turns it on explicitly for the
+        # audience that wants that trade-off.
+        desired=False,
         risk=Risk.MEDIUM,
     ),
 

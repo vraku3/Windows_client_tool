@@ -122,5 +122,39 @@ def test_real_registry_matches_plausible_shape():
     assert sum(r.name.startswith("@") for r in rules) < len(rules) * 0.1  # names resolve
     counts = fa.chip_counts(rules, extras)
     assert counts["enabled"] + counts["disabled"] == counts["all"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
+def test_real_registry_program_missing_is_a_handful_not_hundreds():
+    """"Program missing" is the orphaned-firewall-rule check: a rule whose
+    Program (App=) field names a path that no longer exists on disk, the same
+    "registration outlives the uninstall" pattern as the orphaned services and
+    orphaned scheduled tasks checks. Measured on this real machine (526 rules,
+    305 carrying a non-"System" Program field): 12 rules point at a missing
+    program, all explicable (Windows Peer-to-Peer Collaboration Foundation and
+    Media Center Extenders rules for optional components not installed on this
+    edition; two EdgeWebView rules pinned to a specific already-superseded
+    version subfolder) -- a plausible handful, not the hundreds a relative-path
+    resolution bug would produce (that exact bug turned 736 healthy drivers
+    into 201 false "missing" results in check_orphaned_services before
+    %SystemRoot% expansion was fixed there). Guards against the same class of
+    regression here: if `expand_program`/`program_missing` ever stopped
+    expanding %SystemRoot% or started resolving relative paths against the
+    wrong base, this count would jump into the hundreds."""
+    try:
+        rules, extras = fa.read_registry_rules(fa.resolve_indirect)
+    except OSError:
+        pytest.skip("firewall policy unreadable here")
+    with_program = [r for r in rules if r.program and r.program.strip().lower() != "system"]
+    assert len(with_program) > 50  # sanity: most rules here do carry a Program
+    missing = [r for r in rules if fa.program_missing(r)]
+    # A handful, never a large fraction -- see docstring for the measured shape.
+    assert len(missing) < max(20, len(with_program) * 0.15)
+    for r in missing:
+        # Every flagged rule really did have a Program the check could expand;
+        # "System" and unresolved %vars% are never flagged (program_missing's
+        # own conservative rules -- an unresolved %var% is unknown, not missing).
+        expanded = fa.expand_program(r.program)
+        assert expanded and expanded.lower() != "system" and "%" not in expanded
     profiles = fa.read_profile_states()
     assert [p.name for p in profiles] == ["Domain", "Private", "Public"]

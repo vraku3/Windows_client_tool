@@ -64,6 +64,61 @@ def test_xml_facts():
     assert v.program_missing(d) is True
 
 
+def test_signature_line_is_none_when_the_program_is_missing():
+    d = v.parse_details(XML)  # points at C:\definitely\missing\tool.exe
+    assert v.signature_line(d) is None
+
+
+def test_signature_line_is_none_for_a_com_handler_or_relative_path():
+    assert v.signature_line(v.TaskDetails(commands=[("COM handler {guid}", "")])) is None
+    assert v.signature_line(v.TaskDetails(commands=[("notepad.exe", "")])) is None
+    assert v.signature_line(v.TaskDetails(commands=[])) is None
+
+
+def test_signature_line_reports_each_trust_status(monkeypatch, tmp_path):
+    from modules.startup_manager import trust as trustlib
+    real = tmp_path / "prog.exe"
+    real.write_text("x")
+    d = v.TaskDetails(commands=[(str(real), "")])
+
+    monkeypatch.setattr(trustlib, "check", lambda p: trustlib.Trust(trustlib.SIGNED, "Acme"))
+    assert v.signature_line(d) == "Signed"
+
+    monkeypatch.setattr(trustlib, "check", lambda p: trustlib.Trust(trustlib.SIGNED_CATALOG, None))
+    assert v.signature_line(d) == "Signed (Windows catalog)"
+
+    monkeypatch.setattr(trustlib, "check", lambda p: trustlib.Trust(trustlib.UNSIGNED, None))
+    assert v.signature_line(d) == "NOT SIGNED"
+
+    monkeypatch.setattr(trustlib, "check", lambda p: trustlib.Trust(trustlib.INVALID, None, "hash mismatch"))
+    assert v.signature_line(d) == "INVALID signature: hash mismatch"
+
+    monkeypatch.setattr(trustlib, "check", lambda p: trustlib.Trust(trustlib.UNKNOWN, None, "access denied"))
+    assert v.signature_line(d) == "could not check (access denied)"
+
+
+def test_detail_text_shows_the_signature_for_an_existing_program(monkeypatch, tmp_path):
+    from modules.startup_manager import trust as trustlib
+    real = tmp_path / "prog.exe"
+    real.write_text("x")
+    xml = XML.replace(r"C:\definitely\missing\tool.exe", str(real))
+    monkeypatch.setattr(trustlib, "check", lambda p: trustlib.Trust(trustlib.UNSIGNED, None))
+
+    text = v.detail_text(task(xml=xml))
+
+    assert "Signature:   NOT SIGNED" in text
+    assert "does not exist on disk" not in text
+
+
+def test_real_notepad_reads_as_signed_windows_catalog():
+    # notepad.exe has no embedded signature but is catalog-signed -- the same
+    # trap `startup_manager.trust`'s own docstring exists to avoid, pinned
+    # here again for the scheduled-tasks reuse of it.
+    d = v.TaskDetails(commands=[(r"C:\Windows\System32\notepad.exe", "")])
+    line = v.signature_line(d)
+    assert line is not None and "NOT SIGNED" not in line and "could not check" not in line
+
+
 def test_unparseable_xml_is_unknown_not_empty_answer():
     d = v.parse_details("<not xml")
     assert not d.parsed and v.program_missing(d) is None

@@ -194,6 +194,39 @@ def program_path(command: str) -> str:
     return os.path.expandvars((command or "").strip().strip('"'))
 
 
+def signature_line(details: TaskDetails) -> Optional[str]:
+    """The first Exec action's program, signed or not -- computed on demand
+    (called only from `detail_text`, never from a filter that would run it
+    over every task on every refresh; `trust.check` does real file I/O and
+    WinVerifyTrust calls, one per unique path, cached by `trust` itself).
+
+    Reuses `startup_manager.trust`, the same catalog-aware signature checker
+    the Startup inventory already relies on -- most of Windows itself has no
+    EMBEDDED signature (cmd.exe, rundll32.exe...) and is signed through a
+    security catalog instead; a checker that only asks about the embedded
+    one calls those "not signed", a false claim about the most trusted files
+    on the machine.
+    """
+    if not details.commands:
+        return None
+    command = program_path(details.commands[0][0])
+    if not command or command.startswith("COM handler") or not os.path.isabs(command):
+        return None
+    if not os.path.isfile(command):
+        return None
+    from modules.startup_manager import trust as trustlib
+    result = trustlib.check(command)
+    if result.status in (trustlib.SIGNED, trustlib.SIGNED_CATALOG):
+        # 'publisher' isn't appended here: for a Microsoft catalog-signed binary
+        # it is often blank, and detail_text already gives the program's path.
+        return f"Signed{' (Windows catalog)' if result.status == trustlib.SIGNED_CATALOG else ''}"
+    if result.status == trustlib.UNSIGNED:
+        return "NOT SIGNED"
+    if result.status == trustlib.INVALID:
+        return f"INVALID signature{f': {result.reason}' if result.reason else ''}"
+    return f"could not check ({result.reason})" if result.reason else "could not check"
+
+
 def program_missing(details: TaskDetails) -> Optional[bool]:
     """True if the first Exec action's program is not on disk; None if there is
     none to check (COM handler, unparsed XML) or it is a bare name found via PATH."""
@@ -308,6 +341,10 @@ def detail_text(task) -> str:
     missing = program_missing(d)
     if missing:
         lines.append("WARNING:     the program does not exist on disk.")
+    else:
+        sig_line = signature_line(d)
+        if sig_line is not None:
+            lines.append(f"Signature:   {sig_line}")
     if not is_microsoft(task) and _runs_as_system(task):
         lines.append("NOTE:        third-party task running as SYSTEM.")
     if d.hidden:

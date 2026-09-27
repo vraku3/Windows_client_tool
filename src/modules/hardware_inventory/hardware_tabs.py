@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 from core.table_ui import centered_item, fit_last, fit_table, set_role
 from modules.hardware_inventory import asset_parse as ap
 from modules.hardware_inventory import asset_reader as ar
+from modules.hardware_inventory import device_reader as dvr
 from modules.hardware_inventory import hardware_reader as hr
 from ui.table_items import fit_table_height, numeric_item, paint_severity
 
@@ -111,6 +112,45 @@ def setup_storage(layout, data) -> None:
     t2 = make_dict_table(cols2)
     fill_dict(t2, partitions, cols2)
     layout.addWidget(t2, 1)
+
+
+# -- USB and PCI devices ----------------------------------------------------
+
+DEVICE_COLUMNS = ["Name", "Vendor", "Class", "Status", "Device ID"]
+
+
+def load_devices(worker=None):
+    return dvr.read_usb_devices(), dvr.read_pci_devices()
+
+
+def _device_rows(devices):
+    return [{"Name": d.name, "Vendor": d.vendor or "—", "Class": d.pnp_class,
+             "Status": d.status or "—", "Device ID": d.device_id} for d in devices]
+
+
+def setup_devices(layout, data) -> None:
+    usb, pci = data
+    problems = dvr.problem_devices(usb, pci)
+    layout.addWidget(heading(f"USB devices ({len(usb) if usb is not None else 0})"
+                             if usb is not None else "USB devices — could not be read"))
+    if usb is not None:
+        t1 = make_dict_table(DEVICE_COLUMNS)
+        fill_dict(t1, _device_rows(usb), DEVICE_COLUMNS)
+        fit_table_height(t1)
+        layout.addWidget(t1)
+    layout.addWidget(heading(f"PCI devices ({len(pci) if pci is not None else 0})"
+                             if pci is not None else "PCI devices — could not be read"))
+    if pci is not None:
+        t2 = make_dict_table(DEVICE_COLUMNS)
+        fill_dict(t2, _device_rows(pci), DEVICE_COLUMNS)
+        layout.addWidget(t2, 1)
+    if problems:
+        layout.addWidget(heading(f"Windows flags {len(problems)} of these as a problem"))
+        for d in problems:
+            lbl = QLabel(f"<b>{d.name}</b>  ({d.status})")
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            set_role(lbl, "statusWarning")
+            layout.addWidget(lbl)
 
 
 # -- memory ----------------------------------------------------------------

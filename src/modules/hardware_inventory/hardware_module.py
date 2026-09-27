@@ -108,6 +108,7 @@ def _tab_specs():
         ("GPU", hr.get_gpu_info, ht.setup_dict(["Name", "RAM", "Driver Version", "Driver Date", "Resolution"])),
         ("Monitors", ht.load_monitors, ht.setup_monitors),
         ("Network Adapters", hr.get_network_info, ht.setup_dict(["Name", "IP", "MAC", "Speed", "Up"])),
+        ("Devices", ht.load_devices, ht.setup_devices),
         ("Firmware and Security", ht.load_firmware, ht.setup_firmware),
         ("Asset Record", ht.load_asset, ht.setup_asset),
     ]

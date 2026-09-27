@@ -269,6 +269,7 @@ HIDDEN_IMPORTS = [
     "modules.crash_dumps.dump_parser",
     "modules.reliability.reliability_analysis",
     "modules.windows_update.wu_analysis",
+    "modules.hardware_inventory.device_reader",
     "modules.hardware_inventory.asset_parse",
     "modules.hardware_inventory.asset_reader",
     "modules.hardware_inventory.hardware_tabs",

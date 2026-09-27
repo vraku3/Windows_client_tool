@@ -150,3 +150,107 @@ def test_real_shell_extensions_are_readable_and_mostly_healthy():
     # Confirmed clean on this real machine (0 of 37) -- a handful would still
     # be plausible on any given machine, hundreds would mean the resolver broke.
     assert len(orphaned) < len(entries) * 0.5
+
+
+# ---- icon overlay handlers ---------------------------------------------------
+
+def test_healthy_overlay_handler_resolves(monkeypatch):
+    import winreg
+    clsid = "{44444444-4444-4444-4444-444444444444}"
+
+    def fake_open(hive, path, *a, **k):
+        return _KeyCtx()
+
+    def fake_enum(key, index):
+        if index == 0:
+            return "MyOverlay"
+        raise OSError()
+
+    def fake_query(key, name):
+        return clsid, None
+
+    calls = {"n": 0}
+
+    def fake_query_dll(key, name):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return clsid, None
+        return r"C:\Windows\System32\overlay.dll", None
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open)
+    monkeypatch.setattr(winreg, "EnumKey", fake_enum)
+    monkeypatch.setattr(winreg, "QueryValueEx", fake_query_dll)
+    monkeypatch.setattr("os.path.isfile", lambda p: True)
+
+    entries = sr.get_icon_overlay_handlers()
+    assert len(entries) == 1
+    assert entries[0].name == "MyOverlay" and entries[0].extra == "OK"
+
+
+def test_overlay_handler_with_no_clsid_is_orphaned(monkeypatch):
+    import winreg
+
+    def fake_open(hive, path, *a, **k):
+        return _KeyCtx()
+
+    def fake_enum(key, index):
+        if index == 0:
+            return "Bogus"
+        raise OSError()
+
+    def fake_query(key, name):
+        return "not a clsid", None
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open)
+    monkeypatch.setattr(winreg, "EnumKey", fake_enum)
+    monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
+
+    entries = sr.get_icon_overlay_handlers()
+    assert len(entries) == 1
+    assert entries[0].enabled is False and "no CLSID registered" in entries[0].extra
+
+
+def test_over_the_slot_limit_adds_a_note_without_flagging_as_orphaned(monkeypatch):
+    import winreg
+    names = [f"Overlay{i:02d}" for i in range(sr.ICON_OVERLAY_SLOT_LIMIT + 3)]
+    clsid = "{55555555-5555-5555-5555-555555555555}"
+
+    def fake_open(hive, path, *a, **k):
+        return _KeyCtx()
+
+    def fake_enum(key, index):
+        if index < len(names):
+            return names[index]
+        raise OSError()
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open)
+    monkeypatch.setattr(winreg, "EnumKey", fake_enum)
+    # The per-handler default value and the CLSID's own default value both
+    # get queried with name="" -- differentiate by call count instead.
+    calls = {"n": 0}
+
+    def fake_query_seq(key, name):
+        calls["n"] += 1
+        return (clsid if calls["n"] % 2 == 1 else r"C:\Windows\System32\o.dll"), None
+
+    monkeypatch.setattr(winreg, "QueryValueEx", fake_query_seq)
+    monkeypatch.setattr("os.path.isfile", lambda p: True)
+
+    entries = sr.get_icon_overlay_handlers()
+    assert len(entries) == len(names)
+    assert all(e.enabled for e in entries)
+    assert all(str(sr.ICON_OVERLAY_SLOT_LIMIT) in e.extra for e in entries)
+
+
+def test_an_unopenable_overlay_key_returns_no_entries(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+
+    assert sr.get_icon_overlay_handlers() == []
+
+
+def test_real_icon_overlay_handlers_are_readable_and_mostly_healthy():
+    entries = sr.get_icon_overlay_handlers()
+    assert len(entries) > 0
+    orphaned = [e for e in entries if e.extra.startswith("ORPHANED")]
+    assert len(orphaned) == 0  # confirmed clean on this real machine (9 of 9)

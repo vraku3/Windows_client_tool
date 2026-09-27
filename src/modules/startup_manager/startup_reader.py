@@ -409,3 +409,65 @@ def get_shell_extensions() -> List[StartupEntry]:
                 continue
             entries.append(StartupEntry(display_name, dll_path, True, "shell_ext", "OK"))
     return entries
+
+
+_ICON_OVERLAY_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ShellIconOverlayIdentifiers"
+#: Windows has long documented a hard cap on how many overlay handlers it
+#: will actually load (commonly cited as 15, in alphabetical order by
+#: subkey name) -- not independently re-measured here, so this is reported
+#: as a documented limit approaching, never as something this tool caught
+#: happening live.
+ICON_OVERLAY_SLOT_LIMIT = 15
+
+
+def get_icon_overlay_handlers() -> List[StartupEntry]:
+    """Explorer icon overlay identifiers (the little badge on a OneDrive-synced
+    or version-controlled file/folder). Same CLSID-resolution shape as
+    `get_shell_extensions`, over a single flat key rather than several roots.
+    Confirmed live: 9 real entries here (all 7 OneDrive slots plus Offline
+    Files and Enhanced Storage), comfortably under the documented ~15-slot
+    limit -- so the slot-count note never fires on this machine, only the
+    per-handler orphan check does anything visible here.
+    """
+    entries: List[StartupEntry] = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _ICON_OVERLAY_KEY) as key:
+            names = []
+            index = 0
+            while True:
+                try:
+                    names.append(winreg.EnumKey(key, index))
+                except OSError:
+                    logger.debug("Icon overlay enumeration finished at %d", index)
+                    break
+                index += 1
+    except OSError as exc:
+        logger.warning("Cannot open %s: %s", _ICON_OVERLAY_KEY, exc)
+        return entries
+    for name in sorted(names, key=str.lower):
+        clsid = None
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _ICON_OVERLAY_KEY + "\\" + name) as key:
+                value = str(winreg.QueryValueEx(key, "")[0] or "")
+                clsid = value if _GUID_RE.match(value) else None
+        except OSError as exc:
+            logger.debug("Cannot read %s\\%s: %s", _ICON_OVERLAY_KEY, name, exc)
+        display_name = name.strip()
+        if not clsid:
+            entries.append(StartupEntry(
+                display_name, "", False, "icon_overlay", "ORPHANED: no CLSID registered"))
+            continue
+        dll, problem = _clsid_dll(clsid)
+        if problem:
+            entries.append(StartupEntry(display_name, clsid, False, "icon_overlay", "ORPHANED: " + problem))
+            continue
+        dll_path = os.path.expandvars(dll.strip('"').split(",")[0])
+        if not os.path.isfile(dll_path):
+            entries.append(StartupEntry(
+                display_name, dll_path, False, "icon_overlay", "ORPHANED: file does not exist"))
+            continue
+        note = "OK"
+        if len(names) > ICON_OVERLAY_SLOT_LIMIT:
+            note = f"OK ({len(names)} registered; Windows documents a ~{ICON_OVERLAY_SLOT_LIMIT}-slot limit, alphabetical)"
+        entries.append(StartupEntry(display_name, dll_path, True, "icon_overlay", note))
+    return entries

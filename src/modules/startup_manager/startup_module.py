@@ -30,6 +30,7 @@ from modules.startup_manager.startup_reader import (
     get_service_entries,
     get_browser_extensions,
     get_shell_extensions,
+    get_icon_overlay_handlers,
 )
 
 from modules.startup_manager.unified_tab import UnifiedStartupTab
@@ -420,6 +421,10 @@ class StartupItemsModule(BaseModule):
         tabs.addTab(
             _StartupTab(get_shell_extensions, read_only=True),
             "Shell Extensions",
+        )
+        tabs.addTab(
+            _StartupTab(get_icon_overlay_handlers, read_only=True),
+            "Icon Overlays",
         )
 
         self._startup_tabs = tabs

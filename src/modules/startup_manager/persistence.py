@@ -3,8 +3,9 @@
 Sources read: HKCU/HKLM Run and the 32-bit Run key, RunOnce, both Startup
 folders, scheduled tasks with a logon or boot trigger, automatic services,
 the Winlogon Shell/Userinit values when they are not the defaults, Image
-File Execution Options Debugger hijacks, and a populated + active
-AppInit_DLLs list.
+File Execution Options Debugger hijacks, a populated + active AppInit_DLLs
+list, and any unrecognised LSA Authentication/Notification/Security
+Package.
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -64,7 +65,7 @@ class Item:
     name: str
     command: str
     source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service",
-                           # "Winlogon", "IFEO", "AppInit"
+                           # "Winlogon", "IFEO", "AppInit", "LSA Package"
     scope: str             # "User" | "Machine"
     location: str          # registry key / folder / task folder
     enabled: Optional[bool] = True
@@ -470,6 +471,47 @@ def read_appinit_dlls(inv: Inventory) -> None:
             else "LoadAppInit_DLLs is 0: Windows ignores this list"))
 
 
+_LSA_PATH = r"SYSTEM\CurrentControlSet\Control\Lsa"
+#: Names actually seen shipped by Windows itself across these three values.
+#: Anything else registered here is a package this tool does not recognise
+#: as a Windows component -- the real mechanism behind a custom Security
+#: Support Provider DLL loaded into LSASS at boot (the historical "mimilib"
+#: SSP credential-dumping technique registers itself exactly this way).
+_LSA_KNOWN_PACKAGES = {
+    "msv1_0", "kerberos", "wdigest", "schannel", "tspkg", "pku2u",
+    "negoexts", "negoexp", "livessp", "credssp", "digest", "scecli",
+}
+
+
+def read_lsa_packages(inv: Inventory) -> None:
+    """Authentication/Notification/Security Packages under
+    HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa. Confirmed live: this
+    machine's three values hold only msv1_0 and scecli plus one literal
+    empty placeholder entry (`'""'`) Windows writes when nothing custom is
+    registered -- neither is a finding; the quotes are stripped before the
+    known-name check so that placeholder does not read as a strange package
+    called `""`.
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _LSA_PATH) as key:
+            for value_name in ("Authentication Packages", "Notification Packages", "Security Packages"):
+                try:
+                    entries, _kind = winreg.QueryValueEx(key, value_name)
+                except FileNotFoundError:
+                    logger.debug("LSA value %s is not set", value_name)
+                    continue
+                for entry in entries or []:
+                    name = str(entry).strip().strip('"').strip()
+                    if not name or name.lower() in _LSA_KNOWN_PACKAGES:
+                        continue
+                    inv.items.append(Item(
+                        name, name, "LSA Package", "Machine",
+                        "HKLM" + chr(92) + _LSA_PATH + chr(92) + value_name, enabled=True,
+                        extra=value_name))
+    except OSError as error:
+        inv.problems.append(f"{_LSA_PATH}: {error}")
+
+
 # ---- enrichment ------------------------------------------------------------
 
 def _under(path: str, roots: List[str]) -> bool:
@@ -540,6 +582,10 @@ def assess(item: Item, now: datetime) -> None:
         item.notes.append(Note("appinit", "warn",
                                "AppInit_DLLs loads into every process that links user32.dll -- "
                                "a broad, old-style injection point."))
+    if item.source == "LSA Package":
+        item.notes.append(Note("lsapackage", "warn",
+                               f"Registered under {item.extra}: loads into LSASS at every boot, and is "
+                               "not a Microsoft-shipped name this tool recognises."))
 
 
 def enrich(inv: Inventory, impact: Optional[Dict[str, Tuple[int, int]]], now: datetime) -> None:
@@ -721,6 +767,7 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_winlogon(inv)
     read_ifeo_hijacks(inv)
     read_appinit_dlls(inv)
+    read_lsa_packages(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)
     return inv

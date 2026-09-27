@@ -432,6 +432,52 @@ def test_real_ifeo_and_appinit_reads_do_not_raise():
     assert len(inv.problems) <= 2
 
 
+def test_known_lsa_packages_are_not_flagged(monkeypatch):
+    import winreg
+    mapping = {"Authentication Packages": ["msv1_0"], "Notification Packages": ["scecli"],
+               "Security Packages": ['""']}
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (mapping[name], 7))
+
+    inv = P.Inventory()
+    P.read_lsa_packages(inv)
+
+    assert inv.items == []
+
+
+def test_an_unrecognised_lsa_package_is_flagged(monkeypatch):
+    import winreg
+    mapping = {"Authentication Packages": ["msv1_0"], "Notification Packages": ["scecli"],
+               "Security Packages": ["mimilib"]}
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (mapping[name], 7))
+
+    inv = P.Inventory()
+    P.read_lsa_packages(inv)
+
+    assert len(inv.items) == 1
+    item = inv.items[0]
+    assert item.name == "mimilib" and item.source == "LSA Package" and item.extra == "Security Packages"
+    P.assess(item, NOW)
+    assert item.has("lsapackage") and item.flagged
+
+
+def test_an_unopenable_lsa_key_is_a_problem_not_a_silent_empty_list(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+
+    inv = P.Inventory()
+    P.read_lsa_packages(inv)
+
+    assert inv.items == [] and len(inv.problems) == 1
+
+
+def test_real_lsa_packages_are_clean_on_this_machine():
+    inv = P.Inventory()
+    P.read_lsa_packages(inv)
+    assert inv.items == [] and inv.problems == []
+
+
 def test_real_machine_inventory_is_plausible(tmp_path):
     pythoncom = pytest.importorskip("pythoncom")
     pythoncom.CoInitialize()

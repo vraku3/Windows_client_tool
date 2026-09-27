@@ -25,6 +25,23 @@ from modules.services_manager import service_view
 
 CREATE_NO_WINDOW = 0x08000000
 
+
+def _with_startup_flags(services: List[Dict]) -> List[Dict]:
+    """Merge in DelayedAutostart / trigger-start (a registry read, not a WMI
+    one) so the chips have them. A refused registry read leaves the flags
+    simply absent rather than failing the whole service list -- the chips
+    then read as "0 found", which is the honest answer for "could not check",
+    same as any other read this pane could not do."""
+    flags = service_audit.read_startup_flags()
+    if flags is None:
+        return services
+    for svc in services:
+        found = flags.get((svc.get("Name") or "").lower(), {})
+        svc["DelayedAutostart"] = found.get("delayed", False)
+        svc["TriggerStart"] = found.get("trigger", False)
+    return services
+
+
 # ----------------------------------------------------------------------
 # Impact scoring
 # ----------------------------------------------------------------------
@@ -264,6 +281,8 @@ _AUDIT_FILTERS = (
     ("thirdparty", "Third-party"),
     ("account", "Custom account"),
     ("disabled", "Disabled"),
+    ("delayed", "Delayed start"),
+    ("triggerstart", "Trigger-start"),
 )
 
 # ----------------------------------------------------------------------
@@ -488,7 +507,7 @@ class ServicesModule(BaseModule):
         self._refresh_btn.setEnabled(False)
         self._status_label.setText("Loading...")
         self._progress.show()
-        worker = COMWorker(lambda _w: get_services())
+        worker = COMWorker(lambda _w: _with_startup_flags(get_services()))
         worker.signals.result.connect(self._on_result)
         worker.signals.error.connect(self._on_error)
         self._workers.append(worker)

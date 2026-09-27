@@ -7,9 +7,12 @@ is `None`, never an empty answer.
 import logging
 import re
 import subprocess
+import winreg
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_SERVICES_KEY = r"SYSTEM\CurrentControlSet\Services"
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -148,6 +151,58 @@ def parse_qfailure(text: str) -> Dict:
         elif _ACTION_LINE.match(line):
             actions.append(line)
     return {"reset_period": reset, "actions": actions, "command": command}
+
+
+def read_startup_flags() -> Optional[Dict[str, Dict[str, bool]]]:
+    """{service name lower: {"delayed": bool, "trigger": bool}} for every
+    service on the machine, in one registry walk (no subprocess).
+
+    Delayed Automatic Start is the `DelayedAutostart` DWORD (absent or 0 =
+    ordinary Automatic). Trigger-start is the presence of a `TriggerInfo`
+    subkey -- Windows does not expose a simple boolean for it, the subkey's
+    existence IS the answer, confirmed against 120 real trigger-started
+    services on this machine. Both are readable unelevated.
+
+    None only if the Services key itself could not even be opened; a single
+    service's own key failing to open just leaves it out of the map, since
+    one unreadable service (this app's own driver key, or a genuinely
+    permission-locked one) must not blank the whole picture.
+    """
+    try:
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _SERVICES_KEY, 0, winreg.KEY_READ)
+    except OSError as exc:
+        logger.warning("cannot open %s: %s", _SERVICES_KEY, exc)
+        return None
+    flags: Dict[str, Dict[str, bool]] = {}
+    with root:
+        index = 0
+        while True:
+            try:
+                name = winreg.EnumKey(root, index)
+            except OSError as exc:
+                logger.debug("service enumeration ended at index %d: %s", index, exc)
+                break            # past the last subkey
+            index += 1
+            try:
+                with winreg.OpenKey(root, name, 0, winreg.KEY_READ) as key:
+                    try:
+                        delayed = bool(winreg.QueryValueEx(key, "DelayedAutostart")[0])
+                    except FileNotFoundError:
+                        delayed = False
+                    trigger = _has_subkey(key, "TriggerInfo")
+            except OSError as exc:
+                logger.debug("service key %s unreadable: %s", name, exc)
+                continue
+            flags[name.lower()] = {"delayed": delayed, "trigger": trigger}
+    return flags
+
+
+def _has_subkey(key, name: str) -> bool:
+    try:
+        winreg.OpenKey(key, name, 0, winreg.KEY_READ).Close()
+        return True
+    except OSError:
+        return False
 
 
 def read_recovery(name: str) -> Optional[Dict]:

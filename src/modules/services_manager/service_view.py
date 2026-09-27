@@ -57,6 +57,21 @@ def custom_account(svc: Dict) -> bool:
     return bool(account) and account not in _BUILTIN_ACCOUNTS
 
 
+def is_delayed_autostart(svc: Dict) -> bool:
+    """Automatic (Delayed Start): starts a little after boot, not with it --
+    the setting behind "the service is Automatic but wasn't running yet
+    when I checked right after logon"."""
+    return bool(svc.get("DelayedAutostart"))
+
+
+def is_trigger_start(svc: Dict) -> bool:
+    """Starts on a real event (a device arriving, a network change, ...), not
+    on a timer. An Automatic trigger-start service being stopped at any given
+    moment is normal, not a fault -- exactly why `auto_but_stopped` above is a
+    chip to READ, and this is the fact that usually explains it."""
+    return bool(svc.get("TriggerStart"))
+
+
 def is_third_party(svc: Dict) -> bool:
     """Its binary lives outside the Windows folder. svchost-hosted services
     all resolve to the Windows folder, so the ones Microsoft ships stay out."""
@@ -74,6 +89,8 @@ FILTERS: Tuple[Tuple[str, str, Callable[[Dict], bool]], ...] = (
     ("thirdparty", "Third-party", is_third_party),
     ("account", "Custom account", custom_account),
     ("disabled", "Disabled", is_disabled),
+    ("delayed", "Delayed start", is_delayed_autostart),
+    ("triggerstart", "Trigger-start", is_trigger_start),
 )
 _FILTER_BY_KEY = {key: fn for key, _, fn in FILTERS}
 

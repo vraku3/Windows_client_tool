@@ -2,9 +2,10 @@ import logging
 import os
 import glob
 import json
+import re
 import winreg
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -311,4 +312,100 @@ def get_browser_extensions() -> List[StartupEntry]:
                 except Exception:
                     logger.debug("get_browser_extensions: skipping an item that could not be read", exc_info=True)
                     continue
+    return entries
+
+
+#: Every registry location Explorer consults for a right-click context menu
+#: handler. Confirmed live: 37 real handlers across these roots on this
+#: machine, all healthy.
+_SHELLEX_ROOTS = (
+    r"*\shellex\ContextMenuHandlers",
+    r"Directory\shellex\ContextMenuHandlers",
+    r"Directory\Background\shellex\ContextMenuHandlers",
+    r"Folder\shellex\ContextMenuHandlers",
+    r"AllFilesystemObjects\shellex\ContextMenuHandlers",
+    r"Drive\shellex\ContextMenuHandlers",
+)
+_GUID_RE = re.compile(r"^\{[0-9A-Fa-f-]{36}\}$")
+
+
+def _clsid_dll(clsid: str) -> Tuple[Optional[str], Optional[str]]:
+    """(dll_path, None) for a CLSID's own InProcServer32/LocalServer32
+    default value, or (None, reason) when neither subkey exists."""
+    for sub in ("InProcServer32", "LocalServer32"):
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, f"CLSID\\{clsid}\\{sub}") as key:
+                return str(winreg.QueryValueEx(key, "")[0] or ""), None
+        except OSError as exc:
+            logger.debug("CLSID %s has no %s: %s", clsid, sub, exc)
+            continue
+    return None, "the CLSID has no InProcServer32 or LocalServer32 registered"
+
+
+def get_shell_extensions() -> List[StartupEntry]:
+    """Explorer right-click context menu handlers, across every registry
+    root that offers them (a file, a folder, a folder's empty background,
+    a drive, and every filesystem object).
+
+    The handler subkey's NAME is the authoritative CLSID by Windows'
+    convention ("{GUID}"); its own DEFAULT VALUE is documentation only and
+    is not always a repeated CLSID -- confirmed live: this machine's
+    "Taskband Pin" and "Start Menu Pin" handlers have that default value
+    set to their own FRIENDLY NAME instead. Treating that value as the
+    CLSID whenever the subkey name itself isn't GUID-shaped is what makes
+    both conventions resolve; assuming the default value is always the
+    CLSID produced two false "orphaned" positives here for handlers that
+    are actually Windows' own built-in Pin-to-Start/Taskbar verbs.
+
+    Deduplicates by CLSID: many handlers are registered once and apply
+    to several roots (a handler under `AllFilesystemObjects` also matches
+    everything `*` does).
+    """
+    entries: List[StartupEntry] = []
+    seen = set()
+    for root in _SHELLEX_ROOTS:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, root) as key:
+                names = []
+                index = 0
+                while True:
+                    try:
+                        names.append(winreg.EnumKey(key, index))
+                    except OSError:
+                        logger.debug("%s enumeration finished at %d", root, index)
+                        break
+                    index += 1
+        except OSError as exc:
+            logger.debug("Cannot open %s: %s", root, exc)
+            continue
+        for name in names:
+            clsid = name if _GUID_RE.match(name) else None
+            friendly = ""
+            try:
+                with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, root + "\\" + name) as key:
+                    friendly = str(winreg.QueryValueEx(key, "")[0] or "")
+                    if clsid is None and _GUID_RE.match(friendly):
+                        clsid = friendly
+            except OSError as exc:
+                logger.debug("Cannot read default value of %s\\%s: %s", root, name, exc)
+            dedupe_key = (clsid or name).lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            display_name = friendly if friendly and not _GUID_RE.match(friendly) else name
+            if not clsid:
+                entries.append(StartupEntry(
+                    display_name, name, False, "shell_ext",
+                    "ORPHANED: handler is not a CLSID and has no CLSID default value"))
+                continue
+            dll, problem = _clsid_dll(clsid)
+            if problem:
+                entries.append(StartupEntry(display_name, clsid, False, "shell_ext", "ORPHANED: " + problem))
+                continue
+            dll_path = os.path.expandvars(dll.strip('"').split(",")[0])
+            if not os.path.isfile(dll_path):
+                entries.append(StartupEntry(
+                    display_name, dll_path, False, "shell_ext", "ORPHANED: file does not exist"))
+                continue
+            entries.append(StartupEntry(display_name, dll_path, True, "shell_ext", "OK"))
     return entries

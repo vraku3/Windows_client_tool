@@ -29,6 +29,7 @@ from modules.startup_manager.startup_reader import (
     get_scheduled_task_entries,
     get_service_entries,
     get_browser_extensions,
+    get_shell_extensions,
 )
 
 from modules.startup_manager.unified_tab import UnifiedStartupTab
@@ -415,6 +416,10 @@ class StartupItemsModule(BaseModule):
         tabs.addTab(
             _StartupTab(get_browser_extensions, read_only=True),
             "Browser Extensions",
+        )
+        tabs.addTab(
+            _StartupTab(get_shell_extensions, read_only=True),
+            "Shell Extensions",
         )
 
         self._startup_tabs = tabs

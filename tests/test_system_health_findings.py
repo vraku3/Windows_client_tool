@@ -9,7 +9,7 @@ import pytest
 
 from modules.system_health.findings import (
     Finding, check_pending_servicing, check_orphaned_scheduled_tasks,
-    check_upgrade_headroom, all_findings,
+    check_orphaned_services, check_upgrade_headroom, all_findings,
 )
 
 
@@ -169,6 +169,116 @@ def test_a_failed_schtasks_call_is_reported_not_swallowed(monkeypatch):
     assert findings[0].id == "orphaned_tasks_refused"
 
 
+class _KeyCtx:
+    """A fake context-manager registry key, same shape as
+    test_service_startup_flags.py's -- `winreg.OpenKey(...)` returns one and
+    the module only ever uses it via `with` or `.Close()`."""
+
+    def __init__(self, name=""):
+        self.name = name
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def Close(self):
+        pass
+
+
+def test_orphaned_service_with_missing_absolute_path_is_flagged(monkeypatch, tmp_path):
+    import winreg
+    missing = str(tmp_path / "gone.sys")
+    values = {"ImagePath": (missing, None), "Start": (0, None)}
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: "OrphanDrv" if index == 0 else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: values[name])
+
+    findings = check_orphaned_services()
+
+    assert len(findings) == 1
+    assert findings[0].id == "orphaned_service:OrphanDrv"
+    assert findings[0].severity == "warning"  # boot-start (0)
+    assert missing in findings[0].detail
+    assert findings[0].jump == "Services"
+
+
+def test_orphaned_service_manual_start_is_info_not_warning(monkeypatch, tmp_path):
+    import winreg
+    missing = str(tmp_path / "gone.exe")
+    values = {"ImagePath": (missing, None), "Start": (3, None)}
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: "OrphanSvc" if index == 0 else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: values[name])
+
+    findings = check_orphaned_services()
+
+    assert len(findings) == 1 and findings[0].severity == "info"
+
+
+def test_relative_imagepath_resolves_against_systemroot_not_flagged_when_present(monkeypatch, tmp_path):
+    import winreg
+    system_root_dir = tmp_path / "Windows"
+    (system_root_dir / "System32" / "drivers").mkdir(parents=True)
+    real = system_root_dir / "System32" / "drivers" / "acpi.sys"
+    real.write_text("x")
+    values = {"ImagePath": (r"System32\drivers\acpi.sys", None), "Start": (0, None)}
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: "ACPI" if index == 0 else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: values[name])
+    monkeypatch.setattr("modules.system_health.findings.system_root", lambda: str(system_root_dir))
+
+    assert check_orphaned_services() == []
+
+
+def test_an_unopenable_services_key_is_reported_not_swallowed(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+
+    findings = check_orphaned_services()
+
+    assert len(findings) == 1 and findings[0].id == "orphaned_services_refused"
+
+
+def test_one_unreadable_service_key_is_skipped_not_fatal(monkeypatch, tmp_path):
+    import winreg
+    missing = str(tmp_path / "gone.exe")
+
+    def fake_open_key(root, name=None, *a, **k):
+        if name == "Bad":
+            raise OSError("access denied")
+        return _KeyCtx(name or "")
+
+    def fake_query(key, name):
+        if key.name == "Good":
+            return {"ImagePath": missing, "Start": 3}[name], None
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open_key)
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: ["Bad", "Good"][index] if index < 2
+                        else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
+
+    findings = check_orphaned_services()
+
+    assert len(findings) == 1 and findings[0].id == "orphaned_service:Good"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only registry read")
+def test_real_orphaned_services_check_runs_without_raising():
+    findings = check_orphaned_services()
+    assert isinstance(findings, list)
+    # A handful of real, explicable orphans is normal (a monitoring tool's
+    # driver extracted to %TEMP%, a leftover uninstalled-driver registration)
+    # -- hundreds would mean the resolution logic broke again.
+    assert len(findings) < 50
+
+
 def test_upgrade_headroom_below_threshold_is_a_warning(monkeypatch):
     monkeypatch.setattr("shutil.disk_usage", lambda path: (100 * 1024**3, 90 * 1024**3, 10 * 1024**3))
     finding = check_upgrade_headroom()
@@ -182,14 +292,15 @@ def test_upgrade_headroom_above_threshold_is_info(monkeypatch):
     assert finding.severity == "info"
 
 
-def test_all_findings_combines_all_three_checks(monkeypatch, tmp_path):
+def test_all_findings_combines_all_four_checks(monkeypatch, tmp_path):
     monkeypatch.setenv("windir", str(tmp_path))  # no pending.xml
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
     monkeypatch.setattr("shutil.disk_usage", lambda path: (500 * 1024**3, 100 * 1024**3, 400 * 1024**3))
+    monkeypatch.setattr("modules.system_health.findings.check_orphaned_services", lambda: [])
 
     findings = all_findings()
 
-    # No pending servicing, no orphaned tasks (empty schtasks output), one
-    # headroom finding -- exactly 1 item.
+    # No pending servicing, no orphaned tasks (empty schtasks output), no
+    # orphaned services (mocked empty above), one headroom finding.
     assert len(findings) == 1
     assert findings[0].id == "upgrade_headroom"

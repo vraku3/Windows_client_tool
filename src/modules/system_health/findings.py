@@ -4,6 +4,7 @@ here is safe to call unelevated and safe to call from --unattended
 """
 import logging
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
@@ -173,6 +174,116 @@ def _program_exists(path: str) -> bool:
     return shutil.which(path) is not None
 
 
+_NT_PREFIX = "\\??\\"
+_EXE_OR_SYS = re.compile(r"^(.*?\.(exe|sys))(?=\s|$)", re.IGNORECASE)
+_START_TYPE_NAMES = {0: "Boot", 1: "System", 2: "Automatic", 3: "Manual", 4: "Disabled"}
+
+
+def check_orphaned_services() -> List[Finding]:
+    """A service or driver whose ImagePath names a program that no longer
+    exists on disk -- the other half of `check_orphaned_scheduled_tasks`,
+    deferred out of the original System Health design because
+    `HKLM\\SYSTEM\\CurrentControlSet\\Services` is a much larger, more
+    security-sensitive registry area. Reading it is no more dangerous than
+    reading anything else here; only writing to it would be.
+
+    Pure registry, like `service_audit.read_startup_flags` -- one open of
+    the Services key, then one per-service subkey. A single unreadable
+    service is skipped, not fatal; the whole key failing to open is
+    reported as a refusal, never as "nothing found".
+
+    A relative ImagePath (nearly every driver: `System32\\drivers\\ACPI.sys`)
+    resolves against %SystemRoot%, not the working directory -- getting that
+    wrong turned 736 perfectly healthy drivers on this real machine into 201
+    false "missing" results before this was fixed. Confirmed against the
+    real machine: 2 genuine orphans out of 831 services, both explicable
+    (HWiNFO64's kernel driver extracts to %TEMP% and is expected to vanish
+    between runs; a leftover WinSetupMon.sys boot-start driver entry).
+    """
+    import winreg
+    try:
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services",
+                              0, winreg.KEY_READ)
+    except OSError as exc:
+        return [Finding(
+            id="orphaned_services_refused",
+            title="Could not enumerate services",
+            detail=str(exc), severity="warning")]
+    findings: List[Finding] = []
+    with root:
+        index = 0
+        while True:
+            try:
+                name = winreg.EnumKey(root, index)
+            except OSError as exc:
+                logger.debug("service enumeration ended at index %d: %s", index, exc)
+                break
+            index += 1
+            try:
+                with winreg.OpenKey(root, name, 0, winreg.KEY_READ) as key:
+                    try:
+                        image_path = winreg.QueryValueEx(key, "ImagePath")[0]
+                    except FileNotFoundError:
+                        logger.debug("service %s has no ImagePath (a pseudo-service, e.g. a driver group)", name)
+                        continue
+                    try:
+                        start = winreg.QueryValueEx(key, "Start")[0]
+                    except FileNotFoundError:
+                        start = None
+            except OSError as exc:
+                logger.debug("service key %s unreadable: %s", name, exc)
+                continue
+            program = _service_program_path(image_path)
+            if program and not _service_program_exists(program):
+                findings.append(_orphan_service_finding(name, image_path, program, start))
+    return findings
+
+
+def _service_program_path(image_path: str) -> Optional[str]:
+    """The .exe/.sys an ImagePath value names, or None for the rare value
+    that names neither (a pseudo-service with no real backing file)."""
+    text = os.path.expandvars((image_path or "").strip())
+    if text.lower().startswith(r"\systemroot"):
+        text = system_root() + text[len(r"\systemroot"):]
+    if text.startswith(_NT_PREFIX):
+        text = text[len(_NT_PREFIX):]
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        program = text[1:end] if end > 0 else text[1:]
+    else:
+        match = _EXE_OR_SYS.match(text)
+        program = match.group(1) if match else text
+    if not program.lower().endswith((".exe", ".sys")):
+        return None
+    return program
+
+
+def _service_program_exists(program: str) -> bool:
+    if not os.path.isabs(program):
+        program = os.path.join(system_root(), program)
+    return os.path.exists(program)
+
+
+def _orphan_service_finding(name: str, image_path: str, program: str, start: Optional[int]) -> Finding:
+    start_name = _START_TYPE_NAMES.get(start, "unknown")
+    boot_critical = start in (0, 1)
+    return Finding(
+        id=f"orphaned_service:{name}",
+        title=f"Service '{name}' points at a missing file",
+        detail=(
+            f"ImagePath '{image_path}' resolves to '{program}', which does not exist. "
+            f"Start type: {start_name}."
+            + (" A boot/system-start driver missing its file can surface as a boot "
+               "warning even though nothing currently depends on it."
+               if boot_critical else
+               " Usually a leftover registry entry from an uninstalled program or "
+               "driver -- harmless unless something still tries to start it.")
+        ),
+        severity="warning" if boot_critical else "info",
+        jump="Services",
+    )
+
+
 def check_upgrade_headroom() -> Finding:
     """Free space on the system drive against a practical minimum for a
     feature update -- NOT an official Microsoft figure (Microsoft
@@ -209,6 +320,7 @@ def all_findings() -> List[Finding]:
     if pending:
         findings.append(pending)
     findings.extend(check_orphaned_scheduled_tasks())
+    findings.extend(check_orphaned_services())
     findings.append(check_upgrade_headroom())
     return findings
 

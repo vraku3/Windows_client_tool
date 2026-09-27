@@ -151,6 +151,35 @@ def test_markdown_lists_drives_and_findings():
     assert "HOST" in md and "Test SSD" in md and "95% of rated life used" in md and "C:" in md
 
 
+def test_event_findings_group_and_use_the_right_severity():
+    from modules.disk_health import disk_events as de
+    rep = _report([_disk()])
+    rep.events = [
+        de.DiskEvent(154, "Error", "2026-09-20 02:23:12", "4", "m", "hardware error"),
+        de.DiskEvent(158, "Warning", "2026-09-27 20:28:43", "5", "m", "duplicate ids"),
+        de.DiskEvent(158, "Warning", "2026-09-26 08:00:00", "5", "m", "duplicate ids"),
+    ]
+    findings = dr.event_findings(rep)
+
+    assert len(findings) == 2
+    hw = next(f for f in findings if f.subject == "Disk 4")
+    assert hw.severity == "error" and "hardware error" in hw.detail
+    dup = next(f for f in findings if f.subject == "Disk 5")
+    assert dup.severity == "warning" and "x2" in dup.title
+
+
+def test_a_refused_events_read_is_reported_via_the_generic_errors_path(monkeypatch):
+    monkeypatch.setattr(dr, "_run", lambda *a, **k: (0, json.dumps(
+        {"disks": [_disk()], "volumes": [], "partitions": []}), ""))
+    monkeypatch.setattr("modules.disk_health.disk_events.read_disk_events", lambda: None)
+    monkeypatch.setattr(dr, "_attach_smart", lambda rep: None)
+
+    rep = dr.read_disk_report()
+
+    assert rep.errors.get("events") and rep.events == []
+    assert any(f.title == "Could not read events" for f in dr.all_findings(rep))
+
+
 def test_read_disk_report_failure_is_an_exception_not_empty(monkeypatch):
     monkeypatch.setattr(dr, "_run", lambda *a, **k: (1, "", "boom"))
     with pytest.raises(dr.DiskReadError):

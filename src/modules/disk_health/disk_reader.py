@@ -17,6 +17,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from modules.disk_health import disk_events
+
 logger = logging.getLogger(__name__)
 
 # 4 KiB is the largest physical sector in common use; anything a filesystem
@@ -104,6 +106,7 @@ class DiskReport:
     trim_enabled: Dict[str, Optional[bool]] = field(default_factory=dict)
     errors: Dict[str, str] = field(default_factory=dict)   # section -> reason
     elevated: bool = False
+    events: List[disk_events.DiskEvent] = field(default_factory=list)
 
 
 @dataclass
@@ -303,6 +306,11 @@ def read_disk_report(elevated: bool = False, timeout: int = 60) -> DiskReport:
         rep.errors["trim"] = f"Could not query TRIM ({e})."
     if elevated:
         _attach_smart(rep)
+    events = disk_events.read_disk_events()
+    if events is None:
+        rep.errors["events"] = "Could not read the System log for disk-related events."
+    else:
+        rep.events = events
     return rep
 
 
@@ -438,6 +446,19 @@ def _is_system_drive(vol: VolumeInfo) -> bool:
     return vol.letter.upper() == os.environ.get("SystemDrive", "C:")[:1].upper()
 
 
+def event_findings(report: DiskReport) -> List[Finding]:
+    """One finding per (event id, disk) group, not per raw occurrence --
+    a recurring warning can fire dozens of times in the read window, and a
+    finding per occurrence would bury everything else on the pane."""
+    out: List[Finding] = []
+    for group in disk_events.group_events(report.events):
+        subject = f"Disk {group.disk}" if group.disk else "System log"
+        title = f"Event {group.event_id}" + (f" x{group.count}" if group.count > 1 else "")
+        detail = group.meaning + f" Most recent: {group.latest}."
+        out.append(Finding("error" if group.is_error else "warning", subject, title, detail))
+    return out
+
+
 def all_findings(report: DiskReport) -> List[Finding]:
     found: List[Finding] = []
     for d in report.disks:
@@ -446,6 +467,7 @@ def all_findings(report: DiskReport) -> List[Finding]:
         found += volume_findings(v)
     found += alignment_findings(report)
     found += system_findings(report)
+    found += event_findings(report)
     return sorted(found, key=lambda f: _SEVERITY_ORDER.get(f.severity, 3))
 
 

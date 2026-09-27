@@ -33,7 +33,7 @@ from core.module_groups import ModuleGroup
 from core.table_ui import center_header, centered_item, set_role
 from core.widget_life import widget_is_valid
 from core.worker import Worker
-from modules.network_diagnostics import network_tools
+from modules.network_diagnostics import network_tools, winsock_catalog
 from modules.perfmon.perfmon_charts import _QtLineChart
 from ui.empty_state import EmptyState
 
@@ -749,6 +749,73 @@ def _build_network_errors_card() -> _ToolCard:
     return card
 
 
+def _build_winsock_card() -> _ToolCard:
+    """The Winsock LSP catalog -- a provider whose DLL is missing is the
+    corrupted-catalog symptom `network_fixes.reset_winsock` exists to fix,
+    diagnosed here first rather than reaching for that reset blind."""
+    content = QWidget()
+    layout = QVBoxLayout(content)
+    layout.setContentsMargins(8, 8, 8, 8)
+    card: Optional[_ToolCard] = None
+
+    toolbar = QHBoxLayout()
+    refresh_btn = QPushButton("Refresh")
+    toolbar.addWidget(refresh_btn)
+    toolbar.addStretch()
+    status_label = QLabel("")
+    toolbar.addWidget(status_label)
+    layout.addLayout(toolbar)
+
+    cols = ["Description", "Entry type", "Provider path", "Catalog ID"]
+    table = QTableWidget(0, len(cols))
+    table.setHorizontalHeaderLabels(cols)
+    center_header(table)
+    table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setMinimumHeight(220)
+    layout.addWidget(table)
+
+    def _populate(providers) -> None:
+        if not _widget_valid(table):
+            return
+        if providers is None:
+            status_label.setText("Could not read the Winsock catalog (netsh refused).")
+            set_role(status_label, "statusError")
+            table.setRowCount(0)
+            return
+        broken = {id(p) for p in winsock_catalog.broken_providers(providers)}
+        table.setRowCount(len(providers))
+        for r, p in enumerate(providers):
+            items = [centered_item(p.description), centered_item(p.entry_type),
+                    centered_item(p.provider_path), centered_item(p.catalog_id)]
+            if id(p) in broken:
+                for it in items:
+                    it.setForeground(_ERROR_BRUSH)
+            for c, it in enumerate(items):
+                table.setItem(r, c, it)
+        if broken:
+            status_label.setText(f"⚠ {len(broken)} provider(s) point at a missing DLL")
+            set_role(status_label, "statusError")
+        else:
+            status_label.setText(f"{len(providers)} provider(s), all resolve to a real file")
+            set_role(status_label, "statusSuccess")
+
+    def _refresh() -> None:
+        nonlocal card
+        worker = Worker(lambda _w: winsock_catalog.read_catalog())
+        card._worker = worker
+        worker.signals.result.connect(_populate)
+        worker.signals.error.connect(lambda e: status_label.setText(f"Error: {e}") if _widget_valid(status_label) else None)
+        QThreadPool.globalInstance().start(worker)
+
+    refresh_btn.clicked.connect(_refresh)
+
+    card = _ToolCard("Winsock Catalog", content, expanded=False)
+    _refresh()
+    return card
+
+
 def _build_live_traffic_card() -> _ToolCard:
     """Wireshark-style live traffic overview: throughput charts + per-adapter
     error/drop counters, all without requiring a packet-capture driver."""
@@ -1029,6 +1096,7 @@ class NetworkToolsModule(BaseModule):
         cards.append(_build_connections_card())
         cards.append(_build_wifi_card())
         cards.append(_build_adapter_card())
+        cards.append(_build_winsock_card())
         for c in cards:
             inner_layout.addWidget(c)
 

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from modules.network_diagnostics import dns_client
+from modules.network_diagnostics import dns_client, network_events
 from core.windows_utils import system32
 
 logger = logging.getLogger(__name__)
@@ -156,6 +156,7 @@ def collect_snapshot() -> Dict[str, Any]:
     snap["winhttp_proxy"] = read_winhttp_proxy()
     snap["user_proxy"] = read_user_proxy()
     snap["hosts"] = read_hosts()
+    snap["events"] = network_events.read_network_events()
     return snap
 
 
@@ -563,11 +564,31 @@ def _f_time_v6(probes: Dict[str, Any]) -> List[Finding]:
     return out
 
 
+def _f_events(snap: Dict[str, Any]) -> List[Finding]:
+    """Network-adapter/driver System log events -- one finding per (provider,
+    event id, interface) group, not per raw occurrence: a recurring one can
+    fire dozens of times in the read window and would otherwise bury every
+    other finding on the pane. See ``network_events`` for what is covered
+    and why."""
+    events = snap.get("events")
+    if events is None:
+        return [Finding("events", UNKNOWN, "Could not read the System log for adapter/driver events")]
+    out: List[Finding] = []
+    for group in network_events.group_events(events):
+        subject = f"interface {group.index}" if group.index else group.provider
+        title = f"{group.provider}: event {group.event_id}" + (f" x{group.count}" if group.count > 1 else "")
+        detail = group.meaning + f" Most recent: {group.latest}."
+        out.append(Finding(f"netevt:{group.provider}:{group.event_id}:{group.index}",
+                           ERROR if group.is_error else WARNING, f"{subject} - {title}", detail))
+    return out
+
+
 def evaluate(snap: Dict[str, Any], probes: Dict[str, Any], now: Optional[datetime] = None) -> List[Finding]:
     now = now or datetime.now()
     out: List[Finding] = [Finding("read", UNKNOWN, "Could not read some configuration", e) for e in snap.get("errors", [])]
     for part in (_f_gateway(snap, probes), _f_multi_route(snap), _f_apipa(snap), _f_dns(snap, probes),
-                 _f_proxy(snap), _f_hosts(snap), _f_dhcp(snap, now), _f_links(snap), _f_mtu(snap, probes), _f_time_v6(probes)):
+                 _f_proxy(snap), _f_hosts(snap), _f_dhcp(snap, now), _f_links(snap), _f_mtu(snap, probes),
+                 _f_time_v6(probes), _f_events(snap)):
         out.extend(part)
     out.sort(key=lambda f: SEVERITY_ORDER[f.severity])
     return out

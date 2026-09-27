@@ -546,6 +546,61 @@ def test_real_boot_execute_is_clean_on_this_machine():
     assert inv.items == [] and inv.problems == []
 
 
+# ---- UserInitMprLogonScript ---------------------------------------------------
+
+def test_unset_logon_script_yields_no_items(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (_ for _ in ()).throw(FileNotFoundError()))
+
+    inv = P.Inventory()
+    P.read_user_logon_script(inv)
+
+    assert inv.items == [] and inv.problems == []
+
+
+def test_a_set_logon_script_is_flagged(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (r"C:\scripts\logon.bat", 1))
+
+    inv = P.Inventory()
+    P.read_user_logon_script(inv)
+
+    assert len(inv.items) == 1
+    item = inv.items[0]
+    assert item.source == "Logon Script" and item.command == r"C:\scripts\logon.bat"
+    P.assess(item, NOW)
+    assert item.has("logonscript") and item.flagged
+
+
+def test_a_blank_logon_script_value_is_not_flagged(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: ("", 1))
+
+    inv = P.Inventory()
+    P.read_user_logon_script(inv)
+
+    assert inv.items == []
+
+
+def test_an_unopenable_environment_key_is_a_problem(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+
+    inv = P.Inventory()
+    P.read_user_logon_script(inv)
+
+    assert inv.items == [] and len(inv.problems) == 1
+
+
+def test_real_logon_script_is_clean_on_this_machine():
+    inv = P.Inventory()
+    P.read_user_logon_script(inv)
+    assert inv.items == [] and inv.problems == []
+
+
 def test_real_machine_inventory_is_plausible(tmp_path):
     pythoncom = pytest.importorskip("pythoncom")
     pythoncom.CoInitialize()

@@ -5,7 +5,8 @@ folders, scheduled tasks with a logon or boot trigger, automatic services,
 the Winlogon Shell/Userinit values when they are not the defaults, Image
 File Execution Options Debugger hijacks, a populated + active AppInit_DLLs
 list, any unrecognised LSA Authentication/Notification/Security Package,
-and anything in BootExecute besides Windows' own autocheck entries.
+anything in BootExecute besides Windows' own autocheck entries, and a
+per-user legacy logon script (UserInitMprLogonScript) when one is set.
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -65,7 +66,7 @@ class Item:
     name: str
     command: str
     source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service",
-                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute"
+                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute", "Logon Script"
     scope: str             # "User" | "Machine"
     location: str          # registry key / folder / task folder
     enabled: Optional[bool] = True
@@ -545,6 +546,32 @@ def read_boot_execute(inv: Inventory) -> None:
             "HKLM" + chr(92) + _BOOT_EXECUTE_PATH + chr(92) + "BootExecute", enabled=True))
 
 
+def read_user_logon_script(inv: Inventory) -> None:
+    """`UserInitMprLogonScript` under HKCU\\Environment -- the legacy NT
+    per-user logon script mechanism, still honoured today and commonly set
+    by domain Group Policy. Confirmed live: not set on this non-domain
+    machine, the ordinary state here -- its mere presence is worth knowing
+    about (same reasoning as Winlogon's Shell/Userinit below), not itself
+    proof of anything wrong.
+    """
+    path = r"Environment"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            try:
+                script = winreg.QueryValueEx(key, "UserInitMprLogonScript")[0]
+            except FileNotFoundError:
+                logger.debug("UserInitMprLogonScript is not set")
+                return
+    except OSError as error:
+        inv.problems.append(f"HKCU{chr(92)}{path}: {error}")
+        return
+    text = str(script or "").strip()
+    if text:
+        inv.items.append(Item(
+            "UserInitMprLogonScript", text, "Logon Script", "User",
+            "HKCU" + chr(92) + path, enabled=True))
+
+
 # ---- enrichment ------------------------------------------------------------
 
 def _under(path: str, roots: List[str]) -> bool:
@@ -623,6 +650,10 @@ def assess(item: Item, now: datetime) -> None:
         item.notes.append(Note("bootexecute", "warn",
                                "Runs in the kernel-mode session before Windows itself starts, and is "
                                "not one of Windows' own autocheck entries."))
+    if item.source == "Logon Script":
+        item.notes.append(Note("logonscript", "warn",
+                               "A legacy per-user logon script (HKCU\\Environment\\UserInitMprLogonScript) "
+                               "is set and runs at every interactive logon."))
 
 
 def enrich(inv: Inventory, impact: Optional[Dict[str, Tuple[int, int]]], now: datetime) -> None:
@@ -806,6 +837,7 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_appinit_dlls(inv)
     read_lsa_packages(inv)
     read_boot_execute(inv)
+    read_user_logon_script(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)
     return inv

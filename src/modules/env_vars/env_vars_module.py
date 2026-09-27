@@ -18,7 +18,7 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import centered_item, fit_table, set_role
 from core.worker import Worker
-from modules.env_vars import env_ops, path_analysis
+from modules.env_vars import effective_env, env_ops, path_analysis
 from modules.env_vars.env_ops import EnvVar, SYS_PATH as _SYS_PATH, USR_PATH as _USR_PATH
 
 logger = logging.getLogger(__name__)
@@ -235,6 +235,66 @@ class _PathPane(QWidget):
         self._status.setText(f"{len(rows)} finding(s)" if rows else "No findings.")
 
 
+class _EffectivePane(QWidget):
+    """System vs. User vs. what THIS process actually inherited.
+
+    Answers the classic support question ("I set it, why doesn't my program
+    see it?") by comparing the registry to the running process' own
+    environment: a mismatch means the value needs a new process (a re-login,
+    or a restart) before it takes effect, not that the write failed.
+    """
+
+    def __init__(self, sys_panel: "_EnvPanel", usr_panel: "_EnvPanel"):
+        super().__init__()
+        self._sys_panel = sys_panel
+        self._usr_panel = usr_panel
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        head = QHBoxLayout()
+        head.addWidget(QLabel("<b>Effective (this process)</b>"))
+        self._status = QLabel(
+            "What this running app actually inherited, vs. the registry. A row marked "
+            "stale needs a new process (log off/on, or a restart) to pick up the change "
+            "— the registry write is not live in anything already running.")
+        set_role(self._status, "muted")
+        self._status.setWordWrap(True)
+        head.addWidget(self._status, 1)
+        self._only_stale = QPushButton("Show only stale")
+        self._only_stale.setCheckable(True)
+        self._only_stale.toggled.connect(self._refresh)
+        head.addWidget(self._only_stale)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh)
+        head.addWidget(refresh_btn)
+        layout.addLayout(head)
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(
+            ["Name", "System", "User", "This process has", "State"])
+        fit_table(self._table, stretch=[1, 2, 3], content=[0, 4])
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.verticalHeader().setVisible(False)
+        layout.addWidget(self._table)
+
+    def _refresh(self, *_a) -> None:
+        rows = effective_env.compare(self._sys_panel.variables(), self._usr_panel.variables())
+        if self._only_stale.isChecked():
+            rows = effective_env.stale_rows(rows)
+        self._table.setRowCount(len(rows))
+        for r, row in enumerate(rows):
+            state = "stale" if row.is_stale else ("process-only" if row.process_only else "current")
+            values = (row.name, row.system_value or "—", row.user_value or "—",
+                     row.process_value if row.process_value is not None else "—", state)
+            for c, text in enumerate(values):
+                item = centered_item(text)
+                if state == "stale":
+                    item.setForeground(QColor(semantic("warning")))
+                self._table.setItem(r, c, item)
+        self._status.setText(
+            f"{len(rows)} row(s) shown. Stale rows need a new process to take effect."
+            if not self._only_stale.isChecked() else
+            f"{len(rows)} stale row(s): set in the registry, not yet in this process.")
+
+
 class EnvVarsModule(BaseModule):
     name = "Environment Variables"
     icon = "🔤"
@@ -269,10 +329,12 @@ class EnvVarsModule(BaseModule):
         self._sys_panel.set_duplicate_target(self._usr_panel)
         self._usr_panel.set_duplicate_target(self._sys_panel)
         self._path_pane = _PathPane(self.thread_pool)
+        self._effective_pane = _EffectivePane(self._sys_panel, self._usr_panel)
         splitter.addWidget(self._sys_panel)
         splitter.addWidget(self._usr_panel)
+        splitter.addWidget(self._effective_pane)
         splitter.addWidget(self._path_pane)
-        splitter.setSizes([300, 300, 250])
+        splitter.setSizes([260, 260, 220, 220])
         layout.addWidget(splitter, 1)
         self._widget = root
         return root
@@ -320,6 +382,7 @@ class EnvVarsModule(BaseModule):
         if self._widget:
             self._sys_panel.refresh()
             self._usr_panel.refresh()
+            self._effective_pane._refresh()
 
     def on_deactivate(self) -> None:
         if self._path_pane is not None:

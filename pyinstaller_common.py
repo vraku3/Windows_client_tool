@@ -243,6 +243,7 @@ HIDDEN_IMPORTS = [
     "modules.network_diagnostics.dns_client",
     "modules.network_diagnostics.network_fixes",
     "modules.network_diagnostics.ping_stats",
+    "modules.env_vars.effective_env",
     "modules.env_vars.path_analysis",
     "modules.env_vars.env_ops",
     "modules.local_users.accounts",

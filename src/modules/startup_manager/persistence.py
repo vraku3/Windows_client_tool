@@ -4,8 +4,8 @@ Sources read: HKCU/HKLM Run and the 32-bit Run key, RunOnce, both Startup
 folders, scheduled tasks with a logon or boot trigger, automatic services,
 the Winlogon Shell/Userinit values when they are not the defaults, Image
 File Execution Options Debugger hijacks, a populated + active AppInit_DLLs
-list, and any unrecognised LSA Authentication/Notification/Security
-Package.
+list, any unrecognised LSA Authentication/Notification/Security Package,
+and anything in BootExecute besides Windows' own autocheck entries.
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -65,7 +65,7 @@ class Item:
     name: str
     command: str
     source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service",
-                           # "Winlogon", "IFEO", "AppInit", "LSA Package"
+                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute"
     scope: str             # "User" | "Machine"
     location: str          # registry key / folder / task folder
     enabled: Optional[bool] = True
@@ -512,6 +512,39 @@ def read_lsa_packages(inv: Inventory) -> None:
         inv.problems.append(f"{_LSA_PATH}: {error}")
 
 
+_BOOT_EXECUTE_PATH = r"SYSTEM\CurrentControlSet\Control\Session Manager"
+
+
+def read_boot_execute(inv: Inventory) -> None:
+    """BootExecute under ...\\Session Manager runs in the kernel-mode
+    session before the Windows subsystem itself starts -- native, boot-time
+    execution some rootkits have used to run ahead of anything user-mode
+    security software could see. Confirmed live: this machine's only entry
+    is the Windows default (`autocheck autochk *`). A `chkdsk /f`-scheduled
+    check adds a similar-looking entry (`autocheck autochk /k:C: *`) that is
+    a legitimate, temporary addition, not a hijack -- so anything sharing
+    that "autocheck autochk" prefix is left alone, and only an entry
+    outside that family is flagged.
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _BOOT_EXECUTE_PATH) as key:
+            try:
+                entries, _kind = winreg.QueryValueEx(key, "BootExecute")
+            except FileNotFoundError:
+                logger.debug("BootExecute is not set")
+                return
+    except OSError as error:
+        inv.problems.append(f"{_BOOT_EXECUTE_PATH}: {error}")
+        return
+    for entry in entries or []:
+        text = str(entry).strip()
+        if not text or text.lower().startswith("autocheck autochk"):
+            continue
+        inv.items.append(Item(
+            text.split(" ", 1)[0] or text, text, "BootExecute", "Machine",
+            "HKLM" + chr(92) + _BOOT_EXECUTE_PATH + chr(92) + "BootExecute", enabled=True))
+
+
 # ---- enrichment ------------------------------------------------------------
 
 def _under(path: str, roots: List[str]) -> bool:
@@ -586,6 +619,10 @@ def assess(item: Item, now: datetime) -> None:
         item.notes.append(Note("lsapackage", "warn",
                                f"Registered under {item.extra}: loads into LSASS at every boot, and is "
                                "not a Microsoft-shipped name this tool recognises."))
+    if item.source == "BootExecute":
+        item.notes.append(Note("bootexecute", "warn",
+                               "Runs in the kernel-mode session before Windows itself starts, and is "
+                               "not one of Windows' own autocheck entries."))
 
 
 def enrich(inv: Inventory, impact: Optional[Dict[str, Tuple[int, int]]], now: datetime) -> None:
@@ -768,6 +805,7 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_ifeo_hijacks(inv)
     read_appinit_dlls(inv)
     read_lsa_packages(inv)
+    read_boot_execute(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)
     return inv

@@ -478,6 +478,74 @@ def test_real_lsa_packages_are_clean_on_this_machine():
     assert inv.items == [] and inv.problems == []
 
 
+# ---- BootExecute -------------------------------------------------------------
+
+def test_default_autocheck_entry_is_not_flagged(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (["autocheck autochk *"], 7))
+
+    inv = P.Inventory()
+    P.read_boot_execute(inv)
+
+    assert inv.items == []
+
+
+def test_a_chkdsk_scheduled_autocheck_variant_is_not_flagged(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx",
+                        lambda key, name: (["autocheck autochk *", "autocheck autochk /k:C: *"], 7))
+
+    inv = P.Inventory()
+    P.read_boot_execute(inv)
+
+    assert inv.items == []
+
+
+def test_an_entry_outside_the_autocheck_family_is_flagged(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx",
+                        lambda key, name: (["autocheck autochk *", "evil.exe"], 7))
+
+    inv = P.Inventory()
+    P.read_boot_execute(inv)
+
+    assert len(inv.items) == 1
+    item = inv.items[0]
+    assert item.name == "evil.exe" and item.command == "evil.exe" and item.source == "BootExecute"
+    P.assess(item, NOW)
+    assert item.has("bootexecute") and item.flagged
+
+
+def test_boot_execute_not_set_is_not_a_problem(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (_ for _ in ()).throw(FileNotFoundError()))
+
+    inv = P.Inventory()
+    P.read_boot_execute(inv)
+
+    assert inv.items == [] and inv.problems == []
+
+
+def test_an_unopenable_session_manager_key_is_a_problem(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+
+    inv = P.Inventory()
+    P.read_boot_execute(inv)
+
+    assert inv.items == [] and len(inv.problems) == 1
+
+
+def test_real_boot_execute_is_clean_on_this_machine():
+    inv = P.Inventory()
+    P.read_boot_execute(inv)
+    assert inv.items == [] and inv.problems == []
+
+
 def test_real_machine_inventory_is_plausible(tmp_path):
     pythoncom = pytest.importorskip("pythoncom")
     pythoncom.CoInitialize()

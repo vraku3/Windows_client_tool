@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QLabel, QProgressBar, QLineEdit,
     QComboBox, QMessageBox, QTabWidget, QGroupBox, QFormLayout,
     QScrollArea, QTextEdit, QStackedWidget, QApplication,
+    QListWidget, QListWidgetItem,
 )
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor
@@ -450,11 +451,9 @@ class ServicesModule(BaseModule):
         self._detail_deps_group = QGroupBox("Depends On (services this service requires)")
         deps_layout = QVBoxLayout(self._detail_deps_group)
         deps_layout.setSpacing(4)
-        self._detail_deps_list = QTextEdit()
-        self._detail_deps_list.setReadOnly(True)
+        self._detail_deps_list = QListWidget()
         self._detail_deps_list.setMaximumHeight(100)
-        self._detail_deps_list.setStyleSheet(
-            "background: transparent; border: 1px solid #444; border-radius: 3px;")
+        self._detail_deps_list.itemDoubleClicked.connect(self._jump_to_dependency)
         deps_layout.addWidget(self._detail_deps_list)
         self._detail_layout.addWidget(self._detail_deps_group)
 
@@ -462,11 +461,9 @@ class ServicesModule(BaseModule):
         self._detail_rby_group = QGroupBox("Required By (services that depend on this)")
         rby_layout = QVBoxLayout(self._detail_rby_group)
         rby_layout.setSpacing(4)
-        self._detail_rby_list = QTextEdit()
-        self._detail_rby_list.setReadOnly(True)
+        self._detail_rby_list = QListWidget()
         self._detail_rby_list.setMaximumHeight(100)
-        self._detail_rby_list.setStyleSheet(
-            "background: transparent; border: 1px solid #444; border-radius: 3px;")
+        self._detail_rby_list.itemDoubleClicked.connect(self._jump_to_dependency)
         rby_layout.addWidget(self._detail_rby_list)
         self._detail_layout.addWidget(self._detail_rby_group)
 
@@ -596,8 +593,10 @@ class ServicesModule(BaseModule):
         self._detail_path_value.setPlainText("Loading...")
         self._detail_audit_value.setPlainText("Loading...")
         self._detail_load_group_value.setText("Loading...")
-        self._detail_deps_list.setPlainText("Loading dependencies...")
-        self._detail_rby_list.setPlainText("Loading required-by...")
+        self._detail_deps_list.clear()
+        self._detail_deps_list.addItem("Loading dependencies...")
+        self._detail_rby_list.clear()
+        self._detail_rby_list.addItem("Loading required-by...")
 
         worker = Worker(lambda _w: self._fetch_detail(svc["Name"]))
         worker.signals.result.connect(self._apply_detail)
@@ -623,18 +622,47 @@ class ServicesModule(BaseModule):
 
         self._apply_audit(data.get("recovery"))
         deps = cfg.get("dependencies", [])
-        if deps:
-            self._detail_deps_list.setPlainText(
-                "\n".join(f"  {d}" for d in deps)
-            )
-        else:
-            self._detail_deps_list.setPlainText("  (no dependencies)")
+        self._fill_service_link_list(self._detail_deps_list, [(d, "") for d in deps],
+                                     "(no dependencies)")
+        self._fill_service_link_list(
+            self._detail_rby_list, [(d["name"], d["display"]) for d in req_by],
+            "(no dependent services)")
 
-        if req_by:
-            lines = [f"  {d['name']}  —  {d['display']}" for d in req_by]
-            self._detail_rby_list.setPlainText("\n".join(lines))
-        else:
-            self._detail_rby_list.setPlainText("  (no dependent services)")
+    def _fill_service_link_list(self, widget: QListWidget, rows, empty_text: str) -> None:
+        """Each row is (service name, display name). Double-click jumps to it,
+        if it is a service this pane actually has (a dependency can be a driver
+        or a group, which never appear in the service table at all)."""
+        widget.clear()
+        if not rows:
+            widget.addItem(empty_text)
+            return
+        known = {s["Name"].lower() for s in self._all_services}
+        em_dash = chr(8212)
+        for name, display in rows:
+            label = f"{name}  {em_dash}  {display}" if display else name
+            item = QListWidgetItem(label)
+            if name.lower() in known:
+                item.setData(Qt.ItemDataRole.UserRole, name)
+                item.setToolTip("Double-click to jump to this service")
+            else:
+                item.setToolTip("Not a service in this list (a driver, group, or "
+                                "one this session could not enumerate)")
+            widget.addItem(item)
+
+    def _jump_to_dependency(self, item: QListWidgetItem) -> None:
+        name = item.data(Qt.ItemDataRole.UserRole)
+        if name:
+            self._select_service_by_name(name)
+
+    def _select_service_by_name(self, name: str) -> None:
+        for row in range(self._table.rowCount()):
+            cell = self._table.item(row, 1)      # Name column
+            if cell and cell.data(Qt.ItemDataRole.UserRole) == name:
+                self._table.setCurrentCell(row, 0)
+                self._table.scrollToItem(cell)
+                self._tabs.setCurrentIndex(0)
+                return
+        self._status_label.setText(f"'{name}' is not in the current filter/search.")
 
     def _apply_audit(self, recovery: Optional[Dict]) -> None:
         svc = self._get_selected_service() or {}
@@ -671,7 +699,8 @@ class ServicesModule(BaseModule):
         self._detail_type_value.setText("-")
         self._detail_start_type_value.setText("-")
         self._detail_error_value.setText(f"Error: {err}")
-        self._detail_deps_list.setPlainText(f"Error loading dependencies:\n{err}")
+        self._detail_deps_list.clear()
+        self._detail_deps_list.addItem(f"Error loading dependencies: {err}")
 
     def _refresh_detail(self):
         self._load_detail()

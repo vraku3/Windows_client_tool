@@ -20,7 +20,7 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import center_header, set_role
 from core.worker import Worker
-from modules.network_diagnostics import dns_client, network_fixes, network_health, route_table
+from modules.network_diagnostics import dns_cache, dns_client, network_fixes, network_health, route_table
 from modules.network_diagnostics.ping_stats import PingStats
 from modules.perfmon.perfmon_charts import _QtLineChart
 
@@ -450,6 +450,86 @@ class _RoutesPane(QWidget):
                 self._neighbors.setItem(r, c, item)
 
 
+class _DnsCachePane(QWidget):
+    """Every record `ipconfig /displaydns` currently holds -- not the
+    resolver comparison DNS compare runs live, this is what is ALREADY
+    cached, which is what actually answers the next lookup."""
+
+    def __init__(self, module: "NetworkHealthModule") -> None:
+        super().__init__()
+        self._module = module
+        self._entries: List[dns_cache.DnsCacheEntry] = []
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>DNS resolver cache</b>"))
+        self._status = QLabel("")
+        set_role(self._status, "muted")
+        top.addWidget(self._status, 1)
+        self._filter = QLineEdit()
+        self._filter.setPlaceholderText("Filter by name...")
+        self._filter.textChanged.connect(self._apply_filter)
+        top.addWidget(self._filter)
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(self._refresh_btn)
+        self._flush_btn = QPushButton("Flush Cache")
+        self._flush_btn.clicked.connect(self._flush)
+        top.addWidget(self._flush_btn)
+        lay.addLayout(top)
+        self._table = _read_only_table(["Name", "Type", "TTL", "Section", "Data"])
+        lay.addWidget(self._table, 1)
+
+    def refresh(self) -> None:
+        self._set_buttons_enabled(False)
+        self._status.setText("Reading...")
+        w = Worker(lambda _w: dns_cache.read_dns_cache())
+        w.signals.result.connect(lambda r: self._done(r) if _alive(self) else None)
+        w.signals.error.connect(lambda e: self._failed(str(e)) if _alive(self) else None)
+        self._module.track(w)
+
+    def _set_buttons_enabled(self, enabled: bool) -> None:
+        self._refresh_btn.setEnabled(enabled)
+        self._flush_btn.setEnabled(enabled)
+
+    def _failed(self, message: str) -> None:
+        self._set_buttons_enabled(True)
+        self._status.setText(f"Could not read the DNS cache: {message}")
+
+    def _done(self, entries: Optional[List[dns_cache.DnsCacheEntry]]) -> None:
+        self._set_buttons_enabled(True)
+        if entries is None:
+            self._entries = []
+            self._table.setRowCount(0)
+            self._status.setText("Windows would not report the DNS cache (ipconfig refused).")
+            return
+        self._entries = entries
+        self._status.setText(f"{len(entries)} cached record(s).")
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        needle = self._filter.text().strip().lower()
+        rows = [e for e in self._entries if needle in e.name.lower()] if needle else self._entries
+        self._table.setRowCount(len(rows))
+        for r, e in enumerate(rows):
+            values = (e.name, e.type_name, str(e.ttl) if e.ttl is not None else "—", e.section, e.data)
+            for c, text in enumerate(values):
+                self._table.setItem(r, c, QTableWidgetItem(text))
+        self._table.resizeColumnsToContents()
+        self._table.horizontalHeader().setStretchLastSection(True)
+
+    def _flush(self) -> None:
+        self._set_buttons_enabled(False)
+        self._status.setText("Flushing...")
+        w = Worker(lambda _w: network_fixes.flush_dns())
+        w.signals.result.connect(lambda r: self._flushed(r) if _alive(self) else None)
+        w.signals.error.connect(lambda e: self._failed(str(e)) if _alive(self) else None)
+        self._module.track(w)
+
+    def _flushed(self, result: network_fixes.FixResult) -> None:
+        self._status.setText(result.message)
+        self.refresh()
+
+
 class NetworkHealthModule(BaseModule):
     name = "Health"
     icon = "🩺"
@@ -463,6 +543,7 @@ class NetworkHealthModule(BaseModule):
         self._health: Optional[_HealthPane] = None
         self._ping: Optional[_PingPane] = None
         self._routes: Optional["_RoutesPane"] = None
+        self._dns_cache: Optional["_DnsCachePane"] = None
 
     def on_start(self, app) -> None:
         self.app = app
@@ -481,8 +562,10 @@ class NetworkHealthModule(BaseModule):
         self._health = _HealthPane(self)
         self._ping = _PingPane(self)
         self._routes = _RoutesPane(self)
+        self._dns_cache = _DnsCachePane(self)
         tabs.addTab(self._health, "Health")
         tabs.addTab(_DnsPane(self), "DNS compare")
+        tabs.addTab(self._dns_cache, "DNS cache")
         tabs.addTab(self._ping, "Ping and jitter")
         tabs.addTab(self._routes, "Routes")
         self._widget = tabs
@@ -494,6 +577,8 @@ class NetworkHealthModule(BaseModule):
             h.run_checks()
         if self._routes is not None and self._routes._snapshot is None:
             self._routes.refresh()
+        if self._dns_cache is not None and not self._dns_cache._entries:
+            self._dns_cache.refresh()
 
     def _stop_activity(self) -> None:
         if self._ping is not None and _alive(self._ping):

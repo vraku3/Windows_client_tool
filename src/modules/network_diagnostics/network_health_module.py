@@ -20,7 +20,7 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import center_header, set_role
 from core.worker import Worker
-from modules.network_diagnostics import dns_client, network_fixes, network_health
+from modules.network_diagnostics import dns_client, network_fixes, network_health, route_table
 from modules.network_diagnostics.ping_stats import PingStats
 from modules.perfmon.perfmon_charts import _QtLineChart
 
@@ -372,6 +372,84 @@ class _PingPane(QWidget):
         self._stat_label.setText(self._stats.summary())
 
 
+class _RoutesPane(QWidget):
+    """The full route table and ARP/neighbour cache -- "why is this going out
+    the wrong interface" and "is this MAC actually resolved" are both here,
+    where the Health tab's findings only look at the default route."""
+
+    def __init__(self, module: "NetworkHealthModule") -> None:
+        super().__init__()
+        self._module = module
+        self._snapshot: Optional[route_table.RouteSnapshot] = None
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>Routes and ARP/neighbour cache</b>"))
+        self._status = QLabel("")
+        set_role(self._status, "muted")
+        top.addWidget(self._status, 1)
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(self._refresh_btn)
+        lay.addLayout(top)
+
+        lay.addWidget(QLabel("Routes (default route first, then by metric)"))
+        self._routes = _read_only_table(
+            ["Destination", "Next hop", "Interface", "Metric", "Protocol", "Store"])
+        lay.addWidget(self._routes, 2)
+
+        lay.addWidget(QLabel("Neighbours (ARP / NDP cache) — problems listed first"))
+        self._neighbors = _read_only_table(["IP address", "MAC address", "Interface", "State"])
+        lay.addWidget(self._neighbors, 2)
+
+    def refresh(self) -> None:
+        self._refresh_btn.setEnabled(False)
+        self._status.setText("Reading...")
+        w = Worker(lambda _w: route_table.read_routes_and_neighbors())
+        w.signals.result.connect(lambda r: self._done(r) if _alive(self) else None)
+        w.signals.error.connect(lambda e: self._failed(str(e)) if _alive(self) else None)
+        self._module.track(w)
+
+    def _failed(self, message: str) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._status.setText(f"Could not read routes: {message}")
+
+    def _done(self, snapshot: Optional[route_table.RouteSnapshot]) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._snapshot = snapshot
+        if snapshot is None:
+            self._status.setText("Windows would not report the route table (PowerShell refused).")
+            self._routes.setRowCount(0)
+            self._neighbors.setRowCount(0)
+            return
+        self._fill_routes(snapshot)
+        self._fill_neighbors(snapshot)
+        problems = route_table.problem_neighbors(snapshot)
+        self._status.setText(
+            f"{len(snapshot.routes)} route(s), {len(snapshot.neighbors)} neighbour(s)"
+            + (f"   —   {len(problems)} unresolved" if problems else ""))
+
+    def _fill_routes(self, snapshot: route_table.RouteSnapshot) -> None:
+        self._routes.setRowCount(len(snapshot.routes))
+        for r, route in enumerate(snapshot.routes):
+            values = (route.destination, route.next_hop or "—", route.interface,
+                     str(route.metric), route.protocol, route.store)
+            for c, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                if route.is_default:
+                    item.setForeground(QColor(semantic("info")))
+                self._routes.setItem(r, c, item)
+
+    def _fill_neighbors(self, snapshot: route_table.RouteSnapshot) -> None:
+        self._neighbors.setRowCount(len(snapshot.neighbors))
+        for r, n in enumerate(snapshot.neighbors):
+            values = (n.ip, n.mac or "—", n.interface, n.state)
+            for c, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                if n.is_problem:
+                    item.setForeground(QColor(semantic("warning")))
+                self._neighbors.setItem(r, c, item)
+
+
 class NetworkHealthModule(BaseModule):
     name = "Health"
     icon = "🩺"
@@ -384,6 +462,7 @@ class NetworkHealthModule(BaseModule):
         self._widget: Optional[QWidget] = None
         self._health: Optional[_HealthPane] = None
         self._ping: Optional[_PingPane] = None
+        self._routes: Optional["_RoutesPane"] = None
 
     def on_start(self, app) -> None:
         self.app = app
@@ -401,9 +480,11 @@ class NetworkHealthModule(BaseModule):
         tabs = QTabWidget()
         self._health = _HealthPane(self)
         self._ping = _PingPane(self)
+        self._routes = _RoutesPane(self)
         tabs.addTab(self._health, "Health")
         tabs.addTab(_DnsPane(self), "DNS compare")
         tabs.addTab(self._ping, "Ping and jitter")
+        tabs.addTab(self._routes, "Routes")
         self._widget = tabs
         return tabs
 
@@ -411,6 +492,8 @@ class NetworkHealthModule(BaseModule):
         h = self._health
         if h is not None and not h._findings:
             h.run_checks()
+        if self._routes is not None and self._routes._snapshot is None:
+            self._routes.refresh()
 
     def _stop_activity(self) -> None:
         if self._ping is not None and _alive(self._ping):

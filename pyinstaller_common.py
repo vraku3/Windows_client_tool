@@ -239,6 +239,7 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.pdh_util",
     "modules.dashboard.net_trace",
     "modules.network_diagnostics.network_health_module",
+    "modules.network_diagnostics.route_table",
     "modules.network_diagnostics.network_health",
     "modules.network_diagnostics.dns_client",
     "modules.network_diagnostics.network_fixes",

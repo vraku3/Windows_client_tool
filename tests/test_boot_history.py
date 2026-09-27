@@ -113,8 +113,15 @@ def test_trend_note_handles_no_boots():
 
 def test_real_logs_are_plausible():
     facts = bh.read_boot_facts()
-    assert not facts.problems, facts.problems
-    assert 1 <= len(facts.boots) <= 20
+    # Unelevated, Diagnostics-Performance/Operational refuses -- a real,
+    # honestly-reported refusal, not a bug. Elevated, there must be none.
+    from core.admin_utils import is_admin
+    if is_admin():
+        assert not facts.problems, facts.problems
+        assert 1 <= len(facts.boots) <= 20
+    else:
+        assert all("Access is denied" in p or "denied" in p.lower() for p in facts.problems), facts.problems
+        assert 0 <= len(facts.boots) <= 20
     for boot in facts.boots:
         assert 3_000 < boot.boot_ms < 900_000
         assert boot.when <= datetime.now() + timedelta(minutes=5)

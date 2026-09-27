@@ -62,10 +62,38 @@ class Finding:
 
 
 @dataclass
+class PasswordPolicy:
+    """The local Security Policy (`net accounts` / NetUserModalsGet), not any one
+    account's own state. `None` on the two "days" fields means the policy sets no
+    limit at all (Windows reports that as the sentinel 0xFFFFFFFF seconds, not 0)."""
+    min_length: int
+    max_age_days: Optional[int]
+    min_age_days: int
+    history_len: int
+    force_logoff_days: Optional[int]
+    lockout_threshold: int
+    lockout_duration_min: Optional[int]
+    lockout_window_min: int
+
+    @property
+    def summary(self) -> str:
+        max_age = "no max age" if self.max_age_days is None else f"max age {self.max_age_days}d"
+        if self.lockout_threshold == 0:
+            lockout = "no lockout"
+        else:
+            dur = "until unlocked" if self.lockout_duration_min is None else f"{self.lockout_duration_min}min"
+            lockout = f"lockout after {self.lockout_threshold} ({dur})"
+        return (f"Min length {self.min_length} · {max_age} · min age {self.min_age_days}d · "
+                f"history {self.history_len} · {lockout}")
+
+
+@dataclass
 class Snapshot:
     accounts: List[Account]
     group_members: Dict[str, Tuple[Optional[List[str]], str]]  # group -> (members | None, reason)
     group_comments: Dict[str, str] = field(default_factory=dict)
+    policy: Optional[PasswordPolicy] = None
+    policy_error: str = ""
 
 
 def days_since(epoch: int, now: Optional[float] = None) -> Optional[int]:
@@ -126,6 +154,22 @@ def findings(snap: Snapshot, now: Optional[float] = None) -> List[Finding]:
             out.append(Finding("info", a.name, f"Enabled but no logon for {d} days."))
         if a.groups_error:
             out.append(Finding("unknown", a.name, f"Group membership could not be read: {a.groups_error}"))
+    if snap.policy is not None:
+        p = snap.policy
+        if p.history_len == 0 and p.min_age_days == 0:
+            out.append(Finding(
+                "warning", "Local Security Policy",
+                "Password history is not enforced (0 remembered) and the minimum password age is 0 "
+                "days: anyone required to change their password can set it right back to the old one "
+                "immediately, defeating rotation entirely."))
+        elif p.history_len == 0:
+            out.append(Finding(
+                "info", "Local Security Policy",
+                "Password history is not enforced (0 passwords remembered): an old password can be "
+                "reused once the minimum age allows it."))
+    elif snap.policy_error:
+        out.append(Finding("unknown", "Local Security Policy",
+                           f"Could not read the local password policy: {snap.policy_error}"))
     if admins_group is None or admins_group[0] is None:
         reason = admins_group[1] if admins_group else "not read"
         out.append(Finding("unknown", "Administrators", f"Could not read the Administrators group: {reason}"))
@@ -201,7 +245,44 @@ def read_snapshot(net=None, lookup_sid: Optional[Callable[[str], str]] = None) -
         if not resume:
             break
     accounts.sort(key=lambda a: a.name.lower())
-    return Snapshot(accounts, members, comments)
+    policy, policy_error = read_policy(net)
+    return Snapshot(accounts, members, comments, policy=policy, policy_error=policy_error)
+
+
+def read_policy(net=None) -> Tuple[Optional[PasswordPolicy], str]:
+    """The local Security Policy: `net accounts`'s own numbers, read via
+    NetUserModalsGet rather than parsed from that command's text. Levels 0 and 3
+    are two separate calls (Win32 splits password settings from lockout settings);
+    a level 0 or 3 that is not implemented (a fake in a test) is reported through
+    `error`, never collapsed into zeroes that would read as "no policy at all"."""
+    if net is None:
+        import win32net as net  # type: ignore
+    try:
+        m0 = net.NetUserModalsGet(None, 0)
+        m3 = net.NetUserModalsGet(None, 3)
+    except Exception as e:
+        logger.warning("NetUserModalsGet failed: %s", e)
+        return None, str(e)
+
+    def _days_or_none(seconds) -> Optional[int]:
+        seconds = int(seconds or 0)
+        return None if seconds >= NO_EXPIRY else seconds // 86400
+
+    def _min_or_none(seconds) -> Optional[int]:
+        seconds = int(seconds or 0)
+        return None if seconds >= NO_EXPIRY else seconds // 60
+
+    policy = PasswordPolicy(
+        min_length=int(m0.get("min_passwd_len", 0)),
+        max_age_days=_days_or_none(m0.get("max_passwd_age")),
+        min_age_days=int(m0.get("min_passwd_age", 0) or 0) // 86400,
+        history_len=int(m0.get("password_hist_len", 0)),
+        force_logoff_days=_days_or_none(m0.get("force_logoff")),
+        lockout_threshold=int(m3.get("lockout_threshold", 0)),
+        lockout_duration_min=_min_or_none(m3.get("lockout_duration")),
+        lockout_window_min=int(m3.get("lockout_observation_window", 0) or 0) // 60,
+    )
+    return policy, ""
 
 
 def _lookup_sid(name: str) -> str:

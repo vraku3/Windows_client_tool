@@ -120,6 +120,10 @@ class LocalUsersModule(BaseModule):
         toolbar.addWidget(self._status_label)
         layout.addLayout(toolbar)
 
+        self._policy_label = QLabel("")
+        set_role(self._policy_label, "muted")
+        layout.addWidget(self._policy_label)
+
         chip_row = QHBoxLayout()
         for c in acc.CHIPS:
             b = QPushButton(c)
@@ -202,6 +206,10 @@ class LocalUsersModule(BaseModule):
         self._render_users()
         self._render_groups()
         self._render_findings()
+        if snap.policy is not None:
+            self._policy_label.setText(f"Local policy: {snap.policy.summary}")
+        else:
+            self._policy_label.setText(f"Local policy: could not be read ({snap.policy_error})")
 
     def _on_cancelled(self):
         if self._widget is None:

@@ -284,6 +284,59 @@ def _orphan_service_finding(name: str, image_path: str, program: str, start: Opt
     )
 
 
+def check_hardware_errors(days: int = 30) -> List[Finding]:
+    """Microsoft-Windows-WHEA-Logger events -- Windows' own standard channel
+    for corrected and uncorrected hardware errors (failing RAM, CPU, PCIe
+    links), the same source `mcelog`/`rasdaemon` read on Linux. Reported as
+    a summary (count, level, most recent message) rather than the raw WHEA
+    payload: parsing a memory address or error-source ID out of that binary
+    payload without a real one to test against would be guessing at its
+    shape, and this machine currently logs zero WHEA events to verify
+    against -- confirmed clean, not merely untested.
+    """
+    script = (
+        "$ErrorActionPreference='Stop';"
+        f"$f=@{{LogName='System';ProviderName='Microsoft-Windows-WHEA-Logger';"
+        f"StartTime=(Get-Date).AddDays(-{int(days)})}};"
+        "try{$e=Get-WinEvent -FilterHashtable $f -MaxEvents 500}"
+        "catch{if($_.FullyQualifiedErrorId -like '*NoMatchingEventsFound*'){'[]';exit 0}else{throw}};"
+        "@($e|%{[pscustomobject]@{Level=$_.LevelDisplayName;"
+        "Time=$_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss');"
+        "Message=(($_.Message -split \"`n\")[0])}})|ConvertTo-Json -Compress")
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, subprocess.SubprocessError) as e:
+        return [Finding(id="hardware_errors_refused", title="Could not read hardware error events",
+                        detail=str(e), severity="warning")]
+    if result.returncode != 0:
+        return [Finding(id="hardware_errors_refused", title="Could not read hardware error events",
+                        detail=(result.stderr or result.stdout or "refused").strip()[:200],
+                        severity="warning")]
+    import json
+    try:
+        data = json.loads(result.stdout.strip() or "[]")
+    except ValueError:
+        return [Finding(id="hardware_errors_refused", title="Could not read hardware error events",
+                        detail="Response was not JSON.", severity="warning")]
+    if isinstance(data, dict):
+        data = [data]
+    if not data:
+        return []
+    fatal = [r for r in data if (r.get("Level") or "").lower() in ("error", "critical")]
+    latest = max(data, key=lambda r: r.get("Time") or "")
+    return [Finding(
+        id="hardware_errors",
+        title=f"{len(data)} hardware error event(s) in the last {days} days",
+        detail=("Windows' own WHEA hardware-error log (corrected and uncorrected CPU/RAM/PCIe "
+                f"errors). Most recent ({latest.get('Level', '?')}, {latest.get('Time', '?')}): "
+                f"{(latest.get('Message') or '').strip()}"),
+        severity="warning" if fatal else "info",
+    )]
+
+
 def check_upgrade_headroom() -> Finding:
     """Free space on the system drive against a practical minimum for a
     feature update -- NOT an official Microsoft figure (Microsoft
@@ -321,6 +374,7 @@ def all_findings() -> List[Finding]:
         findings.append(pending)
     findings.extend(check_orphaned_scheduled_tasks())
     findings.extend(check_orphaned_services())
+    findings.extend(check_hardware_errors())
     findings.append(check_upgrade_headroom())
     return findings
 

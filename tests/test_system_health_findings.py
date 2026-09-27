@@ -9,7 +9,7 @@ import pytest
 
 from modules.system_health.findings import (
     Finding, check_pending_servicing, check_orphaned_scheduled_tasks,
-    check_orphaned_services, check_upgrade_headroom, all_findings,
+    check_orphaned_services, check_hardware_errors, check_upgrade_headroom, all_findings,
 )
 
 
@@ -279,6 +279,71 @@ def test_real_orphaned_services_check_runs_without_raising():
     assert len(findings) < 50
 
 
+def test_no_hardware_errors_is_an_empty_list_not_a_finding(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type(
+        "R", (), {"returncode": 0, "stdout": "[]", "stderr": ""})())
+    assert check_hardware_errors() == []
+
+
+def test_corrected_only_hardware_errors_are_info(monkeypatch):
+    # Synthetic, documented WHEA-Logger event 1 message shape ("A corrected
+    # hardware error has occurred.") -- this real machine logs none to
+    # capture a genuine sample from, confirmed via a live probe.
+    payload = ('[{"Level":"Warning","Time":"2026-09-20 03:00:00",'
+              '"Message":"A corrected hardware error has occurred."}]')
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type(
+        "R", (), {"returncode": 0, "stdout": payload, "stderr": ""})())
+
+    findings = check_hardware_errors()
+
+    assert len(findings) == 1
+    assert findings[0].severity == "info" and "1 hardware error" in findings[0].title
+
+
+def test_a_fatal_hardware_error_is_a_warning(monkeypatch):
+    payload = ('[{"Level":"Warning","Time":"2026-09-20 03:00:00",'
+              '"Message":"A corrected hardware error has occurred."},'
+              '{"Level":"Error","Time":"2026-09-21 04:00:00",'
+              '"Message":"A fatal hardware error has occurred."}]')
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type(
+        "R", (), {"returncode": 0, "stdout": payload, "stderr": ""})())
+
+    findings = check_hardware_errors()
+
+    assert len(findings) == 1
+    assert findings[0].severity == "warning" and "2 hardware error" in findings[0].title
+    assert "fatal" in findings[0].detail.lower()
+
+
+def test_a_refused_hardware_error_read_is_reported_not_swallowed(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type(
+        "R", (), {"returncode": 1, "stdout": "", "stderr": "Access is denied."})())
+
+    findings = check_hardware_errors()
+
+    assert len(findings) == 1
+    assert findings[0].id == "hardware_errors_refused"
+    assert "denied" in findings[0].detail.lower()
+
+
+def test_a_failed_hardware_error_call_is_reported_not_swallowed(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        raise OSError("powershell not found")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    findings = check_hardware_errors()
+
+    assert len(findings) == 1 and findings[0].id == "hardware_errors_refused"
+
+
+def test_real_hardware_errors_check_runs_without_raising():
+    # Confirmed live 2026-09-27: this machine logs zero WHEA events in the
+    # last 30 days -- a real, clean read, not an untested one.
+    findings = check_hardware_errors()
+    assert findings == [] or findings[0].id in ("hardware_errors", "hardware_errors_refused")
+
+
 def test_upgrade_headroom_below_threshold_is_a_warning(monkeypatch):
     monkeypatch.setattr("shutil.disk_usage", lambda path: (100 * 1024**3, 90 * 1024**3, 10 * 1024**3))
     finding = check_upgrade_headroom()
@@ -292,7 +357,7 @@ def test_upgrade_headroom_above_threshold_is_info(monkeypatch):
     assert finding.severity == "info"
 
 
-def test_all_findings_combines_all_four_checks(monkeypatch, tmp_path):
+def test_all_findings_combines_all_five_checks(monkeypatch, tmp_path):
     monkeypatch.setenv("windir", str(tmp_path))  # no pending.xml
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
     monkeypatch.setattr("shutil.disk_usage", lambda path: (500 * 1024**3, 100 * 1024**3, 400 * 1024**3))
@@ -301,6 +366,7 @@ def test_all_findings_combines_all_four_checks(monkeypatch, tmp_path):
     findings = all_findings()
 
     # No pending servicing, no orphaned tasks (empty schtasks output), no
-    # orphaned services (mocked empty above), one headroom finding.
+    # orphaned services (mocked empty above), no hardware errors (empty
+    # subprocess output above parses as []), one headroom finding.
     assert len(findings) == 1
     assert findings[0].id == "upgrade_headroom"

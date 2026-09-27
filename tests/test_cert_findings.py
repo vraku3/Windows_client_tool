@@ -31,6 +31,30 @@ def test_chips():
     c = cf.chip_counts(certs)
     assert c["Expired"] == 1 and c["Expires <30 days"] == 1 and c["Expires <90 days"] == 2
     assert c["Self-signed (not root)"] == 1 and c["Has private key"] == 1
+    assert c["Expired root (still trusted)"] == 0
+
+
+def test_expired_root_anchor_is_a_distinct_finding_from_an_expired_leaf():
+    # An expired MY/CA/etc cert gets the generic wording.
+    leaf = mk(-30, store="MY")
+    assert not cf.is_expired_root_anchor(leaf)
+    assert cf.findings_text(leaf) == "expired 30 days ago"
+
+    # The same days-past-expiry on a Root anchor gets the specific wording
+    # and trips its own chip -- Windows keeps an expired root installed and
+    # never auto-removes it, so this is a real, distinct, long-lived state
+    # rather than a "renew soon" notice.
+    root = mk(-30, store="ROOT")
+    assert cf.is_expired_root_anchor(root)
+    assert "expired root CA still trusted" in cf.findings_text(root)
+    assert "30 days past NotAfter" in cf.findings_text(root)
+    assert cf.matches_chip(root, "Expired root (still trusted)")
+    # It also still counts as an ordinary "Expired" cert -- the new chip adds
+    # information, it does not replace the general one.
+    assert cf.matches_chip(root, "Expired")
+
+    # A not-yet-expired Root cert never trips it.
+    assert not cf.is_expired_root_anchor(mk(400, store="ROOT"))
 
 
 def test_search_by_spaced_thumbprint():
@@ -50,3 +74,17 @@ def test_real_root_store_has_plausible_fields():
     assert all(c.sig_algorithm for c in certs)
     assert all(c.store_name == "ROOT" for c in certs)
     assert all(c.key_size == 0 or 256 <= c.key_size <= 16384 for c in certs)
+
+
+def test_real_machine_has_expired_root_anchors_still_trusted():
+    # Measured on this machine 2026-09-27: LocalMachine\Root carries 6 of 46
+    # entries past their own NotAfter (two since 1999/2000, e.g. "Microsoft
+    # Authenticode(tm) Root Authority"), and Windows never auto-removes an
+    # expired root. Root stores only grow real, historical stragglers like
+    # this over time -- if this ever regresses to 0 it means the store was
+    # rebuilt, not that the finding stopped mattering, so this asserts
+    # "at least one", not the exact count.
+    certs = fetch_certs("ROOT", "machine")
+    expired_roots = [c for c in certs if cf.is_expired_root_anchor(c)]
+    assert len(expired_roots) >= 1
+    assert all("expired root CA still trusted" in cf.findings_text(c) for c in expired_roots)

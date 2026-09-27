@@ -2,7 +2,9 @@
 
 Sources read: HKCU/HKLM Run and the 32-bit Run key, RunOnce, both Startup
 folders, scheduled tasks with a logon or boot trigger, automatic services,
-and the Winlogon Shell/Userinit values when they are not the defaults.
+the Winlogon Shell/Userinit values when they are not the defaults, Image
+File Execution Options Debugger hijacks, and a populated + active
+AppInit_DLLs list.
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -61,7 +63,8 @@ class Note:
 class Item:
     name: str
     command: str
-    source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service", "Winlogon"
+    source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service",
+                           # "Winlogon", "IFEO", "AppInit"
     scope: str             # "User" | "Machine"
     location: str          # registry key / folder / task folder
     enabled: Optional[bool] = True
@@ -377,6 +380,96 @@ def read_winlogon(inv: Inventory) -> None:
                                   extra="differs from the Windows default"))
 
 
+def read_ifeo_hijacks(inv: Inventory) -> None:
+    """Image File Execution Options `Debugger` values -- the classic hijack
+    (attach a different program to whatever launches the named one; the
+    "sticky keys backdoor" sets sethc.exe's Debugger to cmd.exe). Confirmed
+    live: this machine carries 116 IFEO subkeys and only ONE unreadable
+    unelevated (a per-subkey ACL, not a blanket refusal) -- most subkeys use
+    IFEO for GlobalFlag or silent process exit and carry no Debugger value
+    at all, so only the ones that do are a redirection worth listing.
+    """
+    path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+    try:
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+    except OSError as error:
+        inv.problems.append(f"{path}: {error}")
+        return
+    names: List[str] = []
+    with root:
+        index = 0
+        while True:
+            try:
+                names.append(winreg.EnumKey(root, index))
+            except OSError:
+                logger.debug("IFEO enumeration finished at %d", index)
+                break
+            index += 1
+        for name in names:
+            try:
+                with winreg.OpenKey(root, name) as key:
+                    try:
+                        debugger = winreg.QueryValueEx(key, "Debugger")[0]
+                    except FileNotFoundError:
+                        logger.debug("IFEO subkey %s has no Debugger value (GlobalFlag/silent-exit use)", name)
+                        continue
+            except OSError as error:
+                inv.problems.append(f"{path}{chr(92)}{name}: {error}")
+                continue
+            inv.items.append(Item(
+                name, str(debugger), "IFEO", "Machine", "HKLM" + chr(92) + path + chr(92) + name,
+                enabled=True, extra=f"redirects launches of {name} to this program"))
+
+
+def _split_appinit(value: str) -> List[str]:
+    """AppInit_DLLs entries: space/comma separated, except a quoted entry
+    (needed for a path containing a space) which may contain either."""
+    out: List[str] = []
+    text = value.strip()
+    i = 0
+    while i < len(text):
+        if text[i] == '"':
+            end = text.find('"', i + 1)
+            out.append(text[i + 1:end if end != -1 else len(text)])
+            i = (end + 1) if end != -1 else len(text)
+        else:
+            j = i
+            while j < len(text) and text[j] not in " ,":
+                j += 1
+            if j > i:
+                out.append(text[i:j])
+            i = j
+        while i < len(text) and text[i] in " ,":
+            i += 1
+    return [o for o in out if o.strip()]
+
+
+def read_appinit_dlls(inv: Inventory) -> None:
+    """AppInit_DLLs: DLLs loaded into every process that links user32.dll.
+    Deprecated and IGNORED under Secure Boot/code integrity, which is most
+    modern machines including this one (confirmed: empty and
+    LoadAppInit_DLLs=0 here) -- but whether it is actually inert depends on
+    both values being read, not assumed, since a machine with Secure Boot
+    off would have it work exactly as it did in 2005.
+    """
+    path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows"
+    values, problem = _read_values(winreg.HKEY_LOCAL_MACHINE, path)
+    if problem:
+        inv.problems.append(problem)
+        return
+    data = dict(values)
+    dlls = (data.get("AppInit_DLLs") or "").strip()
+    if not dlls:
+        return
+    loaded = (data.get("LoadAppInit_DLLs") or "0").strip() not in ("", "0")
+    for entry in _split_appinit(dlls):
+        inv.items.append(Item(
+            os.path.basename(entry) or entry, entry, "AppInit", "Machine", "HKLM" + chr(92) + path,
+            enabled=loaded,
+            extra="loaded into every process that links user32.dll" if loaded
+            else "LoadAppInit_DLLs is 0: Windows ignores this list"))
+
+
 # ---- enrichment ------------------------------------------------------------
 
 def _under(path: str, roots: List[str]) -> bool:
@@ -439,6 +532,14 @@ def assess(item: Item, now: datetime) -> None:
         item.notes.append(Note("recent", "info", f"First seen by this tool {item.first_seen:%Y-%m-%d %H:%M}."))
     if item.source == "Winlogon":
         item.notes.append(Note("winlogon", "warn", "Winlogon Shell/Userinit differs from the Windows default."))
+    if item.source == "IFEO":
+        item.notes.append(Note("ifeo", "warn",
+                               f"Image File Execution Options Debugger hijack: launching {item.name} "
+                               "actually runs this instead."))
+    if item.source == "AppInit" and item.enabled:
+        item.notes.append(Note("appinit", "warn",
+                               "AppInit_DLLs loads into every process that links user32.dll -- "
+                               "a broad, old-style injection point."))
 
 
 def enrich(inv: Inventory, impact: Optional[Dict[str, Tuple[int, int]]], now: datetime) -> None:
@@ -618,6 +719,8 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_tasks(inv)
     read_services(inv)
     read_winlogon(inv)
+    read_ifeo_hijacks(inv)
+    read_appinit_dlls(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)
     return inv

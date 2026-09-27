@@ -298,6 +298,140 @@ def test_missing_file_is_unknown_not_unsigned():
 
 # ---- the real machine ----------------------------------------------------------------
 
+# ---- IFEO Debugger hijacks and AppInit_DLLs ---------------------------------
+
+class _KeyCtx:
+    def __init__(self, name=""):
+        self.name = name
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def Close(self):
+        pass
+
+
+def test_ifeo_debugger_value_is_flagged(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx(a[1] if len(a) > 1 else ""))
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: "sethc.exe" if index == 0 else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: ("cmd.exe", None))
+
+    inv = P.Inventory()
+    P.read_ifeo_hijacks(inv)
+
+    assert len(inv.items) == 1
+    item = inv.items[0]
+    assert item.name == "sethc.exe" and item.command == "cmd.exe" and item.source == "IFEO"
+
+
+def test_ifeo_subkey_without_debugger_is_not_listed(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: _KeyCtx())
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: "notepad.exe" if index == 0 else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: (_ for _ in ()).throw(FileNotFoundError()))
+
+    inv = P.Inventory()
+    P.read_ifeo_hijacks(inv)
+
+    assert inv.items == []
+
+
+def test_an_unopenable_ifeo_root_is_a_problem_not_a_silent_empty_list(monkeypatch):
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: (_ for _ in ()).throw(OSError("denied")))
+
+    inv = P.Inventory()
+    P.read_ifeo_hijacks(inv)
+
+    assert inv.items == [] and len(inv.problems) == 1
+
+
+def test_one_unreadable_ifeo_subkey_is_skipped_not_fatal(monkeypatch):
+    import winreg
+
+    def fake_open(root, name=None, *a, **k):
+        if name == "DefenderAgentScan.exe":
+            raise OSError("access denied")
+        return _KeyCtx(name or "")
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open)
+    monkeypatch.setattr(winreg, "EnumKey",
+                        lambda root, index: ["DefenderAgentScan.exe", "sethc.exe"][index] if index < 2
+                        else (_ for _ in ()).throw(OSError()))
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda key, name: ("cmd.exe", None))
+
+    inv = P.Inventory()
+    P.read_ifeo_hijacks(inv)
+
+    assert len(inv.items) == 1 and inv.items[0].name == "sethc.exe"
+    assert len(inv.problems) == 1 and "DefenderAgentScan.exe" in inv.problems[0]
+
+
+def test_ifeo_item_gets_a_warning_note():
+    item = _item(source="IFEO", name="sethc.exe", command="cmd.exe", exe="", exists=None, trust=trust.UNKNOWN)
+    P.assess(item, NOW)
+    assert item.has("ifeo") and item.flagged
+
+
+def test_split_appinit_handles_quoted_and_bare_entries():
+    assert P._split_appinit('"C:\\Program Files\\x\\a.dll" b.dll,c.dll') == [
+        "C:\\Program Files\\x\\a.dll", "b.dll", "c.dll"]
+
+
+def test_appinit_empty_yields_no_items(monkeypatch):
+    monkeypatch.setattr(P, "_read_values",
+                        lambda hive, subkey: ([("AppInit_DLLs", ""), ("LoadAppInit_DLLs", "0")], None))
+    inv = P.Inventory()
+    P.read_appinit_dlls(inv)
+    assert inv.items == []
+
+
+def test_appinit_populated_and_active_is_flagged(monkeypatch):
+    monkeypatch.setattr(P, "_read_values",
+                        lambda hive, subkey: ([("AppInit_DLLs", "evil.dll"), ("LoadAppInit_DLLs", "1")], None))
+    inv = P.Inventory()
+    P.read_appinit_dlls(inv)
+    assert len(inv.items) == 1
+    item = inv.items[0]
+    assert item.name == "evil.dll" and item.enabled is True
+    P.assess(item, NOW)
+    assert item.has("appinit") and item.flagged
+
+
+def test_appinit_populated_but_inactive_is_not_flagged(monkeypatch):
+    monkeypatch.setattr(P, "_read_values",
+                        lambda hive, subkey: ([("AppInit_DLLs", "old.dll"), ("LoadAppInit_DLLs", "0")], None))
+    inv = P.Inventory()
+    P.read_appinit_dlls(inv)
+    assert len(inv.items) == 1
+    item = inv.items[0]
+    assert item.enabled is False
+    P.assess(item, NOW)
+    assert not item.has("appinit")
+
+
+def test_appinit_refused_read_is_a_problem(monkeypatch):
+    monkeypatch.setattr(P, "_read_values", lambda hive, subkey: ([], "access denied"))
+    inv = P.Inventory()
+    P.read_appinit_dlls(inv)
+    assert inv.items == [] and inv.problems == ["access denied"]
+
+
+def test_real_ifeo_and_appinit_reads_do_not_raise():
+    inv = P.Inventory()
+    P.read_ifeo_hijacks(inv)
+    P.read_appinit_dlls(inv)
+    # Confirmed clean on this real machine (0 Debugger hijacks, AppInit_DLLs
+    # empty) -- this just pins that neither reader raises or floods problems.
+    assert len(inv.problems) <= 2
+
+
 def test_real_machine_inventory_is_plausible(tmp_path):
     pythoncom = pytest.importorskip("pythoncom")
     pythoncom.CoInitialize()

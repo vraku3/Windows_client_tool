@@ -22,7 +22,7 @@ def snap(**over):
                     "RouteMetric": 0, "InterfaceMetric": 25}],
         "dns": [{"InterfaceIndex": 1, "AddressFamily": 2, "ServerAddresses": ["192.168.1.1"]}],
         "ifaces": [], "dhcp": [], "winhttp_proxy": "", "user_proxy": {"enabled": False, "server": "", "pac": "", "auto_detect": True},
-        "hosts": [],
+        "hosts": [], "events": [],
     }
     base.update(over)
     return base
@@ -105,6 +105,25 @@ def test_hosts_override_of_well_known_name():
     assert any("login.microsoft.com" in i for i in f["hosts-wellknown"].items)
     assert not any("telemetry" in i for i in f["hosts-wellknown"].items)  # a block is not a redirect
     assert f["hosts-blocks"].severity == h.INFO
+
+
+def test_unreadable_network_events_are_unknown_not_ok():
+    f = by_id(h.evaluate(snap(events=None), ok_probes()))
+    assert f["events"].severity == h.UNKNOWN
+
+
+def test_network_events_grouped_and_ordered_errors_first():
+    from modules.network_diagnostics import network_events as ne
+    events = [
+        ne.NetworkEvent("Tcpip", 4207, "Error", "2026-09-25 08:00:00", "10", "m", "bind failure"),
+        ne.NetworkEvent("Tcpip", 4207, "Error", "2026-09-26 09:00:00", "10", "m", "bind failure"),
+        ne.NetworkEvent("Microsoft-Windows-WLAN-AutoConfig", 10002, "Warning", "2026-09-27 20:00:00", None, "m", "module stopped"),
+    ]
+    f = by_id(h.evaluate(snap(events=events), ok_probes()))
+    tcpip = f["netevt:Tcpip:4207:10"]
+    assert tcpip.severity == h.ERROR and "x2" in tcpip.title and "2026-09-26 09:00:00" in tcpip.detail
+    wlan = f["netevt:Microsoft-Windows-WLAN-AutoConfig:10002:None"]
+    assert wlan.severity == h.WARNING
 
 
 def test_dhcp_lease_expiry():

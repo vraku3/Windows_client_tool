@@ -41,6 +41,8 @@ class RemoteState:
     services: Dict[str, ServiceInfo] = field(default_factory=dict)
     listening: Optional[Dict[int, bool]] = None   # port -> listening (any address)
     fw_enabled: Optional[Dict[str, int]] = None    # feature -> count of ENABLED inbound allow rules
+    winrm_trusted_hosts: Optional[str] = None      # None = unreadable; "" = none configured
+    winrm_listener_readable: Optional[bool] = None  # WSMAN\Service branch openable at all
     errors: Dict[str, str] = field(default_factory=dict)
 
 
@@ -115,6 +117,27 @@ def _svc_row(s: RemoteState, feature: str, svc: str, port: int, fwkey: str, jump
         svc, "stopped", info.start_type or "?"), SEV_OK if info.start_type.lower() in ("disabled", "manual") else SEV_LOW)
 
 
+def _winrm_row(s: RemoteState) -> Row:
+    row = _svc_row(s, "WinRM / PowerShell remoting", "WinRM", 5985, "winrm", JUMP_SERVICES)
+    if row.status != "On":
+        return row
+    bits = [row.summary]
+    finds = list(row.findings)
+    sev = row.severity
+    if s.winrm_trusted_hosts is None:
+        bits.append("TrustedHosts unreadable")
+    elif s.winrm_trusted_hosts:
+        bits.append("TrustedHosts: %s" % s.winrm_trusted_hosts)
+        finds.append("TrustedHosts is set: any listed host can be remoted into without "
+                      "Kerberos mutual authentication -- confirm every entry is expected.")
+        sev = SEV_MEDIUM if _SEV_ORDER[sev] > _SEV_ORDER[SEV_MEDIUM] else sev
+    else:
+        bits.append("TrustedHosts empty (Kerberos/domain-joined hosts only)")
+    if s.winrm_listener_readable is False:
+        bits.append("listener config needs admin to read")
+    return Row(row.feature, row.status, "; ".join(bits), sev, finds, row.jump)
+
+
 def _assist_row(s: RemoteState) -> Row:
     if s.assist_enabled is None:
         return Row("Remote Assistance", "Unknown", "could not read", SEV_INFO)
@@ -129,8 +152,7 @@ def _assist_row(s: RemoteState) -> Row:
 
 
 def evaluate(state: RemoteState) -> List[Row]:
-    rows = [_rdp_row(state), _assist_row(state),
-            _svc_row(state, "WinRM / PowerShell remoting", "WinRM", 5985, "winrm", JUMP_SERVICES),
+    rows = [_rdp_row(state), _assist_row(state), _winrm_row(state),
             _svc_row(state, "OpenSSH server", "sshd", 22, "ssh", JUMP_SERVICES)]
     rows.sort(key=lambda r: _SEV_ORDER[r.severity])
     return rows
@@ -195,6 +217,52 @@ def read_listeners(state: RemoteState, ports=(3389, 5985, 5986, 22)) -> None:
     state.rdp_listening = port in live
 
 
+_WSMAN_CLIENT = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Client"
+_WSMAN_SERVICE = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service"
+
+
+def read_winrm_trusted_hosts(state: RemoteState) -> None:
+    """`TrustedHosts` under the WSMAN Client registry branch, no subprocess.
+
+    Confirmed live: this branch stays readable unelevated even on a machine
+    where WinRM has never been configured (service Stopped/Manual, no
+    `winrm quickconfig` ever run) -- `winrm enumerate`/`Get-Item WSMan:\\...`
+    both fail here with "cannot connect"/"path does not exist" because the
+    WSMan PowerShell provider talks to the WinRM SERVICE, not the registry,
+    and a stopped service can't answer either. Reading the registry directly
+    sidesteps that: the key exists with zero values in that state, so a
+    missing value means "no hosts trusted" (the real default), not "refused".
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _WSMAN_CLIENT) as key:
+            try:
+                state.winrm_trusted_hosts = str(winreg.QueryValueEx(key, "TrustedHosts")[0])
+            except FileNotFoundError:
+                state.winrm_trusted_hosts = ""
+    except OSError as exc:
+        logger.warning("Cannot read WinRM TrustedHosts: %s", exc)
+        state.errors["winrm_trustedhosts"] = str(exc)
+
+
+def read_winrm_listener_access(state: RemoteState) -> None:
+    """Whether the WSMAN Service registry branch -- where listener config
+    (transport, port, HTTPS cert thumbprint) actually lives -- can even be
+    opened. Confirmed live: this branch refuses with "Requested registry
+    access is not allowed" UNELEVATED even though the sibling Client branch
+    (TrustedHosts, above) is readable -- a real, narrower ACL, not a generic
+    HKLM restriction. So listener detail genuinely needs admin; this only
+    records that refusal for the row to explain, never guesses a value.
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _WSMAN_SERVICE):
+            state.winrm_listener_readable = True
+    except OSError as exc:
+        state.winrm_listener_readable = False
+        state.errors["winrm_listener"] = str(exc)
+
+
 def read_rdp_users(state: RemoteState) -> None:
     try:
         import win32net
@@ -239,4 +307,6 @@ def gather() -> RemoteState:
     read_listeners(st)
     read_rdp_users(st)
     read_firewall(st)
+    read_winrm_trusted_hosts(st)
+    read_winrm_listener_access(st)
     return st

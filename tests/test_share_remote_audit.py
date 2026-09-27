@@ -124,3 +124,50 @@ def test_real_gather_reads_something():
     st = ra.gather()
     assert st.rdp_enabled is not None or "rdp" in st.errors
     assert all(r.status in ("On", "Off", "Unknown") for r in ra.evaluate(st))
+
+
+# ------------------------------------------------------------- WinRM detail
+
+def test_trusted_hosts_set_is_a_medium_finding_on_a_running_service():
+    s = ra.RemoteState(services={"WinRM": ra.ServiceInfo(True, True, "auto"), "sshd": ra.ServiceInfo(False)},
+                       listening={5985: False, 22: False}, winrm_trusted_hosts="*")
+    row = [r for r in ra.evaluate(s) if r.feature == "WinRM / PowerShell remoting"][0]
+    assert row.status == "On" and row.severity == "medium"
+    assert "TrustedHosts: *" in row.summary
+    assert any("without" in f and "Kerberos" in f for f in row.findings)
+
+
+def test_empty_trusted_hosts_is_not_a_finding():
+    s = ra.RemoteState(services={"WinRM": ra.ServiceInfo(True, True, "auto"), "sshd": ra.ServiceInfo(False)},
+                       listening={5985: False, 22: False}, winrm_trusted_hosts="")
+    row = [r for r in ra.evaluate(s) if r.feature == "WinRM / PowerShell remoting"][0]
+    assert "TrustedHosts empty" in row.summary and not row.findings
+
+
+def test_unreadable_trusted_hosts_says_so_rather_than_guessing():
+    s = ra.RemoteState(services={"WinRM": ra.ServiceInfo(True, True, "auto"), "sshd": ra.ServiceInfo(False)},
+                       listening={5985: False, 22: False}, winrm_trusted_hosts=None,
+                       winrm_listener_readable=False)
+    row = [r for r in ra.evaluate(s) if r.feature == "WinRM / PowerShell remoting"][0]
+    assert "TrustedHosts unreadable" in row.summary
+    assert "listener config needs admin to read" in row.summary
+
+
+def test_winrm_off_never_shows_trusted_hosts_detail():
+    s = ra.RemoteState(services={"WinRM": ra.ServiceInfo(True, False, "manual"), "sshd": ra.ServiceInfo(False)},
+                       winrm_trusted_hosts="*")
+    row = [r for r in ra.evaluate(s) if r.feature == "WinRM / PowerShell remoting"][0]
+    assert row.status == "Off" and "TrustedHosts" not in row.summary
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows")
+def test_real_winrm_trusted_hosts_registry_is_readable():
+    # Confirmed live 2026-09-27: the WSMAN\Client branch stays readable even
+    # when WinRM has never been configured (service Stopped/Manual here) --
+    # unlike the WSMan PowerShell provider, which needs the service running
+    # and fails with "cannot connect"/"path does not exist" in that state.
+    st = ra.RemoteState()
+    ra.read_winrm_trusted_hosts(st)
+    assert st.winrm_trusted_hosts is not None
+    ra.read_winrm_listener_access(st)
+    assert st.winrm_listener_readable in (True, False)

@@ -18,8 +18,8 @@ Two things recur here and are stated once:
 from typing import Any, Dict, Tuple
 
 from ..security_reader import (
-    check_admin_shares, check_firewall, check_firewall_stealth, check_llmnr,
-    check_mdns, check_netbios_tcpip, check_network_profile, check_rdp,
+    check_admin_shares, check_firewall, check_firewall_outbound, check_firewall_stealth,
+    check_llmnr, check_mdns, check_netbios_tcpip, check_network_profile, check_rdp,
     check_rdp_nla, check_remote_registry, check_smb_signing, check_smbv1,
     check_telnet, check_winrm, check_wpad,
 )
@@ -104,6 +104,29 @@ CONTROLS: Tuple[SecurityControl, ...] = (
                                 _REVERT_INBOUND),),
         off_steps=(_profile_step("-DefaultInboundAction NotConfigured",
                                  "-DefaultInboundAction ${old}",
+                                 _REVERT_INBOUND),),
+        desired=True,
+        risk=Risk.MEDIUM,
+    ),
+
+    SecurityControl(
+        id="firewall_outbound_blocked",
+        title="Default outbound action: block",
+        category=Category.FIREWALL_NETWORK,
+        description="What the firewall does with outbound traffic that matches "
+                    "no rule.",
+        why_it_matters="Windows allows all outbound traffic by default -- even "
+                       "when this reads 'Not Configured' -- so malware phoning "
+                       "home or exfiltrating data needs no rule of its own to "
+                       "succeed. Blocking by default is real hardening most "
+                       "environments skip, because every legitimate program "
+                       "then needs its own allow rule.",
+        reader=check_firewall_outbound,
+        on_steps=(_profile_step("-DefaultOutboundAction Block",
+                                "-DefaultOutboundAction ${old}",
+                                _REVERT_INBOUND),),
+        off_steps=(_profile_step("-DefaultOutboundAction NotConfigured",
+                                 "-DefaultOutboundAction ${old}",
                                  _REVERT_INBOUND),),
         desired=True,
         risk=Risk.MEDIUM,

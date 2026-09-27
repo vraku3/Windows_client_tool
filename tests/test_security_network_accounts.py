@@ -120,6 +120,77 @@ def test_a_refused_firewall_profile_read_says_so(powershell):
     assert result.get("enabled") is not True
 
 
+def test_not_configured_outbound_is_labelled_allow_not_block(powershell):
+    # The real bug this pins: NotConfigured (0) used to be hardcoded as
+    # "(default: block)" regardless of direction, so the OUTBOUND row (whose
+    # real default is allow) displayed the exact opposite of the truth.
+    powershell.append(("Get-NetFirewallProfile", (0, REAL_FIREWALL_PROFILES, "")))
+
+    result = security_reader.check_firewall_stealth()
+
+    outbound = _detail(result, "Domain Outbound")
+    assert "allow" in outbound.lower() and "block" not in outbound.lower()
+
+
+def test_not_configured_inbound_is_still_labelled_block(powershell):
+    powershell.append(("Get-NetFirewallProfile", (0, REAL_FIREWALL_PROFILES, "")))
+
+    result = security_reader.check_firewall_stealth()
+
+    inbound = _detail(result, "Domain Inbound")
+    assert "block" in inbound.lower()
+
+
+# -- check_firewall_outbound --------------------------------------------------
+
+def test_not_configured_outbound_reads_as_effectively_allowed_not_blocked(powershell):
+    powershell.append(("Get-NetFirewallProfile", (0, REAL_FIREWALL_PROFILES, "")))
+
+    result = security_reader.check_firewall_outbound()
+
+    assert result["available"] is True
+    assert result["enabled"] is False, (
+        "NotConfigured (0) outbound is Windows' real allow-everything default; "
+        "reading it as blocked would be the same bug check_firewall_stealth had for inbound")
+    assert result["color"] == "amber"
+
+
+def test_an_explicitly_blocked_outbound_profile_is_green(powershell):
+    powershell.append(("Get-NetFirewallProfile", (
+        0, '[{"Name":"Public","DefaultOutboundAction":4}]', "")))
+
+    result = security_reader.check_firewall_outbound()
+
+    assert result["color"] == "green" and result["enabled"] is True
+
+
+def test_an_explicitly_allowed_outbound_profile_is_amber_not_green(powershell):
+    powershell.append(("Get-NetFirewallProfile", (
+        0, '[{"Name":"Public","DefaultOutboundAction":2}]', "")))
+
+    result = security_reader.check_firewall_outbound()
+
+    assert result["enabled"] is False and result["color"] == "amber"
+
+
+def test_a_refused_outbound_read_says_so(powershell):
+    powershell.append(("Get-NetFirewallProfile", (1, "", "Access is denied.")))
+
+    result = security_reader.check_firewall_outbound()
+
+    assert result["available"] is False
+    assert result.get("enabled") is not True
+
+
+def test_real_firewall_outbound_is_readable_and_matches_stealth_reading():
+    # Confirmed live 2026-09-27: all three profiles report NotConfigured for
+    # DefaultOutboundAction, so this reads as NOT blocked (amber), while
+    # check_firewall_stealth's inbound reading is separately blocked (green)
+    # -- the two directions really do disagree on this real machine.
+    outbound = security_reader.check_firewall_outbound()
+    assert outbound["available"] is True
+
+
 # -- check_network_profile ---------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [

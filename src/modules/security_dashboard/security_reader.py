@@ -1800,11 +1800,15 @@ def check_network_profile() -> Dict[str, Any]:
 
 #: Get-NetFirewallProfile's DefaultInbound/OutboundAction, read off the live
 #: cmdlet's own enum: NotConfigured=0, Allow=2, Block=4. Nothing maps 0 to
-#: Allow -- NotConfigured means Windows' default applies, and the default
-#: inbound action is Block. Reading 0 as "allow" put a red "Inbound Allowed"
-#: on every machine that had never had an explicit policy set.
-_FIREWALL_ACTIONS = {0: "Not configured (default: block)", 2: "Allow",
-                     4: "Block"}
+#: Allow -- NotConfigured means Windows' default applies, and reading 0 as
+#: "allow" put a red "Inbound Allowed" on every machine that had never had
+#: an explicit policy set. The label stays direction-agnostic here because
+#: Windows' own default is OPPOSITE by direction (block inbound, allow
+#: outbound) -- an earlier version hardcoded "(default: block)" onto this
+#: dict entry and displayed that same wrong claim on the OUTBOUND row too;
+#: `_firewall_default_hint` below adds the correct direction-specific
+#: annotation instead.
+_FIREWALL_ACTIONS = {0: "Not configured", 2: "Allow", 4: "Block"}
 
 
 def _firewall_action(raw) -> str:
@@ -1814,6 +1818,13 @@ def _firewall_action(raw) -> str:
         return _FIREWALL_ACTIONS.get(int(raw), f"Unknown ({raw})")
     except (TypeError, ValueError):
         return f"Unknown ({raw})"
+
+
+def _firewall_default_hint(action: str, direction_default: str) -> str:
+    """`action` with its effective meaning spelled out when Windows' own
+    default applies -- `direction_default` is "block" for inbound, "allow"
+    for outbound."""
+    return f"{action} (default: {direction_default})" if action == "Not configured" else action
 
 
 def check_firewall_stealth() -> Dict[str, Any]:
@@ -1829,8 +1840,8 @@ def check_firewall_stealth() -> Dict[str, Any]:
             name = prof.get("Name", "?")
             ib = _firewall_action(prof.get("DefaultInboundAction"))
             ob = _firewall_action(prof.get("DefaultOutboundAction"))
-            details.append((f"{name} Inbound", ib))
-            details.append((f"{name} Outbound", ob))
+            details.append((f"{name} Inbound", _firewall_default_hint(ib, "block")))
+            details.append((f"{name} Outbound", _firewall_default_hint(ob, "allow")))
             if ib == "Allow":
                 allowed.append(name)
         stealth_ok = not allowed
@@ -1840,6 +1851,44 @@ def check_firewall_stealth() -> Dict[str, Any]:
                 "available": True, "enabled": stealth_ok, "details": details}
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
+
+
+def check_firewall_outbound() -> Dict[str, Any]:
+    """Default outbound action per profile.
+
+    The OPPOSITE trap from `check_firewall_stealth`'s inbound reading:
+    "NotConfigured" means Windows' own default applies, and for OUTBOUND
+    that default is ALLOW -- confirmed live, this machine's three profiles
+    all report NotConfigured for DefaultOutboundAction, and Windows Firewall
+    does not restrict outbound traffic in that state. Reusing the inbound
+    comparison (`action == "Allow"`) here would read NotConfigured as
+    "blocked" and put a green "Outbound Blocked" on a machine that in fact
+    allows everything out -- so only an explicit "Block" counts here.
+    """
+    try:
+        rc, out, err = _ps(
+            "Get-NetFirewallProfile | Select Name,DefaultOutboundAction | ConvertTo-Json -Compress", timeout=15)
+        if rc != 0 or not out:
+            return {"status": "Unknown", "color": "amber", "available": False,
+                    "details": [("Firewall profiles",
+                                 f"Could not read: {(err or out or '').strip()[:80]}")]}
+        data = json.loads(out) if out.strip().startswith("[") else [json.loads(out)]
+        details, open_profiles = [], []
+        for prof in data:
+            name = prof.get("Name", "?")
+            action = _firewall_action(prof.get("DefaultOutboundAction"))
+            blocked = action == "Block"
+            details.append((name, _firewall_default_hint(action, "allow")))
+            if not blocked:
+                open_profiles.append(name)
+        all_blocked = bool(data) and not open_profiles
+        return {"status": ("Outbound Blocked (all profiles)" if all_blocked
+                           else "Outbound Allowed on " + ", ".join(open_profiles)),
+                "color": "green" if all_blocked else "amber",
+                "available": True, "enabled": all_blocked, "details": details}
+    except Exception:
+        return {"status": "Error", "color": "amber", "details": []}
+
 
 def check_listening_ports() -> Dict[str, Any]:
     try:

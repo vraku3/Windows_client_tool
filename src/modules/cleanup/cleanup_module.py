@@ -13,10 +13,13 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
+    QDialog, QListWidget, QPushButton,
 )
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.table_ui import set_role
+from modules.cleanup import cleanup_history
 from modules.cleanup import cleanup_scanner as cs
 from modules.cleanup.tabs import (
     _ScanTab,
@@ -186,6 +189,43 @@ def _with_catalog(curated: dict, *categories: str) -> dict:
     return merged
 
 
+class _CleanupHistoryDialog(QDialog):
+    """Read-only browser over the local Cleanup run history.
+
+    Mirrors QuickFixHistoryDialog (quick_fix_module.py) -- same read-only
+    QListWidget over a capped JSON log, opened from a "History" button.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Cleanup History")
+        self.resize(420, 420)
+        root = QVBoxLayout(self)
+
+        self._list = QListWidget()
+        entries = cleanup_history.recent(limit=20)
+        if entries:
+            for entry in entries:
+                freed = cs.format_size(entry.get("freed_bytes", 0))
+                self._list.addItem(f"{entry['at']} — freed {freed}")
+        else:
+            self._list.addItem("No cleanup runs recorded yet.")
+        root.addWidget(self._list)
+
+        total_lbl = QLabel(
+            f"Total freed (last {len(entries)} run(s)): "
+            f"{cs.format_size(cleanup_history.total_freed_all_time())}")
+        set_role(total_lbl, "muted")
+        root.addWidget(total_lbl)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+
 class CleanupModule(BaseModule):
     name = "Cleanup"
     icon = "🗑️"
@@ -201,11 +241,18 @@ class CleanupModule(BaseModule):
 
         # ── Module-level toolbar ──
         header = QHBoxLayout()
+        self._all_time_lbl = QLabel(
+            f"All-time freed: {cs.format_size(cleanup_history.total_freed_all_time())}")
+        set_role(self._all_time_lbl, "muted")
         self._freed_lbl = QLabel("Freed this session: 0 B")
         self._freed_lbl.setStyleSheet("color: #4caf50; font-weight: bold; padding: 2px 6px;")
         self._freed_bytes = 0
+        history_btn = QPushButton("History")
+        history_btn.clicked.connect(self._show_history)
         header.addStretch()
+        header.addWidget(self._all_time_lbl)
         header.addWidget(self._freed_lbl)
+        header.addWidget(history_btn)
         main_lay.addLayout(header)
 
         # ── Tabs ──
@@ -304,6 +351,12 @@ class CleanupModule(BaseModule):
     def _on_freed(self, nbytes: int):
         self._freed_bytes += nbytes
         self._freed_lbl.setText(f"Freed this session: {cs.format_size(self._freed_bytes)}")
+        cleanup_history.record(nbytes)
+        self._all_time_lbl.setText(
+            f"All-time freed: {cs.format_size(cleanup_history.total_freed_all_time())}")
+
+    def _show_history(self) -> None:
+        _CleanupHistoryDialog(self._tabs.window()).exec()
 
     # ── Auto-scan on tab switch ──
 

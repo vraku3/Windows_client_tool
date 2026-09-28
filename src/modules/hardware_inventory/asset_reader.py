@@ -86,8 +86,30 @@ def read_monitors() -> Tuple[List[ap.MonitorRecord], str]:
 class MemoryReport:
     slots: List[ap.MemorySlot]
     total_slots: Optional[int] = None
+    max_capacity_bytes: Optional[int] = None
     ecc_mode: str = ""          # controller-level error correction, "" = unknown
     error: str = ""
+
+
+def _max_capacity_bytes(arr) -> Optional[int]:
+    """Win32_PhysicalMemoryArray.MaxCapacity is a uint32 in KB.  Microsoft's
+    documented convention is that 0x80000000 there is a sentinel meaning "the
+    real figure does not fit in 32 bits, read MaxCapacityEx instead" (a
+    uint64, also KB).  Measured on this board (ASRock X870E Taichi):
+    MaxCapacity itself already reports 134217728 KB = 128 GB across 4 slots,
+    so the sentinel does not fire here, but a board rated for 2 TB+ would
+    need it -- checking is nearly free and wrong on the boards it applies to.
+    """
+    try:
+        cap_kb = int(arr.MaxCapacity or 0)
+    except (TypeError, ValueError):
+        return None
+    if cap_kb == 0x80000000:
+        try:
+            cap_kb = int(getattr(arr, "MaxCapacityEx", 0) or 0)
+        except (TypeError, ValueError):
+            cap_kb = 0
+    return cap_kb * 1024 if cap_kb else None
 
 
 def read_memory_slots() -> MemoryReport:
@@ -105,19 +127,21 @@ def read_memory_slots() -> MemoryReport:
         } for s in c.Win32_PhysicalMemory()]
     except Exception as e:
         logger.warning("Win32_PhysicalMemory failed: %s", e)
-        return MemoryReport([], None, "", f"Could not read memory modules ({e}).")
+        return MemoryReport([], None, None, "", f"Could not read memory modules ({e}).")
     total: Optional[int] = None
     ecc_code = None
+    max_cap: Optional[int] = None
     try:
         arr = _wmi().Win32_PhysicalMemoryArray()
         if arr:
             total = sum(int(a.MemoryDevices or 0) for a in arr) or None
             ecc_code = arr[0].MemoryErrorCorrection
+            max_cap = _max_capacity_bytes(arr[0])
     except Exception as e:
         logger.warning("Win32_PhysicalMemoryArray failed: %s", e)
     err = "" if total is not None else "Slot count unavailable; empty slots are not shown."
     ecc = ap.ecc_mode_name(ecc_code) if ecc_code is not None else ""
-    return MemoryReport(ap.build_slot_map(sticks, total), total, ecc, err)
+    return MemoryReport(ap.build_slot_map(sticks, total), total, max_cap, ecc, err)
 
 
 def _read_firmware_mode() -> Optional[str]:
@@ -267,7 +291,8 @@ def read_asset_record() -> Tuple[Dict[str, str], List[ap.Finding]]:
 
     overview = dict(hr.get_overview())
     drives = physical_drives()
-    slots = read_memory_slots().slots
+    mem_report = read_memory_slots()
+    slots = mem_report.slots
     monitors, _merr = read_monitors()
     fw = read_firmware()
     _d, ver, serial, _e = _read_bios()
@@ -288,4 +313,4 @@ def read_asset_record() -> Tuple[Dict[str, str], List[ap.Finding]]:
         bios=f"{ver} ({fw.bios_date.isoformat()})" if fw.bios_date else ver,
         fw=fw,
     )
-    return rec, ap.firmware_findings(fw) + ap.memory_findings(slots)
+    return rec, ap.firmware_findings(fw) + ap.memory_findings(slots, mem_report.max_capacity_bytes)

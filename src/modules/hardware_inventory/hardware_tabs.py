@@ -183,8 +183,12 @@ def _slot_cells(s: ap.MemorySlot):
 def setup_memory(layout, data) -> None:
     summary, report = data
     layout.addWidget(heading("Summary"))
+    extra = []
+    if report.ecc_mode:
+        extra.append(("Error correction", report.ecc_mode))
+    extra.append(("Max capacity (motherboard)", ap.max_capacity_text(report.max_capacity_bytes)))
     t1 = make_kv_table()
-    fill_kv(t1, list(summary) + ([("Error correction", report.ecc_mode)] if report.ecc_mode else []))
+    fill_kv(t1, list(summary) + extra)
     fit_table_height(t1)
     layout.addWidget(t1)
     layout.addWidget(heading(
@@ -205,7 +209,8 @@ def setup_memory(layout, data) -> None:
             t2.setItem(r, c, item)
     fit_table_height(t2)
     layout.addWidget(t2)
-    add_findings(layout, ap.memory_findings(report.slots), "Memory configuration looks consistent.")
+    add_findings(layout, ap.memory_findings(report.slots, report.max_capacity_bytes),
+                "Memory configuration looks consistent.")
     layout.addStretch(1)
 
 

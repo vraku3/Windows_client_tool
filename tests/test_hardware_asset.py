@@ -82,6 +82,28 @@ def test_speed_notes_and_findings():
     assert any("Mixed" in f.title for f in ap.memory_findings(mixed))
 
 
+def test_max_capacity_text():
+    assert ap.max_capacity_text(None) == "Unknown (could not read)"
+    assert ap.max_capacity_text(0) == "Unknown (could not read)"
+    assert ap.max_capacity_text(128 * 1024 ** 3) == "128 GB"
+    assert ap.max_capacity_text(2 * 1024 ** 4) == "2.0 TB"
+
+
+def test_room_to_expand_finding_only_when_headroom_exists():
+    one_slot = ap.build_slot_map([_stick(cap=32 * 1024 ** 3)], 4)  # 32 GB in, 3 empty
+    findings = ap.memory_findings(one_slot, max_capacity_bytes=128 * 1024 ** 3)
+    room = [f for f in findings if f.title == "Room to expand"]
+    assert len(room) == 1
+    assert "32 GB installed" in room[0].detail and "128 GB" in room[0].detail
+    # Maxed-out board: no headroom finding even though max capacity is known.
+    full = ap.build_slot_map([_stick(cap=64 * 1024 ** 3), _stick("DIMM 2", cap=64 * 1024 ** 3)], 2)
+    assert not [f for f in ap.memory_findings(full, max_capacity_bytes=128 * 1024 ** 3)
+               if f.title == "Room to expand"]
+    # Unknown max capacity: no headroom finding invented from nothing.
+    assert not [f for f in ap.memory_findings(one_slot, max_capacity_bytes=None)
+               if f.title == "Room to expand"]
+
+
 def test_ecc_bits_detected_from_widths():
     ecc = ap.build_slot_map([dict(_stick(), TotalWidth=72)], 1)[0]
     assert ecc.ecc_bits
@@ -186,6 +208,10 @@ def test_real_machine_monitors_and_firmware_are_plausible():
         for s in slots.slots:
             if s.populated:
                 assert s.capacity_bytes >= 512 * 1024 ** 2
+        # Measured on this machine (ASRock X870E Taichi): Win32_PhysicalMemoryArray
+        # reports MaxCapacity 134217728 KB (128 GB) across 4 DIMM slots.
+        if slots.total_slots == 4:
+            assert slots.max_capacity_bytes == 128 * 1024 ** 3
         fw = ar.read_firmware()
         assert fw.firmware_mode in (None, "UEFI", "Legacy BIOS")
         battery, note = ar.read_battery()

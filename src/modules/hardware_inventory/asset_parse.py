@@ -342,7 +342,15 @@ def firmware_findings(fw: FirmwareInfo, today: Optional[date] = None) -> List[Fi
     return out
 
 
-def memory_findings(slots: Sequence[MemorySlot]) -> List[Finding]:
+def max_capacity_text(n: Optional[int]) -> str:
+    """Board's max supported RAM, from Win32_PhysicalMemoryArray.MaxCapacity(Ex)."""
+    if not n:
+        return "Unknown (could not read)"
+    gb = n / 1024 ** 3
+    return f"{gb / 1024:.1f} TB" if gb >= 1024 else f"{gb:.0f} GB"
+
+
+def memory_findings(slots: Sequence[MemorySlot], max_capacity_bytes: Optional[int] = None) -> List[Finding]:
     out: List[Finding] = []
     filled = [s for s in slots if s.populated]
     if not filled:
@@ -363,6 +371,12 @@ def memory_findings(slots: Sequence[MemorySlot]) -> List[Finding]:
         if note.startswith("running below"):
             out.append(Finding("warning", f"{s.locator} {note}",
                                f"Rated {s.rated_mhz} MHz, configured {s.configured_mhz} MHz."))
+    installed = sum(s.capacity_bytes for s in filled)
+    if max_capacity_bytes and installed < max_capacity_bytes:
+        headroom = max_capacity_bytes - installed
+        out.append(Finding("info", "Room to expand",
+                           f"{_fmt_gb(installed)} installed of {max_capacity_text(max_capacity_bytes)} "
+                           f"this board supports -- {_fmt_gb(headroom)} of headroom."))
     return out
 
 

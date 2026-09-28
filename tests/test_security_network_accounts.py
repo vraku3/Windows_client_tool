@@ -191,6 +191,55 @@ def test_real_firewall_outbound_is_readable_and_matches_stealth_reading():
     assert outbound["available"] is True
 
 
+# -- check_firewall_logging ---------------------------------------------------
+
+_LOGGING_KEYS = {
+    "Domain": r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile\Logging",
+    "Private": r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile\Logging",
+    "Public": r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile\Logging",
+}
+
+
+def test_no_logdroppedpackets_value_reads_as_off_not_unknown(registry):
+    # The real reading on this machine, 2026-09-28: the DWORD is absent on
+    # all three profiles, which is Windows' own shipped default (off), not a
+    # refusal -- this branch is confirmed readable unelevated.
+    result = security_reader.check_firewall_logging()
+
+    assert result["available"] is True
+    assert result["enabled"] is False
+    assert result["color"] == "amber"
+
+
+def test_all_profiles_logging_dropped_packets_is_green(registry):
+    for key in _LOGGING_KEYS.values():
+        registry[(key, "LogDroppedPackets")] = 1
+
+    result = security_reader.check_firewall_logging()
+
+    assert result["enabled"] is True
+    assert result["color"] == "green"
+
+
+def test_one_profile_missing_logging_is_still_amber(registry):
+    registry[(_LOGGING_KEYS["Domain"], "LogDroppedPackets")] = 1
+    registry[(_LOGGING_KEYS["Private"], "LogDroppedPackets")] = 1
+    # Public left unset.
+
+    result = security_reader.check_firewall_logging()
+
+    assert result["enabled"] is False
+    assert "Public" in result["status"]
+
+
+def test_real_firewall_logging_is_readable_unelevated():
+    # Confirmed live 2026-09-28, unelevated: reads a definite value, never a
+    # refusal, on the same FirewallPolicy branch CLAUDE.md already documents
+    # as readable without admin for firewall rules.
+    result = security_reader.check_firewall_logging()
+    assert result["available"] is True
+
+
 # -- check_network_profile ---------------------------------------------------
 
 @pytest.mark.parametrize("raw,expected", [

@@ -18,13 +18,16 @@ Two things recur here and are stated once:
 from typing import Any, Dict, Tuple
 
 from ..security_reader import (
-    check_admin_shares, check_firewall, check_firewall_outbound, check_firewall_stealth,
+    check_admin_shares, check_firewall, check_firewall_logging,
+    check_firewall_outbound, check_firewall_stealth,
     check_llmnr, check_mdns, check_netbios_tcpip, check_network_profile, check_rdp,
     check_rdp_nla, check_remote_registry, check_smb_signing, check_smbv1,
     check_telnet, check_winrm, check_wpad,
 )
 from .model import Category, Risk, SecurityControl
 
+_FIREWALL_POLICY = r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy"
+_FW_LOGGING_PROFILES = ("DomainProfile", "StandardProfile", "PublicProfile")
 _DNSCLIENT_POLICY = r"HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient"
 _DNSCACHE = r"HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters"
 _NETBT = r"HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters"
@@ -135,6 +138,31 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         # audience that wants that trade-off.
         desired=False,
         risk=Risk.MEDIUM,
+    ),
+
+    SecurityControl(
+        id="firewall_logging_dropped",
+        title="Firewall logs blocked connections",
+        category=Category.FIREWALL_NETWORK,
+        description="Whether a connection attempt the firewall dropped is "
+                    "written to pfirewall.log, per profile.",
+        why_it_matters="Every other control on this page decides what gets "
+                       "through; this one decides whether a block leaves any "
+                       "trace at all. Off, which is Windows' own shipped "
+                       "default, means a probe blocked five minutes ago is "
+                       "already gone -- nothing on the machine records that "
+                       "it happened. Unlike blocking outbound by default, "
+                       "turning logging on breaks nothing: it only writes a "
+                       "line to a file.",
+        reader=check_firewall_logging,
+        on_steps=tuple(_dword(f"{_FIREWALL_POLICY}\\{profile}\\Logging",
+                              "LogDroppedPackets", 1)
+                       for profile in _FW_LOGGING_PROFILES),
+        off_steps=tuple(_dword(f"{_FIREWALL_POLICY}\\{profile}\\Logging",
+                               "LogDroppedPackets", 0)
+                        for profile in _FW_LOGGING_PROFILES),
+        desired=True,
+        risk=Risk.LOW,
     ),
 
     # -- name resolution: the three protocols Responder answers -------------

@@ -1890,6 +1890,50 @@ def check_firewall_outbound() -> Dict[str, Any]:
         return {"status": "Error", "color": "amber", "details": []}
 
 
+#: HKLM\...\FirewallPolicy is the same branch CLAUDE.md already documents as
+#: readable unelevated for firewall rules -- confirmed live 2026-09-28,
+#: unelevated, for the `Logging` subkey too: all three profiles read
+#: `LogDroppedPackets`=0 (Windows' own shipped default -- logging is off out
+#: of the box). Registry, not `Get-NetFirewallProfile`, for the same reason
+#: every other writable control in this file is registry-first: BackupService
+#: can restore a DWORD exactly and cannot revert a script.
+_FIREWALL_LOGGING_KEYS = {
+    "Domain": r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\DomainProfile\Logging",
+    "Private": r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\StandardProfile\Logging",
+    "Public": r"HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\PublicProfile\Logging",
+}
+
+
+def check_firewall_logging() -> Dict[str, Any]:
+    """Whether a connection the firewall dropped is written to pfirewall.log.
+
+    Distinct from every other firewall control here: those decide what gets
+    through, this decides whether a block leaves any trace at all. Measured
+    live 2026-09-28 (unelevated): all three profiles' `LogDroppedPackets` DWORD
+    is absent, which is Windows' own default of 0/off -- a probe the firewall
+    blocked today is gone the moment the packet is dropped, nothing to review
+    after the fact. A missing value is a definite "off", the same reading
+    `check_admin_shares`/`check_smb_signing` give their own absent DWORDs, not
+    a refusal -- this branch is confirmed readable without elevation.
+    """
+    try:
+        details, off_profiles = [], []
+        for name, key in _FIREWALL_LOGGING_KEYS.items():
+            val = _reg_read(key, "LogDroppedPackets")
+            logging_on = val == 1
+            details.append((f"{name} dropped-packet logging",
+                            "On" if logging_on else "Off"))
+            if not logging_on:
+                off_profiles.append(name)
+        all_on = not off_profiles
+        return {"status": ("Logging blocked connections (all profiles)" if all_on
+                           else "Not logging on " + ", ".join(off_profiles)),
+                "color": "green" if all_on else "amber",
+                "available": True, "enabled": all_on, "details": details}
+    except Exception:
+        return {"status": "Error", "color": "amber", "details": []}
+
+
 def check_listening_ports() -> Dict[str, Any]:
     try:
         rc, out, _ = _cmd_run(["netstat", "-an"], timeout=15)

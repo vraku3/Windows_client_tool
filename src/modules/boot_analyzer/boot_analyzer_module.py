@@ -142,20 +142,15 @@ class BootAnalyzerModule(BaseModule):
         def do_analyze(worker):
             info = {}
 
-            # Boot type (UEFI vs BIOS)
+            # Boot type (UEFI vs BIOS) + Secure Boot state, read straight
+            # from the registry -- no elevation needed, unlike the
+            # `bcdedit /enum firmware` this used to shell out to (see
+            # boot_history.read_firmware_type's docstring).
             try:
-                result = subprocess.run(
-                    ["bcdedit", "/enum", "firmware"],
-                    capture_output=True, text=True, timeout=10,
-                    creationflags=subprocess.CREATE_NO_WINDOW,
-                )
-                if result.returncode != 0:
-                    info["boot_type"] = "Unknown"      # refused: not proof of BIOS
-                else:
-                    info["boot_type"] = "UEFI" if "UEFI" in result.stdout else "BIOS/Legacy"
+                info["boot_type"], info["secure_boot"] = boot_history.read_firmware_type()
             except Exception:
-                logger.debug("Failed to detect boot type", exc_info=True)
-                info["boot_type"] = "Unknown"
+                logger.warning("Failed to detect firmware type", exc_info=True)
+                info["boot_type"], info["secure_boot"] = "Unknown", None
 
             # Boot timeout and entry count from one bcdedit run. A refusal
             # (bcdedit needs elevation) stays None -- never a made-up "Optimal".
@@ -243,14 +238,22 @@ class BootAnalyzerModule(BaseModule):
             if item.widget():
                 item.widget().deleteLater()
 
+        boot_mode_detail = "BIOS/Legacy mode — consider migrating to UEFI for better performance"
+        if info.get("boot_type") == "Unknown":
+            boot_mode_detail = "Could not read the firmware configuration from the registry"
+        elif info.get("boot_type") == "UEFI":
+            secure_boot = info.get("secure_boot")
+            secure_boot_note = (
+                f"Secure Boot {'On' if secure_boot else 'Off'}" if secure_boot is not None
+                else "Secure Boot state could not be read"
+            )
+            boot_mode_detail = f"UEFI is faster and more secure · {secure_boot_note}"
+
         cards_data = [
             (
                 "🖥️ Boot Mode",
                 info.get("boot_type", "N/A"),
-                "UEFI is faster and more secure" if info.get("boot_type") == "UEFI"
-                else "Could not read the firmware configuration (bcdedit needs administrator)"
-                if info.get("boot_type") == "Unknown"
-                else "BIOS/Legacy mode — consider migrating to UEFI for better performance"
+                boot_mode_detail,
             ),
             (
                 "⏱️ Boot Timeout",

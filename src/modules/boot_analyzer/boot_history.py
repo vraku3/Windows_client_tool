@@ -268,6 +268,38 @@ def uptime_seconds() -> float:
     return ctypes.windll.kernel32.GetTickCount64() / 1000.0
 
 
+def read_firmware_type() -> Tuple[str, Optional[bool]]:
+    """(firmware, secure_boot) -- readable with NO elevation at all.
+
+    `bcdedit /enum firmware` needs administrator; refused, it exits 1 with
+    empty stdout, which BootAnalyzerModule used to read as "BIOS/Legacy" on
+    a real UEFI machine before that call was guarded, and still only reports
+    "Unknown" once it was. `SecureBoot\\State` is a better source for the
+    same fact and needs no elevation at all: the subkey is created only on
+    UEFI firmware (confirmed unelevated on this machine: the key exists and
+    `UEFISecureBootEnabled` reads back False), so its absence is a real
+    Legacy BIOS signal, not a refusal -- the same technique
+    `hardware_inventory/asset_reader.py` and
+    `security_dashboard/security_reader.py` already use for this exact
+    fact. Boot Analyzer had neither, so an ordinary user opening it saw
+    "Unknown" for a reading two other tabs already give unelevated.
+    """
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Control\SecureBoot\State") as key:
+            try:
+                secure_boot = bool(winreg.QueryValueEx(key, "UEFISecureBootEnabled")[0])
+            except OSError as error:
+                logger.debug("UEFISecureBootEnabled not readable: %s", error)
+                secure_boot = None
+            return "UEFI", secure_boot
+    except FileNotFoundError:
+        return "Legacy BIOS", None
+    except OSError as error:
+        logger.warning("Firmware type registry read refused: %s", error)
+        return "Unknown", None
+
+
 def read_boot_facts(boots: int = 20, slow_events: int = 300) -> BootFacts:
     facts = BootFacts()
     events, why = _query(PERF_LOG, "*[System[(EventID=100)]]", boots)

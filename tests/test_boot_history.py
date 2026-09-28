@@ -1,5 +1,6 @@
 """Boot history parsing (pure) and a plausibility pass against the real logs."""
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 from modules.boot_analyzer import boot_history as bh
 
@@ -109,6 +110,67 @@ def test_uptime_note_explains_fast_startup_carry_over():
 
 def test_trend_note_handles_no_boots():
     assert "No boot events" in bh.trend_note([])
+
+
+def _key_cm():
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=MagicMock())
+    cm.__exit__ = MagicMock(return_value=False)
+    return cm
+
+
+def test_read_firmware_type_uefi_secure_boot_on():
+    with patch("winreg.OpenKey", return_value=_key_cm()), \
+         patch("winreg.QueryValueEx", return_value=(1, 4)):
+        firmware, secure_boot = bh.read_firmware_type()
+    assert firmware == "UEFI"
+    assert secure_boot is True
+
+
+def test_read_firmware_type_uefi_secure_boot_off():
+    with patch("winreg.OpenKey", return_value=_key_cm()), \
+         patch("winreg.QueryValueEx", return_value=(0, 4)):
+        firmware, secure_boot = bh.read_firmware_type()
+    assert firmware == "UEFI"
+    assert secure_boot is False
+
+
+def test_read_firmware_type_uefi_but_secure_boot_value_unreadable():
+    with patch("winreg.OpenKey", return_value=_key_cm()), \
+         patch("winreg.QueryValueEx", side_effect=OSError("refused")):
+        firmware, secure_boot = bh.read_firmware_type()
+    assert firmware == "UEFI"
+    assert secure_boot is None
+
+
+def test_read_firmware_type_legacy_bios_key_absent():
+    """Key does not exist at all -- a real, unelevated Legacy BIOS signal."""
+    with patch("winreg.OpenKey", side_effect=FileNotFoundError()):
+        firmware, secure_boot = bh.read_firmware_type()
+    assert firmware == "Legacy BIOS"
+    assert secure_boot is None
+
+
+def test_read_firmware_type_refused_is_unknown_never_a_guess():
+    with patch("winreg.OpenKey", side_effect=PermissionError()):
+        firmware, secure_boot = bh.read_firmware_type()
+    assert firmware == "Unknown"
+    assert secure_boot is None
+
+
+def test_read_firmware_type_real_machine():
+    """Real, unelevated read on this machine.
+
+    Confirmed live 2026-09-28 (unelevated): `Test-Path
+    HKLM:\\SYSTEM\\CurrentControlSet\\Control\\SecureBoot\\State` is True and
+    `UEFISecureBootEnabled` reads back 0 -- a real UEFI machine with Secure
+    Boot off. `bcdedit /enum firmware` on the very same machine, same
+    privilege level, exits 1 "Access is denied" with empty stdout, which is
+    the reading this function replaces.
+    """
+    firmware, secure_boot = bh.read_firmware_type()
+    assert firmware == "UEFI"
+    assert secure_boot is False
 
 
 def test_real_logs_are_plausible():

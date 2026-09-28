@@ -25,6 +25,7 @@ from modules.gpresult.tweak_conflicts import (
     load_tweak_definitions,
     normalise_key,
     policy_key_path,
+    policy_managed_tweak_keys,
     registry_steps,
 )
 
@@ -398,6 +399,54 @@ def test_definitions_that_are_not_tweak_lists_are_skipped_quietly(tmp_path):
     assert [t["id"] for t in loaded] == ["t"]
     assert notes == []
     assert loaded[0]["_source_file"] == "real.json"
+
+
+# --------------------------------------------------------------------------
+# policy_managed_tweak_keys -- what tweaks_module.py's GPO badge is built on
+# --------------------------------------------------------------------------
+
+def test_a_tweak_with_no_policy_branch_steps_is_absent_from_the_map():
+    tweaks = [tweak("t1", reg(r"HKLM\Software\Vendor\App", "Setting", 1))]
+    assert policy_managed_tweak_keys(tweaks=tweaks) == {}
+
+
+def test_a_tweak_writing_into_a_policies_branch_is_mapped_by_id():
+    tweaks = [tweak("disable_consumer_features", reg(CLOUD, "DisableWindowsConsumerFeatures", 1))]
+    result = policy_managed_tweak_keys(tweaks=tweaks)
+    assert list(result.keys()) == ["disable_consumer_features"]
+    assert result["disable_consumer_features"] == [CLOUD]
+
+
+def test_several_steps_under_the_same_managed_key_are_not_duplicated():
+    tweaks = [tweak("t1", reg(CLOUD, "A", 1), reg(CLOUD, "B", 1))]
+    result = policy_managed_tweak_keys(tweaks=tweaks)
+    assert result["t1"] == [CLOUD]
+
+
+def test_a_registry_delete_step_into_a_managed_branch_still_counts():
+    tweaks = [tweak("t1", reg_delete(CLOUD, "SomeValue"))]
+    result = policy_managed_tweak_keys(tweaks=tweaks)
+    assert result["t1"] == [CLOUD]
+
+
+def test_non_registry_steps_are_ignored_by_the_policy_map():
+    tweaks = [tweak("t1", {"type": "service", "name": "Fax", "start_type": "disabled"})]
+    assert policy_managed_tweak_keys(tweaks=tweaks) == {}
+
+
+def test_a_tweak_with_no_id_is_never_mapped():
+    tweaks = [{"name": "no id", "steps": [reg(CLOUD, "X", 1)]}]
+    assert policy_managed_tweak_keys(tweaks=tweaks) == {}
+
+
+def test_real_definitions_have_real_policy_managed_tweaks():
+    # Confirmed live: this app's own ~700 real tweaks include a real,
+    # measurable number of registry steps under a `\Policies\` branch --
+    # this is what tweaks_module.py's GPO badge warns about, so the map
+    # must not come back empty against the real definition files.
+    result = policy_managed_tweak_keys()
+    assert len(result) > 0
+    assert all(keys for keys in result.values())
 
 
 if __name__ == "__main__":

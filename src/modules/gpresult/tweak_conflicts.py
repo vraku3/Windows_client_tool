@@ -531,6 +531,42 @@ def _conflict_for(
     )
 
 
+def policy_managed_tweak_keys(
+    tweaks: Optional[Sequence[Dict[str, Any]]] = None,
+    definitions_dir: Optional[str] = None,
+) -> Dict[str, List[str]]:
+    """Tweak id -> the distinct registry keys, among that tweak's OWN steps,
+    that sit inside a Group-Policy-managed branch (`\\Policies\\`).
+
+    This needs no `Registry.pol` and no elevation -- it is a fact about the
+    tweak DEFINITION, not about whether a live GPO exists today to fight over
+    it. Measured on this real, non-domain-joined machine (2026-09-28):
+    `find_conflicts()` reports zero conflicts because there is no local GPO
+    to collide with, but 288 of the app's 814 registry steps still write into
+    a `\\Policies\\` branch the Registry client-side extension owns --
+    exactly the steps this maps by tweak id, so a machine with no policy
+    today can still be told which of its tweaks a future GPO would silently
+    take back. This is what `tweaks_module.py` surfaces before Apply; the
+    aggregate count alone (`ConflictReport.policy_branch_steps`) told nobody
+    WHICH tweak was at risk, and it lived only in the separate Group Policy
+    pane, which `tweaks_module.py` never imported at all.
+    """
+    if tweaks is None:
+        tweaks = load_tweak_definitions(definitions_dir)
+    result: Dict[str, List[str]] = {}
+    for tweak, _index, step in registry_steps(tweaks):
+        key = step.get("key", "")
+        if not is_policy_managed_key(key):
+            continue
+        tweak_id = str(tweak.get("id", ""))
+        if not tweak_id:
+            continue
+        keys = result.setdefault(tweak_id, [])
+        if key not in keys:
+            keys.append(key)
+    return result
+
+
 def find_conflicts(
     tweaks: Optional[Sequence[Dict[str, Any]]] = None,
     pol_files: Optional[Sequence[PolFile]] = None,

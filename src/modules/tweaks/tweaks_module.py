@@ -21,6 +21,7 @@ from modules.tweaks.os_context import get_os_context
 from modules.tweaks.app_catalog import AppCatalog, PROTECTED_APPS_DEFAULT
 from modules.tweaks.preset_manager import PresetManager
 from modules.tweaks.tweak_categories import CATEGORY_FILES
+from modules.gpresult.tweak_conflicts import policy_managed_tweak_keys
 from core.semantic_colors import semantic
 from ui.error_banner import ErrorBanner
 
@@ -100,6 +101,11 @@ class _DetailsPanel(QFrame):
         self._desc.setStyleSheet("color: #aaaaaa;")
         layout.addWidget(self._desc)
 
+        self._policy_warning = QLabel()
+        self._policy_warning.setWordWrap(True)
+        self._policy_warning.hide()
+        layout.addWidget(self._policy_warning)
+
         layout.addWidget(QLabel("Steps:"))
         self._steps = QTextEdit()
         self._steps.setReadOnly(True)
@@ -119,7 +125,20 @@ class _DetailsPanel(QFrame):
 
         self._tweak = None
         self._status_cache: Dict[str, tuple] = {}
+        self._policy_managed: Dict[str, List[str]] = {}
         self._apply_btn.clicked.connect(self._on_apply_clicked)
+
+    def set_policy_managed_map(self, policy_managed: Dict[str, List[str]]) -> None:
+        """Tweak id -> Group-Policy-managed registry keys among its steps.
+
+        From `tweak_conflicts.policy_managed_tweak_keys()` — see that
+        docstring for the measured real-machine count (288 of 814 registry
+        steps land in a `\\Policies\\` branch here). Set once, at widget
+        build time; re-rendered on the next `set_tweak()`.
+        """
+        self._policy_managed = policy_managed
+        if self._tweak is not None:
+            self.set_tweak(self._tweak)
 
     def update_status(self, tweak_id: str, status: str, reason: str) -> None:
         """Remember every verdict, and repaint if it is the one on screen.
@@ -154,6 +173,7 @@ class _DetailsPanel(QFrame):
             self._desc.setText("Click a tweak to see its details.")
             self._steps.setText("")
             self._presets.setText("")
+            self._policy_warning.hide()
             self._apply_btn.setEnabled(False)
             return
 
@@ -165,6 +185,21 @@ class _DetailsPanel(QFrame):
         self._risk.setText(f"<span style='color:{risk_color}'>RISK: {risk.upper()}</span>")
 
         self._desc.setText(tweak.get("description", "No description."))
+
+        managed_keys = self._policy_managed.get(tweak.get("id", ""))
+        if managed_keys:
+            info_color = semantic("info")
+            key_list = "<br>".join(_escape(k) for k in managed_keys)
+            self._policy_warning.setText(
+                f"<span style='color:{info_color}'>&#9888; Writes into a Group "
+                f"Policy managed branch:</span><br>{key_list}<br>"
+                "<span style='color:#999999'>If this machine later gets a local "
+                "or domain GPO for this path, it can take this tweak back "
+                "without warning — see the Group Policy pane's Policy Audit "
+                "tab for whether one exists today.</span>")
+            self._policy_warning.show()
+        else:
+            self._policy_warning.hide()
 
         steps_text = ""
         for i, step in enumerate(tweak.get("steps", [])):
@@ -209,7 +244,8 @@ class _DetailsPanel(QFrame):
 # ---------------------------------------------------------------------------
 
 class TweakRow(QWidget):
-    def __init__(self, tweak: Dict, parent: Optional[QWidget] = None):
+    def __init__(self, tweak: Dict, parent: Optional[QWidget] = None,
+                 policy_keys: Optional[List[str]] = None):
         super().__init__(parent)
         self.tweak = tweak
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -222,9 +258,33 @@ class TweakRow(QWidget):
         layout.addWidget(self.checkbox)
 
         name_label = QLabel(tweak["name"])
-        name_label.setToolTip(tweak.get("description", ""))
+        tooltip = tweak.get("description", "")
+        if policy_keys:
+            # From tweak_conflicts.policy_managed_tweak_keys() — see that
+            # docstring for the measured real-machine count. Shown as a
+            # tooltip badge, not a column, so an unmanaged majority of rows
+            # (526 of 814 registry steps here) pay nothing for it.
+            tooltip = (tooltip + "\n\n" if tooltip else "") + (
+                "⚠ Writes into a Group Policy managed branch:\n" +
+                "\n".join(policy_keys) +
+                "\nA future local or domain GPO for this path can take this "
+                "tweak back without warning.")
+        name_label.setToolTip(tooltip)
         name_label.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
         layout.addWidget(name_label, stretch=1)
+
+        self.policy_keys = policy_keys
+        if policy_keys:
+            gpo_badge = QLabel("GPO")
+            gpo_badge.setToolTip(
+                "This tweak writes into a Group Policy managed registry "
+                "branch — a future GPO can revert it without warning. See "
+                "the details panel or the Group Policy pane's Policy Audit.")
+            gpo_badge.setStyleSheet("color: %s; font-weight: 600;" % semantic("info"))
+            gpo_badge.setFixedWidth(36)
+            gpo_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            gpo_badge.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
+            layout.addWidget(gpo_badge)
 
         risk = tweak.get("risk", "low")
         risk_label = QLabel(risk.upper())
@@ -310,9 +370,11 @@ class TweakRow(QWidget):
 # ---------------------------------------------------------------------------
 
 class TweakTab(QWidget):
-    def __init__(self, tweaks: List[Dict], parent: Optional[QWidget] = None):
+    def __init__(self, tweaks: List[Dict], parent: Optional[QWidget] = None,
+                 policy_managed: Optional[Dict[str, List[str]]] = None):
         super().__init__(parent)
         self._tweaks = tweaks
+        policy_managed = policy_managed or {}
         self._rows: Dict[str, TweakRow] = {}
         self._filter_text = ""
         self._filter_risk = "all"
@@ -374,7 +436,7 @@ class TweakTab(QWidget):
         self._container_layout.setContentsMargins(0, 0, 0, 0)
 
         for tweak in tweaks:
-            row = TweakRow(tweak)
+            row = TweakRow(tweak, policy_keys=policy_managed.get(tweak["id"]))
             self._rows[tweak["id"]] = row
             self._container_layout.addWidget(row)
 
@@ -818,11 +880,27 @@ class TweaksModule(BaseModule):
         # Main: tabs with details panel side-by-side
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self._tabs = QTabWidget()
+        all_tweaks: List[Dict] = []
+        category_tweaks: Dict[str, List[Dict]] = {}
         for category, filename in _CATEGORY_FILES.items():
             path = os.path.join(_DEFS_DIR, filename)
             tweaks = TweakEngine.load_definitions(path)
-            tab = TweakTab(tweaks)
+            category_tweaks[category] = tweaks
+            all_tweaks.extend(tweaks)
+
+        # Which of these tweaks write into a Group-Policy-managed registry
+        # branch (`\Policies\...`) -- a fact about the DEFINITION, computed
+        # once here rather than per-row. See policy_managed_tweak_keys()'s
+        # docstring for the measured real-machine count.
+        try:
+            policy_managed = policy_managed_tweak_keys(tweaks=all_tweaks)
+        except Exception:
+            logger.warning("Could not compute policy-managed tweak keys", exc_info=True)
+            policy_managed = {}
+
+        self._tabs = QTabWidget()
+        for category, tweaks in category_tweaks.items():
+            tab = TweakTab(tweaks, policy_managed=policy_managed)
             tab._category_name = category
             self._tab_widgets[category] = tab
             self._tabs.addTab(tab, category)
@@ -840,6 +918,7 @@ class TweaksModule(BaseModule):
         main_splitter.addWidget(self._tabs)
 
         self._details_panel = _DetailsPanel()
+        self._details_panel.set_policy_managed_map(policy_managed)
         self._details_panel.apply_requested.connect(self._on_apply_single_tweak)
         main_splitter.addWidget(self._details_panel)
         main_splitter.setSizes([700, 300])

@@ -110,6 +110,9 @@ class _MonitorCard(QFrame):
                          ", ".join(f"{r:g}" for r in view.rates_at_resolution)))
         if view.device_name:
             rows.append(("Device", view.device_name))
+        hdr_text = vm.hdr_text(view)
+        if hdr_text:
+            rows.append(("HDR", hdr_text))
         audio = _audio_text(view)
         if audio:
             rows.append(("Audio", audio))
@@ -126,6 +129,13 @@ class _MonitorCard(QFrame):
             note = QLabel(f"Could run at {best:g} Hz here")
             note.setObjectName("statusWarning")
             layout.addWidget(note)
+
+        hdr_warning = vm.hdr_warning(view)
+        if hdr_warning:
+            warning = QLabel(hdr_warning)
+            warning.setObjectName("statusWarning")
+            warning.setWordWrap(True)
+            layout.addWidget(warning)
 
         self._add_refresh_buttons(layout, view)
         self._add_audio_toggle(layout, view)

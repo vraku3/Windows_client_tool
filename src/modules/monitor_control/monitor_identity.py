@@ -23,6 +23,16 @@ rather than an error:
   `\\.\DISPLAY2` on this machine and source 0 is `\\.\DISPLAY1`, but that
   correspondence is a coincidence of enumeration order and is not relied on
   anywhere: the GDI name is always asked for.
+* **GET_ADVANCED_COLOR_INFO only answers for a target that is part of the
+  CURRENTLY APPLIED topology.** Measured here: target 512 (the one active
+  monitor at probe time) returned `ERROR_SUCCESS` with every bit 0 -- SDR,
+  no HDR capability reported for this panel/cable/driver combination.
+  Targets 520 and 521 (present on the machine, per `display_config`'s
+  all-paths query, but not part of the path currently applied) both
+  answered `ERROR_GEN_FAILURE` for the identical call -- not "no HDR", a
+  refusal, and `advanced_color_info` reports it as `None` rather than as
+  "not supported". Never query this for a target that is not
+  `MonitorView.active`.
 
 Read-only throughout. Nothing here calls `SetDisplayConfig` or changes any
 part of the display configuration, and none of it needs elevation.
@@ -45,6 +55,17 @@ logger = logging.getLogger(__name__)
 DEVICE_INFO_GET_SOURCE_NAME = 1
 DEVICE_INFO_GET_TARGET_NAME = 2
 DEVICE_INFO_GET_ADAPTER_NAME = 4
+DEVICE_INFO_GET_ADVANCED_COLOR_INFO = 9
+
+#: The low four bits of DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO's bitfield
+#: union, read as a plain UINT32 -- ctypes bitfields are not portable across
+#: struct-packing quirks and this project already prefers masking a known
+#: bit over trusting a bitfield layout (see the audio `DeviceState` note in
+#: CLAUDE.md).
+_ADVANCED_COLOR_SUPPORTED = 0x1
+_ADVANCED_COLOR_ENABLED = 0x2
+_WIDE_COLOR_ENFORCED = 0x4
+_ADVANCED_COLOR_FORCE_DISABLED = 0x8
 
 #: DISPLAYCONFIG_TARGET_DEVICE_NAME_FLAGS. Observed value here: 0x5.
 TARGET_NAME_FLAG_FRIENDLY_NAME_FROM_EDID = 0x1
@@ -112,6 +133,42 @@ class TargetName:
     output_technology: int
     connector_instance: int
     edid_valid: bool
+
+
+@dataclass(frozen=True)
+class AdvancedColorInfo:
+    """What `GET_ADVANCED_COLOR_INFO` answered for one active target.
+
+    `supported` and `enabled` are two different questions: a panel can
+    support HDR and be running in SDR (the common case -- Windows does not
+    turn HDR on by itself), so "is HDR actually on for this monitor right
+    now" needs both, not one. `wide_color_enforced` is the quirk worth a
+    note of its own: Windows can force the wide-gamut pipeline for a
+    display even while `enabled` is False, and SDR content run through it
+    reads oversaturated -- a real, commonly-reported "colours look off"
+    complaint that has nothing to do with the monitor's own settings.
+    """
+
+    supported: bool
+    enabled: bool
+    wide_color_enforced: bool
+    force_disabled: bool
+    bits_per_color_channel: int
+    color_encoding: int
+
+
+def build_advanced_color_info(value: int, color_encoding: int,
+                              bits_per_color_channel: int) -> AdvancedColorInfo:
+    """Assemble from the raw bitfield word -- split out so the masking is
+    testable with no display attached."""
+    return AdvancedColorInfo(
+        supported=bool(value & _ADVANCED_COLOR_SUPPORTED),
+        enabled=bool(value & _ADVANCED_COLOR_ENABLED),
+        wide_color_enforced=bool(value & _WIDE_COLOR_ENFORCED),
+        force_disabled=bool(value & _ADVANCED_COLOR_FORCE_DISABLED),
+        bits_per_color_channel=bits_per_color_channel,
+        color_encoding=color_encoding,
+    )
 
 
 def _fallback_name(device_path: str, target_id: int) -> str:
@@ -307,6 +364,15 @@ class _ADAPTER_NAME(ctypes.Structure):
                 ("adapterDevicePath", ctypes.c_wchar * 128)]
 
 
+class _ADVANCED_COLOR_INFO(ctypes.Structure):
+    #: The spec's bitfield struct, read here as one UINT32 -- see the
+    #: `_ADVANCED_COLOR_*` masks above for why.
+    _fields_ = [("header", _DEVICE_INFO_HEADER),
+                ("value", wintypes.UINT),
+                ("colorEncoding", wintypes.UINT),
+                ("bitsPerColorChannel", wintypes.UINT)]
+
+
 def _device_info(packet) -> int:
     """The one call, in one place, so tests can stand in for it.
 
@@ -393,3 +459,25 @@ def adapter_name(adapter: Tuple[int, int]) -> Optional[str]:
                        "empty path", adapter)
         return None
     return name
+
+
+def advanced_color_info(adapter: Tuple[int, int],
+                        target_id: int) -> Optional[AdvancedColorInfo]:
+    """HDR capability and on/off state for one ACTIVE target, or `None`.
+
+    `None` is a refusal, not "no HDR" -- confirmed on this machine: a
+    target present but not part of the currently applied topology answers
+    `ERROR_GEN_FAILURE` here, the identical call that succeeds (all bits
+    0, meaning no HDR support reported) for the one target that is active.
+    Only call this for a target `display_config` reports as active.
+    """
+    packet = _ADVANCED_COLOR_INFO()
+    _fill_header(packet, DEVICE_INFO_GET_ADVANCED_COLOR_INFO, adapter,
+                target_id)
+    if not _ask(packet, f"GET_ADVANCED_COLOR_INFO target={target_id}"):
+        return None
+    return build_advanced_color_info(
+        value=packet.value,
+        color_encoding=packet.colorEncoding,
+        bits_per_color_channel=packet.bitsPerColorChannel,
+    )

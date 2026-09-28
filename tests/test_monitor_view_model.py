@@ -17,6 +17,8 @@ The rules it has to get right are all "do not overstate":
   something is a banner nobody reads.
 * Never recommend a downsampled resolution as an improvement.
 """
+import dataclasses
+
 import pytest
 
 from modules.monitor_control import view_model as vm
@@ -185,7 +187,7 @@ class _FakeCap:
 
 def _two_monitors(monkeypatch, *, audio=None, ddc_by_device=None,
                   default_id=None, audio_raises=None, ddc_raises=None,
-                  ambiguous=None):
+                  ambiguous=None, hdr_by_target=None):
     """Stand `build_views` up over fakes for every engine it calls."""
     from modules.monitor_control import display_audio as da
     from modules.monitor_control import ddc as ddc_mod
@@ -227,6 +229,9 @@ def _two_monitors(monkeypatch, *, audio=None, ddc_by_device=None,
     monkeypatch.setattr(mi, "adapter_name", lambda adapter: "GPU")
     monkeypatch.setattr(dm, "refresh_rates_for",
                         lambda device, w, h: (60.0, 144.0))
+    monkeypatch.setattr(
+        mi, "advanced_color_info",
+        lambda adapter, target_id: (hdr_by_target or {}).get(target_id))
 
     # The GDI device name is what pairs a view to a physical monitor, and
     # `build_views` gets it from the topology's active paths — which the
@@ -397,3 +402,85 @@ def test_an_endpoint_whose_state_could_not_be_read_has_no_hidden_state(
     _two_monitors(monkeypatch, audio=[endpoint])
     views = {v.target_id: v for v in vm.build_views()}
     assert views[520].audio_hidden is None
+
+
+# ── HDR ─────────────────────────────────────────────────────────────────
+#
+# `GET_ADVANCED_COLOR_INFO` only answers for an ACTIVE target (measured on
+# the real machine — see `monitor_identity.advanced_color_info`), so
+# `build_views` must never query it for the inactive monitor even though
+# `_two_monitors` always has one (521).
+
+def _hdr(**over):
+    fields = dict(supported=True, enabled=False, wide_color_enforced=False,
+                 force_disabled=False, bits_per_color_channel=8,
+                 color_encoding=0)
+    fields.update(over)
+    from modules.monitor_control.monitor_identity import AdvancedColorInfo
+    return AdvancedColorInfo(**fields)
+
+
+def test_build_views_fills_hdr_only_for_the_active_monitor(monkeypatch):
+    calls = []
+
+    def _fake(adapter, target_id):
+        calls.append(target_id)
+        return _hdr() if target_id == 520 else None
+
+    from modules.monitor_control import monitor_identity as mi
+    _two_monitors(monkeypatch)
+    monkeypatch.setattr(mi, "advanced_color_info", _fake)
+    views = {v.target_id: v for v in vm.build_views()}
+    assert views[520].hdr is not None
+    assert views[521].hdr is None
+    assert 521 not in calls, "the inactive monitor's target was queried anyway"
+
+
+def test_hdr_text_says_nothing_when_there_is_no_answer():
+    view = _view(target_id=520)
+    assert vm.hdr_text(view) == ""
+
+
+def test_hdr_text_reports_unsupported_as_a_fact():
+    view = dataclasses.replace(_view(target_id=520), hdr=_hdr(supported=False))
+    assert vm.hdr_text(view) == "Not supported"
+
+
+def test_hdr_text_reports_on_and_off():
+    on = dataclasses.replace(_view(target_id=520),
+                             hdr=_hdr(supported=True, enabled=True))
+    assert vm.hdr_text(on) == "On"
+
+    off = dataclasses.replace(_view(target_id=520),
+                              hdr=_hdr(supported=True, enabled=False))
+    assert vm.hdr_text(off) == "Off"
+
+
+def test_hdr_text_reports_forced_off_distinctly():
+    view = dataclasses.replace(
+        _view(target_id=520), hdr=_hdr(supported=True, force_disabled=True))
+    assert vm.hdr_text(view) == "Supported, forced off"
+
+
+def test_hdr_warning_fires_only_for_wide_color_enforced_while_off():
+    quiet = dataclasses.replace(
+        _view(target_id=520),
+        hdr=_hdr(enabled=False, wide_color_enforced=False))
+    assert vm.hdr_warning(quiet) == ""
+
+    loud = dataclasses.replace(
+        _view(target_id=520),
+        hdr=_hdr(enabled=False, wide_color_enforced=True))
+    assert "oversaturated" in vm.hdr_warning(loud)
+
+
+def test_hdr_warning_is_silent_once_hdr_is_actually_on():
+    """Wide colour IS the point once HDR is enabled -- not a warning."""
+    view = dataclasses.replace(
+        _view(target_id=520), hdr=_hdr(enabled=True, wide_color_enforced=True))
+    assert vm.hdr_warning(view) == ""
+
+
+def test_hdr_warning_is_silent_when_there_is_no_answer():
+    view = _view(target_id=520)
+    assert vm.hdr_warning(view) == ""

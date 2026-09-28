@@ -868,6 +868,16 @@ Rules here, each one measured:
   `DdcCapability.responded` False, `audio_hidden` None and
   `WriteResult.verified` None all mean "we could not find out", and none of
   them is collapsed into a value. `can_apply` refuses **by name**.
+- **`GET_ADVANCED_COLOR_INFO` only answers for a target that is part of the
+  CURRENTLY APPLIED topology** (`monitor_identity.advanced_color_info`,
+  2026-09-28). Measured here: the one active target answered `ERROR_SUCCESS`
+  with every bit 0 (SDR, no HDR reported); the two other targets present on
+  the machine but not part of the applied path both answered
+  `ERROR_GEN_FAILURE` for the identical call — a refusal, reported as `None`,
+  never as "not supported". `MonitorView.hdr` is only ever populated for an
+  active view. The card also flags `wide_color_enforced` while HDR is off —
+  a real, undocumented-by-Microsoft cause of "colours look oversaturated"
+  that has nothing to do with any monitor setting.
 
 Harnesses, all read-only unless told otherwise: `tools/monitor_control_check.py`
 (what the hardware says) and `tools/monitor_revert_check.py` (the countdown

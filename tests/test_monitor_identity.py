@@ -381,3 +381,77 @@ def test_live_the_adapter_is_named():
     name = mi.adapter_name(monitor.adapter)
     assert name, "adapter name could not be read"
     assert "\\" in name
+
+
+# -- HDR / GET_ADVANCED_COLOR_INFO --------------------------------------
+
+def test_build_advanced_color_info_masks_each_bit_independently():
+    info = mi.build_advanced_color_info(
+        value=mi._ADVANCED_COLOR_SUPPORTED | mi._WIDE_COLOR_ENFORCED,
+        color_encoding=1, bits_per_color_channel=10)
+    assert info.supported is True
+    assert info.enabled is False
+    assert info.wide_color_enforced is True
+    assert info.force_disabled is False
+    assert info.color_encoding == 1
+    assert info.bits_per_color_channel == 10
+
+
+def test_build_advanced_color_info_all_bits_set():
+    info = mi.build_advanced_color_info(value=0xF, color_encoding=2,
+                                        bits_per_color_channel=12)
+    assert info.supported and info.enabled
+    assert info.wide_color_enforced and info.force_disabled
+
+
+def test_advanced_color_info_none_on_refusal(monkeypatch):
+    monkeypatch.setattr(mi, "_device_info", lambda packet: 31)  # GEN_FAILURE
+    assert mi.advanced_color_info((0, 0), 512) is None
+
+
+def test_advanced_color_info_reads_the_buffer_on_success(monkeypatch):
+    def fake(packet):
+        packet.value = mi._ADVANCED_COLOR_SUPPORTED
+        packet.colorEncoding = 0
+        packet.bitsPerColorChannel = 8
+        return 0
+
+    monkeypatch.setattr(mi, "_device_info", fake)
+    info = mi.advanced_color_info((0, 0), 512)
+    assert info is not None
+    assert info.supported is True
+    assert info.enabled is False
+
+
+def test_live_hdr_query_succeeds_for_every_active_target_and_refuses_for_present_but_inactive_ones():
+    """Against this machine: `GET_ADVANCED_COLOR_INFO` answers for a target
+    that is part of the applied topology and refuses (`ERROR_GEN_FAILURE`)
+    for one that display_config reports as present but not currently active
+    -- measured directly with the same target ids `dc.query(all_paths=True)`
+    returns. Never asserts a specific HDR capability: that is a fact about
+    whichever monitor happens to be plugged in and active right now, not
+    something this test should pin.
+    """
+    try:
+        topology = dc.query(all_paths=True)
+    except OSError as exc:
+        pytest.skip(f"QueryDisplayConfig is unavailable here: {exc}")
+
+    active_ids = {m.target_id for m in topology.monitors() if m.active}
+    if not active_ids:
+        pytest.skip("no active monitor on this machine right now")
+
+    adapters = {m.target_id: m.adapter for m in topology.monitors()}
+    for target_id in active_ids:
+        info = mi.advanced_color_info(adapters[target_id], target_id)
+        assert info is not None, (
+            f"GET_ADVANCED_COLOR_INFO refused for active target {target_id}")
+
+    inactive_present = {m.target_id for m in topology.monitors()
+                        if not m.active} - active_ids
+    for target_id in inactive_present:
+        info = mi.advanced_color_info(adapters[target_id], target_id)
+        assert info is None, (
+            f"target {target_id} is not active but GET_ADVANCED_COLOR_INFO "
+            "answered anyway -- the refusal this test pins may have "
+            "changed on this machine")

@@ -72,6 +72,11 @@ class MonitorView:
     #: has no GDI device to talk to. `responded` False inside it is the
     #: different answer: present, but not speaking DDC/CI.
     ddc: object = None
+    #: `monitor_identity.AdvancedColorInfo`, or None. None covers both "not
+    #: active" (never queried -- the API only answers for an active target)
+    #: and "the query was refused"; the card shows nothing rather than
+    #: guessing which.
+    hdr: object = None
 
     @property
     def label(self) -> str:
@@ -140,6 +145,36 @@ def describe(view: MonitorView) -> str:
         native = view.native_resolution
         text += f"  (scaled from {native[0]}x{native[1]})"
     return text
+
+
+def hdr_text(view: MonitorView) -> str:
+    """The one line the card shows for HDR, or "" to say nothing.
+
+    Empty for anything we could not establish -- `view.hdr is None` covers
+    both "not active" and "the API refused" and neither is a fact worth a
+    row. `supported=False` IS a fact worth a row: it answers "is HDR
+    actually on for this monitor" even in the negative, which is the
+    question this was built for.
+    """
+    if view.hdr is None:
+        return ""
+    if not view.hdr.supported:
+        return "Not supported"
+    if view.hdr.force_disabled:
+        return "Supported, forced off"
+    return "On" if view.hdr.enabled else "Off"
+
+
+def hdr_warning(view: MonitorView) -> str:
+    """A note when SDR content is being pushed through the wide-gamut
+    pipeline anyway -- the "colours look oversaturated" complaint that has
+    nothing to do with any setting on the monitor itself. Empty otherwise.
+    """
+    if view.hdr is None or view.hdr.enabled:
+        return ""
+    if view.hdr.wide_color_enforced:
+        return "Wide colour is enforced while HDR is off -- SDR content may look oversaturated"
+    return ""
 
 
 def headline(views: Sequence[MonitorView]) -> str:
@@ -233,6 +268,18 @@ def build_views(topology=None) -> List[MonitorView]:
         except Exception:                                # noqa: BLE001
             logger.debug("No adapter name", exc_info=True)
 
+        hdr = None
+        if monitor.active:
+            # GET_ADVANCED_COLOR_INFO only answers for a target that is
+            # part of the currently applied topology -- see
+            # `monitor_identity.advanced_color_info`'s docstring for the
+            # measured refusal on an inactive-but-present target.
+            try:
+                hdr = mi.advanced_color_info(monitor.adapter, monitor.target_id)
+            except Exception:                            # noqa: BLE001
+                logger.debug("No HDR info for %s", monitor.target_id,
+                             exc_info=True)
+
         views.append(MonitorView(
             target_id=monitor.target_id,
             name=(record.friendly_name if record and record.friendly_name
@@ -246,6 +293,7 @@ def build_views(topology=None) -> List[MonitorView]:
             rates_at_resolution=rates,
             native_resolution=native,
             device_name=device,
+            hdr=hdr,
         ))
     return _with_hardware(views)
 

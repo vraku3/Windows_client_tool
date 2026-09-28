@@ -1749,6 +1749,79 @@ class DriverModule(BaseModule):
     def _open_devmgr(self) -> None:
         subprocess.Popen(["mmc", "devmgmt.msc"])
 
+    def _check_rollback_and_open_devmgr(self, driver: Optional[DriverInfo]) -> None:
+        """The "Roll back to previous version..." context menu action.
+        This app never performs the rollback itself (see
+        rollback_availability.py's module docstring) -- but it CAN now
+        tell you, before you go looking, whether Windows still has an
+        older package cached to roll back TO. Runs on a Worker: enumerating
+        the whole driver store is a real pnputil subprocess call, the same
+        one Cleanup's Superseded Drivers panel already pays for.
+
+        No is_admin() gate here, deliberately -- measured live on this
+        machine (2026-09-28, confirmed unelevated via `net session` ->
+        Access Denied), `pnputil /enum-drivers` returned REAL package
+        records rather than its usual-elsewhere-in-this-app help-banner
+        refusal. Whether that is a genuinely lower bar for this one
+        read-only pnputil verb or specific to this machine/Windows build,
+        checked_rollback_availability()'s own None-vs-refused handling
+        already reports the refusal honestly either way -- gating on
+        is_admin() up front would have blocked a check that can, in fact,
+        succeed unelevated."""
+        if driver is None or not published_name_for(driver.inf_name):
+            self._open_devmgr()
+            return
+        if self._status_lbl:
+            self._status_lbl.setText(
+                f"Checking the driver store for a previous version of "
+                f"{driver.device_name}...")
+
+        def do_check(worker):
+            from modules.driver_manager.rollback_availability import (
+                check_rollback_availability,
+            )
+            return check_rollback_availability(driver)
+
+        worker = Worker(do_check)
+
+        def on_result(result) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            if not result.checked:
+                QMessageBox.information(
+                    self._widget, "Roll Back Driver",
+                    f"{result.reason}\n\nOpening Device Manager.")
+                self._open_devmgr()
+                return
+            if not result.available:
+                QMessageBox.information(self._widget, "Roll Back Driver", result.reason)
+                return
+            confirm = QMessageBox.question(
+                self._widget, "Roll Back Driver",
+                f"{result.reason}\n\nOpen Device Manager to roll back?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if confirm == QMessageBox.StandardButton.Yes:
+                self._open_devmgr()
+
+        def on_error(err_str: str) -> None:
+            if not widget_is_valid(self._widget):
+                return
+            if self._status_lbl:
+                self._status_lbl.setText("Click Refresh to load drivers.")
+            self._error_banner.set_error(
+                f"Could not check the driver store: {err_str}")
+
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        self._workers.append(worker)
+        if self.app and getattr(self.app, "thread_pool", None) is not None:
+            self.app.thread_pool.start(worker)
+        else:
+            QThreadPool.globalInstance().start(worker)
+
     def _show_restore_points(self) -> None:
         # list_restore_points() runs a PowerShell subprocess with a 30s
         # timeout -- doing that synchronously in a toolbar click handler
@@ -1932,9 +2005,12 @@ class DriverModule(BaseModule):
             lambda: self._copy_hardware_id(driver.hardware_id if driver else ""))
         act_rollback = menu.addAction("Roll back to previous version…")
         act_rollback.setToolTip(
-            "Needs the previous driver still cached, which this app does "
-            "not track — opens Device Manager, where Windows can check.")
-        act_rollback.triggered.connect(self._open_devmgr)
+            "Checks whether Windows still has an older version of this "
+            "driver cached in the driver store, then offers to open "
+            "Device Manager to actually perform the rollback there -- "
+            "this app does not perform the rollback itself.")
+        act_rollback.triggered.connect(
+            lambda: self._check_rollback_and_open_devmgr(driver))
         act_check_update = menu.addAction("Check for Vendor Update...")
         act_check_update.triggered.connect(
             lambda: self._check_for_vendor_update(driver) if driver else None)

@@ -26,6 +26,7 @@ from core.table_ui import fit_columns_once, restore_column_widths, save_column_w
 from core.worker import Worker
 from modules.debloat import debloat_history
 from modules.debloat import debloat_presets as dp
+from modules.debloat import debloat_reinstall_tracker as reinstall_tracker
 from modules.debloat import debloat_scanner
 from modules.debloat.debloat_session import DebloatSession
 from modules.debloat.debloat_scanner import (
@@ -503,11 +504,18 @@ class DebloatToolsModule(BaseModule):
                 by_category[entry.get("category", "")] = \
                     by_category.get(entry.get("category", ""), 0) + 1
         breakdown = ", ".join(f"{c}: {n}" for c, n in sorted(by_category.items()))
-        self._apps_status.setText(
+        reinstalled = reinstall_tracker.check_reinstalled(installed)
+        reinstalled_pkgs = {r["package"]: r for r in reinstalled}
+        status_text = (
             f"Scan complete \u2014 {len(installed)} bloatware app(s) detected"
             + (f" ({breakdown})" if breakdown else "")
         )
-        self._populate_apps_table(installed)
+        if reinstalled_pkgs:
+            status_text += (
+                f" \u2014 \u26a0 {len(reinstalled_pkgs)} previously-removed "
+                f"app(s) are back")
+        self._apps_status.setText(status_text)
+        self._populate_apps_table(installed, reinstalled_pkgs)
         self._apply_selected_btn.setEnabled(len(installed) > 0)
         self._apply_all_btn.setEnabled(len(installed) > 0)
 
@@ -515,13 +523,22 @@ class DebloatToolsModule(BaseModule):
         return {p.get("Name", ""): p.get("InstallLocation", "")
                for p in fetch_packages(use_cache=True)}
 
-    def _populate_apps_table(self, installed: List[str]) -> None:
+    def _populate_apps_table(self, installed: List[str],
+                             reinstalled: Optional[Dict[str, dict]] = None) -> None:
         # Keep in sync with what's actually on screen -- the Apply methods
         # read self._installed_apps to tell an installed row from a
         # catalogued-but-not-installed one (Show All can put both in the
         # table), and a caller populating directly (a test, or the Show All
         # toggle re-populating with the same list) must not leave it stale.
         self._installed_apps = installed
+        # `reinstalled` is only supplied by `_on_scanned`, right after a
+        # fresh scan -- the Show All toggle re-populating the same list
+        # (line ~212) has no new scan to recompute it from, so it simply
+        # re-checks against the same installed list rather than losing the
+        # badge on every filter change.
+        if reinstalled is None:
+            reinstalled = {r["package"]: r
+                          for r in reinstall_tracker.check_reinstalled(installed)}
         self._apps_table.setSortingEnabled(False)
         self._apps_table.setRowCount(0)
         entries = self._load_debloat_entries()
@@ -552,19 +569,36 @@ class DebloatToolsModule(BaseModule):
             cat_item = QTableWidgetItem(entry.get("category", ""))
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._apps_table.setItem(row, 2, cat_item)
+            reinstall_record = reinstalled.get(pkg)
             if present:
                 # The column is headed "Status" but held a bare size ("24.4 MB"),
                 # which read as a value with no meaning. It says what it is; an
                 # unknown size is simply "Installed", never "0 B".
                 size_bytes = dir_size(locations.get(pkg, ""))
-                status_item = QTableWidgetItem(
+                status_text = (
                     f"Installed — {human_size(size_bytes)}" if size_bytes > 0
                     else "Installed")
+                if reinstall_record is not None:
+                    # Windows (a Feature Update, a re-add from another
+                    # component) put this back after Debloat removed it --
+                    # see debloat_reinstall_tracker's docstring. Distinct
+                    # from a plain "Installed" row so a returning admin
+                    # does not read this as "the removal never worked."
+                    removed_at = reinstall_record["last_removed_at"][:10]
+                    status_text = f"↺ Reinstalled (removed {removed_at})"
             else:
-                status_item = QTableWidgetItem("Not installed")
+                status_text = "Not installed"
+            status_item = QTableWidgetItem(status_text)
             status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             status_item.setData(Qt.ItemDataRole.UserRole, entry["id"])
-            if pkg in PROTECTED_APPS:
+            if reinstall_record is not None:
+                status_item.setForeground(QColor(semantic("warning")))
+                status_item.setToolTip(
+                    f"Removed by Debloat on {reinstall_record['last_removed_at']}, "
+                    f"but is installed again now. Reinstalled "
+                    f"{reinstall_record['times_reinstalled']} time(s) since "
+                    "first removal.")
+            elif pkg in PROTECTED_APPS:
                 status_item.setForeground(QColor(semantic("warning")))
             self._apps_table.setItem(row, 3, status_item)
 
@@ -724,12 +758,18 @@ class DebloatToolsModule(BaseModule):
         # before an uninstall decision" (see CLAUDE.md's Apps tab section).
         invalidate_cache()
         now_installed = set(debloat_scanner.get_installed_packages())
-        actually_gone = sum(1 for pkg in result.get("targeted", [])
-                            if pkg not in now_installed)
+        confirmed_removed = [pkg for pkg in result.get("targeted", [])
+                             if pkg not in now_installed]
+        actually_gone = len(confirmed_removed)
         logger.info(
             "Debloat complete: confirmed %d/%d app(s) removed",
             actually_gone, result["total"],
         )
+        # Only packages with positive evidence of removal go on record --
+        # see debloat_reinstall_tracker's docstring: recording the whole
+        # requested set would teach a later scan to distrust a removal that
+        # never actually happened.
+        reinstall_tracker.record_removed(confirmed_removed)
         box = QMessageBox(self._widget)
         box.setWindowTitle("Debloat Complete")
         box.setText(f"{actually_gone} of {result['total']} app(s) confirmed "

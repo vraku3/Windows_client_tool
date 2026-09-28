@@ -238,6 +238,51 @@ def read_shadow_storage() -> Tuple[Optional[List[ShadowStorage]], str]:
 
 
 # --------------------------------------------------------------------------
+# VSS service start type (readable unelevated)
+# --------------------------------------------------------------------------
+
+#: Both stopped on this machine right now -- that is NORMAL: VSS and swprv
+#: are Demand-Start and sit idle until something (System Restore, a backup
+#: tool) asks for a shadow copy. Measured with `sc qc VSS` / `sc qc swprv`
+#: from an unelevated shell: SC_MANAGER_CONNECT + SERVICE_QUERY_CONFIG both
+#: succeed with no prompt, so the start type is a real unelevated answer.
+#: What is NOT normal is either being set to Disabled -- then no restore
+#: point can ever be created, no matter what System Protection or the SPP
+#: registry key say, and neither of those two reads would ever show it.
+VSS_SERVICES = {
+    "VSS": "Volume Shadow Copy",
+    "swprv": "Microsoft Software Shadow Copy Provider",
+}
+
+
+def read_service_disabled(name: str) -> Optional[bool]:
+    """True if the service's start type is Disabled, False otherwise, None
+    when the service could not be queried at all (absent, or access denied
+    -- both are "could not tell" and must never collapse into "not disabled",
+    the same rule this module already applies to policy and protection reads."""
+    try:
+        import win32service
+        hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)
+        try:
+            hs = win32service.OpenService(hscm, name, win32service.SERVICE_QUERY_CONFIG)
+            try:
+                config = win32service.QueryServiceConfig(hs)
+                return config[1] == win32service.SERVICE_DISABLED
+            finally:
+                win32service.CloseServiceHandle(hs)
+        finally:
+            win32service.CloseServiceHandle(hscm)
+    except Exception as e:
+        logger.debug("read_service_disabled(%s) failed: %s", name, e)
+        return None
+
+
+def read_vss_services_disabled() -> Dict[str, Optional[bool]]:
+    """One entry per name in VSS_SERVICES -> read_service_disabled(name)."""
+    return {name: read_service_disabled(name) for name in VSS_SERVICES}
+
+
+# --------------------------------------------------------------------------
 # Protection state and frequency (registry; readable unelevated)
 # --------------------------------------------------------------------------
 
@@ -341,12 +386,20 @@ def _system_mount() -> str:
 def restore_findings(points: Sequence[PointInfo], protection: Optional[Protection],
                      storage: Optional[List[ShadowStorage]], storage_error: str,
                      policy_disabled: Optional[bool], frequency_minutes: int,
-                     system_mount: Optional[str] = None) -> List[Finding]:
+                     system_mount: Optional[str] = None,
+                     vss_disabled: Optional[Dict[str, Optional[bool]]] = None) -> List[Finding]:
     out: List[Finding] = []
     system_mount = (system_mount or _system_mount()).upper()
     if policy_disabled:
         out.append(Finding("error", "System Restore is disabled by policy",
                            "DisableSR = 1: no restore points can be created."))
+    for svc_name, disabled in (vss_disabled or {}).items():
+        if disabled:
+            out.append(Finding(
+                "error", f"{VSS_SERVICES.get(svc_name, svc_name)} service is disabled",
+                f"No restore point can be created while the \"{svc_name}\" service's start type "
+                "is Disabled, regardless of System Protection or the shadow-storage limit. "
+                "Set it back to Manual in Services.msc."))
     if protection is None:
         out.append(Finding("info", "System Protection state could not be read", ""))
     elif system_mount not in protection.mounts:

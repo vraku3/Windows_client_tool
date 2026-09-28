@@ -128,7 +128,8 @@ def test_parse_protection_decodes_mounts():
 def _findings(points=(), protection=None, storage=(), **kw):
     prot = ra.Protection(mounts=["C:"]) if protection is None else protection
     return ra.restore_findings(ra.analyze_points(points, now=NOW), prot, list(storage) or [], "",
-                               kw.get("policy", False), kw.get("freq", 0), system_mount="C:")
+                               kw.get("policy", False), kw.get("freq", 0), system_mount="C:",
+                               vss_disabled=kw.get("vss_disabled"))
 
 
 def test_protection_off_on_system_drive_is_an_error():
@@ -198,3 +199,33 @@ def test_real_machine_is_plausible():
         assert p.created is None or p.created <= now + timedelta(minutes=5), "a point from the future"
     prot, err = ra.read_protection()
     assert prot is not None, err
+
+
+def test_vss_service_disabled_is_an_error():
+    f = _findings([_pt(1, "20260926000000.000000-000")], vss_disabled={"VSS": True})
+    assert any(x.severity == "error" and "Volume Shadow Copy" in x.title for x in f)
+
+
+def test_vss_service_not_disabled_reports_nothing():
+    f = _findings([_pt(1, "20260926000000.000000-000")], vss_disabled={"VSS": False, "swprv": False})
+    assert not any("Volume Shadow Copy" in x.title or "Shadow Copy Provider" in x.title for x in f)
+
+
+def test_vss_service_unreadable_reports_nothing_not_a_false_positive():
+    # None means "could not tell" (access denied / absent) -- collapsing that
+    # into "disabled" would be a false alarm, the same trap this module's
+    # protection and policy reads already guard against.
+    f = _findings([_pt(1, "20260926000000.000000-000")], vss_disabled={"VSS": None})
+    assert not any("Volume Shadow Copy" in x.title for x in f)
+
+
+def test_real_machine_vss_services_are_queryable_unelevated():
+    # Measured on this machine: `sc qc VSS` / `sc qc swprv` both succeed with
+    # SC_MANAGER_CONNECT + SERVICE_QUERY_CONFIG and no elevation prompt, and
+    # both start types come back Demand-Start (neither Disabled). A None
+    # here would mean the unelevated read stopped working on this machine.
+    result = ra.read_vss_services_disabled()
+    assert set(result) == set(ra.VSS_SERVICES)
+    for name, disabled in result.items():
+        assert disabled is not None, f"{name} start type could not be read unelevated"
+        assert disabled is False, f"{name} is unexpectedly Disabled on this machine"

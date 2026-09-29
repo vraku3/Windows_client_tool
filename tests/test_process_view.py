@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from core.procengine.snapshot import SnapshotSource
@@ -68,3 +70,21 @@ def test_duration_formatting():
 def test_service_map_reads_svchost_hosts():
     m = pv.services_by_pid()
     assert m is None or all(isinstance(v, list) for v in m.values())
+
+
+def test_is_self_matches_exactly_this_process(snapshot):
+    """tmog.org's "self-monitoring capability for TMOG itself" -- this test
+    IS that process (pytest's own interpreter), so a real snapshot taken
+    in-process must contain exactly one row `is_self` agrees with, and it
+    must be the running interpreter's own PID."""
+    own_pid = os.getpid()
+    matches = [i for i in snapshot.by_pid.values() if pv.is_self(i)]
+    assert len(matches) == 1
+    assert matches[0].pid == own_pid
+    other = next(i for i in snapshot.by_pid.values() if i.pid != own_pid)
+    assert not pv.is_self(other)
+
+
+def test_is_self_is_flagged_as_a_badge(snapshot):
+    own = next(i for i in snapshot.by_pid.values() if pv.is_self(i))
+    assert "this app" in pv.badges(own)

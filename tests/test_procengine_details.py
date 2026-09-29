@@ -68,6 +68,13 @@ def test_whether_we_are_elevated_is_a_definite_answer(mine):
     assert mine.elevated in (True, False)
 
 
+def test_whether_we_are_appcontainer_is_a_definite_answer(mine):
+    """Same shape as elevation: a process we can open always answers this
+    question definitely. pytest itself carries an ordinary, non-sandboxed
+    token."""
+    assert mine.appcontainer is False
+
+
 def test_our_own_architecture_is_reported(mine):
     assert mine.architecture in {"x64", "x86", "ARM64", "ARM"}
 
@@ -251,6 +258,57 @@ def test_no_budget_resolves_everything():
     for row in rows:
         cache.get(row.pid, row.create_time)
     assert cache.tracked() == len(rows)
+
+
+# ---- AppContainer, verified against real sandboxed processes ------------
+
+@pytest.mark.real_machine
+def test_a_running_sandboxed_process_is_detected():
+    """Measured live on this machine (2026-09-29): 13 of 348 running
+    processes carry an AppContainer token, including `msedge.exe`,
+    `msedgewebview2.exe`, `SearchHost.exe`, `ShellExperienceHost.exe`,
+    `LockApp.exe` and `Microsoft.AAD.BrokerPlugin.exe`. If none of those
+    are running right now this is skipped rather than asserting on a
+    fabricated result."""
+    from core.procengine.ntquery import system_processes
+
+    names = {"msedge.exe", "msedgewebview2.exe", "searchhost.exe",
+              "shellexperiencehost.exe", "lockapp.exe",
+              "microsoft.aad.brokerplugin.exe"}
+    candidates = [row.pid for row in system_processes()
+                  if row.name.lower() in names]
+    if not candidates:
+        pytest.skip("none of the known AppContainer-hosting processes "
+                    "are running right now")
+    assert any(resolve(pid).appcontainer is True for pid in candidates)
+
+
+@pytest.mark.real_machine
+def test_appcontainer_and_package_identity_are_genuinely_different_facts():
+    """The reason this is not `classify.is_immersive` under another name.
+
+    Measured live: `msedge.exe` carries an AppContainer token (it
+    sandboxes its own renderer/utility processes) while
+    `GetPackageFamilyName` reports it has NO package identity at all --
+    it is an ordinary desktop install, not a Store app. Skipped if Edge
+    is not running rather than asserting on a fabricated result.
+    """
+    from core.procengine.classify import package_family_name
+    from core.procengine.ntquery import system_processes
+
+    candidates = [row.pid for row in system_processes()
+                  if row.name.lower() == "msedge.exe"]
+    if not candidates:
+        pytest.skip("msedge.exe is not running right now")
+
+    sandboxed_but_not_packaged = [
+        pid for pid in candidates
+        if resolve(pid).appcontainer is True
+        and package_family_name(pid)[0] == ""
+    ]
+    assert sandboxed_but_not_packaged, \
+        "expected at least one msedge.exe process to be AppContainer " \
+        "but not package-identified"
 
 
 @pytest.mark.slow

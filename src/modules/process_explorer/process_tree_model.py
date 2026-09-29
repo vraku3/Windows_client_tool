@@ -93,6 +93,8 @@ class ProcessTreeModel(QAbstractItemModel):
             old.exe            = new_node.exe or old.exe
             old.user           = new_node.user or old.user
             old.cmdline        = new_node.cmdline or old.cmdline
+            if new_node.appcontainer is not None:
+                old.appcontainer = new_node.appcontainer
 
         if changed:
             if self._flat_mode:

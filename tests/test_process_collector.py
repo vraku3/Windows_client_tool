@@ -130,6 +130,23 @@ def test_readable_details_are_carried_through():
     assert node.integrity_level == "High"
 
 
+def test_appcontainer_is_carried_through_unmodified():
+    """Unlike is_immersive/is_dotnet, a refusal (None) must NOT collapse to
+    False here -- this is not a row-colour input, so there is nothing to
+    protect by lying it into a value."""
+    sandboxed = node_from_info(_info(details=ProcessDetails(
+        pid=100, appcontainer=True)), set())
+    assert sandboxed.appcontainer is True
+
+    ordinary = node_from_info(_info(details=ProcessDetails(
+        pid=100, appcontainer=False)), set())
+    assert ordinary.appcontainer is False
+
+    refused = node_from_info(_info(details=ProcessDetails(
+        pid=100, appcontainer=None)), set())
+    assert refused.appcontainer is None
+
+
 def test_rates_are_carried_through():
     node = node_from_info(
         _info(rates=Rates(cpu_percent=12.5, read_bps=1024.0,

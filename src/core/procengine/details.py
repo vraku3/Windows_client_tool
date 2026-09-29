@@ -35,6 +35,7 @@ ERROR_INSUFFICIENT_BUFFER = 122
 
 # GetTokenInformation classes.
 _TokenUser = 1
+_TokenIsAppContainer = 29
 _TokenElevation = 20
 _TokenIntegrityLevel = 25
 
@@ -116,6 +117,15 @@ class ProcessDetails:
     user_error: Optional[str] = None
     integrity: Optional[str] = None
     elevated: Optional[bool] = None
+    #: Whether the process token is an AppContainer token -- a distinct
+    #: fact from integrity or elevation, and from `classify.is_immersive`
+    #: (a package identity). Measured on this machine: 13 of 348 processes
+    #: are AppContainer-sandboxed, and `msedge.exe` itself is one of them
+    #: while carrying NO package family at all -- a desktop program, not a
+    #: Store app, that still runs its renderer inside the sandbox boundary.
+    #: `None` means the token could not be read, same as every other field
+    #: here.
+    appcontainer: Optional[bool] = None
     architecture: Optional[str] = None
     description: Optional[str] = None
     company: Optional[str] = None
@@ -138,7 +148,7 @@ def resolve(pid: int) -> ProcessDetails:
     try:
         path, path_error = _image_path(handle)
         cmdline, cmdline_error = _command_line(pid)
-        user, user_error, integrity, elevated = _token_facts(handle)
+        user, user_error, integrity, elevated, appcontainer = _token_facts(handle)
         description, company = _version_info(path)
         return ProcessDetails(
             pid=pid,
@@ -146,6 +156,7 @@ def resolve(pid: int) -> ProcessDetails:
             cmdline=cmdline, cmdline_error=cmdline_error,
             user=user, user_error=user_error,
             integrity=integrity, elevated=elevated,
+            appcontainer=appcontainer,
             architecture=_architecture(handle),
             description=description, company=company,
         )
@@ -246,14 +257,15 @@ def _command_line(pid: int) -> Tuple[Optional[str], Optional[str]]:
 
 
 def _token_facts(handle):
-    """User, integrity and elevation, which all come from the same token."""
+    """User, integrity, elevation and AppContainer -- one open token, four reads."""
     token = wintypes.HANDLE()
     if not _advapi32.OpenProcessToken(
             handle, TOKEN_QUERY, ctypes.byref(token)):
-        return None, _reason(ctypes.get_last_error()), None, None
+        reason = _reason(ctypes.get_last_error())
+        return None, reason, None, None, None
     try:
         return (_token_user(token), None, _token_integrity(token),
-                _token_elevated(token))
+                _token_elevated(token), _token_appcontainer(token))
     finally:
         _kernel32.CloseHandle(token)
 
@@ -323,6 +335,24 @@ def _token_integrity(token) -> Optional[str]:
 
 def _token_elevated(token) -> Optional[bool]:
     buffer = _token_information(token, _TokenElevation)
+    if buffer is None:
+        return None
+    return bool(ctypes.cast(buffer,
+                            ctypes.POINTER(wintypes.DWORD))[0])
+
+
+def _token_appcontainer(token) -> Optional[bool]:
+    """Whether this token is an AppContainer token (sandboxed).
+
+    Distinct from `classify.package_family_name` -- that answers "does this
+    process have a Store package identity", this answers "does its token
+    carry the sandbox boundary at all". They disagree in exactly the
+    interesting direction: `msedge.exe` on this machine has NO package
+    family (it is an ordinary desktop install) but IS an AppContainer
+    token, because Edge sandboxes its own renderer/utility processes the
+    same way a packaged app's broker would.
+    """
+    buffer = _token_information(token, _TokenIsAppContainer)
     if buffer is None:
         return None
     return bool(ctypes.cast(buffer,

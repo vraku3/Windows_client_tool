@@ -74,6 +74,10 @@ def node_from_info(info, service_names: Set[str],
         is_service=info.is_service or (raw.name or "").lower() in service_names,
         is_suspended=_suspended(raw),
         integrity_level=details.integrity or "Medium",
+        # Kept Optional, unlike is_immersive/is_dotnet below: this is not a
+        # row-colour input, so there is no reason to lie a refusal into
+        # False. The Properties dialog shows "could not tell" for None.
+        appcontainer=details.appcontainer,
         is_own=info.is_own_user,
         # `is_immersive` and `is_dotnet` are `Optional[bool]` in the engine
         # -- None where we were refused. ProcessNode has no None, and the

@@ -75,7 +75,10 @@ class ProcessPropertiesDialog(QDialog):
         h = QHBoxLayout(w)
         h.setContentsMargins(0, 0, 0, 0)
         lbl = QLabel(f"<b>{label}:</b>")
-        lbl.setFixedWidth(140)
+        # Wide enough for "Sandboxed (AppContainer):", the longest label any
+        # row uses -- at the old 140px it was truncated to "Sandboxed
+        # (AppContaine" with no ellipsis, unreadable at a glance.
+        lbl.setFixedWidth(190)
         val = QLabel(value)
         val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         val.setWordWrap(True)
@@ -354,6 +357,9 @@ class ProcessPropertiesDialog(QDialog):
         except Exception as e:
             te.setPlainText(f"Security info unavailable: {e}\n(Requires elevated privileges)")
         layout.addWidget(te)
+        layout.addWidget(self._row("Integrity", self._node.integrity_level))
+        layout.addWidget(self._row("Sandboxed (AppContainer)",
+                                    _appcontainer_text(self._node.appcontainer)))
         self._tabs.addTab(w, "Security")
 
     def _build_environment_tab(self):
@@ -446,6 +452,21 @@ def _exe_signature(exe: str) -> str:
     if facts.status == INVALID:
         return f"Invalid — {facts.reason or 'the signature does not hold'}"
     return f"Could not verify — {facts.reason or 'unknown reason'}"
+
+
+def _appcontainer_text(appcontainer: Optional[bool]) -> str:
+    """The Security tab's wording for `ProcessNode.appcontainer`.
+
+    Never "No" for a refusal: `None` means the token could not be read
+    (the ordinary case for a process that is not ours, unelevated), which
+    is a different fact from a token that was read and is not an
+    AppContainer token.
+    """
+    if appcontainer is None:
+        return "Could not tell — the process token could not be read"
+    if appcontainer:
+        return "Yes — this process runs inside an AppContainer sandbox"
+    return "No"
 
 
 def _percent(value) -> str:

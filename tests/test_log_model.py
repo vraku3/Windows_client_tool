@@ -1,6 +1,7 @@
 """The log viewer's table model: colouring, filtering, the cap, and find."""
 from datetime import datetime
 
+import pytest
 from PyQt6.QtCore import Qt
 
 from core.types import LogEntry
@@ -292,6 +293,95 @@ def test_find_only_searches_what_is_visible(qapp):
                     _entry("other", level="Error")])
     model.set_filter(levels={"Error"})
     assert model.find("target") == -1
+
+
+# ---- find_issue -----------------------------------------------------------
+
+def test_find_issue_lands_on_the_next_error_or_warning(qapp):
+    model = _model([_entry("ok", level="Info"),
+                    _entry("careful", level="Warning"),
+                    _entry("broke", level="Error")])
+    assert model.find_issue(start_row=0) == 1
+    assert model.find_issue(start_row=1) == 2
+
+
+def test_find_issue_skips_info_and_debug(qapp):
+    model = _model([_entry("a", level="Debug"), _entry("b", level="Info"),
+                    _entry("c", level="Error")])
+    assert model.find_issue(start_row=0) == 2
+
+
+def test_find_issue_wraps_around(qapp):
+    model = _model([_entry("bad", level="Error"), _entry("ok", level="Info")])
+    assert model.find_issue(start_row=0) == 0
+
+
+def test_find_issue_goes_backwards_too(qapp):
+    model = _model([_entry("bad", level="Error"), _entry("ok", level="Info"),
+                    _entry("worse", level="Error")])
+    assert model.find_issue(start_row=2, forwards=False) == 0
+
+
+def test_find_issue_with_no_problems_returns_minus_one(qapp):
+    model = _model([_entry("a"), _entry("b"), _entry("c")])
+    assert model.find_issue(start_row=0) == -1
+
+
+def test_find_issue_on_an_empty_model_is_not_an_error(qapp):
+    assert LogModel().find_issue(start_row=0) == -1
+
+
+def test_find_issue_only_searches_what_is_visible(qapp):
+    """The severity filter hiding an Error is not the same question as
+    whether the whole log has one -- jumping to a hidden row would scroll
+    to nothing."""
+    model = _model([_entry("ok", level="Info"), _entry("bad", level="Error")])
+    model.set_filter(levels={"Info"})
+    assert model.find_issue(start_row=0) == -1
+
+
+def test_find_issue_reaches_a_continuation_that_folding_was_hiding(qapp):
+    """The model does not assume a continuation's level always matches its
+    parent's -- only `parse_service_log` happens to set it that way today --
+    so find_issue unfolds to reach an Error that folding was hiding, the
+    same as `find` does for a text match."""
+    parent = _entry("Performing 1 operation:", level="Info", source="CSI")
+    cont = LogEntry(timestamp=UNKNOWN_TIME, source="CSI", level="Error",
+                    message="  (0)  broke", raw={"continuation": "1"})
+    model = _model([_entry("ok", level="Info"), parent, cont])
+    row = model.find_issue(start_row=1)
+    assert row >= 0
+    assert model.entry(row).message == "  (0)  broke"
+    assert model.is_folding() is False
+
+
+def test_find_issue_that_finds_nothing_leaves_folding_alone(qapp):
+    model = _model([_entry("ok", level="Info")])
+    assert model.find_issue(start_row=0) == -1
+    assert model.is_folding() is True
+
+
+def test_find_issue_reaches_the_real_cbs_logs_first_warning_or_error(qapp):
+    """Against the real machine, not a synthetic fixture: CBS.log measured
+    359 Warning and 59 Error lines out of 62,208 (see cmtrace_parser's own
+    module docstring). find_issue must land on one of them, unfolded or not,
+    starting from row 0 -- the exact "jump to the first problem" an admin
+    opening this file would reach for."""
+    import os
+
+    from modules.log_viewer.cmtrace_parser import parse
+
+    path = r"C:\Windows\Logs\CBS\CBS.log"
+    if not os.path.exists(path):
+        pytest.skip("no CBS.log on this machine")
+    text = open(path, encoding="utf-8-sig", errors="replace").read()
+    entries = parse(text)
+    if not any(e.level in ("Warning", "Error") for e in entries):
+        pytest.skip("this machine's CBS.log currently has no Warning/Error")
+    model = _model(entries)
+    row = model.find_issue(start_row=0)
+    assert row >= 0
+    assert model.entry(row).level in ("Warning", "Error")
 
 
 # ---- clearing -----------------------------------------------------------

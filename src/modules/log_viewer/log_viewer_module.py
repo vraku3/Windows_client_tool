@@ -343,6 +343,21 @@ class LogViewerWidget(QWidget):
         self.next_button.clicked.connect(self.find_next)
         find_row.addWidget(self.next_button)
 
+        # Independent of the Find box: jumps to the next/previous Error or
+        # Warning row regardless of what (or whether) anything is typed
+        # above, the same way CMTrace's own error navigation works.
+        find_row.addSpacing(8)
+        self.prev_issue_button = QPushButton("◀ Issue", self)
+        self.prev_issue_button.setToolTip(
+            "Jump to the previous Error or Warning row (Shift+F4)")
+        self.prev_issue_button.clicked.connect(self.find_previous_issue)
+        find_row.addWidget(self.prev_issue_button)
+        self.next_issue_button = QPushButton("Issue ▶", self)
+        self.next_issue_button.setToolTip(
+            "Jump to the next Error or Warning row (F4)")
+        self.next_issue_button.clicked.connect(self.find_next_issue)
+        find_row.addWidget(self.next_issue_button)
+
         # Find JUMPS to the next match and leaves everything on screen.
         # Filter HIDES everything that does not match. Two different jobs, so
         # two boxes -- the previous "Show only matches" checkbox shared Find's
@@ -1123,6 +1138,8 @@ class LogViewerWidget(QWidget):
                 ("Ctrl+P", self.toggle_pin),
                 ("F3", self.find_next),
                 ("Shift+F3", self.find_previous),
+                ("F4", self.find_next_issue),
+                ("Shift+F4", self.find_previous_issue),
         ):
             shortcut = QShortcut(QKeySequence(sequence), self)
             shortcut.setContext(
@@ -2253,6 +2270,37 @@ class LogViewerWidget(QWidget):
 
     def find_previous(self) -> None:
         self._find(forwards=False)
+
+    def find_next_issue(self) -> None:
+        self._find_issue(forwards=True)
+
+    def find_previous_issue(self) -> None:
+        self._find_issue(forwards=False)
+
+    def _find_issue(self, forwards: bool) -> None:
+        """Jump to the next/previous Error or Warning row.
+
+        Deliberately ignores the Find box entirely -- this is "take me to
+        the next problem", not "take me to the next problem that also
+        matches what I typed". Mirrors `_find`'s row-tracking and status
+        wording so the two navigation actions read as one family.
+        """
+        start = self.table.currentIndex().row()
+        if start < 0:
+            start = 0 if forwards else self.model.rowCount()
+        row = self.model.find_issue(start_row=start, forwards=forwards)
+        self._sync_fold_box()
+        if row < 0:
+            extra = ""
+            if self._set is not None and self._set.has_earlier():
+                extra = (f" {_size(self._set.earlier_bytes())} earlier in "
+                         "the file is not loaded — press Search earlier.")
+            self.status.setText("No Error or Warning row in what is "
+                                f"loaded.{extra}")
+            return
+        index = self.model.index(row, MESSAGE)
+        self.table.setCurrentIndex(index)
+        self.table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _find(self, forwards: bool) -> None:
         needle = self.find_box.text().strip()

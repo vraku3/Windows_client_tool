@@ -36,6 +36,10 @@ TIME, SOURCE, SEVERITY, COMPONENT, PACKAGE, THREAD, MESSAGE = range(
 #: does in practice and what keeps a 300 MB log openable.
 DEFAULT_CAP = 200_000
 
+#: What "next issue" means by default -- the two levels an admin scanning a
+#: log actually cares about, not Debug/verbose noise.
+ISSUE_LEVELS = frozenset({"Error", "Warning"})
+
 
 def split_terms(text: str) -> list:
     """A filter box's text as the terms it means, AS TYPED.
@@ -821,6 +825,50 @@ class LogModel(QAbstractTableModel):
             # should not silently rearrange the view, so put folding back.
             self.set_folding(True)
         return row
+
+    def find_issue(self, start_row: int = 0, forwards: bool = True,
+                   levels: frozenset = ISSUE_LEVELS) -> int:
+        """The next VISIBLE row at severity `levels`, or -1.
+
+        Independent of the Find box: an admin scanning a log they have not
+        typed anything into yet wants "take me to the next problem",
+        deliberately mirroring `find`'s unfold-and-retry rather than
+        `_find_visible`'s plain wrap. A folded CONTINUATION line is not
+        automatically safe to skip -- `parse_service_log` gives it its
+        PARENT's level, so a run of Error continuation lines folded under one
+        parent row can itself be the next thing worth landing on, and
+        unfolding is what makes those reachable.
+        """
+        row = self._find_issue_visible(start_row, forwards, levels)
+        if row >= 0 or not self._folding_now():
+            return row
+        self.set_folding(False)
+        row = self._find_issue_visible(start_row, forwards, levels)
+        if row < 0:
+            # Nothing anywhere, even unfolded: put folding back rather than
+            # leaving the view permanently unfolded over a search that found
+            # nothing.
+            self.set_folding(True)
+        return row
+
+    def _find_issue_visible(self, start_row: int, forwards: bool,
+                            levels: frozenset) -> int:
+        """The next VISIBLE row at severity `levels`, or -1.
+
+        Wraps, the same reason `_find_visible` wraps: stopping at the end of
+        the loaded window makes someone scroll back to the top by hand to
+        keep going.
+        """
+        if not self._visible:
+            return -1
+        count = len(self._visible)
+        step = 1 if forwards else -1
+        for offset in range(1, count + 1):
+            row = (start_row + offset * step) % count
+            entry = self.entry(row)
+            if entry is not None and entry.level in levels:
+                return row
+        return -1
 
     def _find_visible(self, needle: str, start_row: int = 0,
                       forwards: bool = True) -> int:

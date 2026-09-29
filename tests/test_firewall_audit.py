@@ -76,6 +76,37 @@ def test_program_missing_duplicates_broad_ranges_and_allow_vs_block():
     assert "allow_vs_block" in keys
 
 
+def test_scoped_open_public_is_distinct_from_open_inbound_and_broad_ports():
+    third_party = _rule(name="outlook_udp", protocol="UDP", local_port="6004",
+                        program=r"C:\Program Files\Microsoft Office\root\Office16\outlook.exe",
+                        profile="Public")
+    builtin = _rule(name="dosvc", protocol="TCP", local_port="7680",
+                    program=r"%SystemRoot%\system32\svchost.exe", profile="Public")
+    discovery = _rule(name="mdns", protocol="UDP", local_port="5353",
+                      program=r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                      profile="Public")
+    domain_only = _rule(name="domain_scoped", protocol="UDP", local_port="6004",
+                        program=r"C:\a.exe", profile="Domain")
+    rules = [third_party, builtin, discovery, domain_only]
+    extras = [fa.RuleExtra() for _ in rules]
+    got = fa.audit(rules, extras, exists=lambda p: True)
+    hit = next(f for f in got if f.key == "scoped_open_public")
+    assert hit.rule_names == ["outlook_udp"]
+    # None of these should also show up as the fully-open or broad-range findings.
+    assert not any(f.key in ("open_public", "broad_ports") for f in got)
+    assert fa.chip_matches("scoped_open_public", third_party, fa.RuleExtra())
+    assert not fa.chip_matches("scoped_open_public", builtin, fa.RuleExtra())
+    assert not fa.chip_matches("scoped_open_public", discovery, fa.RuleExtra())
+
+
+def test_scoped_open_public_excludes_restricted_remote_and_service_bound():
+    restricted = _rule(name="restricted", protocol="TCP", local_port="9000",
+                       program=r"C:\a.exe", profile="Public")
+    assert fa.chip_matches("scoped_open_public", restricted, fa.RuleExtra(remote_ip="LocalSubnet")) is False
+    svc = _rule(name="svc", protocol="TCP", local_port="9000", profile="Public")
+    assert fa.chip_matches("scoped_open_public", svc, fa.RuleExtra(service="Foo"))
+
+
 def test_icmp_type_makes_rules_distinct():
     r1, r2 = _rule(name="1", protocol="ICMPv6", program="x"), _rule(name="2", protocol="ICMPv6", program="x")
     e1, e2 = fa.RuleExtra(icmp="128:0"), fa.RuleExtra(icmp="129:0")
@@ -158,3 +189,23 @@ def test_real_registry_program_missing_is_a_handful_not_hundreds():
         assert expanded and expanded.lower() != "system" and "%" not in expanded
     profiles = fa.read_profile_states()
     assert [p.name for p in profiles] == ["Domain", "Private", "Public"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
+def test_real_registry_scoped_open_public_is_rare_and_third_party():
+    """Measured on this real machine (529 rules): 30 program/service-scoped
+    inbound-allow rules leave RemoteAddress at Any on a specific port -- but 27
+    of those are Windows-supplied (dosvc, dhcp, rpcss, mdeserver, the
+    ms-resource system apps) or a standard mDNS/SSDP discovery port, which
+    `_is_scoped_open_public` excludes by design (see its docstring). What is
+    left is a small, real, third-party handful -- "Microsoft Office Outlook"
+    UDP 6004 on the Public profile among them -- never the bulk of the 30."""
+    try:
+        rules, extras = fa.read_registry_rules(fa.resolve_indirect)
+    except OSError:
+        pytest.skip("firewall policy unreadable here")
+    hits = [(r, e) for r, e in zip(rules, extras) if fa.chip_matches("scoped_open_public", r, e)]
+    assert 0 < len(hits) < 10
+    for r, e in hits:
+        assert not fa.is_builtin(r, e)
+        assert "Public" in fa._profiles(r)

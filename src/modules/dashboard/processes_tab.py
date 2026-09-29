@@ -415,19 +415,22 @@ class ProcessesTab(QWidget):
             for member in sorted(members, key=lambda info: info.pid):
                 self._process_item(item, member, peak)
             item.setExpanded(row.pid in self._expanded)
+        else:
+            # A single-process "app" never reaches `_process_item` (the loop
+            # above is skipped), so without this its own row got none of the
+            # elevated/self/reused flags below -- an app that happens to run
+            # as one process (this tool, run from source, is one: "Python"
+            # with a single member) silently lost every badge a two-process
+            # app would have shown. Real on this machine: `is_self` matches
+            # exactly the lone "Python" row while the tab is open.
+            self._apply_row_flags(item, members[0])
         return len(members)
 
     def _process_item(self, parent, info, peak) -> None:
         label = info.details.description or info.name
         item = QTreeWidgetItem(parent, [label])
         item.setData(0, PID_ROLE, info.pid)
-        flags = pv.badges(info)
-        if self._recycle.recently_reused(info.pid, 120.0, self._snapshot.taken_at):
-            flags = flags + ["PID reused"]
-        item.setToolTip(0, (info.details.path or info.name)
-                        + (f"\n[{', '.join(flags)}]" if flags else ""))
-        if "elevated" in flags:
-            item.setForeground(0, QBrush(QColor(semantic("info"))))
+        self._apply_row_flags(item, info)
         self._set_value(item, CPU, info.rates.cpu_percent, fmt_percent,
                         peak["cpu"])
         self._set_value(item, MEMORY, info.raw.working_set_private,
@@ -436,6 +439,26 @@ class ProcessesTab(QWidget):
         self._set_value(item, DISK, disk, fmt_rate, peak["disk"])
         item.setText(4, str(info.pid))
         self._fill_extra(item, [info])
+
+    def _apply_row_flags(self, item, info) -> None:
+        """The tooltip and foreground tint for one real process's row.
+
+        Shared by `_process_item` (a member of a multi-process app, or a
+        top-level process) and `_add_row`'s single-member-app branch, which
+        would otherwise show none of these -- see the comment there.
+        """
+        flags = pv.badges(info)
+        if self._recycle.recently_reused(info.pid, 120.0, self._snapshot.taken_at):
+            flags = flags + ["PID reused"]
+        item.setToolTip(0, (info.details.path or info.name)
+                        + (f"\n[{', '.join(flags)}]" if flags else ""))
+        if "elevated" in flags:
+            item.setForeground(0, QBrush(QColor(semantic("info"))))
+        if "this app" in flags:
+            # "match" (violet): distinct from elevated's info blue and the
+            # high-cpu/high-mem heat tints, so the app's own row reads as an
+            # identity marker rather than a severity.
+            item.setForeground(0, QBrush(QColor(semantic("match"))))
 
     def _fill_extra(self, item, infos) -> None:
         """The optional columns; skipped for any column that is hidden."""

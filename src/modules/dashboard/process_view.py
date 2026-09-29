@@ -7,6 +7,7 @@ A value we were refused is shown as blank, never as a guess -- each of these
 reads `None` from `ProcessDetails` when the kernel said no.
 """
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
@@ -15,6 +16,16 @@ _FILETIME_UNIX_EPOCH = 116444736000000000
 RECENT_SECONDS = 300
 HIGH_CPU_PERCENT = 5.0
 HIGH_MEMORY_BYTES = 500 * 1024 * 1024
+
+#: This process's own PID, read once. tmog.org lists "self-monitoring
+#: capability for TMOG itself" as a distinct Process Monitoring feature: a
+#: tool that watches a machine's resource use should be visibly held to the
+#: same standard, not exempted by hiding among the other rows. Overview
+#: already prints one summary line for this ("This tool - ..."); this is the
+#: same identity check surfaced on the actual process row, whichever name
+#: it runs under (`python.exe` from source, the frozen exe's own name once
+#: built) -- matched by PID, never by name, since the name changes.
+_SELF_PID = os.getpid()
 
 
 def started_at(info) -> Optional[datetime]:
@@ -149,6 +160,17 @@ def _unreadable(info) -> bool:
     return info.details.path is None and info.pid > 4
 
 
+def is_self(info) -> bool:
+    """True for the row that is this application's own process.
+
+    Matched by PID, not by name or path: `info.pid == _SELF_PID` is true for
+    exactly one row in any real snapshot, where a name match would need to
+    track both the source-mode name (`python.exe`) and the frozen one and
+    would also mis-fire on someone else's `python.exe`.
+    """
+    return info.pid == _SELF_PID
+
+
 FILTERS: Tuple[Tuple[str, str, Callable], ...] = (
     ("all", "All", lambda i: True),
     ("cpu", "High CPU", _cpu_hot),
@@ -184,6 +206,8 @@ def badges(info) -> List[str]:
         found.append("high memory")
     if _unreadable(info):
         found.append("unreadable")
+    if is_self(info):
+        found.append("this app")
     return found
 
 

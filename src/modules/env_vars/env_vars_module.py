@@ -7,7 +7,7 @@ from typing import List, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
     QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -18,7 +18,7 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import centered_item, fit_table, set_role
 from core.worker import Worker
-from modules.env_vars import effective_env, env_ops, path_analysis
+from modules.env_vars import effective_env, env_ops, path_analysis, process_env_scan
 from modules.env_vars.env_ops import EnvVar, SYS_PATH as _SYS_PATH, USR_PATH as _USR_PATH
 
 logger = logging.getLogger(__name__)
@@ -244,10 +244,13 @@ class _EffectivePane(QWidget):
     or a restart) before it takes effect, not that the write failed.
     """
 
-    def __init__(self, sys_panel: "_EnvPanel", usr_panel: "_EnvPanel"):
+    def __init__(self, sys_panel: "_EnvPanel", usr_panel: "_EnvPanel", thread_pool):
         super().__init__()
         self._sys_panel = sys_panel
         self._usr_panel = usr_panel
+        self._pool = thread_pool
+        self._rows: List[effective_env.EffectiveRow] = []
+        self._workers: list = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         head = QHBoxLayout()
@@ -263,6 +266,12 @@ class _EffectivePane(QWidget):
         self._only_stale.setCheckable(True)
         self._only_stale.toggled.connect(self._refresh)
         head.addWidget(self._only_stale)
+        self._scan_btn = QPushButton("Scan running processes...")
+        self._scan_btn.setToolTip(
+            "Select a variable row, then check every OTHER running process (not just this "
+            "app) for whether it still has the current registry value.")
+        self._scan_btn.clicked.connect(self._scan_selected)
+        head.addWidget(self._scan_btn)
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh)
         head.addWidget(refresh_btn)
@@ -272,13 +281,18 @@ class _EffectivePane(QWidget):
             ["Name", "System", "User", "This process has", "State"])
         fit_table(self._table, stretch=[1, 2, 3], content=[0, 4])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
 
+    def cancel(self) -> None:
+        for w in self._workers:
+            w.cancel()
+        self._workers.clear()
+
     def _refresh(self, *_a) -> None:
-        rows = effective_env.compare(self._sys_panel.variables(), self._usr_panel.variables())
-        if self._only_stale.isChecked():
-            rows = effective_env.stale_rows(rows)
+        self._rows = effective_env.compare(self._sys_panel.variables(), self._usr_panel.variables())
+        rows = effective_env.stale_rows(self._rows) if self._only_stale.isChecked() else self._rows
         self._table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             state = "stale" if row.is_stale else ("process-only" if row.process_only else "current")
@@ -294,6 +308,86 @@ class _EffectivePane(QWidget):
             if not self._only_stale.isChecked() else
             f"{len(rows)} stale row(s): set in the registry, not yet in this process.")
 
+    # ── scan every running process for the selected variable ───────────────
+
+    def _selected_row(self) -> Optional[effective_env.EffectiveRow]:
+        item = self._table.item(self._table.currentRow(), 0) if self._table.currentRow() >= 0 else None
+        if item is None:
+            return None
+        return next((r for r in self._rows if r.name == item.text()), None)
+
+    def _scan_selected(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            self._status.setText("Select a variable row first, then Scan running processes.")
+            return
+        name, expected = row.name, row.combined_registry_value
+        self._scan_btn.setEnabled(False)
+        self._status.setText(f"Scanning running processes for {name}...")
+
+        def work(_w):
+            return process_env_scan.scan_running_processes(name, expected)
+
+        w = Worker(work)
+        w.signals.result.connect(lambda rows: self._on_scan_result(name, expected, rows))
+        w.signals.error.connect(self._on_scan_error)
+        w.signals.finished.connect(lambda: self._scan_btn.setEnabled(True))
+        self._workers.append(w)
+        self._pool.start(w)
+
+    def _on_scan_error(self, err: str) -> None:
+        self._status.setText(f"Process scan failed: {err}")
+
+    def _on_scan_result(self, name: str, expected: Optional[str],
+                        rows: List[process_env_scan.ProcessEnvRow]) -> None:
+        summary = process_env_scan.summarize(rows)
+        self._status.setText(
+            f"{name}: {summary.has_value} of {summary.total} running processes have a value "
+            f"({summary.stale} stale, {summary.refused} refused).")
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Running processes with {name}")
+        dlg.resize(760, 480)
+        layout = QVBoxLayout(dlg)
+        header = QLabel(
+            f"Registry says a new process would get: {expected if expected is not None else '(not set)'}")
+        header.setWordWrap(True)
+        set_role(header, "muted")
+        layout.addWidget(header)
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(["PID", "Process", "User", "Value", "State"])
+        fit_table(table, stretch=[1, 3], content=[0, 2, 4])
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        shown = [r for r in rows if r.value is not None or not r.readable]
+        table.setRowCount(len(shown))
+        for r, row in enumerate(shown):
+            if not row.readable:
+                state, value = f"refused ({row.refusal})", "—"
+            elif row.is_stale:
+                state, value = "stale", row.value
+            else:
+                state, value = "current", row.value
+            for c, text in enumerate((str(row.pid), row.name, row.username or "—", value, state)):
+                item = centered_item(text)
+                if not row.readable:
+                    item.setForeground(QColor(semantic("info")))
+                elif row.is_stale:
+                    item.setForeground(QColor(semantic("warning")))
+                table.setItem(r, c, item)
+        layout.addWidget(table, 1)
+        absent = summary.total - summary.has_value - summary.refused
+        footer = QLabel(
+            f"{absent} process(es) not shown: readable, and this variable is simply absent there. "
+            "A refused row means the process belongs to another user/SYSTEM and could not be "
+            "checked at all -- it is not evidence either way.")
+        footer.setWordWrap(True)
+        set_role(footer, "muted")
+        layout.addWidget(footer)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btns.accepted.connect(dlg.accept)
+        layout.addWidget(btns)
+        dlg.exec()
+
 
 class EnvVarsModule(BaseModule):
     name = "Environment Variables"
@@ -306,6 +400,7 @@ class EnvVarsModule(BaseModule):
         super().__init__()
         self._widget: QWidget | None = None
         self._path_pane: Optional[_PathPane] = None
+        self._effective_pane: Optional[_EffectivePane] = None
 
     def create_widget(self) -> QWidget:
         root = QWidget()
@@ -329,7 +424,7 @@ class EnvVarsModule(BaseModule):
         self._sys_panel.set_duplicate_target(self._usr_panel)
         self._usr_panel.set_duplicate_target(self._sys_panel)
         self._path_pane = _PathPane(self.thread_pool)
-        self._effective_pane = _EffectivePane(self._sys_panel, self._usr_panel)
+        self._effective_pane = _EffectivePane(self._sys_panel, self._usr_panel, self.thread_pool)
         splitter.addWidget(self._sys_panel)
         splitter.addWidget(self._usr_panel)
         splitter.addWidget(self._effective_pane)
@@ -387,6 +482,8 @@ class EnvVarsModule(BaseModule):
     def on_deactivate(self) -> None:
         if self._path_pane is not None:
             self._path_pane.cancel()
+        if self._effective_pane is not None:
+            self._effective_pane.cancel()
 
     def on_start(self, app) -> None:
         self.app = app

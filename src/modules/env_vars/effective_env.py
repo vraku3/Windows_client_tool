@@ -56,7 +56,7 @@ def compare(system_rows: Sequence[EnvVar], user_rows: Sequence[EnvVar],
         sysval, usrval = sysmap.get(upper), usrmap.get(upper)
         proc_key, procval = proc_upper.get(upper, (upper, None))
         expected = _combined(upper, sysval, usrval)
-        stale = expected is not None and procval is not None and not _equivalent(upper, expected, procval)
+        stale = expected is not None and procval is not None and not values_equivalent(upper, expected, procval)
         out.append(EffectiveRow(
             name=proc_key if proc_key in process_env else upper,
             system_value=sysval, user_value=usrval, process_value=procval,
@@ -71,12 +71,20 @@ def _combined(name_upper: str, sysval: Optional[str], usrval: Optional[str]) -> 
     return usrval if usrval is not None else sysval
 
 
-def _equivalent(name_upper: str, expected: str, actual: str) -> bool:
+def values_equivalent(name_upper: str, expected: str, actual: str) -> bool:
     """PATH comparisons ignore order and blank entries: Windows itself, and
     whatever launched this process, can reorder or add its own segments
-    (a shell's own PATH additions) without that being registry drift."""
+    (a shell's own PATH additions) without that being registry drift.
+
+    Public (not `_`-prefixed): `process_env_scan.py` reuses this exact rule to
+    judge staleness in OTHER processes' environment blocks, not just this
+    process' own -- the same "PATH order/blanks don't count as drift" logic
+    has to apply there too, or a process with a merely reordered PATH would
+    be flagged stale for no real reason.
+    """
     if name_upper == "PATH":
-        norm = lambda text: {p.strip().rstrip("\\").lower() for p in text.split(";") if p.strip()}
+        def norm(text: str):
+            return {p.strip().rstrip("\\").lower() for p in text.split(";") if p.strip()}
         return norm(expected) <= norm(actual)
     return expected == actual
 

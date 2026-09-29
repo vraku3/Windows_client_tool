@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
 from core.worker import Worker
 from modules.registry_explorer import registry_scan
 from modules.registry_explorer.registry_model import RegistryTreeModel
@@ -113,6 +113,9 @@ class RegistryExplorerModule(BaseModule):
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        self._last_write_label = QLabel("")
+        set_role(self._last_write_label, "muted")
+        right_layout.addWidget(self._last_write_label)
         self._values_table = QTableWidget(0, 3)
         self._values_table.setHorizontalHeaderLabels(["Name", "Type", "Data"])
         hdr = self._values_table.horizontalHeader()
@@ -139,6 +142,11 @@ class RegistryExplorerModule(BaseModule):
             return
         path = self._model.key_path(current)
         self._path_bar.setText(path)
+        when, why = self._model.last_write_for(current)
+        if when is not None:
+            self._last_write_label.setText(f"Last modified: {when:%Y-%m-%d %H:%M} UTC")
+        else:
+            self._last_write_label.setText(f"Last modified: could not read ({why})" if why else "")
         values = self._model.values_for(current)
         self._values_table.setRowCount(0)
         for name, type_str, data in values:

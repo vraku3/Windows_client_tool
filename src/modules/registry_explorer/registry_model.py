@@ -1,9 +1,12 @@
 # src/modules/registry_explorer/registry_model.py
+import datetime
 import logging
 import winreg
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from PyQt6.QtCore import QAbstractItemModel, QModelIndex, Qt
+
+from modules.registry_explorer.registry_scan import filetime_to_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +66,22 @@ class _Node:
         if self.parent:
             return self.parent.children().index(self)
         return 0
+
+    def last_write(self) -> Tuple[Optional[datetime.datetime], str]:
+        """(when, "") in UTC, or (None, reason) if the key can't be opened.
+
+        RegQueryInfoKey's lpftLastWriteTime is a real per-key fact regedit
+        itself never shows while browsing -- only exposed here today inside
+        registry_scan's search ("modified in the last N days"). Reusing it
+        for the currently selected key answers "when was this last touched"
+        without having to run a scan first.
+        """
+        try:
+            with winreg.OpenKey(self.hive, self.path, access=winreg.KEY_READ) as k:
+                _, _, ft = winreg.QueryInfoKey(k)
+            return filetime_to_datetime(ft), ""
+        except (OSError, PermissionError) as e:
+            return None, str(e)
 
 
 class RegistryTreeModel(QAbstractItemModel):
@@ -147,6 +166,13 @@ class RegistryTreeModel(QAbstractItemModel):
         node: _Node = index.internalPointer()
         hive_name = next((n for n, h in _HIVES.items() if h == node.hive), "")
         return f"{hive_name}\\{node.path}" if node.path else hive_name
+
+    def last_write_for(self, index: QModelIndex) -> Tuple[Optional[datetime.datetime], str]:
+        """(when, "") in UTC, or (None, reason) -- see _Node.last_write."""
+        if not index.isValid():
+            return None, ""
+        node: _Node = index.internalPointer()
+        return node.last_write()
 
     def values_for(self, index: QModelIndex) -> List[tuple]:
         """Return list of (name, type_str, data) for the selected key."""

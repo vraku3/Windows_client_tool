@@ -84,3 +84,37 @@ def test_health_stage_is_registered():
     from modules.updates.stage_runners import STAGE_RUNNERS, STAGE_LABELS
     assert "health" in STAGE_RUNNERS
     assert "health" in STAGE_LABELS
+
+
+class _FakeConfig:
+    def __init__(self, values):
+        self._values = values
+
+    def get(self, key, default=None):
+        return self._values.get(key, default)
+
+
+def test_run_wu_stage_honors_the_include_drivers_setting(monkeypatch):
+    """The Settings tab's "Include driver updates from Windows Update"
+    checkbox saves to updates.wu_include_drivers, but run_wu_stage (shared by
+    Run All and the headless --unattended runner) called fetch_pending_updates
+    with no such parameter — so unchecking it never changed anything on
+    either of those two paths. This pins that the config value now reaches
+    the WUA search."""
+    from modules.updates import stage_runners
+
+    captured = {}
+
+    def _fake_fetch(include_hidden=False, patterns=None, include_drivers=True):
+        captured["include_drivers"] = include_drivers
+        return []
+
+    monkeypatch.setattr(
+        "modules.updates.windows_updater.fetch_pending_updates", _fake_fetch)
+
+    class _FakeApp:
+        config = _FakeConfig({"updates.wu_include_drivers": False})
+
+    stage_runners.run_wu_stage(_FakeApp(), lambda msg: None, lambda: False)
+
+    assert captured["include_drivers"] is False

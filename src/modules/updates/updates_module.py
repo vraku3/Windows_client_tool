@@ -482,9 +482,12 @@ class _WinUpdatesTab(QWidget):
 
         include_hidden = self._chk_hidden.isChecked()
         patterns = self._patterns()
+        include_drivers = self.app.config.get("updates.wu_include_drivers", True) if self.app else True
 
         def _fetch(worker):
-            return fetch_pending_updates(include_hidden=include_hidden, patterns=patterns)
+            return fetch_pending_updates(
+                include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
+            )
 
         w = COMWorker(_fetch)
         w.signals.result.connect(self._on_updates)
@@ -606,9 +609,12 @@ class _WinUpdatesTab(QWidget):
     def _verify_after(self, results: List[InstallResult]) -> None:
         include_hidden = self._chk_hidden.isChecked()
         patterns = self._patterns()
+        include_drivers = self.app.config.get("updates.wu_include_drivers", True) if self.app else True
 
         def _fetch(worker):
-            return fetch_pending_updates(include_hidden=include_hidden, patterns=patterns)
+            return fetch_pending_updates(
+                include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
+            )
 
         w = COMWorker(_fetch)
         w.signals.result.connect(lambda after: self._on_verify_done(results, after))

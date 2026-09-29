@@ -25,8 +25,11 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
 
     patterns = app.config.get("updates.blocklist_patterns", [])
     include_hidden = app.config.get("updates.wu_include_hidden", False)
+    include_drivers = app.config.get("updates.wu_include_drivers", True)
     log("Windows Update: scanning...")
-    updates = fetch_pending_updates(include_hidden=include_hidden, patterns=patterns)
+    updates = fetch_pending_updates(
+        include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
+    )
     if not updates:
         log("Windows Update: system is up to date.")
         return {"results": [], "reboot_required": False, "installed_count": 0}

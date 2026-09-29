@@ -35,6 +35,7 @@ class InstallResult:
 def fetch_pending_updates(
     include_hidden: bool = False,
     patterns: Optional[List[str]] = None,
+    include_drivers: bool = True,
 ) -> List[WindowsUpdate]:
     """
     Uses Microsoft.Update.Session COM object to get pending updates.
@@ -42,10 +43,23 @@ def fetch_pending_updates(
 
     include_hidden: when False (default), excludes updates the user hid.
     patterns: optional blocklist patterns — matching updates are excluded.
+    include_drivers: when False, excludes Type='Driver' updates from the
+    search criteria itself (the same criteria syntax
+    windows_update_driver_check.py already verified live on this machine).
+    Windows Update's default search mixes driver-classified updates in with
+    everything else, so this is the only place that can honor the Settings
+    tab's "Include driver updates from Windows Update" checkbox — that
+    checkbox persisted to updates.wu_include_drivers and loaded back into
+    the UI, but nothing downstream ever read it: fetch_pending_updates took
+    no such parameter, and both the interactive Windows Updates tab and the
+    shared run_wu_stage (used by both Run All and the headless --unattended
+    runner) called it without one, so unchecking the box changed nothing.
     """
     import win32com.client
     updates = []
     criteria = "IsInstalled=0" if include_hidden else "IsInstalled=0 and IsHidden=0"
+    if not include_drivers:
+        criteria += " and Type<>'Driver'"
     try:
         session = win32com.client.Dispatch("Microsoft.Update.Session")
         searcher = session.CreateUpdateSearcher()

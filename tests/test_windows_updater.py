@@ -129,6 +129,44 @@ def test_a_failed_search_reports_a_sentence_not_a_tuple(monkeypatch):
     assert "shutting down" in text, text
 
 
+def test_include_drivers_false_adds_the_type_exclusion_to_search_criteria(monkeypatch):
+    """Settings has a checkbox, "Include driver updates from Windows Update",
+    that persists to updates.wu_include_drivers and reloads correctly — but
+    until this fix, fetch_pending_updates took no such parameter at all, so
+    unchecking it changed nothing in the interactive tab, Run All, or the
+    unattended runner. Type<>'Driver' is the same search-criteria syntax
+    windows_update_driver_check.py already verified live (its Type='Driver'
+    counterpart), just negated."""
+    import win32com.client
+
+    seen_criteria = []
+
+    class _Searcher:
+        def Search(self, criteria):
+            seen_criteria.append(criteria)
+            return type("R", (), {"Updates": _Coll([])})()
+
+    monkeypatch.setattr(
+        win32com.client, "Dispatch",
+        lambda progid: type("S", (), {"CreateUpdateSearcher": lambda self: _Searcher()})(),
+    )
+
+    windows_updater.fetch_pending_updates(include_drivers=False)
+    assert "Type<>'Driver'" in seen_criteria[-1]
+
+    windows_updater.fetch_pending_updates(include_drivers=True)
+    assert "Type<>'Driver'" not in seen_criteria[-1]
+
+
+def test_include_drivers_defaults_to_true_for_backward_compatibility(monkeypatch):
+    """Every pre-existing call site (before this fix) called fetch_pending_updates
+    with no include_drivers argument at all, and must keep seeing every
+    update type by default."""
+    _install_fake_session(monkeypatch, [_Update(title="A driver update")])
+    updates = windows_updater.fetch_pending_updates()
+    assert len(updates) == 1
+
+
 def test_a_non_com_failure_keeps_its_own_message(monkeypatch):
     import win32com.client
 

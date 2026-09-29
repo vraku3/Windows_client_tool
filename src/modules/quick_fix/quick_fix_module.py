@@ -22,12 +22,13 @@ logger = logging.getLogger(__name__)
 class _FixCard(QFrame):
     _line = pyqtSignal(str)   # marshals output to main thread
 
-    def __init__(self, action: FixAction, parent=None):
+    def __init__(self, action: FixAction, last_entry: dict = None, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self._action = action
         self._running = False
         self._worker = None   # track for cancellation
+        self._last_entry = last_entry   # most recent history row for this action, if any
         self._thread_pool = QThreadPool.globalInstance()
         self._setup_ui()
 
@@ -60,10 +61,13 @@ class _FixCard(QFrame):
         self._run_btn.setFixedWidth(80)
         layout.addWidget(self._run_btn)
 
-        # Status label
+        # Status label -- shows a blocked precondition or the last run's
+        # outcome at rest; overwritten with "Running..." while a worker is
+        # in flight (see _run/_on_done/_on_error/cancel).
         self._status = QLabel("")
         self._status.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(self._status)
+        self._refresh_status()
 
         # Output
         self._output = QPlainTextEdit()
@@ -76,6 +80,24 @@ class _FixCard(QFrame):
 
         self._run_btn.clicked.connect(self._run)
         self._line.connect(self._output.appendPlainText)
+
+    def _refresh_status(self) -> None:
+        """What the status label shows while nothing is running: a blocked
+        precondition's own reason (checked eagerly, at build time, not only
+        after a click that then goes nowhere -- e.g. "Right-size Hibernation
+        File" on a machine with hibernation off, which this label now says
+        up front instead of making the admin click Run to find out), else
+        the most recent history entry for this exact action, else nothing."""
+        if self._action.precondition is not None:
+            msg = self._action.precondition()
+            if msg is not None:
+                self._status.setText(msg)
+                return
+        if self._last_entry is not None:
+            self._status.setText(
+                f"Last run: {self._last_entry['at']} — {self._last_entry['outcome']}")
+        else:
+            self._status.setText("")
 
     def _run(self):
         if self._running:
@@ -131,9 +153,9 @@ class _FixCard(QFrame):
         self._running = False
         self._worker = None
         self._run_btn.setEnabled(True)
-        self._status.setText("")
         from modules.quick_fix import quick_fix_history
-        quick_fix_history.record(self._action.title, "ok")
+        self._last_entry = quick_fix_history.record(self._action.title, "ok")
+        self._refresh_status()
 
     def _on_error(self, error_str: str, worker) -> None:
         if self._worker is not worker:
@@ -143,10 +165,10 @@ class _FixCard(QFrame):
         self._running = False
         self._worker = None
         self._run_btn.setEnabled(True)
-        self._status.setText("")
         self._output.appendPlainText(f"ERROR: {error_str}")
         from modules.quick_fix import quick_fix_history
-        quick_fix_history.record(self._action.title, "error")
+        self._last_entry = quick_fix_history.record(self._action.title, "error")
+        self._refresh_status()
 
     def cancel(self) -> None:
         """Cancel the running worker if any."""
@@ -157,7 +179,8 @@ class _FixCard(QFrame):
             self._run_btn.setEnabled(True)
             self._output.appendPlainText("Cancelled.")
             from modules.quick_fix import quick_fix_history
-            quick_fix_history.record(self._action.title, "cancelled")
+            self._last_entry = quick_fix_history.record(self._action.title, "cancelled")
+            self._refresh_status()
 
 
 class QuickFixHistoryDialog(QDialog):
@@ -242,6 +265,11 @@ class QuickFixModule(BaseModule):
         for action in ALL_ACTIONS:
             categories.setdefault(action.category, []).append(action)
 
+        # One read of the history file for every card, rather than one per
+        # card -- see quick_fix_history.last_by_action's docstring.
+        from modules.quick_fix import quick_fix_history
+        last_outcomes = quick_fix_history.last_by_action()
+
         self._cards.clear()
         self._category_headers.clear()
         for cat_name, actions in categories.items():
@@ -258,7 +286,7 @@ class QuickFixModule(BaseModule):
             grid = QGridLayout()
             grid.setSpacing(8)
             for i, action in enumerate(actions):
-                card = _FixCard(action)
+                card = _FixCard(action, last_outcomes.get(action.title))
                 card._category = cat_name
                 self._cards.append(card)
                 grid.addWidget(card, i // 2, i % 2)

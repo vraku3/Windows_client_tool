@@ -53,3 +53,24 @@ def test_model_update_metrics():
     model.update_nodes({4: updated})
     idx = model.index(0, COL_CPU)
     assert "50" in model.data(idx)
+
+
+def test_appcontainer_arrives_late_like_the_other_cold_details():
+    """appcontainer is resolved cold, the same as exe/user/cmdline, so a
+    later tick's real reading must overwrite the first tick's None -- and
+    a later None (the budget ran out again) must NOT blank out a value
+    already learned."""
+    model = ProcessTreeModel()
+    first = _node(4, "System")
+    first.appcontainer = None
+    model.load_snapshot({4: first})
+
+    resolved = _node(4, "System")
+    resolved.appcontainer = True
+    model.update_nodes({4: resolved})
+    assert model._snapshot[4].appcontainer is True
+
+    unresolved_again = _node(4, "System")
+    unresolved_again.appcontainer = None
+    model.update_nodes({4: unresolved_again})
+    assert model._snapshot[4].appcontainer is True

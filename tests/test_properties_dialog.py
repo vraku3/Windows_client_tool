@@ -15,8 +15,8 @@ from PyQt6.QtGui import QImage, QPainter
 
 from modules.process_explorer.process_node import ProcessNode
 from modules.process_explorer.properties_dialog import (
-    ProcessPropertiesDialog, _bytes, _duration, _elapsed, _in_job, _percent,
-    _rate,
+    ProcessPropertiesDialog, _appcontainer_text, _bytes, _duration, _elapsed,
+    _in_job, _percent, _rate,
 )
 
 MY_PID = os.getpid()
@@ -173,6 +173,28 @@ def test_the_job_tab_names_the_driver_limit_rather_than_faking_it(dialog):
 
     text = " ".join(label.text() for label in page.findChildren(QLabel))
     assert "In a job" in text
+
+
+# ---- the Security tab's AppContainer row ---------------------------------
+
+def test_the_security_tab_shows_the_sandbox_status(dialog):
+    """Distinct from the Job tab and from `is_immersive`: this is the
+    process's own token, not a package identity or a job membership."""
+    index = EXPECTED_TABS.index("Security")
+    page = dialog._tabs.widget(index)
+    from PyQt6.QtWidgets import QLabel
+
+    text = " ".join(label.text() for label in page.findChildren(QLabel))
+    assert "Sandboxed (AppContainer)" in text
+
+
+def test_appcontainer_text_never_says_no_for_a_refusal():
+    """A refused token read is `None`. Reporting it as plain "No" would say
+    the process is definitely not sandboxed when the truth is nobody
+    knows."""
+    assert "Could not tell" in _appcontainer_text(None)
+    assert _appcontainer_text(True).startswith("Yes")
+    assert _appcontainer_text(False) == "No"
 
 
 # ---- formatting ---------------------------------------------------------

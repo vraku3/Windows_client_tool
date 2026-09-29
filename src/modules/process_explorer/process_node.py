@@ -30,6 +30,11 @@ class ProcessNode:
     is_dotnet: bool = False
     is_suspended: bool = False
     integrity_level: str = "Medium"  # Low | Medium | High | System
+    #: Whether the process token is an AppContainer token -- a sandbox
+    #: boundary, distinct from `is_immersive` (package identity). `None`
+    #: means the token could not be read (unelevated, most processes that
+    #: are not ours). See `core.procengine.details._token_appcontainer`.
+    appcontainer: Optional[bool] = None
 
     # Process Explorer's remaining row categories.
     #: Runs as the user we are, which is the distinction that makes a

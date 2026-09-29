@@ -10,7 +10,7 @@ from modules.shared_resources import share_audit as sa
 
 def _data(**kw):
     base = dict(shares=[], access=[], sessions=[], open_files=[],
-                server={"Smb1": False, "RequireSigning": True, "Encrypt": True,
+                server={"Smb1": False, "RequireSigning": True, "Encrypt": True, "RejectUnencrypted": True,
                         "AutoShareServer": True, "AutoShareWks": True},
                 client={"InsecureGuest": False, "RequireSigning": True}, guest={"Enabled": False})
     base.update(kw)
@@ -43,6 +43,41 @@ def test_everyone_full_on_user_share_is_high_read_is_medium():
     assert got["share_writeData"] == "high" and got["share_readPub"] == "medium"
 
 
+def test_encryption_required_but_not_enforced_is_a_low_finding():
+    d = _data(server={"Smb1": False, "RequireSigning": True, "Encrypt": True, "RejectUnencrypted": False,
+                      "AutoShareServer": True, "AutoShareWks": True})
+    keys = {f.key: f.severity for f in sa.audit(d)}
+    assert keys["reject_unencrypted_off"] == "low"
+
+
+def test_encryption_optional_and_unenforced_is_not_the_reject_finding():
+    # This machine's real default: Encrypt off, RejectUnencrypted on -- no
+    # inconsistency to flag, only the existing "encryption not enforced" info.
+    d = _data(server={"Smb1": False, "RequireSigning": True, "Encrypt": False, "RejectUnencrypted": True,
+                      "AutoShareServer": True, "AutoShareWks": True})
+    keys = {f.key for f in sa.audit(d)}
+    assert "reject_unencrypted_off" not in keys and "encrypt" in keys
+
+
+def test_share_level_encryption_override_is_surfaced():
+    shares = [{"Name": "Data", "Path": "C:\\d", "ShareType": "FileSystemDirectory", "Special": False,
+              "Enum": "AccessBased", "Encrypt": True}]
+    d = _data(shares=shares, access=[], server={"Smb1": False, "RequireSigning": True, "Encrypt": False,
+              "RejectUnencrypted": True, "AutoShareServer": True, "AutoShareWks": True})
+    keys = {f.key: f for f in sa.audit(d, lambda p: True)}
+    assert "share_encrypt_override" in keys
+    assert "Data" in keys["share_encrypt_override"].title
+    rows = sa.rows_shares(d)
+    assert rows[0]["Encrypted"] == "Yes"
+
+
+def test_share_without_encryption_reports_no_in_rows():
+    shares = [{"Name": "Data", "Path": "C:\\d", "ShareType": "FileSystemDirectory", "Special": False,
+              "Enum": "AccessBased", "Encrypt": False}]
+    d = _data(shares=shares, access=[])
+    assert sa.rows_shares(d)[0]["Encrypted"] == "No"
+
+
 def test_unreadable_permissions_do_not_claim_a_clean_share():
     shares = [{"Name": "Data", "Path": "", "ShareType": "FileSystemDirectory", "Special": False, "Enum": "AccessBased"}]
     d = _data(shares=shares, access=None)
@@ -70,6 +105,21 @@ def test_real_collect_shape():
     assert d.server is None or "Smb1" in d.server
     for f in sa.audit(d):
         assert f.severity in ("high", "medium", "low", "info")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows SMB")
+def test_real_server_encryption_fields_are_present():
+    # Confirmed live 2026-09-29: Get-SmbServerConfiguration on this machine
+    # answers EncryptData=False, RejectUnencryptedAccess=True (the Windows
+    # default) -- both keys must come through parsing, not just exist as
+    # PowerShell property names.
+    d = sa.collect()
+    if d.fatal or d.server is None:
+        pytest.skip(d.fatal or "server section unreadable")
+    assert "RejectUnencrypted" in d.server
+    assert isinstance(d.server["RejectUnencrypted"], bool)
+    for s in d.shares or []:
+        assert "Encrypt" in s or s.get("ShareType", "").lower().startswith("interprocess")
 
 
 # ---------------------------------------------------------------- remote

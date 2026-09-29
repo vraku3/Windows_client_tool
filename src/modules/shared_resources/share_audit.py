@@ -6,6 +6,19 @@ failure in `errors`; a section that failed is UNKNOWN in the findings, never
 "nothing found". (Measured 2026-09-26: Get-SmbShare, Get-SmbShareAccess,
 Get-SmbSession, Get-SmbOpenFile and Get-SmbServerConfiguration all answer
 unelevated on this machine, but that is not promised elsewhere.)
+
+Per-share and server-wide SMB *encryption* is a distinct setting from
+signing (already covered above) and from SMB1 -- and it was being collected
+into `ShareData` (both `EncryptData` per share and `RejectUnencryptedAccess`
+server-wide) without ever being surfaced. Confirmed live 2026-09-29 on this
+machine: `Get-SmbShare` really does return an `EncryptData` property per
+share (`False` for the only real share here, `IPC$`), and
+`Get-SmbServerConfiguration` really does return `EncryptData=False,
+RejectUnencryptedAccess=True` -- the Windows default (encryption optional,
+but a client that DOES negotiate it is never silently downgraded). A server
+that turns EncryptData on but leaves RejectUnencryptedAccess off is a real,
+actionable inconsistency: it announces "this share needs encryption" while
+still accepting a client that cannot do it.
 """
 from __future__ import annotations
 
@@ -152,6 +165,12 @@ def audit(data: ShareData, path_exists=os.path.exists) -> List[Finding]:
         if not srv.get("Encrypt"):
             out.append(Finding(SEV_INFO, "encrypt", "SMB encryption is not enforced server-wide",
                                "Fine on a trusted LAN; consider it across untrusted links."))
+        elif not srv.get("RejectUnencrypted"):
+            out.append(Finding(SEV_LOW, "reject_unencrypted_off",
+                               "Encryption is required server-wide, but unencrypted access is not rejected",
+                               "EncryptData is on but RejectUnencryptedAccess is off: a client that cannot "
+                               "negotiate SMB 3.x encryption still connects unencrypted instead of being refused, "
+                               "which quietly defeats the point of requiring encryption."))
     cli = data.client
     if cli and cli.get("InsecureGuest"):
         out.append(Finding(SEV_MEDIUM, "insecure_guest", "Insecure guest logons are allowed (client)",
@@ -197,6 +216,9 @@ def _audit_share(data: ShareData, s: dict, path_exists) -> List[Finding]:
     if s.get("Enum", "").lower() == "unrestricted":
         out.append(Finding(SEV_INFO, "no_abe", "%s lists files a user cannot open" % name,
                            "Access-based enumeration is off.", name))
+    if data.server and not data.server.get("Encrypt") and s.get("Encrypt"):
+        out.append(Finding(SEV_INFO, "share_encrypt_override", "%s requires SMB encryption" % name,
+                           "This share turns on encryption itself even though the server default is off.", name))
     return out
 
 
@@ -208,5 +230,6 @@ def rows_shares(data: ShareData) -> List[dict]:
             if data.access is not None else "(permissions unreadable)"
         out.append({"Name": s.get("Name", ""), "Kind": "Admin/special" if is_admin_share(s) else "User",
                     "Path": s.get("Path", ""), "Access": access,
+                    "Encrypted": "Yes" if s.get("Encrypt") else "No",
                     "Users": s.get("CurrentUsers", 0), "Comment": s.get("Description", "")})
     return out

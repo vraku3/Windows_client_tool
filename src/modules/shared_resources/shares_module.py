@@ -59,8 +59,10 @@ def get_exposure() -> List[Dict]:
     srv, cli = data.server, data.client
     if srv:
         rows.append({"Severity": "SETTING", "Finding": "SMB server",
-                     "Detail": "SMB1 %s, SMB2 %s, signing required %s, encryption %s" % tuple(
-                         "on" if srv.get(k) else "off" for k in ("Smb1", "Smb2", "RequireSigning", "Encrypt"))})
+                     "Detail": "SMB1 %s, SMB2 %s, signing required %s, encryption required %s, "
+                               "unencrypted access rejected %s" % tuple(
+                         "on" if srv.get(k) else "off" for k in
+                         ("Smb1", "Smb2", "RequireSigning", "Encrypt", "RejectUnencrypted"))})
     if cli:
         rows.append({"Severity": "SETTING", "Finding": "SMB client",
                      "Detail": "signing required %s, insecure guest logons %s" % (
@@ -218,7 +220,7 @@ class SharesModule(BaseModule):
         tabs.addTab(
             _RefreshTab(get_exposure, ["Severity", "Finding", "Detail"], tp), "Exposure")
         tabs.addTab(
-            _RefreshTab(get_shares, ["Name", "Kind", "Path", "Access", "Users", "Comment"], tp),
+            _RefreshTab(get_shares, ["Name", "Kind", "Path", "Access", "Encrypted", "Users", "Comment"], tp),
             "Network Shares"
         )
         tabs.addTab(

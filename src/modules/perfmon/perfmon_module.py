@@ -6,7 +6,8 @@ from typing import Optional
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QLabel, QVBoxLayout, QWidget, QTabWidget, QGridLayout, QProgressBar, QTableWidget,
+    QComboBox, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton,
+    QStackedWidget, QTableWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
@@ -14,8 +15,8 @@ from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.table_ui import centered_item, fit_table
 from core.types import LogEntry
-from modules.perfmon.perfmon_collector import PerfMonStore, collect_snapshot
-from modules.perfmon.perfmon_charts import PerfMonDashboard, _QtLineChart
+from modules.perfmon.perfmon_collector import PerfMonStore, REPLAYABLE_COUNTERS, collect_snapshot, downsample
+from modules.perfmon.perfmon_charts import HistoryDashboard, PerfMonDashboard, _QtLineChart
 from modules.perfmon.perfmon_alerts import AlertRule
 from modules.perfmon.perfmon_search_provider import PerfMonSearchProvider
 from core.semantic_colors import semantic
@@ -66,9 +67,13 @@ class PerfMonModule(BaseModule):
         dash_layout.addWidget(self._summary_label)
 
         self._dashboard = PerfMonDashboard()
+        self._dashboard.set_alert_thresholds(self._alerts)
         dash_layout.addWidget(self._dashboard)
 
         self._tabs.addTab(dash_widget, "Charts")
+
+        # --- History tab (replay of what PerfMonStore already logged) ---
+        self._tabs.addTab(self._build_history_tab(), "History")
 
         # --- Live Monitor tab ---
         live_widget = QWidget()
@@ -136,6 +141,13 @@ class PerfMonModule(BaseModule):
         self._live_prev_disk = None
         self._live_prev_net = None
 
+        # Connected AFTER every addTab() above: QTabWidget.addTab() fires
+        # currentChanged synchronously for the first tab added, so wiring
+        # this earlier would run a store query during create_widget() itself,
+        # defeating the lazy-load-on-visit this is trying to do.
+        self._history_loaded = False
+        self._tabs.currentChanged.connect(self._on_tab_changed)
+
         layout.addWidget(self._tabs)
         # The charts paint themselves, so the theme has to be handed to them --
         # at build time for whatever is already in force, and again whenever it
@@ -146,6 +158,70 @@ class PerfMonModule(BaseModule):
         if theme is not None:
             self._sync_chart_theme(theme.current_theme)
         return self._widget
+
+    _HISTORY_RANGES = [
+        ("Last hour", 1),
+        ("Last 6 hours", 6),
+        ("Last 24 hours", 24),
+        ("Last 7 days", 168),
+    ]
+
+    def _build_history_tab(self) -> QWidget:
+        """A replay of `PerfMonStore`'s own data. The store has been writing
+        one row per counter per minute since PerfMon first shipped, but
+        `PerfMonStore.query` had no caller anywhere in the app -- every
+        sample it ever wrote was write-only. This is the read side."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Range:"))
+        self._history_range = QComboBox()
+        for label, _hours in self._HISTORY_RANGES:
+            self._history_range.addItem(label)
+        controls.addWidget(self._history_range)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.clicked.connect(self._refresh_history)
+        controls.addWidget(refresh_btn)
+        controls.addStretch()
+        layout.addLayout(controls)
+
+        self._history_stack = QStackedWidget()
+        self._history_dashboard = HistoryDashboard()
+        self._history_stack.addWidget(self._history_dashboard)
+        empty_label = QLabel(
+            "No history recorded for this range yet.\n"
+            "PerfMon only logs while this module's tab is open -- open Charts "
+            "for a while, then check back here."
+        )
+        empty_label.setWordWrap(True)
+        self._history_stack.addWidget(empty_label)
+        layout.addWidget(self._history_stack)
+
+        return widget
+
+    def _on_tab_changed(self, index: int) -> None:
+        if index == 1 and not self._history_loaded:
+            self._history_loaded = True
+            self._refresh_history()
+
+    def _refresh_history(self) -> None:
+        if self._store is None:
+            return
+        idx = self._history_range.currentIndex()
+        hours_back = self._HISTORY_RANGES[idx][1] if 0 <= idx < len(self._HISTORY_RANGES) else 1
+        rows_by_counter = {}
+        try:
+            for counter in REPLAYABLE_COUNTERS:
+                rows = self._store.query(counter, hours_back=hours_back)
+                rows_by_counter[counter] = downsample(rows)
+        except Exception as e:
+            logger.error("PerfMon history query failed: %s", e)
+            self._history_stack.setCurrentIndex(1)
+            return
+        has_data = self._history_dashboard.load(rows_by_counter)
+        self._history_stack.setCurrentIndex(0 if has_data else 1)
 
     def _sync_chart_theme(self, theme: str) -> None:
         if self._widget is None:

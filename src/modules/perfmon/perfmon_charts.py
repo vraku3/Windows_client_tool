@@ -1,9 +1,12 @@
 import logging
 from collections import deque
+from typing import Optional
 
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget
-from PyQt6.QtCore import QPointF
-from PyQt6.QtGui import QPainter, QPen, QColor, QBrush, QFont, QPainterPath
+from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen
+from PyQt6.QtWidgets import QTabWidget, QVBoxLayout, QWidget
+
+from core.semantic_colors import semantic
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +63,34 @@ class _QtLineChart(QWidget):
         self._data: deque = deque(maxlen=self.MAX_POINTS)
         self._times: deque = deque(maxlen=self.MAX_POINTS)
         self._curve: QPainterPath = QPainterPath()
+        #: An alert threshold to draw as a horizontal reference line, or
+        #: None to draw nothing. Set from the module's own `AlertRule`s, so
+        #: the line shown here is never a value invented for the chart --
+        #: it is the exact number that would fire an alert.
+        self._threshold: Optional[float] = None
+        self._threshold_label: str = ""
         self.setMinimumHeight(140)
         #: Dark until told otherwise -- never an empty dict, so paintEvent has
         #: no uncoloured state to guard against.
         self.colours = CHART_PALETTES["dark"]
         self._apply_background()
+
+    def set_threshold(self, value: Optional[float], label: str = "") -> None:
+        """Show (or clear, with `value=None`) a dashed reference line at
+        `value`. `label` is drawn beside it, e.g. "alert > 90"."""
+        self._threshold = value
+        self._threshold_label = label
+        self.update()
+
+    def set_series(self, values) -> None:
+        """Replace the plotted data outright with `values`, for a one-shot
+        historical replay rather than a live rolling window. Capped to
+        `MAX_POINTS` (matching the live charts) so a caller that forgot to
+        downsample a multi-day query still renders, just clipped to its
+        most recent points rather than stalling the paint."""
+        self._data = deque(values[-self.MAX_POINTS:], maxlen=self.MAX_POINTS)
+        self._times = deque(range(1, len(self._data) + 1), maxlen=self.MAX_POINTS)
+        self.update()
 
     def set_theme(self, theme: str) -> None:
         """Follow `theme`, repainting immediately. Unknown names stay put."""
@@ -174,6 +200,18 @@ class _QtLineChart(QWidget):
             painter.drawText(1, int(y_px + 3), f"{val:.0f}")
             painter.drawLine(pad - 3, int(y_px), int(pad), int(y_px))
 
+        # Alert threshold line -- drawn under the data so a spike that
+        # crosses it is still the thing the eye lands on first.
+        if self._threshold is not None and y_min <= self._threshold <= y_max:
+            frac = (self._threshold - y_min) / y_range
+            y_px = chart_bottom - frac * chart_h
+            threshold_pen = QPen(QColor(semantic("error")), 1, Qt.PenStyle.DashLine)
+            painter.setPen(threshold_pen)
+            painter.drawLine(int(pad), int(y_px), int(pad + chart_w), int(y_px))
+            if self._threshold_label:
+                painter.setFont(QFont("Segoe UI", 7))
+                painter.drawText(int(pad + 4), int(y_px - 3), self._threshold_label)
+
         # Draw the line
         points = self._to_xy()
         if len(points) < 2:
@@ -247,6 +285,10 @@ class RealTimeChart(QWidget):
         if self._plot_widget is not None:
             self._plot_widget.add_point(value)
 
+    def set_threshold(self, value: Optional[float], label: str = "") -> None:
+        if self._plot_widget is not None:
+            self._plot_widget.set_threshold(value, label)
+
 
 class PerfMonDashboard(QWidget):
     """Dashboard with multiple real-time charts in tabs."""
@@ -287,3 +329,67 @@ class PerfMonDashboard(QWidget):
             self.memory_chart.add_point(snapshot["memory_percent"])
         if "disk_percent" in snapshot:
             self.disk_chart.add_point(snapshot["disk_percent"])
+
+    def set_alert_thresholds(self, alerts) -> None:
+        """Draw each enabled `AlertRule`'s threshold on the chart for its own
+        counter. An alert firing in the log was previously invisible on the
+        chart it is about -- this is the exact number from that same rule,
+        never a value re-guessed for display."""
+        by_counter = {"cpu_total": self.cpu_chart, "memory_percent": self.memory_chart,
+                      "disk_percent": self.disk_chart}
+        shown = {chart_id: None for chart_id in by_counter}
+        for rule in alerts:
+            chart = by_counter.get(rule.counter)
+            if chart is None or not rule.enabled:
+                continue
+            shown[rule.counter] = rule
+        for counter, rule in shown.items():
+            chart = by_counter[counter]
+            if rule is None:
+                chart.set_threshold(None)
+            else:
+                chart.set_threshold(rule.threshold, f"alert {rule.operator} {rule.threshold:g}")
+
+
+class HistoryDashboard(QWidget):
+    """A one-shot (non-live) replay of counters `PerfMonStore` already
+    logged. `PerfMonStore.store_snapshot` has been writing since PerfMon
+    first shipped, but nothing ever read `PerfMonStore.query` back -- this
+    is that missing read side, in the same tabbed-chart shape as the live
+    Dashboard so it needs no new UI convention.
+
+    Only `REPLAYABLE_COUNTERS` are offered: `net_*`/`disk_*_bytes` are
+    cumulative counters (see `collect_snapshot`), and charting them verbatim
+    would draw an ever-climbing line rather than a rate.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs)
+
+        self.charts: dict = {
+            "cpu_total": _QtLineChart("CPU Usage (history)", "%",
+                                       color=CHART_COLORS["cpu"], y_range=(0, 100)),
+            "memory_percent": _QtLineChart("Memory Usage (history)", "%",
+                                            color=CHART_COLORS["memory"], y_range=(0, 100)),
+            "disk_percent": _QtLineChart("Disk Activity (history)", "%",
+                                          color=CHART_COLORS["disk"], y_range=(0, 100)),
+        }
+        self._tabs.addTab(self.charts["cpu_total"], "CPU")
+        self._tabs.addTab(self.charts["memory_percent"], "Memory")
+        self._tabs.addTab(self.charts["disk_percent"], "Disk")
+
+    def load(self, rows_by_counter: dict) -> bool:
+        """Replace every chart's series from `{counter: [(ts, value), ...]}`.
+        Returns True if any counter had at least one row, so the caller can
+        decide whether to show an empty-state message instead."""
+        any_rows = False
+        for counter, chart in self.charts.items():
+            rows = rows_by_counter.get(counter, [])
+            chart.set_series([value for _ts, value in rows])
+            any_rows = any_rows or bool(rows)
+        return any_rows

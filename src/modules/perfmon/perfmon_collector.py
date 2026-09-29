@@ -2,11 +2,23 @@ import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import psutil
 
 logger = logging.getLogger(__name__)
+
+#: Counters `PerfMonStore` holds that are plain 0-100 percentages, so they can
+#: be replayed straight onto a chart with no rate/derivative math. `net_*` and
+#: `disk_*_bytes` are cumulative counters (see `collect_snapshot`) -- charting
+#: those verbatim would show an ever-climbing line, not the KB/s rate the
+#: live Network tab computes from two consecutive readings. History replay is
+#: scoped to the counters that are already meaningful as single values.
+REPLAYABLE_COUNTERS: Dict[str, str] = {
+    "cpu_total": "CPU %",
+    "memory_percent": "Memory %",
+    "disk_percent": "Disk %",
+}
 
 
 def collect_snapshot() -> Dict[str, float]:
@@ -99,3 +111,24 @@ class PerfMonStore:
         if self._conn:
             self._conn.close()
             self._conn = None
+
+
+def downsample(rows: List[Tuple[str, float]], max_points: int = 300) -> List[Tuple[str, float]]:
+    """Thin `rows` (as returned by `PerfMonStore.query`) to at most
+    `max_points` for chart display.
+
+    `PerfMonStore` writes one sample per counter per minute, so a 7-day
+    `query()` returns up to 10,080 rows. Feeding all of them into
+    `_QtLineChart.set_series` is a real cost, not a theoretical one: every
+    point recomputes its own (x, y) in `_to_xy`, and the axis writes an
+    OS-level DPI-scaled `drawText` per gridline on every repaint. This keeps
+    the point count fixed regardless of range, and always keeps the very
+    first and last sample so the endpoints of the requested window are never
+    silently trimmed off.
+    """
+    n = len(rows)
+    if n <= max_points or max_points <= 1:
+        return rows
+    step = (n - 1) / (max_points - 1)
+    indices = {round(i * step) for i in range(max_points)}
+    return [rows[i] for i in sorted(indices)]

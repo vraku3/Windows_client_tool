@@ -87,3 +87,52 @@ def test_a_genuinely_empty_but_successful_listing_is_still_empty(dism):
     dism(0, "Feature Name                | State\n")
 
     assert features_module._fetch_all_features() == []
+
+
+# ---------------------------------------------------------------------------
+# The reboot banner names WHY, reusing overview_health.pending_reboot_reasons
+# instead of the bare on/off core.windows_utils.is_reboot_pending() -- a
+# feature toggle here sets the CBS RebootPending key specifically, and a
+# returning admin wants to know it was THIS action asking for the restart,
+# not an unrelated Windows Update. `None` (a refused registry read) is its
+# own state, never silently folded into "no reboot needed".
+# ---------------------------------------------------------------------------
+
+def _reboot_banner(widget):
+    from PyQt6.QtWidgets import QLabel
+    return next(lbl for lbl in widget.findChildren(QLabel) if lbl.text().startswith("⚠"))
+
+
+def test_no_reasons_hides_the_banner(qapp, monkeypatch):
+    monkeypatch.setattr(features_module, "pending_reboot_reasons", lambda: [])
+    mod = features_module.WindowsFeaturesModule()
+    w = mod.create_widget()
+    assert _reboot_banner(w).isHidden()
+
+
+def test_reasons_are_named_in_the_banner_text(qapp, monkeypatch):
+    monkeypatch.setattr(features_module, "pending_reboot_reasons",
+                        lambda: ["servicing (CBS)", "Windows Update"])
+    mod = features_module.WindowsFeaturesModule()
+    w = mod.create_widget()
+    banner = _reboot_banner(w)
+    assert not banner.isHidden()
+    assert "servicing (CBS)" in banner.text() and "Windows Update" in banner.text()
+
+
+def test_a_refused_read_is_its_own_state_not_a_hidden_banner(qapp, monkeypatch):
+    monkeypatch.setattr(features_module, "pending_reboot_reasons", lambda: None)
+    mod = features_module.WindowsFeaturesModule()
+    w = mod.create_widget()
+    banner = _reboot_banner(w)
+    assert not banner.isHidden()
+    assert "could not be checked" in banner.text().lower()
+
+
+def test_a_raised_exception_still_degrades_to_a_hidden_banner(qapp, monkeypatch):
+    def _boom():
+        raise RuntimeError("boom")
+    monkeypatch.setattr(features_module, "pending_reboot_reasons", _boom)
+    mod = features_module.WindowsFeaturesModule()
+    w = mod.create_widget()
+    assert _reboot_banner(w).isHidden()

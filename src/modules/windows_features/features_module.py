@@ -12,7 +12,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
 from core.semantic_colors import semantic
-from core.windows_utils import is_reboot_pending
+from modules.dashboard.overview_health import pending_reboot_reasons
 import logging
 logger = logging.getLogger(__name__)
 
@@ -147,11 +147,32 @@ class WindowsFeaturesModule(BaseModule):
         reboot_banner.setStyleSheet(
             "background:#FF8800;color:white;padding:4px;font-weight:bold;"
         )
-        try:
-            reboot_banner.setVisible(is_reboot_pending())
-        except Exception:
-            logger.warning("Ignored Exception", exc_info=True)
-            reboot_banner.hide()
+
+        def _refresh_reboot_banner() -> None:
+            """Named reasons (CBS servicing, Windows Update, queued file
+            replacements), not just a bare on/off -- a feature toggle here
+            sets the CBS RebootPending key specifically, and a returning
+            admin wants to know it was THIS action, not an unrelated
+            Windows Update, that's asking for the restart. `None` means the
+            read itself was refused, which is never the same as "no reboot
+            needed" -- shown as its own state rather than silently hidden.
+            """
+            try:
+                reasons = pending_reboot_reasons()
+            except Exception:
+                logger.warning("Ignored Exception", exc_info=True)
+                reboot_banner.hide()
+                return
+            if reasons is None:
+                reboot_banner.setText("⚠ Reboot status could not be checked.")
+                reboot_banner.show()
+            elif reasons:
+                reboot_banner.setText("⚠ A system reboot is pending (" + ", ".join(reasons) + ").")
+                reboot_banner.show()
+            else:
+                reboot_banner.hide()
+
+        _refresh_reboot_banner()
         layout.addWidget(reboot_banner)
 
         # Toolbar
@@ -265,10 +286,7 @@ class WindowsFeaturesModule(BaseModule):
                 populate(features, filter_edit.text())
                 enabled = sum(1 for _, s in features if "Enabled" in s)
                 status_lbl.setText(f"{len(features)} features — {enabled} enabled")
-                try:
-                    reboot_banner.setVisible(is_reboot_pending())
-                except Exception:
-                    logger.warning("Ignored Exception", exc_info=True)
+                _refresh_reboot_banner()
 
             def on_error(err: str) -> None:
                 refresh_btn.setEnabled(True)
@@ -320,10 +338,7 @@ class WindowsFeaturesModule(BaseModule):
                 enable_btn.setEnabled(True)
                 disable_btn.setEnabled(True)
                 status_lbl.setText(f"{action_name} complete.")
-                try:
-                    reboot_banner.setVisible(is_reboot_pending())
-                except Exception:
-                    logger.warning("Ignored Exception", exc_info=True)
+                _refresh_reboot_banner()
                 load_features()
 
             def on_error(err: str) -> None:

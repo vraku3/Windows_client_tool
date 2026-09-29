@@ -18,7 +18,7 @@ from core.semantic_colors import semantic
 from core.table_ui import center_header, centered_item, set_role
 from core.worker import COMWorker, Worker
 from modules.dashboard.tab_base import make_chips, set_chip_counts
-from modules.scheduled_tasks import task_actions, task_view
+from modules.scheduled_tasks import task_actions, task_history, task_view
 from modules.scheduled_tasks.tasks_reader import (
     ALL_FOLDERS, TaskFolder, TaskInfo, get_folder_tree, get_tasks_in_folder,
 )
@@ -49,6 +49,7 @@ class TasksModule(BaseModule):
         self._filter_key = "all"
         self._folder_path = ALL_FOLDERS
         self._tasks_loaded = False
+        self._history_enabled: Optional[bool] = None
 
     # ------------------------------------------------------------------
     # BaseModule lifecycle
@@ -69,6 +70,7 @@ class TasksModule(BaseModule):
             self._tasks_loaded = True
             self._load_folders()
             self._load_tasks()
+            self._check_history_log()
 
     def on_deactivate(self) -> None:
         self.cancel_all_workers()
@@ -116,6 +118,19 @@ class TasksModule(BaseModule):
                   self._delete_btn, self._export_btn, self._copy_btn, self._sig_btn, taskschd):
             bar.addWidget(b)
         bar.addStretch()
+        self._history_lbl = QLabel("Task history logging: checking...")
+        self._history_lbl.setToolTip(
+            "Microsoft-Windows-TaskScheduler/Operational -- Windows ships this off, so a "
+            "task's own History tab in Task Scheduler is empty until it is turned on.")
+        set_role(self._history_lbl, "muted")
+        self._history_enable_btn = QPushButton("Enable task history")
+        self._history_enable_btn.setToolTip(
+            "Turn on Task Scheduler's per-run history log for every task, from now on. "
+            "Needs an elevated instance of this app.")
+        self._history_enable_btn.hide()
+        self._history_enable_btn.clicked.connect(self._enable_history)
+        bar.addWidget(self._history_lbl)
+        bar.addWidget(self._history_enable_btn)
         bar.addWidget(self._status_lbl)
         self._refresh_btn.clicked.connect(self._refresh_all)
         self._enable_btn.clicked.connect(lambda: self._change_enabled(True))
@@ -235,6 +250,55 @@ class TasksModule(BaseModule):
             return
         self._progress.hide()
         self._status_lbl.setText(f"Error: {err}")
+
+    def _check_history_log(self) -> None:
+        """Whether Microsoft-Windows-TaskScheduler/Operational is on -- a
+        plain read, no elevation needed. Confirmed OFF by default (see
+        `task_history`'s docstring); this is what lets a returning admin see
+        that at a glance instead of discovering it only once a task fails
+        with nothing in its own History tab to explain why."""
+        worker = Worker(lambda _w: task_history.log_enabled())
+        worker.signals.result.connect(self._on_history_log_status)
+        worker.signals.error.connect(lambda _err: None)
+        self._start(worker)
+
+    def _on_history_log_status(self, enabled: Optional[bool]) -> None:
+        if not _alive(self._widget):
+            return
+        self._history_enabled = enabled
+        if enabled is True:
+            self._history_lbl.setText("Task history logging: ON")
+            self._history_enable_btn.hide()
+        elif enabled is False:
+            self._history_lbl.setText("Task history logging: OFF (Windows default)")
+            self._history_enable_btn.show()
+        else:
+            self._history_lbl.setText("Task history logging: could not be checked")
+            self._history_enable_btn.hide()
+
+    def _enable_history(self) -> None:
+        if not confirm_destructive(
+                self._widget, "Enable Task History",
+                "Turn on Task Scheduler's own per-run history log "
+                "(Microsoft-Windows-TaskScheduler/Operational) for every task?",
+                detail="This only records runs from now on; nothing before this moment "
+                       "can be recovered. Needs an elevated instance of this app.",
+                irreversible=False):
+            return
+        self._history_enable_btn.setEnabled(False)
+        self._history_lbl.setText("Task history logging: enabling...")
+        worker = Worker(lambda _w: task_history.enable_log())
+        worker.signals.result.connect(self._on_enable_history_done)
+        worker.signals.error.connect(lambda err: self._on_enable_history_done((False, str(err))))
+        self._start(worker)
+
+    def _on_enable_history_done(self, result) -> None:
+        if not _alive(self._widget):
+            return
+        ok, message = result
+        self._status_lbl.setText(("Done: " if ok else "FAILED: ") + message)
+        self._history_enable_btn.setEnabled(True)
+        self._check_history_log()
 
     def _on_tasks(self, tasks: List[TaskInfo]) -> None:
         if not _alive(self._widget):

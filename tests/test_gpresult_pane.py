@@ -402,6 +402,58 @@ def test_a_delete_directive_is_not_painted_as_a_setting(pane):
 
 
 # ------------------------------------------------------------------
+# Multiple Local GPO (System32\GroupPolicyUsers) -- a separate mechanism
+# from the single machine-wide Local Policy section above.
+# ------------------------------------------------------------------
+
+def _per_user_entry(sid="S-1-5-32-544", account_name="Administrators",
+                    resolved=True, pol=None):
+    from modules.gpresult.pol_parser import PerUserLocalPolicy
+    return PerUserLocalPolicy(sid=sid, account_name=account_name,
+                              resolved=resolved, pol=pol)
+
+
+def test_the_section_is_absent_when_the_check_never_ran(pane):
+    """`None` means the caller never fetched this, the same signal
+    `_build_audit` reads on `tattoo`/`conflicts` -- distinct from a real,
+    empty answer."""
+    pane._on_result(parse_rsop_xml(SETTINGS_XML))
+    assert "Per-User Local Policies" not in _roots(pane)
+
+
+def test_a_real_empty_answer_still_gets_its_own_row(pane):
+    """Confirmed on the real machine this ships on: the folder exists but
+    holds no SID subfolders. That is worth stating, not hiding."""
+    pane._on_result(parse_rsop_xml(SETTINGS_XML), per_user_policy=[])
+    section = _roots(pane)["Per-User Local Policies"]
+    assert section.text(1) == "0"
+    assert "System32" in section.child(0).text(0)
+
+
+def test_a_configured_per_user_policy_is_shown_under_its_account_name(pane):
+    pol = _pol_file(scope="User", hive="HKU\\S-1-5-32-544", values=[SRPV2])
+    entry = _per_user_entry(pol=pol)
+    pane._on_result(parse_rsop_xml(SETTINGS_XML), per_user_policy=[entry])
+    section = _roots(pane)["Per-User Local Policies"]
+    assert section.text(1) == "1 (1 with settings configured)"
+    account = _child(section, "Administrators")
+    setting = _child(
+        account, r"Software\Policies\Microsoft\Windows\SrpV2\Exe\AllowWindows")
+    assert setting.text(1) == "0"
+
+
+def test_an_unresolvable_sid_is_shown_under_its_raw_sid_and_flagged(pane):
+    """A deleted account's per-user GPO is still real, still-effective
+    policy -- it must be shown, not dropped for want of a friendly name."""
+    entry = _per_user_entry(sid="S-1-5-21-1-2-3-9999", account_name="",
+                            resolved=False, pol=_pol_file(values=[SRPV2]))
+    pane._on_result(parse_rsop_xml(SETTINGS_XML), per_user_policy=[entry])
+    section = _roots(pane)["Per-User Local Policies"]
+    row = _child(section, "S-1-5-21-1-2-3-9999")
+    assert "Could not resolve" in _child(row, "Account").text(1)
+
+
+# ------------------------------------------------------------------
 # Is the configured policy actually in effect?
 # ------------------------------------------------------------------
 

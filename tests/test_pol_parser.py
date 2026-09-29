@@ -14,13 +14,14 @@ mid-field. This machine's own file has sizes of only 0 and 4, so the bug would
 have passed every test written against real local data here and corrupted the
 first domain policy it ever met.
 """
+import os
 import struct
 
 import pytest
 
 from modules.gpresult.pol_parser import (
     PolParseError, local_policy_files,
-    parse_pol_bytes, read_pol_file,
+    parse_pol_bytes, per_user_local_policies, read_pol_file,
 )
 
 REG_SZ = 1
@@ -236,3 +237,100 @@ def test_a_key_only_record_has_no_value_name():
         _record("Software\\Policies\\Microsoft\\Windows\\Safer", "", 0, b"")))
     assert values[0].value_name == ""
     assert values[0].full_path == "Software\\Policies\\Microsoft\\Windows\\Safer"
+
+
+# ------------------------------------------------------------------
+# Multiple Local GPO (System32\GroupPolicyUsers) -- a separate mechanism
+# from local_policy_files' single machine-wide Registry.pol above.
+# ------------------------------------------------------------------
+
+def test_a_missing_group_policy_users_folder_is_not_an_error(tmp_path):
+    """A machine that never used per-user local GPO has no such folder at
+    all -- the same "normal state, not a failure" rule read_pol_file already
+    applies to a missing Registry.pol."""
+    assert per_user_local_policies(str(tmp_path)) == []
+
+
+def test_an_empty_group_policy_users_folder_reports_zero_entries(tmp_path):
+    (tmp_path / "System32" / "GroupPolicyUsers").mkdir(parents=True)
+    assert per_user_local_policies(str(tmp_path)) == []
+
+
+def test_a_specific_account_sid_folder_is_read_and_labelled(tmp_path):
+    """A real per-account local GPO: gpedit names the folder after the
+    account's own SID, and the Registry.pol inside is the exact same PReg
+    format local_policy_files already parses -- reused here, not
+    reimplemented."""
+    sid = "S-1-5-21-111111111-222222222-333333333-1001"
+    sid_dir = tmp_path / "System32" / "GroupPolicyUsers" / sid / "User"
+    sid_dir.mkdir(parents=True)
+    (sid_dir / "Registry.pol").write_bytes(_pol(
+        _record("Software\\Policies\\Test", "On", REG_DWORD,
+                struct.pack("<I", 1))))
+
+    entries = per_user_local_policies(str(tmp_path))
+    assert len(entries) == 1
+    assert entries[0].sid == sid
+    assert entries[0].pol.exists is True
+    assert entries[0].pol.hive == "HKU\\%s" % sid
+    assert entries[0].pol.settings[0].full_path == "Software\\Policies\\Test\\On"
+
+
+def test_the_administrators_and_non_administrators_group_sids_get_friendly_names(
+        tmp_path):
+    """The two group-wide targets of Multiple Local GPO use well-known SIDs
+    that resolve fine through LookupAccountSid, but gpedit calls the second
+    one specifically "Non-Administrators" in this context -- not the plain
+    group name "Users" LookupAccountSid would give it."""
+    base = tmp_path / "System32" / "GroupPolicyUsers"
+    for sid in ("S-1-5-32-544", "S-1-5-32-545"):
+        (base / sid / "User").mkdir(parents=True)
+
+    entries = {e.sid: e for e in per_user_local_policies(str(tmp_path))}
+    assert entries["S-1-5-32-544"].account_name == "Administrators"
+    assert entries["S-1-5-32-545"].account_name == "Non-Administrators (Users)"
+    assert entries["S-1-5-32-544"].resolved is True
+
+
+def test_a_non_sid_entry_in_the_folder_is_ignored(tmp_path):
+    """Windows itself only ever writes SID-named subfolders here, but a
+    stray non-SID entry must not be walked into as if it were one."""
+    base = tmp_path / "System32" / "GroupPolicyUsers"
+    (base / "desktop.ini").parent.mkdir(parents=True)
+    (base / "desktop.ini").write_text("[.ShellClassInfo]")
+    assert per_user_local_policies(str(tmp_path)) == []
+
+
+def test_a_deleted_accounts_sid_still_reports_its_policy_unresolved(tmp_path):
+    """A SID with no corresponding account (the user was deleted after the
+    per-user GPO was set) must still surface the policy data -- it is real
+    and still in effect for anyone who logs on with that SID again."""
+    sid = "S-1-5-21-999999999-888888888-777777777-9999"
+    sid_dir = tmp_path / "System32" / "GroupPolicyUsers" / sid / "User"
+    sid_dir.mkdir(parents=True)
+    (sid_dir / "Registry.pol").write_bytes(_pol(
+        _record("K", "V", REG_DWORD, struct.pack("<I", 1))))
+
+    entries = per_user_local_policies(str(tmp_path))
+    assert len(entries) == 1
+    assert entries[0].resolved is False
+    assert entries[0].account_name == ""
+    assert entries[0].pol.exists is True
+
+
+def test_the_real_group_policy_users_folder_on_this_machine():
+    """Confirmed live 2026-09-29: `C:\\Windows\\System32\\GroupPolicyUsers`
+    exists (Windows creates it regardless) but currently holds zero SID
+    subfolders on this machine -- Multiple Local GPO has never been set up
+    here. That is a real, verifiable answer, not a skip: the function must
+    return an empty list rather than treating the folder's mere existence
+    as something to report on."""
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    folder = os.path.join(system_root, "System32", "GroupPolicyUsers")
+    if not os.path.isdir(folder):
+        pytest.skip("this machine has no GroupPolicyUsers folder at all")
+    sid_subfolders = [
+        name for name in os.listdir(folder) if name.upper().startswith("S-1-")
+    ]
+    entries = per_user_local_policies()
+    assert len(entries) == len(sid_subfolders)

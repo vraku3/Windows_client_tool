@@ -44,7 +44,9 @@ from modules.gpresult.admx_catalog import get_catalog
 from modules.gpresult.policy_drift import (
     APPLIED, DIFFERENT, DriftReport, MISSING, UNREADABLE, drift_report,
 )
-from modules.gpresult.pol_parser import PolFile, local_policy_files
+from modules.gpresult.pol_parser import (
+    PerUserLocalPolicy, PolFile, local_policy_files, per_user_local_policies,
+)
 from modules.gpresult.rsop_parser import local_read_time
 from modules.gpresult.rsop_parser import (
     GpoInfo, PolicySetting, RsopResult, RsopScope,
@@ -105,6 +107,7 @@ class GPResultModule(BaseModule):
         self._drift_by_path = {}
         self._tattoo: Optional[TattooedResult] = None
         self._conflicts: Optional[ConflictReport] = None
+        self._per_user_policy: List[PerUserLocalPolicy] = []
 
     # ------------------------------------------------------------------
     # UI
@@ -236,7 +239,8 @@ class GPResultModule(BaseModule):
                 logger.warning("Could not build the ADMX catalogue",
                                exc_info=True)
             return (collect_rsop(), pols, drift_report(pol_files=pols),
-                    find_tattooed(pol_files=pols), find_conflicts(pol_files=pols))
+                    find_tattooed(pol_files=pols), find_conflicts(pol_files=pols),
+                    per_user_local_policies())
 
         worker = Worker(work)
         worker.signals.result.connect(self._on_loaded)
@@ -251,7 +255,9 @@ class GPResultModule(BaseModule):
                    local_policy: Optional[List[PolFile]] = None,
                    drift: Optional[DriftReport] = None,
                    tattoo: Optional[TattooedResult] = None,
-                   conflicts: Optional[ConflictReport] = None) -> None:
+                   conflicts: Optional[ConflictReport] = None,
+                   per_user_policy: Optional[List[PerUserLocalPolicy]] = None
+                   ) -> None:
         self._busy = False
         self._loaded_once = True
         self._refresh_btn.setEnabled(True)
@@ -261,7 +267,9 @@ class GPResultModule(BaseModule):
         self._drift = drift
         self._tattoo = tattoo
         self._conflicts = conflicts
-        self._rebuild_tree(result, self._local_policy, drift, tattoo, conflicts)
+        self._per_user_policy = per_user_policy or []
+        self._rebuild_tree(result, self._local_policy, drift, tattoo, conflicts,
+                           per_user_policy)
 
     def _on_error(self, err: str) -> None:
         self._busy = False
@@ -301,7 +309,9 @@ class GPResultModule(BaseModule):
                       local_policy: Optional[List[PolFile]] = None,
                       drift: Optional[DriftReport] = None,
                       tattoo: Optional[TattooedResult] = None,
-                      conflicts: Optional[ConflictReport] = None) -> None:
+                      conflicts: Optional[ConflictReport] = None,
+                      per_user_policy: Optional[List[PerUserLocalPolicy]] = None
+                      ) -> None:
         self._tree.clear()
         self._banner.hide()
 
@@ -338,6 +348,7 @@ class GPResultModule(BaseModule):
             total_settings += len(scope.settings)
             self._build_scope(scope, by_scope.get(scope.scope))
 
+        self._build_per_user_policy(per_user_policy)
         self._build_audit(tattoo, conflicts)
 
         parts = []
@@ -634,6 +645,66 @@ class GPResultModule(BaseModule):
             node.setText(1, "%d (%s)" % (
                 len(pol.settings),
                 "%d not in effect" % drifted if drifted else "all in effect"))
+
+    def _build_per_user_policy(
+            self, entries: Optional[List[PerUserLocalPolicy]]) -> None:
+        """Multiple Local GPO -- one `Registry.pol` per targeted account or
+        group, under `System32\\GroupPolicyUsers`.
+
+        A separate mechanism from the machine-wide local policy shown under
+        each scope above (see `pol_parser.per_user_local_policies`), and a
+        real gap this tool had: a shared/kiosk machine can carry different
+        local policy per local account, and nothing here checked for it.
+        Shown as its own top-level root, with a stated zero when there is
+        nothing configured, rather than a silent absence -- the same choice
+        this module makes everywhere else a check comes back empty. `None`
+        (the check never ran -- the same signal `_build_audit` reads on
+        `tattoo`/`conflicts`) skips the root entirely rather than claiming a
+        zero that was never measured.
+        """
+        if entries is None:
+            return
+        root = self._bold(self._node(self._tree, "Per-User Local Policies",
+                                     str(len(entries))))
+        root.setToolTip(
+            0, "Local GPOs scoped to one local account, or to the "
+               "Administrators/Non-Administrators group, read from "
+               "System32\\GroupPolicyUsers -- separate from the single "
+               "machine-wide local policy shown above under each scope.")
+        if not entries:
+            self._node(root, "No per-user local Group Policy is configured "
+                             "on this machine (System32\\GroupPolicyUsers "
+                             "has no SID subfolders).")
+            return
+
+        configured = 0
+        for entry in entries:
+            label = entry.account_name or entry.sid
+            item = self._node(root, label, "", entry.sid)
+            if not entry.resolved:
+                self._paint(item, "warning")
+                self._node(item, "Account", "Could not resolve this SID -- "
+                                 "the account or group may have been deleted.")
+            pol = entry.pol
+            if pol is None or not pol.exists:
+                continue
+            if pol.error:
+                self._paint(self._node(item, pol.error), "error")
+                continue
+            if not pol.settings and not pol.values:
+                self._node(item, "The file exists but configures nothing "
+                                 "(every setting is Not Configured).")
+                continue
+            configured += 1
+            for value in pol.values:
+                vitem = self._node(item, value.full_path, value.display())
+                if value.directive:
+                    self._paint(vitem, "warning")
+                vitem.setToolTip(0, "%s\\%s" % (pol.hive, value.full_path))
+        if configured:
+            root.setText(1, "%d (%d with settings configured)"
+                         % (len(entries), configured))
+            self._paint(root, "warning")
 
     def _build_settings(self, root: QTreeWidgetItem,
                         settings: List[PolicySetting]) -> None:

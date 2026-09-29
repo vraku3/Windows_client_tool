@@ -27,10 +27,13 @@ the first real domain policy it met.
 
 from __future__ import annotations
 
+import logging
 import os
 import struct
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 PREG_MAGIC = b"PReg"
 PREG_VERSION = 1
@@ -38,6 +41,26 @@ PREG_VERSION = 1
 #: Where Windows keeps the local GPO's registry policy.
 MACHINE_POL = r"System32\GroupPolicy\Machine\Registry.pol"
 USER_POL = r"System32\GroupPolicy\User\Registry.pol"
+
+#: Multiple Local GPO -- a SEPARATE mechanism from the single machine-wide
+#: local GPO above. gpedit.msc can target one specific local account, or the
+#: whole Administrators/Non-Administrators group, and each target gets its
+#: own `Registry.pol` under here rather than sharing the one at USER_POL.
+#: This is how a shared/kiosk machine (no domain) gives different local
+#: policy per local account. Confirmed live on this machine 2026-09-29: the
+#: folder exists (Windows creates it regardless) but currently holds zero SID
+#: subfolders -- multiple local GPO has never actually been configured here.
+GROUP_POLICY_USERS_DIR = r"System32\GroupPolicyUsers"
+
+#: gpedit's own names for the two group targets of multiple local GPO --
+#: LookupAccountSid resolves S-1-5-32-544/-545 to "Administrators"/"Users"
+#: (the ordinary group names), but gpedit itself calls the second one
+#: "Non-Administrators" specifically in this context, so that is what is
+#: shown here rather than the generic group name.
+_SPECIAL_LOCAL_GPO_SIDS = {
+    "S-1-5-32-544": "Administrators",
+    "S-1-5-32-545": "Non-Administrators (Users)",
+}
 
 REG_NONE = 0
 REG_SZ = 1
@@ -271,3 +294,71 @@ def local_policy_files(system_root: Optional[str] = None) -> List[PolFile]:
         read_pol_file(os.path.join(root, MACHINE_POL), "Computer", "HKLM"),
         read_pol_file(os.path.join(root, USER_POL), "User", "HKCU"),
     ]
+
+
+@dataclass
+class PerUserLocalPolicy:
+    """One `GroupPolicyUsers\\<SID>` folder -- a per-account or per-group
+    local GPO, distinct from the single machine-wide one `local_policy_files`
+    reads."""
+    sid: str = ""
+    account_name: str = ""
+    resolved: bool = False
+    pol: Optional[PolFile] = None
+
+
+def _resolve_sid_name(sid_str: str) -> Tuple[str, bool]:
+    """The account/group name for a SID string, and whether it resolved.
+
+    An unresolvable SID is not an error: Windows leaves the per-user local
+    GPO folder in place after the account it targeted is deleted, and that
+    folder's policy is still real, still-configured data worth showing under
+    its raw SID rather than being dropped.
+    """
+    special = _SPECIAL_LOCAL_GPO_SIDS.get(sid_str.upper())
+    if special:
+        return special, True
+    try:
+        import win32security
+        sid = win32security.ConvertStringSidToSid(sid_str)
+        name, domain, _sid_type = win32security.LookupAccountSid(None, sid)
+        return ("%s\\%s" % (domain, name) if domain else name), True
+    except Exception as exc:  # noqa: BLE001 - any pywin32/OS failure here
+        # means only "this SID no longer resolves", never a code bug worth
+        # crashing the refresh over.
+        logger.debug("Could not resolve local-GPO SID %s: %s", sid_str, exc)
+        return "", False
+
+
+def per_user_local_policies(
+        system_root_dir: Optional[str] = None) -> List[PerUserLocalPolicy]:
+    """Multiple Local GPO: one `Registry.pol` per targeted account/group.
+
+    Enumerates `System32\\GroupPolicyUsers\\<SID>\\User\\Registry.pol` --
+    see the module-level `GROUP_POLICY_USERS_DIR` docstring for why this is a
+    separate tree from `local_policy_files`. An empty return here is a real,
+    verified answer ("multiple local GPO is not configured"), not a refusal;
+    a missing top-level folder is treated the same way `read_pol_file`
+    treats a missing `Registry.pol` -- the normal state, not an error.
+    """
+    if system_root_dir is None:
+        from core.windows_utils import system_root as _default_system_root
+        system_root_dir = _default_system_root()
+    base = os.path.join(system_root_dir, GROUP_POLICY_USERS_DIR)
+    results: List[PerUserLocalPolicy] = []
+    try:
+        entries = sorted(os.listdir(base))
+    except OSError as exc:
+        logger.debug("Could not list %s: %s", base, exc)
+        return results
+    for name in entries:
+        sid_dir = os.path.join(base, name)
+        if not os.path.isdir(sid_dir) or not name.upper().startswith("S-1-"):
+            continue
+        pol = read_pol_file(
+            os.path.join(sid_dir, "User", "Registry.pol"),
+            scope="User", hive="HKU\\%s" % name)
+        account_name, resolved = _resolve_sid_name(name)
+        results.append(PerUserLocalPolicy(
+            sid=name, account_name=account_name, resolved=resolved, pol=pol))
+    return results

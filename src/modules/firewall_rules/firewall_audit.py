@@ -33,6 +33,15 @@ _SEV_ORDER = {SEV_HIGH: 0, SEV_MEDIUM: 1, SEV_LOW: 2, SEV_INFO: 3}
 # A port range wider than this on an inbound allow is worth a look.
 BROAD_PORT_SPAN = 1000
 
+# Standard multicast/broadcast local-discovery ports: every browser and several
+# Windows components carry a rule for one of these with RemoteAddress=Any by
+# design (mDNS, SSDP, WS-Discovery, LLMNR all work by soliciting a reply from
+# whatever is on the local segment) -- flagging them as "overly broad" would be
+# noise, not a finding. Measured on this real machine: Edge/Chrome/Brave each
+# carry an identical "(mDNS-In)" rule on UDP 5353, RemoteAddress=Any, enabled
+# on Public -- none of them are the kind of exposure this check exists to find.
+_DISCOVERY_PORTS = {"5353", "1900", "3702", "5355"}
+
 
 @dataclass
 class RuleExtra:
@@ -248,6 +257,7 @@ CHIPS: List[Tuple[str, str]] = [
     ("third_party", "Non-Microsoft"),
     ("prog_missing", "Program missing"),
     ("public", "Public profile"),
+    ("scoped_open_public", "Scoped, open remote, Public"),
 ]
 
 
@@ -278,6 +288,8 @@ def chip_matches(chip: str, rule, extra: Optional[RuleExtra] = None,
         return program_missing(rule, exists)
     if chip == "public":
         return "Public" in _profiles(rule)
+    if chip == "scoped_open_public":
+        return _is_scoped_open_public(rule, extra)
     return False
 
 
@@ -307,6 +319,37 @@ def _is_open_inbound(rule, extra) -> bool:
             and rule.protocol in ("TCP", "UDP", "Any")
             and is_any(rule.local_port)
             and is_any(extra.remote_ip if extra else "Any"))
+
+
+def _is_scoped_open_public(rule, extra) -> bool:
+    """A program/service-bound inbound allow, on the Public profile, that still
+    accepts from ANY remote address on a specific, non-discovery port.
+
+    `_is_open_inbound` above only counts a rule with no program/service/port
+    limit at all (`is_scoped` excludes these), and `broad_ports` only counts a
+    wide RANGE of ports -- so a rule tied to one real program, on one specific
+    port, with RemoteAddress left at its default of Any, is invisible to both.
+    Measured on this real machine: 526 rules include "Microsoft Office Outlook"
+    inbound-allow UDP 6004, RemoteAddress=Any, enabled on the Public profile --
+    scoped to a named program (so it never appears as "open"), but on an
+    untrusted network (airport/cafe Wi-Fi) any device on that network can still
+    reach it on that port. Windows-supplied rules are excluded: Microsoft's own
+    rules for dosvc/dhcp/rpcss/etc. on Public are assumed already vetted, and
+    flagging every one of them (measured: 27 rules match the raw shape before
+    this exclusion) would bury the one third-party rule actually worth a look.
+    """
+    if not (rule.enabled == "Yes" and rule.direction == "In" and rule.action == "Allow"):
+        return False
+    if "Public" not in _profiles(rule):
+        return False
+    if is_builtin(rule, extra) or not is_scoped(rule, extra):
+        return False
+    if rule.protocol not in ("TCP", "UDP") or is_any(rule.local_port):
+        return False
+    ports = {p.strip() for p in rule.local_port.split(",")}
+    if ports <= _DISCOVERY_PORTS:
+        return False
+    return is_any(extra.remote_ip if extra else "Any")
 
 
 def _dup_key(r, e) -> tuple:
@@ -344,6 +387,19 @@ def audit(rules: Sequence, extras: Optional[Sequence[RuleExtra]] = None,
                 "%d inbound allow rule(s) with no program, service or port limit on %s" % (len(hit), pname),
                 "Any process may accept connections on any port from any address.",
                 [r.name for r in hit], "Disable or scope the rule (program/port/remote address)."))
+
+    scoped_open = [r for r, e in zip(rules, ext) if _is_scoped_open_public(r, e)]
+    if scoped_open:
+        out.append(Finding(
+            SEV_MEDIUM, "scoped_open_public",
+            "%d non-Microsoft inbound allow rule(s) accept any remote address on the Public profile"
+            % len(scoped_open),
+            "Each is tied to one program or service, so it is not \"any process, any port\" and does "
+            "not appear above -- but Remote address is still unrestricted on the Public profile, the "
+            "one meant for untrusted networks like a cafe or airport. Worth checking whether the "
+            "program genuinely needs to accept connections from an arbitrary host there.",
+            [r.name for r in scoped_open],
+            "Restrict Remote address to what actually needs it, or drop Public from the rule's profile."))
 
     broad = [r for r, e in zip(rules, ext)
              if r.enabled == "Yes" and r.direction == "In" and r.action == "Allow"

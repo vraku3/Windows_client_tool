@@ -58,6 +58,50 @@ def test_parse_wmi_time():
     assert ra.parse_wmi_time("garbage") is None and ra.parse_wmi_time(None) is None
 
 
+def test_sparkline_tooltip_states_range_and_lowest_point():
+    t0 = datetime(2026, 9, 4, 11, 0)
+    metrics = [
+        ra.Metric(t0, 10.0),
+        ra.Metric(t0 + timedelta(hours=13, minutes=13), 1.4),  # the lowest
+        ra.Metric(t0 + timedelta(days=25), 4.4),
+    ]
+    text = ra.sparkline_tooltip(metrics)
+    assert "2026-09-04" in text and "2026-09-29" in text
+    assert "Now: 4.4 / 10" in text
+    assert "Lowest: 1.4 / 10" in text
+
+
+def test_sparkline_tooltip_without_history_says_so():
+    assert ra.sparkline_tooltip([]) == "No stability index history was returned."
+
+
+def test_sparkline_tooltip_sorts_out_of_order_metrics():
+    # set_metrics on the chart widget sorts before calling this, but the
+    # function itself must not trust the caller either.
+    t0 = datetime(2026, 9, 20, 0, 0)
+    metrics = [ra.Metric(t0 + timedelta(hours=5), 3.0), ra.Metric(t0, 8.0)]
+    text = ra.sparkline_tooltip(metrics)
+    assert "Now: 3.0 / 10" in text
+
+
+def test_real_reliability_stability_metrics_feed_the_sparkline():
+    """Real machine: Win32_ReliabilityStabilityMetrics is readable unelevated
+    and gives at least one usable (start, index 0..10) row here -- confirmed
+    2026-09-29 with a live decline from a flat 10.0 on 2026-09-04 to ~4.4."""
+    import pytest
+    from modules.reliability.reliability_reader import read_stability_metrics
+
+    try:
+        metrics = read_stability_metrics()
+    except Exception as exc:
+        pytest.skip(f"WMI reliability metrics not readable in this environment: {exc}")
+    if not metrics:
+        pytest.skip("No stability index history on this machine yet.")
+    assert all(0.0 <= m.index <= 10.0 for m in metrics)
+    text = ra.sparkline_tooltip(metrics)
+    assert "Now:" in text and "Lowest:" in text
+
+
 # -- windows update --------------------------------------------------------
 _FAIL = "\t".join([
     "{CB6DE3B4-CC97-4BD7-B8F2-2AF4A0DB4FCC}", "2026-09-23 15:29:04:734+0300", "1", "182 [AGENT_INSTALLING_FAILED]",

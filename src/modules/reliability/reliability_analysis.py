@@ -130,6 +130,26 @@ def _describe(events) -> str:
     return ", ".join(f"{n} x{c}" if c > 1 else n for n, c in sorted(names.items(), key=lambda kv: -kv[1])[:3])
 
 
+def sparkline_tooltip(metrics: List[Metric]) -> str:
+    """Hover text for the stability sparkline: the whole loaded history's range.
+
+    `summary_text` above already states the single biggest one-hour drop, but
+    a slow multi-day decline (measured on this real machine: a flat 10.0 on
+    2026-09-04 sliding to 4.4 by 2026-09-29, with no single hour ever dropping
+    more than ~3 points) never shows up as "a drop" at all -- this is the
+    plain start/now/lowest reading the sparkline draws, in words.
+    """
+    if not metrics:
+        return "No stability index history was returned."
+    ordered = sorted(metrics, key=lambda m: m.start)
+    first, last = ordered[0], ordered[-1]
+    worst = min(ordered, key=lambda m: m.index)
+    return (
+        f"Stability index, {first.start:%Y-%m-%d %H:%M} to {last.start:%Y-%m-%d %H:%M}.\n"
+        f"Now: {last.index:.1f} / 10.  Lowest: {worst.index:.1f} / 10 on {worst.start:%Y-%m-%d %H:00}."
+    )
+
+
 def detail_html(entry: LogEntry, metrics: List[Metric]) -> str:
     m = index_at(metrics, entry.timestamp)
     if m is None:

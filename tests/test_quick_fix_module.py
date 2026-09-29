@@ -40,6 +40,13 @@ def _no_real_history(monkeypatch):
     function, until monkeypatch's own teardown restores that at the end
     of the test.
 
+    Also patches `last_by_action` to a fixed empty dict: `QuickFixModule
+    .create_widget()` calls it once to seed every card's "Last run" label,
+    and leaving it live would make these tests read the same real history
+    file `record` is patched away from writing to -- harmless (read-only),
+    but non-hermetic, since the result would depend on whatever this
+    machine's own Quick Fix history happens to contain.
+
     Declared BEFORE `_drain_thread_pools` and taken as that fixture's own
     dependency (see its signature) so pytest tears this one down AFTER
     it, not before -- a first version of this fixture had the two
@@ -50,6 +57,8 @@ def _no_real_history(monkeypatch):
     testing before the dependency was made explicit here."""
     monkeypatch.setattr(
         "modules.quick_fix.quick_fix_history.record", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "modules.quick_fix.quick_fix_history.last_by_action", lambda *a, **k: {})
 
 
 @pytest.fixture(autouse=True)
@@ -152,6 +161,58 @@ def test_a_precondition_returning_a_message_blocks_the_run_and_shows_it(qapp):
     c._run()
     assert calls == []
     assert c._status.text() == "nothing to do here"
+
+
+def test_a_blocked_precondition_shows_up_before_the_run_button_is_ever_clicked(qapp):
+    """CLAUDE.md documents precondition as able to 'block the run with a
+    status message instead' -- but the card only checked it inside `_run()`,
+    so an admin saw the reason ONLY after clicking Run and having nothing
+    happen. Real example on the dev machine: 'Right-size Hibernation File'
+    (`fix_actions._hibernation_precondition`) always blocks here because
+    `hiberfil.sys` genuinely does not exist -- `powercfg /a` on this box
+    reports 'Hibernation has not been enabled.' The card must say so at
+    build time, with no click required."""
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None,
+                        precondition=lambda: "hibernation is off here")
+    c = _FixCard(action)
+    assert c._status.text() == "hibernation is off here"
+
+
+def test_the_real_hibernation_precondition_blocks_on_this_machine(qapp):
+    """Real-machine assertion: `Test-Path C:\\hiberfil.sys` is False and
+    `powercfg /a` reports hibernation not enabled on this dev box (checked
+    2026-09-29), so the shipped precondition itself -- not a stand-in
+    lambda -- must show its real reason on the card with no click."""
+    from modules.quick_fix.fix_actions import ALL_ACTIONS
+    hib_action = next(a for a in ALL_ACTIONS if a.key == "resize_hibernation")
+    c = _FixCard(hib_action)
+    assert c._status.text() == (
+        "Hibernation is off on this machine — nothing to resize")
+
+
+def test_a_card_shows_its_last_history_entry_at_rest(qapp):
+    entry = {"at": "2026-09-20T10:00:00", "action": "Test", "outcome": "ok"}
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None)
+    c = _FixCard(action, last_entry=entry)
+    assert "2026-09-20T10:00:00" in c._status.text()
+    assert "ok" in c._status.text()
+
+
+def test_a_card_with_no_history_shows_a_blank_status(qapp):
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None)
+    c = _FixCard(action, last_entry=None)
+    assert c._status.text() == ""
+
+
+def test_a_blocked_precondition_takes_priority_over_a_stale_last_run(qapp):
+    """A machine's state can change between runs (hibernation turned off
+    after a successful resize last week) -- the CURRENT precondition is
+    what the admin needs to see, not a now-misleading old history line."""
+    entry = {"at": "2026-09-20T10:00:00", "action": "Test", "outcome": "ok"}
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None,
+                        precondition=lambda: "blocked now")
+    c = _FixCard(action, last_entry=entry)
+    assert c._status.text() == "blocked now"
 
 
 def test_a_precondition_returning_none_lets_the_action_run(qapp, monkeypatch):
@@ -287,6 +348,30 @@ def test_cancel_records_cancelled_outcome_only_while_running(qapp):
     with patch("modules.quick_fix.quick_fix_history.record") as mock_record:
         c.cancel()
     mock_record.assert_called_once_with(c._action.title, "cancelled")
+
+
+def test_create_widget_wires_each_cards_last_run_from_history(qapp, monkeypatch):
+    """`create_widget()` reads history ONCE (`last_by_action`) and hands
+    each card its own entry by title -- not a per-card re-read -- so a
+    returning admin sees "Last run: ..." on the exact card they last used
+    without opening the separate History dialog."""
+    from modules.quick_fix.quick_fix_module import QuickFixModule
+    from modules.quick_fix import quick_fix_history
+
+    entry = {"at": "2026-09-28T09:00:00", "action": "Flush DNS", "outcome": "ok"}
+    monkeypatch.setattr(quick_fix_history, "last_by_action", lambda *a, **k: {"Flush DNS": entry})
+
+    class FakeApp:
+        pass
+    mod = QuickFixModule()
+    mod.on_start(FakeApp())
+    widget = mod.create_widget()
+    widget.show()
+
+    dns_card = next(c for c in mod._cards if c._action.title == "Flush DNS")
+    assert "2026-09-28T09:00:00" in dns_card._status.text()
+    other_card = next(c for c in mod._cards if c._action.title != "Flush DNS")
+    assert "2026-09-28T09:00:00" not in other_card._status.text()
 
 
 def test_clearing_the_search_shows_everything_again(qapp):

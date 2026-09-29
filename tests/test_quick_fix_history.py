@@ -31,3 +31,28 @@ def test_record_caps_at_200_entries(tmp_path, monkeypatch):
         entries = json.load(f)
     assert len(entries) == 200
     assert entries[-1]["action"] == "Action 209"
+
+
+def test_record_returns_the_entry_it_wrote(tmp_path, monkeypatch):
+    monkeypatch.setattr(qfh, "_history_path", lambda: str(tmp_path / "h.json"))
+    entry = qfh.record("Flush DNS", "ok")
+    assert entry["action"] == "Flush DNS"
+    assert entry["outcome"] == "ok"
+    assert "at" in entry
+
+
+def test_last_by_action_keeps_only_the_most_recent_row_per_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(qfh, "_history_path", lambda: str(tmp_path / "h.json"))
+    qfh.record("Flush DNS", "ok")
+    qfh.record("Reset Winsock", "error")
+    qfh.record("Flush DNS", "error")   # a second, later run of the same action
+    result = qfh.last_by_action()
+    assert set(result) == {"Flush DNS", "Reset Winsock"}
+    # The later "Flush DNS" run must win, not the first one recorded.
+    assert result["Flush DNS"]["outcome"] == "error"
+    assert result["Reset Winsock"]["outcome"] == "error"
+
+
+def test_last_by_action_on_no_history_returns_empty_dict(tmp_path, monkeypatch):
+    monkeypatch.setattr(qfh, "_history_path", lambda: str(tmp_path / "nope.json"))
+    assert qfh.last_by_action() == {}

@@ -156,7 +156,11 @@ def test_revert_step_registry_writes_before_value_directly(svc):
     mock_key.__exit__ = MagicMock(return_value=False)
     with patch("winreg.CreateKeyEx", return_value=mock_key) as mock_create, \
          patch("winreg.SetValueEx") as mock_set, \
-         patch("subprocess.run") as mock_run:
+         patch("subprocess.run") as mock_run, \
+         patch.object(BackupService, "_verify_registry_revert", return_value=True):
+        # The write itself is mocked (no real registry change happens), so
+        # read-back verification is mocked too here — it has its own
+        # dedicated tests below (test_revert_step_registry_verifies_the_write_*).
         result = svc.revert_step(step_id)
 
     assert result is True
@@ -182,7 +186,8 @@ def test_revert_step_registry_deletes_when_no_prior_value(svc):
     mock_key.__enter__ = lambda s: s
     mock_key.__exit__ = MagicMock(return_value=False)
     with patch("winreg.OpenKey", return_value=mock_key), \
-         patch("winreg.DeleteValue") as mock_delete:
+         patch("winreg.DeleteValue") as mock_delete, \
+         patch.object(BackupService, "_verify_registry_revert", return_value=True):
         result = svc.revert_step(step_id)
 
     assert result is True
@@ -216,7 +221,8 @@ def test_revert_tweak_reverts_latest_applied_steps(svc):
     mock_key = MagicMock()
     mock_key.__enter__ = lambda s: s
     mock_key.__exit__ = MagicMock(return_value=False)
-    with patch("winreg.CreateKeyEx", return_value=mock_key), patch("winreg.SetValueEx"):
+    with patch("winreg.CreateKeyEx", return_value=mock_key), patch("winreg.SetValueEx"), \
+         patch.object(BackupService, "_verify_registry_revert", return_value=True):
         result = svc.revert_tweak("tweak_a")
     assert result.success is True
     assert result.partial is False
@@ -250,7 +256,8 @@ def test_revert_tweak_only_touches_most_recent_session(svc):
     mock_key = MagicMock()
     mock_key.__enter__ = lambda s: s
     mock_key.__exit__ = MagicMock(return_value=False)
-    with patch("winreg.CreateKeyEx", return_value=mock_key), patch("winreg.SetValueEx"):
+    with patch("winreg.CreateKeyEx", return_value=mock_key), patch("winreg.SetValueEx"), \
+         patch.object(BackupService, "_verify_registry_revert", return_value=True):
         result = svc.revert_tweak("tweak_b")
     assert result.success is True
 
@@ -531,3 +538,122 @@ def test_restoring_a_prior_value_never_removes_the_key(svc, reg_sandbox):
     assert _key_exists(path)
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
         assert winreg.QueryValueEx(k, "Val")[0] == 7
+
+
+# --- a revert that writes without raising is not proof it landed ------------
+#
+# TweakEngine.detect() and Security Dashboard's "verified by reading the
+# control back" both exist because a Windows write API not raising is not
+# evidence the machine actually moved. `revert_step` had never applied that
+# same rule to its OWN writes -- it reported "reverted" the instant
+# SetValueEx/DeleteValue returned, never reading the value back. The bug
+# class this closes is exactly the one recorded above this comment block in
+# this same file: the elevated LLMNR round-trip that reported "back to
+# exactly what it was" while leaving an empty key behind. That one was
+# caught by a person manually re-checking the registry after the fact; a
+# read-back here would have caught it the moment it happened, and guards
+# against any future regression of the same shape (wrong hive/sub, a
+# before/after swap, a write silently landing somewhere the read doesn't
+# agree with) without needing another manual round-trip session to notice.
+
+def test_verify_registry_revert_matches_written_value(reg_sandbox):
+    path = reg_sandbox + r"\VerifyMatch"
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path,
+                            access=winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, "Val", 0, winreg.REG_DWORD, 5)
+    result = BackupService._verify_registry_revert(
+        winreg.HKEY_CURRENT_USER, path, "Val", 5)
+    assert result is True
+
+
+def test_verify_registry_revert_flags_a_real_mismatch(reg_sandbox):
+    """The registry really does hold something other than what we expected —
+    a genuine failure, not a false alarm."""
+    path = reg_sandbox + r"\VerifyMismatch"
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path,
+                            access=winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, "Val", 0, winreg.REG_DWORD, 999)
+    result = BackupService._verify_registry_revert(
+        winreg.HKEY_CURRENT_USER, path, "Val", 5)
+    assert result is False
+
+
+def test_verify_registry_revert_absent_matches_expected_none(reg_sandbox):
+    """Nothing there at all, and we expected absence — a clean match, the
+    common case for a step that only ever created a value."""
+    path = reg_sandbox + r"\VerifyAbsent"
+    result = BackupService._verify_registry_revert(
+        winreg.HKEY_CURRENT_USER, path, "Val", None)
+    assert result is True
+
+
+def test_verify_registry_revert_flags_a_value_still_present_when_expected_gone(reg_sandbox):
+    path = reg_sandbox + r"\VerifyStillThere"
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path,
+                            access=winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, "Val", 0, winreg.REG_DWORD, 1)
+    result = BackupService._verify_registry_revert(
+        winreg.HKEY_CURRENT_USER, path, "Val", None)
+    assert result is False
+
+
+def test_verify_registry_revert_access_denied_is_unknown_not_a_failure():
+    """A refused read-back is never collapsed into pass or fail — the same
+    distinction `_registry_key_exists` and `TweakEngine.detect()` already
+    draw for every other registry read in this app."""
+    denied = OSError(5, "Access is denied")
+    denied.winerror = 5  # winreg's own OSErrors carry this; a bare errno does not
+    with patch("winreg.OpenKey", side_effect=denied):
+        result = BackupService._verify_registry_revert(
+            winreg.HKEY_LOCAL_MACHINE, "SECURITY", "Val", 1)
+    assert result is None
+
+
+def test_revert_step_treats_a_refused_verification_as_success_not_failure(svc, reg_sandbox):
+    """The write itself did not raise; the read-back to confirm it was
+    refused. That is unknown, not a mismatch, so the revert still counts as
+    done -- matching how `detect()` never turns a refusal into a false
+    negative on the apply side."""
+    path = reg_sandbox + r"\VerifyRefused"
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path,
+                            access=winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, "Val", 0, winreg.REG_DWORD, 1)
+    step_id = _record_registry_step(svc, "HKCU\\" + path, key_created=False, before=7)
+
+    with patch.object(BackupService, "_verify_registry_revert", return_value=None):
+        result = svc.revert_step(step_id)
+
+    assert result is True
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+        assert winreg.QueryValueEx(k, "Val")[0] == 7  # the real write still happened
+
+
+def test_revert_step_fails_when_the_actual_write_does_not_match_what_was_recorded(svc, reg_sandbox):
+    """If the write path ever regresses (wrong hive/sub, a before/after swap,
+    any future refactor bug) so the registry ends up NOT holding the
+    recorded before_value, revert_step must say so rather than reporting
+    success just because SetValueEx did not raise. Simulated by making the
+    real SetValueEx write the wrong value while everything else — the
+    sandbox, the read-back — runs for real."""
+    path = reg_sandbox + r"\WriteRegresses"
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path,
+                            access=winreg.KEY_SET_VALUE) as k:
+        winreg.SetValueEx(k, "Val", 0, winreg.REG_DWORD, 999)  # the "applied" value
+    step_id = _record_registry_step(svc, "HKCU\\" + path, key_created=False, before=7)
+
+    real_set_value_ex = winreg.SetValueEx
+
+    def _wrong_write(key, name, reserved, kind, _data):
+        real_set_value_ex(key, name, reserved, kind, 12345)  # NOT the recorded before_value
+
+    with patch("winreg.SetValueEx", side_effect=_wrong_write):
+        result = svc.revert_step(step_id)
+
+    assert result is False
+    row = svc._conn.execute(
+        "SELECT revert_error, reverted_at FROM tweak_steps WHERE id=?", (step_id,)
+    ).fetchone()
+    assert row["reverted_at"] is None, "a failed revert must not be marked reverted"
+    assert "read" in row["revert_error"].lower()
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+        assert winreg.QueryValueEx(k, "Val")[0] == 12345  # proves this was a real write, not a mock

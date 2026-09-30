@@ -20,7 +20,8 @@ from PyQt6.QtWidgets import (
 from core.formatting import human_size
 from core.appx_service import (
     _version_key, dedupe_by_name, dir_size_detailed, fetch_packages,
-    fetch_packages_or_none,
+    fetch_packages_or_none, provisioned_package_name_map_or_none,
+    remove_provisioned_package,
 )
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
@@ -243,6 +244,12 @@ class StoreAppsModule(BaseModule):
         self._load_error = ""
         self._show_pfn = False
         self._show_arch = False
+        self._show_provisioned = False
+        #: DisplayName -> full PackageName for every provisioned package, or
+        #: `None` when it has never been fetched or the last fetch could not
+        #: run (unelevated) -- see `core.appx_service.
+        #: provisioned_package_name_map_or_none`. Never `{}` for "unknown".
+        self._provisioned_map: Optional[Dict[str, str]] = None
         self._size_signals = _SizeSignals()
         self._size_signals.size_ready.connect(self._on_size_ready)
         self._debloat_packages: Set[str] = set()
@@ -272,6 +279,8 @@ class StoreAppsModule(BaseModule):
 
         self._show_pfn = bool(self.app.config.get(f"{self._CONFIG_PREFIX}.show_pfn", False))
         self._show_arch = bool(self.app.config.get(f"{self._CONFIG_PREFIX}.show_arch", False))
+        self._show_provisioned = bool(
+            self.app.config.get(f"{self._CONFIG_PREFIX}.show_provisioned", False))
 
         layout.addLayout(self._build_toolbar())
         layout.addWidget(self._build_table_stack())
@@ -322,10 +331,10 @@ class StoreAppsModule(BaseModule):
         # Table stacked with empty/error state
         self._table_stack = QStackedWidget()
         self._table = QTableWidget()
-        self._table.setColumnCount(7)
+        self._table.setColumnCount(8)
         self._table.setHorizontalHeaderLabels([
             "Name", "Publisher", "Version", "Size", "User-Removable",
-            "Package Family", "Architecture",
+            "Package Family", "Architecture", "New Users",
         ])
         header = self._table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -344,6 +353,7 @@ class StoreAppsModule(BaseModule):
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)
         self._table.setSortingEnabled(True)
         saved_col = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0)
         saved_order = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_order",
@@ -355,6 +365,7 @@ class StoreAppsModule(BaseModule):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setColumnHidden(5, not self._show_pfn)
         self._table.setColumnHidden(6, not self._show_arch)
+        self._table.setColumnHidden(7, not self._show_provisioned)
         # C07: restore any column widths saved from a previous session.
         restore_column_widths(self._table, self.app.config.get, self._CONFIG_PREFIX)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -407,6 +418,14 @@ class StoreAppsModule(BaseModule):
         act_arch.setCheckable(True)
         act_arch.setChecked(self._show_arch)
         act_arch.toggled.connect(self._toggle_arch)
+        act_prov = menu.addAction("Provisioned (New Users)")
+        act_prov.setCheckable(True)
+        act_prov.setChecked(self._show_provisioned)
+        act_prov.setToolTip(
+            "Whether the package is provisioned for every NEW user account "
+            "on this machine -- a separate question from whether it is "
+            "installed for you. Needs Administrator to check.")
+        act_prov.toggled.connect(self._toggle_provisioned)
         btn.setMenu(menu)
         return btn
 
@@ -419,6 +438,11 @@ class StoreAppsModule(BaseModule):
         self._show_arch = checked
         self._table.setColumnHidden(6, not checked)
         self.app.config.set(f"{self._CONFIG_PREFIX}.show_arch", checked)
+
+    def _toggle_provisioned(self, checked: bool) -> None:
+        self._show_provisioned = checked
+        self._table.setColumnHidden(7, not checked)
+        self.app.config.set(f"{self._CONFIG_PREFIX}.show_provisioned", checked)
 
     def on_start(self, app) -> None:
         self.app = app
@@ -485,23 +509,43 @@ class StoreAppsModule(BaseModule):
             # Shared AppX service: one query + -AllUsers fallback for
             # unelevated runs, cached briefly. Forced fresh on load so a
             # scan always reflects what is installed right now.
-            return dedupe_by_name(fetch_packages(use_cache=False))
+            apps = dedupe_by_name(fetch_packages(use_cache=False))
+            # Elevated-only, and short-circuits to None unelevated without
+            # spawning a process -- see appx_service.
+            # fetch_provisioned_packages_or_none's docstring.
+            provisioned = provisioned_package_name_map_or_none(use_cache=False)
+            return apps, provisioned
 
         self._worker = Worker(do_load)
-        self._worker.signals.result.connect(lambda apps: self._on_apps_loaded(apps, state))
+        self._worker.signals.result.connect(
+            lambda result: self._on_apps_loaded(result[0], state, result[1]))
         self._worker.signals.error.connect(self._on_load_error)
         self._workers.append(self._worker)
         self.app.thread_pool.start(self._worker)
 
-    def _on_apps_loaded(self, apps, state) -> None:
+    def _on_apps_loaded(self, apps, state, provisioned_map=None) -> None:
         if not self._widget_valid(self._table_stack):
             return
         self._progress.setVisible(False)
 
         # The shared service already dedupes -AllUsers rows by newest version.
         self._apps = apps
+        self._provisioned_map = provisioned_map
 
-        if not apps:
+        # A package that is provisioned but no longer installed for THIS
+        # user never appears in `apps` at all (Get-AppxPackage only lists
+        # what is installed for the caller) -- so it needs its own row, or
+        # the one real gap this column exists to surface (Windows will
+        # still add it to every new account) stays invisible no matter how
+        # this table is filtered. Only synthesized when the provisioned
+        # query actually ran; never guessed from an empty/None map.
+        installed_names = {a.get("Name", "") for a in apps}
+        provisioned_only = (
+            [n for n in provisioned_map if n and n not in installed_names]
+            if provisioned_map else []
+        )
+
+        if not apps and not provisioned_only:
             self._set_empty("📦", "No Store apps found",
                             "Nothing to show for this machine. Click Refresh to scan again.")
             return
@@ -579,6 +623,12 @@ class StoreAppsModule(BaseModule):
             arch_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 6, arch_item)
 
+            self._table.setItem(row, 7, self._provisioned_cell(
+                None if provisioned_map is None else name in provisioned_map))
+
+        for name in provisioned_only:
+            self._add_provisioned_only_row(name)
+
         self._table.setSortingEnabled(True)
 
         # C07 follow-up: fit Interactive columns to content ONCE, on the
@@ -611,6 +661,89 @@ class StoreAppsModule(BaseModule):
         empty.action_triggered.connect(self._load_apps)
         self._table_stack.addWidget(empty)
         self._table_stack.setCurrentIndex(1)
+
+    # ------------------------------------------------------------------
+    # Provisioned-for-new-users column and rows
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _provisioned_cell(provisioned: Optional[bool]) -> QTableWidgetItem:
+        """`None` means the provisioned query never ran or was refused
+        (unelevated) -- shown as its own state, never folded into "No"."""
+        if provisioned is None:
+            item = QTableWidgetItem("❔ Unknown")
+            item.setToolTip("Requires Administrator to check "
+                            "(Get-AppxProvisionedPackage).")
+        elif provisioned:
+            item = QTableWidgetItem("Yes")
+            item.setToolTip(
+                "Also provisioned: Windows adds this to every NEW user "
+                "account on this machine, not just yours.")
+        else:
+            item = QTableWidgetItem("No")
+            item.setToolTip(
+                "Not provisioned -- removing this for you removes it for "
+                "good; it will not reappear for a new account either.")
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        return item
+
+    def _add_provisioned_only_row(self, name: str) -> None:
+        """A package Windows still provisions for every NEW user account,
+        even though it is no longer installed for the current one --
+        `Get-AppxPackage` never lists it, so without this row the gap
+        `provisioned_only` exists to catch would stay invisible no matter
+        how this table is filtered. See appx_service.
+        fetch_provisioned_packages_or_none's docstring for the real-machine
+        evidence (8 such packages, confirmed 2026-09-30)."""
+        full_resolved = resolve_package_name(name, "")
+        display_name = shorten_app_name(full_resolved)
+
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+        self._row_index[name] = row
+
+        name_item = _SortableItem(display_name)
+        name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_item.setData(Qt.ItemDataRole.UserRole, name)
+        name_item.setData(Qt.ItemDataRole.UserRole + 1, True)  # virtual-row marker
+        tip = [f"Package: {name}"] if display_name != full_resolved or full_resolved != name else []
+        if name in self._debloat_packages:
+            tip.insert(0, "Known bloatware — also in the Debloat catalog")
+        if tip:
+            name_item.setToolTip("\n".join(tip))
+        self._table.setItem(row, 0, name_item)
+
+        for col in (1, 2):  # Publisher, Version -- unknown for a package
+            item = QTableWidgetItem("")  # that is not currently installed
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, col, item)
+
+        size_item = NumericSortItem("—", 0)
+        size_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._table.setItem(row, 3, size_item)
+
+        rem_item = QTableWidgetItem("➖ Not installed")
+        rem_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        rem_item.setForeground(QColor(semantic("info")))
+        rem_item.setToolTip(
+            "Not installed for the current user -- nothing here to "
+            "uninstall. Right-click for “Stop provisioning for new "
+            "users” to remove it from new accounts too.")
+        self._table.setItem(row, 4, rem_item)
+
+        for col in (5, 6):  # Package Family, Architecture -- not reported
+            item = QTableWidgetItem("")  # by Get-AppxProvisionedPackage
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._table.setItem(row, col, item)
+
+        prov_item = QTableWidgetItem("⚠️ Still provisioned")
+        prov_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        prov_item.setForeground(QColor(semantic("warning")))
+        prov_item.setToolTip(
+            "Removed for this user, but still provisioned: Windows will "
+            "add it back for every NEW user account created on this "
+            "machine. Right-click to stop that.")
+        self._table.setItem(row, 7, prov_item)
 
     # ------------------------------------------------------------------
     # Filtering / selection
@@ -722,6 +855,26 @@ class StoreAppsModule(BaseModule):
         act_store.setToolTip("This package has no Package Family Name" if not pfn else "")
         act_store.triggered.connect(
             lambda: os.startfile(f"ms-windows-store://pdp/?PFN={pfn}"))
+
+        provisioned_full_name = (self._provisioned_map or {}).get(package_name)
+        menu.addSeparator()
+        act_deprovision = menu.addAction("🚫 Stop provisioning for new users")
+        act_deprovision.setEnabled(bool(provisioned_full_name))
+        if not provisioned_full_name:
+            act_deprovision.setToolTip(
+                "Requires Administrator to check"
+                if self._provisioned_map is None else
+                "Not provisioned for new user accounts")
+        display_name = name_item.text()
+        act_deprovision.triggered.connect(
+            lambda: self._deprovision(package_name, display_name, provisioned_full_name))
+        act_copy_deprov = menu.addAction("Copy deprovision command")
+        act_copy_deprov.setEnabled(bool(provisioned_full_name))
+        act_copy_deprov.triggered.connect(
+            lambda: QApplication.clipboard().setText(
+                "Remove-AppxProvisionedPackage -Online -PackageName '"
+                + ps_quote(provisioned_full_name or "") + "'"))
+
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _app_for(self, package_name: str) -> Optional[dict]:
@@ -747,7 +900,14 @@ class StoreAppsModule(BaseModule):
             if removable_cell is None:
                 continue
             removable = removable_cell.text()
-            if "System" in removable:
+            # A provisioned-only row (Get-AppxProvisionedPackage found it,
+            # Get-AppxPackage did not) has nothing installed for THIS user
+            # to remove -- Remove-AppxPackage on it is a harmless no-op
+            # that would still get counted as "verified removed" by
+            # verify_uninstalled(), a false success for something never
+            # installed. "Stop provisioning for new users" is the real
+            # action for it.
+            if "System" in removable or self._row_is_virtual(name_cell):
                 skipped_names.append(display)
                 continue
             pfn_item = self._table.item(r, 5)
@@ -895,6 +1055,70 @@ class StoreAppsModule(BaseModule):
             text += f"\n  …and {extra} more"
         return text
 
+    @staticmethod
+    def _row_is_virtual(name_cell: QTableWidgetItem) -> bool:
+        """True for a row synthesized in `_add_provisioned_only_row` -- a
+        package `Get-AppxProvisionedPackage` reports but `Get-AppxPackage`
+        does not, so there is nothing installed here to uninstall."""
+        return bool(name_cell.data(Qt.ItemDataRole.UserRole + 1))
+
+    # ------------------------------------------------------------------
+    # Deprovision (stop reinstalling for new user accounts)
+    # ------------------------------------------------------------------
+
+    def _deprovision(self, package_name: str, display_name: str,
+                     provisioned_full_name: str) -> None:
+        if not self.require_admin():
+            return
+        reply = QMessageBox.warning(
+            self._widget, "Stop Provisioning",
+            f"Stop provisioning {display_name} for new user accounts?\n\n"
+            "This does not remove or change any copy already installed "
+            "for an existing user -- it only stops Windows from adding it "
+            "automatically to accounts created after this.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        def do_deprovision(worker):
+            del worker
+            backup = self.app.backup
+            rp_id = backup.create_restore_point(
+                f"Store Apps deprovision {datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                "Store Apps",
+            )
+            ok, reason = remove_provisioned_package(provisioned_full_name)
+            if ok:
+                try:
+                    backup.record_steps(
+                        "store_apps_deprovision",
+                        [StepRecord("appx", package_name, package_name, None)],
+                        rp_id,
+                    )
+                except Exception as e:                       # noqa: BLE001
+                    logger.warning("Failed to record deprovision step: %s", e)
+            return ok, reason, display_name
+
+        worker = Worker(do_deprovision)
+        worker.signals.result.connect(self._on_deprovision_done)
+        worker.signals.error.connect(
+            lambda err: self._error_banner.set_error(f"Deprovision failed: {err}"))
+        self._workers.append(worker)
+        self.app.thread_pool.start(worker)
+
+    def _on_deprovision_done(self, result) -> None:
+        ok, reason, display_name = result
+        if ok:
+            QMessageBox.information(
+                self._widget, "Deprovisioned",
+                f"{display_name} will no longer be added to new user "
+                f"accounts on this machine.")
+        else:
+            self._error_banner.set_error(
+                f"Could not stop provisioning {display_name}: {reason}")
+        self._load_apps()
+
     # ------------------------------------------------------------------
     # Sizes (background, best-effort)
     # ------------------------------------------------------------------
@@ -1009,10 +1233,13 @@ class StoreAppsModule(BaseModule):
 
         targets = []
         for r in rows:
-            display = self._table.item(r, 0).text()
-            name = self._table.item(r, 0).data(Qt.ItemDataRole.UserRole) or display
+            name_cell = self._table.item(r, 0)
+            display = name_cell.text()
+            name = name_cell.data(Qt.ItemDataRole.UserRole) or display
             publisher = self._table.item(r, 1).text()
-            if "System" in self._table.item(r, 4).text():
+            # A provisioned-only row has nothing installed to uninstall --
+            # see the same check in _selected_targets().
+            if "System" in self._table.item(r, 4).text() or self._row_is_virtual(name_cell):
                 continue
             targets.append((name, display, publisher))
 
@@ -1037,7 +1264,8 @@ class StoreAppsModule(BaseModule):
                     writer.writerow(["Package Name", "Display Name", "Publisher",
                                     "Version", "Size", "Architecture"])
                     for r in rows:
-                        if "System" in self._table.item(r, 4).text():
+                        if ("System" in self._table.item(r, 4).text()
+                                or self._row_is_virtual(self._table.item(r, 0))):
                             continue
                         writer.writerow([
                             self._table.item(r, 0).data(Qt.ItemDataRole.UserRole)

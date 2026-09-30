@@ -12,9 +12,10 @@ from PyQt6.QtWidgets import (
 from core.base_module import BaseModule
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
 from core.widget_life import widget_is_valid
 from core.worker import Worker
+from modules.wifi_analyzer import wifi_profile_audit
 import logging
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ CREATE_NO_WINDOW = 0x08000000
 
 _NET_COLS = ["SSID", "Signal %", "Channel", "Band", "Security", "Authentication", "BSSID"]
 _IFACE_COLS = ["Property", "Value"]
+_PROFILE_COLS = ["Profile", "Rating", "Authentication", "Cipher", "Auto-connect", "Hidden SSID", "Has key"]
 
 
 def _run_netsh(*args) -> str:
@@ -170,6 +172,14 @@ class WifiAnalyzerModule(BaseModule):
         # composite tab nobody opened.
         self._progress = None
         self._scan_btn = None
+        self._profile_worker: Optional[Worker] = None
+        self._profiles_loaded = False
+        # Declared here too, for the same reason as `_progress`/`_scan_btn`
+        # above: on_stop()/on_deactivate() can reach this module before its
+        # widget was ever built (a composite tab nobody opened).
+        self._profile_refresh_btn = None
+        self._profile_status_lbl = None
+        self._profile_table = None
 
     def create_widget(self) -> QWidget:
         outer = QWidget()
@@ -226,6 +236,23 @@ class WifiAnalyzerModule(BaseModule):
         ch_layout.addStretch()
         tabs.addTab(self._channel_widget, "Channel Map")
 
+        # Saved Profiles tab -- what Windows REMEMBERS and will silently
+        # rejoin, as opposed to the Networks tab above (what is currently
+        # broadcasting). See wifi_profile_audit.py.
+        self._profile_widget = QWidget()
+        prof_layout = QVBoxLayout(self._profile_widget)
+        prof_toolbar = QHBoxLayout()
+        self._profile_refresh_btn = QPushButton("Refresh")
+        self._profile_status_lbl = QLabel("")
+        prof_toolbar.addWidget(self._profile_refresh_btn)
+        prof_toolbar.addStretch()
+        prof_toolbar.addWidget(self._profile_status_lbl)
+        prof_layout.addLayout(prof_toolbar)
+        self._profile_table = _make_table(_PROFILE_COLS)
+        prof_layout.addWidget(self._profile_table, 1)
+        self._profile_refresh_btn.clicked.connect(self._load_profiles)
+        tabs.addTab(self._profile_widget, "Saved Profiles")
+
         self._scan_btn.clicked.connect(self._do_scan)
         self._widget = outer
         return outer
@@ -245,9 +272,13 @@ class WifiAnalyzerModule(BaseModule):
         if not getattr(self, "_loaded", False):
             self._loaded = True
             self._do_scan()
+        if not self._profiles_loaded:
+            self._profiles_loaded = True
+            self._load_profiles()
 
     def on_deactivate(self) -> None:
         self._stop_scan()
+        self._stop_profile_load()
         if self._auto_refresh_timer:
             self._auto_refresh_timer.stop()
 
@@ -256,6 +287,7 @@ class WifiAnalyzerModule(BaseModule):
 
     def on_stop(self) -> None:
         self._stop_scan()
+        self._stop_profile_load()
         if self._auto_refresh_timer:
             self._auto_refresh_timer.stop()
         self.cancel_all_workers()
@@ -379,3 +411,89 @@ class WifiAnalyzerModule(BaseModule):
             self._auto_refresh_timer.start(15_000)  # 15 seconds
         else:
             self._auto_refresh_timer.stop()
+
+    # ── saved profile security audit ──────────────────────────────────────
+
+    def _load_profiles(self):
+        self._stop_profile_load()
+        # Loaded lazily on first activation and again on demand from the
+        # Refresh button -- unlike Networks, saved profiles rarely change,
+        # so there is no auto-refresh timer for this tab.
+        if self._widget is None:
+            return
+        if widget_is_valid(self._profile_refresh_btn):
+            self._profile_refresh_btn.setEnabled(False)
+        if widget_is_valid(self._profile_status_lbl):
+            self._profile_status_lbl.setText("Reading saved Wi-Fi profiles…")
+
+        self._profile_worker = Worker(lambda _w: wifi_profile_audit.audit_profiles())
+        self._profile_worker.signals.result.connect(self._on_profiles_result)
+        self._profile_worker.signals.error.connect(self._on_profiles_error)
+        self.app.thread_pool.start(self._profile_worker)
+
+    def _stop_profile_load(self):
+        if self._profile_worker is not None:
+            self._profile_worker.cancel()
+            self._profile_worker = None
+        if widget_is_valid(self._profile_refresh_btn):
+            self._profile_refresh_btn.setEnabled(True)
+
+    def _on_profiles_result(self, profiles):
+        if not widget_is_valid(self._profile_table):
+            return
+        self._profile_refresh_btn.setEnabled(True)
+        if profiles is None:
+            self._profile_table.setRowCount(0)
+            self._profile_status_lbl.setText("Could not read saved Wi-Fi profiles (netsh refused).")
+            set_role(self._profile_status_lbl, "statusError")
+            return
+
+        self._profile_table.setRowCount(len(profiles))
+        for r, p in enumerate(profiles):
+            if p.refused:
+                cells = [p.name, "Could not read", p.reason, "", "", "", ""]
+                row_color = QColor(semantic("warning"))
+            else:
+                rating_label = {"open": "OPEN — no encryption", "wep": "WEP — crackable",
+                                 "wpa": "WPA", "wpa2": "WPA2", "wpa3": "WPA3",
+                                 "unknown": "Unrecognised"}.get(p.rating, p.rating)
+                cells = [
+                    p.name, rating_label,
+                    ", ".join(p.auth_types) or "?",
+                    ", ".join(p.ciphers) or "?",
+                    "Yes" if p.auto_connect else ("No" if p.auto_connect is False else "?"),
+                    "Yes" if p.hidden else ("No" if p.hidden is False else "?"),
+                    "Yes" if p.has_key else ("No" if p.has_key is False else "?"),
+                ]
+                if p.rating in ("open", "wep"):
+                    row_color = QColor(semantic("error"))
+                elif p.hidden:
+                    row_color = QColor(semantic("warning"))
+                else:
+                    row_color = None
+            for c, val in enumerate(cells):
+                item = centered_item(str(val))
+                if row_color is not None:
+                    item.setForeground(row_color)
+                self._profile_table.setItem(r, c, item)
+
+        risky = wifi_profile_audit.risky_profiles(profiles)
+        hidden = wifi_profile_audit.hidden_profiles(profiles)
+        unreadable = [p for p in profiles if p.refused]
+        parts = [f"{len(profiles)} saved profile(s)"]
+        if risky:
+            parts.append(f"{len(risky)} with no real encryption (Open/WEP)")
+        if hidden:
+            parts.append(f"{len(hidden)} hidden-SSID (probes when out of range)")
+        if unreadable:
+            parts.append(f"{len(unreadable)} could not be read")
+        self._profile_status_lbl.setText(" — ".join(parts))
+        set_role(self._profile_status_lbl, "statusError" if (risky or unreadable) else
+                 ("statusWarning" if hidden else "statusSuccess"))
+
+    def _on_profiles_error(self, err: str):
+        if widget_is_valid(self._profile_refresh_btn):
+            self._profile_refresh_btn.setEnabled(True)
+        if widget_is_valid(self._profile_status_lbl):
+            self._profile_status_lbl.setText(f"Error: {err}")
+            set_role(self._profile_status_lbl, "statusError")

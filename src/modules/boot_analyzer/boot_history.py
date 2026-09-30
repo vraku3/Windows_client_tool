@@ -14,6 +14,22 @@ switch.
 
 A log that cannot be read is `None` with a reason, never an empty list:
 "no boots recorded" and "we were refused" are different claims.
+
+Re-checked live 2026-09-30: PERF_LOG now refuses unelevated on this same
+machine -- both `wevtutil` (exit 5, "Access is denied") and PowerShell's
+`Get-WinEvent` ("Attempted to perform an unauthorized operation") -- so
+whatever made it readable when this docstring was first written no longer
+holds here. `read_boot_facts` falls back to `read_fallback_boot_history`
+when `boots` comes back empty: it pairs Kernel-General's own EventID 12
+("The operating system started at system time...") with EventLog's own
+EventID 6005 ("...service was started"), both in the `System` log, which
+is unelevated-readable everywhere else in this app (Event Viewer,
+Reliability, CBS) and confirmed so again here. That gap is roughly the
+same interval PERF_LOG's BootTime measures, but it is not the same
+measurement -- no main-path/post-boot split, no per-app/driver/service
+breakdown -- so it is kept in its own `FallbackBootRecord` list and never
+merged into `boots`. Measured on this machine across the last 10 boots:
+16.5s, 26.8s, 42.8s, 38.7s, 32.0s, 32.3s, 32.4s, 32.0s, 33.2s, 32.5s.
 """
 import ctypes
 import logging
@@ -27,6 +43,18 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 PERF_LOG = "Microsoft-Windows-Diagnostics-Performance/Operational"
+
+#: Fallback source for FallbackBootRecord, read only when PERF_LOG refuses.
+#: Both queried from `System`, which the rest of this app already treats
+#: as unelevated-readable everywhere (Event Viewer, Reliability, CBS).
+_FALLBACK_BOOT_XPATH = (
+    "*[System[Provider[@Name='Microsoft-Windows-Kernel-General'] "
+    "and EventID=12]]"
+)
+_FALLBACK_SHUTDOWN_XPATH = "*[System[(EventID=6005 or EventID=6006 or EventID=6008)]]"
+_FALLBACK_READY_ID = 6005
+_FALLBACK_CLEAN_ID = 6006
+_FALLBACK_UNEXPECTED_ID = 6008
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 BOOT_TYPES = {0: "Full boot", 1: "Fast Startup (hybrid)", 2: "Resume from hibernate"}
@@ -76,6 +104,24 @@ class SlowSummary:
 
 
 @dataclass
+class FallbackBootRecord:
+    """A boot duration approximated from the `System` log, used only when
+    the Performance log above is refused and `boots` came back empty.
+
+    Kernel-General's own EventID 12 ("The operating system started at
+    system time...") paired with EventLog's own EventID 6005 ("...service
+    was started") brackets roughly the same interval `BootRecord.boot_ms`
+    measures, but it is NOT the same measurement -- no main-path/post-boot
+    split, no per-app/driver/service breakdown -- so it is kept in its own
+    field and never merged into `boots`."""
+    when: datetime
+    duration_seconds: Optional[float]
+    #: True = a clean shutdown (6006) preceded this boot, False = an
+    #: unexpected one (6008), None = neither event was found for it.
+    prior_shutdown_clean: Optional[bool]
+
+
+@dataclass
 class BootFacts:
     boots: List[BootRecord] = field(default_factory=list)
     slow: List[SlowItem] = field(default_factory=list)
@@ -83,6 +129,9 @@ class BootFacts:
     fast_startup: Optional[bool] = None
     hibernate_file: Optional[bool] = None
     uptime_s: Optional[float] = None
+    #: Only populated when `boots` is empty because the Performance log
+    #: was refused -- see `FallbackBootRecord`.
+    fallback_boots: List[FallbackBootRecord] = field(default_factory=list)
 
 
 # ---- parsing (pure, unit-tested) ---------------------------------------
@@ -300,6 +349,47 @@ def read_firmware_type() -> Tuple[str, Optional[bool]]:
         return "Unknown", None
 
 
+def read_fallback_boot_history(max_boots: int = 20) -> Tuple[List[FallbackBootRecord], Optional[str]]:
+    """(records, reason) from the `System` log's own boot/shutdown events.
+
+    `reason` is set only when the System log query itself could not be
+    run -- never when it simply returned few or no events, which is a
+    legitimate (if unlikely) answer on a machine that has not rebooted.
+    """
+    boot_events, why = _query("System", _FALLBACK_BOOT_XPATH, max_boots)
+    if boot_events is None:
+        return [], why or "System log (boot events) unreadable"
+    shutdown_events, why = _query("System", _FALLBACK_SHUTDOWN_XPATH, max_boots * 3)
+    if shutdown_events is None:
+        return [], why or "System log (shutdown events) unreadable"
+
+    boot_times = sorted(t for t in (_time_created(e) for e in boot_events) if t is not None)
+    shutdowns: List[Tuple[datetime, int]] = []
+    for event in shutdown_events:
+        when = _time_created(event)
+        event_id = _event_id(event)
+        if when is not None and event_id is not None:
+            shutdowns.append((when, event_id))
+    shutdowns.sort(key=lambda pair: pair[0])
+
+    records = []
+    for boot_time in boot_times:
+        ready = next(
+            (t for t, eid in shutdowns if eid == _FALLBACK_READY_ID and t >= boot_time),
+            None,
+        )
+        duration = (ready - boot_time).total_seconds() if ready else None
+        prior = [
+            (t, eid) for t, eid in shutdowns
+            if eid in (_FALLBACK_CLEAN_ID, _FALLBACK_UNEXPECTED_ID) and t < boot_time
+        ]
+        prior_clean = (prior[-1][1] == _FALLBACK_CLEAN_ID) if prior else None
+        records.append(FallbackBootRecord(
+            when=boot_time, duration_seconds=duration, prior_shutdown_clean=prior_clean,
+        ))
+    return records, None
+
+
 def read_boot_facts(boots: int = 20, slow_events: int = 300) -> BootFacts:
     facts = BootFacts()
     events, why = _query(PERF_LOG, "*[System[(EventID=100)]]", boots)
@@ -319,6 +409,14 @@ def read_boot_facts(boots: int = 20, slow_events: int = 300) -> BootFacts:
         facts.problems.append(why or "kernel boot log unreadable")
     else:
         match_boot_types(facts.boots, [k for k in (parse_kernel_boot(e) for e in kernel) if k])
+    if not facts.boots:
+        # The Performance log is the preferred source; only reach for the
+        # System-log approximation once it has genuinely given nothing.
+        fallback, fallback_why = read_fallback_boot_history(boots)
+        if fallback_why:
+            facts.problems.append(fallback_why)
+        else:
+            facts.fallback_boots = fallback
     facts.fast_startup, facts.hibernate_file = read_fast_startup()
     facts.uptime_s = uptime_seconds()
     return facts
@@ -390,3 +488,18 @@ def trend_note(boots: List[BootRecord]) -> str:
     worst = max(boots, key=lambda b: b.boot_ms)
     return (f"{len(boots)} boots: median {fmt_ms(median)}, slowest {fmt_ms(worst.boot_ms)} "
             f"on {worst.when:%Y-%m-%d %H:%M}.")
+
+
+def fallback_trend_note(records: List[FallbackBootRecord]) -> str:
+    """The same kind of one-line verdict as `trend_note`, but for the
+    System-log approximation -- worded differently on purpose so it is
+    never mistaken for the Performance log's own BootTime figure."""
+    measured = [r.duration_seconds for r in records if r.duration_seconds is not None]
+    if not measured:
+        return "No boot events recorded in the System log fallback either."
+    times = sorted(measured)
+    median = times[len(times) // 2]
+    worst = max(measured)
+    worst_when = next(r.when for r in records if r.duration_seconds == worst)
+    return (f"{len(measured)} boots (System log approximation): median {median:.0f}s, "
+            f"slowest {worst:.0f}s on {worst_when:%Y-%m-%d %H:%M}.")

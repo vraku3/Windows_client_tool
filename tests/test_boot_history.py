@@ -184,8 +184,116 @@ def test_real_logs_are_plausible():
     else:
         assert all("Access is denied" in p or "denied" in p.lower() for p in facts.problems), facts.problems
         assert 0 <= len(facts.boots) <= 20
+        # The primary log is refused unelevated on this real machine, which
+        # is exactly the case read_fallback_boot_history exists for: the
+        # System log is a different, always-unelevated-readable source, and
+        # this machine reboots often enough that it must have something.
+        if not facts.boots:
+            assert facts.fallback_boots, (
+                "primary boot log refused and the System-log fallback found "
+                "nothing either -- both boot-history sources are dark")
+            for record in facts.fallback_boots:
+                assert record.when <= datetime.now() + timedelta(minutes=5)
+                if record.duration_seconds is not None:
+                    assert 1.0 < record.duration_seconds < 3600.0
     for boot in facts.boots:
         assert 3_000 < boot.boot_ms < 900_000
         assert boot.when <= datetime.now() + timedelta(minutes=5)
     assert facts.uptime_s and facts.uptime_s > 0
     assert facts.fast_startup in (True, False)
+
+
+def _fallback_query(boot_xmls="", shutdown_xmls=""):
+    """A `_query` stand-in: routes by which xpath asked, like the real one
+    routes by which log/filter -- lets the pairing logic be tested without
+    touching wevtutil."""
+    def fake(log, xpath, count):
+        if "EventID=12" in xpath:
+            return bh.split_events(boot_xmls), None
+        return bh.split_events(shutdown_xmls), None
+    return fake
+
+
+def test_read_fallback_boot_history_pairs_ready_and_clean_shutdown():
+    boot = _event(12, "2026-09-30T05:46:36Z", {})
+    ready = _event(6005, "2026-09-30T05:47:09Z", {})
+    prior_clean = _event(6006, "2026-09-29T20:42:17Z", {})
+    with patch("modules.boot_analyzer.boot_history._query",
+               side_effect=_fallback_query(boot, prior_clean + ready)):
+        records, reason = bh.read_fallback_boot_history()
+    assert reason is None
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.duration_seconds is not None
+    assert 30.0 < rec.duration_seconds < 35.0
+    assert rec.prior_shutdown_clean is True
+
+
+def test_read_fallback_boot_history_flags_an_unexpected_prior_shutdown():
+    boot = _event(12, "2026-09-30T05:46:36Z", {})
+    ready = _event(6005, "2026-09-30T05:47:09Z", {})
+    prior_dirty = _event(6008, "2026-09-29T20:42:17Z", {})
+    with patch("modules.boot_analyzer.boot_history._query",
+               side_effect=_fallback_query(boot, prior_dirty + ready)):
+        records, _reason = bh.read_fallback_boot_history()
+    assert records[0].prior_shutdown_clean is False
+
+
+def test_read_fallback_boot_history_missing_ready_is_none_not_zero():
+    """No 6005 after the boot (log rotated, or it just hasn't happened)
+    must report `duration_seconds=None`, never 0 or a guessed value."""
+    boot = _event(12, "2026-09-30T05:46:36Z", {})
+    with patch("modules.boot_analyzer.boot_history._query",
+               side_effect=_fallback_query(boot, "")):
+        records, _reason = bh.read_fallback_boot_history()
+    assert records[0].duration_seconds is None
+    assert records[0].prior_shutdown_clean is None
+
+
+def test_read_fallback_boot_history_propagates_a_refusal():
+    with patch("modules.boot_analyzer.boot_history._query",
+               return_value=(None, "System: Access is denied.")):
+        records, reason = bh.read_fallback_boot_history()
+    assert records == []
+    assert reason == "System: Access is denied."
+
+
+def test_fallback_trend_note_needs_at_least_one_measured_boot():
+    assert "No boot events" in bh.fallback_trend_note([])
+
+
+def test_fallback_trend_note_reports_median_and_worst():
+    now = datetime(2026, 9, 30, 5, 46, 36)
+    records = [
+        bh.FallbackBootRecord(now, 30.0, True),
+        bh.FallbackBootRecord(now, 40.0, True),
+        bh.FallbackBootRecord(now, 20.0, None),
+    ]
+    note = bh.fallback_trend_note(records)
+    assert "3 boots" in note and "System log approximation" in note
+
+
+def test_read_boot_facts_falls_back_when_the_perf_log_is_refused(monkeypatch):
+    """The integration point: `read_boot_facts` must reach for the System
+    log only once the Performance log has genuinely given nothing, and
+    must report the fallback separately rather than inventing BootRecords
+    it has no MainPath/PostBoot breakdown for."""
+    boot = _event(12, "2026-09-30T05:46:36Z", {})
+    ready = _event(6005, "2026-09-30T05:47:09Z", {})
+
+    def fake_query(log, xpath, count):
+        if log == bh.PERF_LOG:
+            return None, f"{log}: Access is denied."
+        if "Kernel-Boot" in xpath:
+            return [], None
+        if "EventID=12" in xpath:
+            return bh.split_events(boot), None
+        return bh.split_events(ready), None
+
+    monkeypatch.setattr(bh, "_query", fake_query)
+    monkeypatch.setattr(bh, "read_fast_startup", lambda: (True, None))
+    facts = bh.read_boot_facts()
+    assert facts.boots == []
+    assert len(facts.fallback_boots) == 1
+    assert facts.fallback_boots[0].duration_seconds is not None
+    assert any("Access is denied" in p for p in facts.problems)

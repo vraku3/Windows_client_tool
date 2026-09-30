@@ -12,6 +12,7 @@ from modules.boot_analyzer import boot_history as bh
 
 BOOT_COLUMNS = ["Boot logged", "Type", "Boot time", "Main path", "Post-boot", "Startup apps", "Degraded"]
 SLOW_COLUMNS = ["Kind", "Name", "Publisher", "Events", "Worst", "Average", "Last seen", "Path"]
+FALLBACK_COLUMNS = ["Boot logged", "Time to ready (approx.)", "Prior shutdown"]
 
 
 class _Num(QTableWidgetItem):
@@ -58,6 +59,23 @@ class BootHistoryPanel(QWidget):
         layout.addWidget(title2)
         self._slow = _table(SLOW_COLUMNS, 260)
         layout.addWidget(self._slow)
+
+        # Only shown when the Performance log above was refused and the
+        # System-log approximation (boot_history.read_fallback_boot_history)
+        # found something instead -- hidden otherwise, never both at once.
+        self._fallback_title = QLabel(
+            "Approximate boot times (System log -- the detailed log above could not be read)"
+        )
+        set_role(self._fallback_title, "heading")
+        self._fallback_title.hide()
+        layout.addWidget(self._fallback_title)
+        self._fallback_summary = QLabel("")
+        self._fallback_summary.setWordWrap(True)
+        self._fallback_summary.hide()
+        layout.addWidget(self._fallback_summary)
+        self._fallback = _table(FALLBACK_COLUMNS, 200)
+        self._fallback.hide()
+        layout.addWidget(self._fallback)
         row = QHBoxLayout()
         copy = QPushButton("Copy Boot Summary")
         copy.clicked.connect(self._copy)
@@ -74,6 +92,7 @@ class BootHistoryPanel(QWidget):
         self._summary.setText(bh.trend_note(facts.boots) + "\n" + bh.uptime_note(facts))
         self._fill_boots(facts)
         self._fill_slow(facts)
+        self._fill_fallback(facts)
         self._problems.setText("Not read: " + "; ".join(facts.problems) if facts.problems else "")
 
     def _fill_boots(self, facts: bh.BootFacts) -> None:
@@ -91,6 +110,39 @@ class BootHistoryPanel(QWidget):
                 cells[2].setForeground(QBrush(QColor(semantic("warning"))))
             if b.degraded:
                 cells[6].setForeground(QBrush(QColor(semantic("error"))))
+            for column, cell in enumerate(cells):
+                table.setItem(row, column, cell)
+        table.setSortingEnabled(True)
+
+    def _fill_fallback(self, facts: bh.BootFacts) -> None:
+        records = facts.fallback_boots
+        visible = bool(records)
+        self._fallback_title.setVisible(visible)
+        self._fallback_summary.setVisible(visible)
+        self._fallback.setVisible(visible)
+        if not visible:
+            self._fallback.setRowCount(0)
+            return
+        self._fallback_summary.setText(bh.fallback_trend_note(records))
+        table = self._fallback
+        table.setSortingEnabled(False)
+        table.setRowCount(len(records))
+        for row, r in enumerate(records):
+            duration_text = f"{r.duration_seconds:.0f}s" if r.duration_seconds is not None else "Unknown"
+            duration_value = r.duration_seconds if r.duration_seconds is not None else -1.0
+            if r.prior_shutdown_clean is None:
+                shutdown_text = "Unknown"
+            elif r.prior_shutdown_clean:
+                shutdown_text = "Clean shutdown"
+            else:
+                shutdown_text = "Unexpected shutdown"
+            cells = [
+                _Num(f"{r.when:%Y-%m-%d %H:%M}", r.when.timestamp()),
+                _Num(duration_text, duration_value),
+                centered_item(shutdown_text),
+            ]
+            if r.prior_shutdown_clean is False:
+                cells[2].setForeground(QBrush(QColor(semantic("warning"))))
             for column, cell in enumerate(cells):
                 table.setItem(row, column, cell)
         table.setSortingEnabled(True)

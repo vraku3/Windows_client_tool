@@ -13,8 +13,11 @@ from PyQt6.QtWidgets import (
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
 from core.worker import Worker
+from modules.disk_health.physical_disks import (
+    PhysicalDiskInfo, PhysicalDiskScan, hidden_from_smart, list_physical_disks,
+)
 from ui.empty_state import EmptyState
 
 logger = logging.getLogger(__name__)
@@ -325,6 +328,54 @@ class _DiskCard(QFrame):
             vbox.addWidget(tbl)
 
 
+class _HiddenDiskNotice(QFrame):
+    """Physical disks the SMART scan above never mentioned -- Storage Spaces
+    pool members `Win32_DiskDrive` omits entirely. See physical_disks.py's
+    docstring for the measured gap this closes."""
+
+    def __init__(self, hidden: List[PhysicalDiskInfo], parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(12, 10, 12, 10)
+        vbox.setSpacing(4)
+
+        title = QLabel(
+            f"⚠  {len(hidden)} more physical disk(s) hidden from the SMART "
+            "scan above by Storage Spaces pooling")
+        set_role(title, "statusWarning")
+        vbox.addWidget(title)
+
+        for d in hidden:
+            pool = d.pool_name or "unknown pool"
+            line = QLabel(
+                f"{d.friendly_name}  (serial {d.serial or '—'}, {d.size_gb:,.0f} GB, "
+                f"{d.bus_type})  — pool \"{pool}\": {d.health_status}/"
+                f"{d.operational_status}")
+            line.setWordWrap(True)
+            vbox.addWidget(line)
+
+        note = QLabel(
+            "No S.M.A.R.T. detail is available for a pooled disk this way — "
+            "Windows' own Storage Spaces health above is the only reading "
+            "this app has for it.")
+        note.setWordWrap(True)
+        set_role(note, "muted")
+        vbox.addWidget(note)
+
+
+class _StorageSpacesUnavailableNotice(QLabel):
+    """`Get-PhysicalDisk` itself was refused or could not run -- said plainly
+    rather than silently skipping the Storage Spaces cross-check."""
+
+    def __init__(self, reason: str, parent=None):
+        super().__init__(
+            f"ℹ  Could not check for disks hidden by Storage Spaces pooling: {reason}",
+            parent)
+        self.setWordWrap(True)
+        set_role(self, "muted")
+
+
 # ---------------------------------------------------------------------------
 # Main widget
 # ---------------------------------------------------------------------------
@@ -409,9 +460,10 @@ class _DiskHealthWidget(QWidget):
         self._clear_cards()
 
         def work(_w):
-            return _query_disks()
+            return _query_disks(), list_physical_disks()
 
-        def on_result(disks: List[DiskInfo]):
+        def on_result(payload):
+            disks, physical_scan = payload
             self._scanning = False
             self._progress.hide()
             self._scan_btn.setEnabled(True)
@@ -427,6 +479,7 @@ class _DiskHealthWidget(QWidget):
             for d in disks:
                 card = _DiskCard(d)
                 self._cards_layout.insertWidget(self._cards_layout.count() - 1, card)
+            self._add_storage_spaces_notice(disks, physical_scan)
             self._update_empty_state()
 
         def on_error(err: str):
@@ -440,6 +493,21 @@ class _DiskHealthWidget(QWidget):
         w.signals.error.connect(on_error)
         self._workers.append(w)
         self._thread_pool.start(w)
+
+    def _add_storage_spaces_notice(self, disks: List[DiskInfo],
+                                    physical_scan: PhysicalDiskScan) -> None:
+        """Append whatever the Storage Spaces cross-check found -- a refusal
+        reason, a list of hidden pool members, or nothing when there are
+        none, but never silence for a refusal (see physical_disks.py)."""
+        if not physical_scan.available:
+            notice = _StorageSpacesUnavailableNotice(physical_scan.reason)
+            self._cards_layout.insertWidget(self._cards_layout.count() - 1, notice)
+            return
+        smart_serials = [d.serial for d in disks]
+        hidden = hidden_from_smart(physical_scan.disks, smart_serials)
+        if hidden:
+            notice = _HiddenDiskNotice(hidden)
+            self._cards_layout.insertWidget(self._cards_layout.count() - 1, notice)
 
     def _clear_cards(self) -> None:
         # Everything except the empty state, which is a fixture of the pane

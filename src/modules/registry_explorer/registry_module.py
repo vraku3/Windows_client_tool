@@ -15,8 +15,16 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header, set_role
 from core.worker import Worker
-from modules.registry_explorer import registry_scan
+from modules.registry_explorer import registry_acl, registry_scan
 from modules.registry_explorer.registry_model import RegistryTreeModel
+
+# Trustees that normally hold write access on a well-run machine. Anyone else
+# showing up with a write-capable ACE is the actionable finding -- flagged,
+# not just listed alongside the routine entries.
+_EXPECTED_WRITERS = {
+    "NT AUTHORITY\\SYSTEM", "BUILTIN\\ADMINISTRATORS", "CREATOR OWNER",
+    "NT SERVICE\\TRUSTEDINSTALLER",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +124,10 @@ class RegistryExplorerModule(BaseModule):
         self._last_write_label = QLabel("")
         set_role(self._last_write_label, "muted")
         right_layout.addWidget(self._last_write_label)
+        self._write_access_label = QLabel("")
+        self._write_access_label.setWordWrap(True)
+        set_role(self._write_access_label, "muted")
+        right_layout.addWidget(self._write_access_label)
         self._values_table = QTableWidget(0, 3)
         self._values_table.setHorizontalHeaderLabels(["Name", "Type", "Data"])
         hdr = self._values_table.horizontalHeader()
@@ -147,6 +159,7 @@ class RegistryExplorerModule(BaseModule):
             self._last_write_label.setText(f"Last modified: {when:%Y-%m-%d %H:%M} UTC")
         else:
             self._last_write_label.setText(f"Last modified: could not read ({why})" if why else "")
+        self._update_write_access(path)
         values = self._model.values_for(current)
         self._values_table.setRowCount(0)
         for name, type_str, data in values:
@@ -155,6 +168,33 @@ class RegistryExplorerModule(BaseModule):
             self._values_table.setItem(row, 0, centered_item(name))
             self._values_table.setItem(row, 1, centered_item(type_str))
             self._values_table.setItem(row, 2, centered_item(data))
+
+    def _update_write_access(self, path: str) -> None:
+        """Who can write to the selected key, right where regedit itself makes
+        you open a separate Permissions dialog to find out."""
+        result = registry_acl.describe_write_access(path)
+        if result.refused:
+            set_role(self._write_access_label, "muted")
+            self._write_access_label.setText(f"Write access: could not read ({result.refused})")
+            return
+        names = []
+        unusual = []
+        for w in result.writers:
+            label = w.trustee if w.allowed else f"{w.trustee} (DENY)"
+            names.append(label)
+            if w.allowed and w.trustee.upper() not in _EXPECTED_WRITERS:
+                unusual.append(w.trustee)
+        if not names:
+            set_role(self._write_access_label, "muted")
+            self._write_access_label.setText("Write access: none granted in this key's own ACL")
+            return
+        text = "Write access: " + ", ".join(names)
+        if unusual:
+            set_role(self._write_access_label, "statusWarning")
+            text += f"  -- unusual: {', '.join(unusual)}"
+        else:
+            set_role(self._write_access_label, "muted")
+        self._write_access_label.setText(text)
 
     def _copy_path(self) -> None:
         idx = self._tree.currentIndex()

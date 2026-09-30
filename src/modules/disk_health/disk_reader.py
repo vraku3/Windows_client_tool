@@ -17,7 +17,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from modules.disk_health import disk_events
+from modules.disk_health import disk_events, physical_disks
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,7 @@ class DiskReport:
     errors: Dict[str, str] = field(default_factory=dict)   # section -> reason
     elevated: bool = False
     events: List[disk_events.DiskEvent] = field(default_factory=list)
+    hidden_pool_disks: List[physical_disks.PhysicalDiskInfo] = field(default_factory=list)
 
 
 @dataclass
@@ -311,7 +312,30 @@ def read_disk_report(elevated: bool = False, timeout: int = 60) -> DiskReport:
         rep.errors["events"] = "Could not read the System log for disk-related events."
     else:
         rep.events = events
+    _attach_storage_spaces_crossref(rep)
     return rep
+
+
+def _attach_storage_spaces_crossref(rep: DiskReport) -> None:
+    """Physical disks Storage Spaces pools away from Win32_DiskDrive.
+
+    A Storage Spaces pool member never appears in the SMART scan above --
+    see physical_disks.py for the measured evidence -- so without this a
+    failing pool member is invisible to this tab for as long as it stays
+    pooled. A refused read is its own state (``rep.errors``), never
+    collapsed into "no hidden disks".
+    """
+    try:
+        scan = physical_disks.list_physical_disks()
+    except Exception as e:  # subprocess/parsing can fail in many ways
+        logger.warning("Storage Spaces cross-reference failed: %s", e)
+        rep.errors["storage_spaces"] = f"Could not check for hidden pool members ({e})."
+        return
+    if not scan.available:
+        rep.errors["storage_spaces"] = scan.reason
+        return
+    rep.hidden_pool_disks = physical_disks.hidden_from_smart(
+        scan.disks, [d.serial for d in rep.disks])
 
 
 def _attach_smart(rep: DiskReport) -> None:
@@ -459,6 +483,18 @@ def event_findings(report: DiskReport) -> List[Finding]:
     return out
 
 
+def storage_spaces_findings(report: DiskReport) -> List[Finding]:
+    out: List[Finding] = []
+    for d in report.hidden_pool_disks:
+        out.append(Finding(
+            "warning", d.friendly_name,
+            f'Not shown above -- pooled in "{d.pool_name}"',
+            f"{d.size_gb:.0f} GB, health {d.health_status}. Storage Spaces pool "
+            "members are not enumerated by the drives table's own scan, so "
+            "this disk's health is only visible here."))
+    return out
+
+
 def all_findings(report: DiskReport) -> List[Finding]:
     found: List[Finding] = []
     for d in report.disks:
@@ -466,6 +502,7 @@ def all_findings(report: DiskReport) -> List[Finding]:
     for v in report.volumes:
         found += volume_findings(v)
     found += alignment_findings(report)
+    found += storage_spaces_findings(report)
     found += system_findings(report)
     found += event_findings(report)
     return sorted(found, key=lambda f: _SEVERITY_ORDER.get(f.severity, 3))

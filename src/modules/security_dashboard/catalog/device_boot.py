@@ -20,7 +20,8 @@ from ..security_reader import (
     check_hibernation, check_hvci, check_memory_integrity_registry,
     check_ntp_sync, check_pagefile_clear, check_secure_boot_tpm,
     check_security_log_size, check_smartscreen, check_system_log_size,
-    check_test_signing, check_tpm_details, check_wu_auto_update,
+    check_test_signing, check_tpm_details, check_usb_storage,
+    check_wu_auto_update,
 )
 from .model import Category, Risk, SecurityControl
 
@@ -33,6 +34,7 @@ _EXPLORER_POLICY = (r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion"
                     r"\Policies\Explorer")
 _SMARTSCREEN_POLICY = r"HKLM\SOFTWARE\Policies\Microsoft\Windows\System"
 _POWER = r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Power"
+_USBSTOR = r"HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR"
 
 
 def _dword(key: str, value: str, data: int) -> Dict[str, Any]:
@@ -206,6 +208,27 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         off_steps=(_dword(_EXPLORER_POLICY, "NoDriveTypeAutoRun", 255),),
         desired=False,
         risk=Risk.LOW,
+    ),
+
+    SecurityControl(
+        id="usb_storage",
+        title="USB Mass Storage",
+        category=Category.DEVICE_BOOT,
+        description="Whether Windows will mount a USB drive at all, via the "
+                    "USBSTOR driver's Start value.",
+        why_it_matters="This is the standard control against walking data "
+                       "out on a USB stick or plugging in an unknown one "
+                       "(BadUSB) -- distinct from AutoRun above, which only "
+                       "stops a drive Windows already mounted from running "
+                       "something automatically. Blocking it also stops "
+                       "every legitimate USB drive, camera SD reader and "
+                       "phone-as-storage from mounting.",
+        reader=check_usb_storage,
+        on_steps=(_dword(_USBSTOR, "Start", 3),),
+        off_steps=(_dword(_USBSTOR, "Start", 4),),
+        desired=False,
+        risk=Risk.MEDIUM,
+        requires_reboot=True,
     ),
 
     SecurityControl(

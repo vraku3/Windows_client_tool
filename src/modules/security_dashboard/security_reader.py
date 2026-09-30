@@ -2013,6 +2013,60 @@ def check_autorun() -> Dict[str, Any]:
         return {"status": "Error", "color": "amber", "available": False,
                 "details": []}
 
+
+def check_usb_storage() -> Dict[str, Any]:
+    """Whether Windows will mount a USB mass-storage device at all.
+
+    `Start` under the USBSTOR driver's own service key is the same value
+    `sc config USBSTOR start=` writes: 3 lets it load on demand (the
+    out-of-box default, since Windows 2000/XP), 4 disables it -- Explorer
+    never sees the drive at all, not even to show it as inaccessible. This
+    is the standard data-exfiltration/BadUSB control, distinct from
+    `check_autorun` (which only stops autorun.inf from firing on media
+    Windows already mounted).
+
+    Measured live on this machine 2026-09-29, unelevated: Start=3, i.e. USB
+    storage is allowed -- the Windows default, not itself a finding.
+
+    `enabled` follows the same polarity as `check_autorun`: True means "USB
+    storage CAN be used" (the permissive/bad state), so the catalog's
+    `desired=False` asks for it to be blocked.
+    """
+    key = r"HKLM\SYSTEM\CurrentControlSet\Services\USBSTOR"
+    hive_name, _, sub = key.partition("\\")
+    hive = _HIVES.get(hive_name.upper())
+    try:
+        with winreg.OpenKey(hive, sub) as handle:
+            start, _ = winreg.QueryValueEx(handle, "Start")
+    except FileNotFoundError:
+        # USBSTOR not existing at all would mean no USB mass-storage class
+        # driver is installed on this machine -- unusual enough that it is
+        # reported as a definite state (nothing to block) rather than
+        # guessed at.
+        return {"status": "Not Found", "color": "green", "available": True,
+                "enabled": False,
+                "details": [("USBSTOR", "Service key not present")]}
+    except PermissionError as exc:
+        logger.warning("check_usb_storage: access denied reading Start: %s",
+                        exc)
+        return {"status": "Unknown", "color": "amber", "available": False,
+                "details": [("USBSTOR", "Access denied reading Start value")]}
+    except OSError as exc:
+        logger.warning("check_usb_storage: registry read failed: %s", exc)
+        return {"status": "Unknown", "color": "amber", "available": False,
+                "details": [("USBSTOR", f"Could not read: {exc}")]}
+    blocked = start == 4
+    return {
+        "status": "Blocked" if blocked else "Allowed",
+        "color": "green" if blocked else "amber",
+        "available": True, "enabled": not blocked,
+        "details": [("USBSTOR Start", str(start)),
+                     ("USB Mass Storage",
+                      "Blocked -- drives will not mount" if blocked
+                      else "Allowed -- any USB drive can be read/written")],
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CATEGORY C — SYSTEM HARDENING (16 checks)
 # ═══════════════════════════════════════════════════════════════════════════════

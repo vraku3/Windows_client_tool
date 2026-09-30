@@ -34,6 +34,9 @@ CACHE_TTL_SECONDS = 60
 
 _lock = threading.Lock()
 _cache: Optional[Tuple[float, List[dict]]] = None
+#: Separate cache for the provisioned-package query (elevated-only, its own
+#: DISM cost) so invalidating one does not force a re-query of the other.
+_prov_cache: Optional[Tuple[float, List[dict]]] = None
 
 
 def fetch_packages(*, use_cache: bool = True) -> List[dict]:
@@ -273,6 +276,111 @@ def invalidate_cache() -> None:
     global _cache
     with _lock:
         _cache = None
+
+
+def fetch_provisioned_packages_or_none(*, use_cache: bool = True) -> Optional[List[dict]]:
+    """Packages provisioned for every NEW user account on this machine
+    (`Get-AppxProvisionedPackage -Online`, DISM-backed) -- a different
+    question from `fetch_packages()`'s per-CURRENT-user install state.
+    `Remove-AppxPackage -AllUsers` (what Store Apps' own uninstall already
+    runs) removes a package for every EXISTING profile but leaves a
+    provisioned entry untouched, so it is silently re-added to any account
+    created afterwards.
+
+    Confirmed live on this real machine 2026-09-30: 8 of 64 provisioned
+    packages (Clipchamp.Clipchamp, Microsoft.BingNews, Microsoft.BingSearch,
+    Microsoft.BingWeather, Microsoft.MicrosoftSolitaireCollection,
+    Microsoft.OutlookForWindows, Microsoft.Windows.DevHome,
+    Microsoft.ZuneMusic) are provisioned but NOT installed for the current
+    user -- each one removed at some point, each one still queued for the
+    next new account.
+
+    Requires elevation: unelevated, `Get-AppxProvisionedPackage` throws a
+    COMException reading "The requested operation requires elevation"
+    (confirmed live, exit code 1, empty stdout) every time, so this returns
+    `None` immediately without spawning a PowerShell process for a query
+    guaranteed to be refused -- the same short-circuit
+    `security_dashboard._wmi_namespace` uses for a namespace that always
+    denies an unelevated caller.
+    """
+    from core.admin_utils import is_admin
+    global _prov_cache
+    if not is_admin():
+        return None
+    if use_cache:
+        with _lock:
+            if _prov_cache is not None and time.monotonic() - _prov_cache[0] < CACHE_TTL_SECONDS:
+                return _prov_cache[1]
+    outcome = _run_ps_bounded(
+        "Get-AppxProvisionedPackage -Online | "
+        "Select-Object DisplayName, PackageName | ConvertTo-Json -Compress"
+    )
+    if outcome is None:
+        return None
+    returncode, stdout, stderr = outcome
+    if returncode != 0 or not stdout.strip():
+        logger.warning("AppxProvisionedPackage enumeration failed: %s", stderr.strip())
+        return None
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse AppxProvisionedPackage output")
+        return None
+    if isinstance(data, dict):
+        data = [data]
+    if use_cache:
+        with _lock:
+            _prov_cache = (time.monotonic(), data)
+    return data
+
+
+def provisioned_package_name_map_or_none(*, use_cache: bool = True) -> Optional[Dict[str, str]]:
+    """DisplayName -> full PackageName for every provisioned package, or
+    `None` when the query could not run at all (unelevated, or a refused
+    or unparseable enumeration) -- never collapsed to `{}`, which would
+    read as "nothing is provisioned" rather than "we could not check"."""
+    packages = fetch_provisioned_packages_or_none(use_cache=use_cache)
+    if packages is None:
+        return None
+    return {p.get("DisplayName", ""): p.get("PackageName", "")
+            for p in packages if p.get("DisplayName")}
+
+
+def remove_provisioned_package(package_name: str) -> Tuple[bool, str]:
+    """Deprovision one package (`Remove-AppxProvisionedPackage -Online`) so
+    it stops being added to new user accounts. Does not touch any existing
+    profile's own install -- that is `Remove-AppxPackage`'s job, already
+    Store Apps' uninstall path.
+
+    The call itself refuses while exiting 0 on some errors (the same trap
+    `netsh`/`dism` have elsewhere in this app), so this always wraps it in
+    `-ErrorAction Stop` and reads the outcome from stdout, never the return
+    code alone. Verified live 2026-09-30 against a package name that does
+    not exist: a clean, distinguishable failure ("The parameter is
+    incorrect", non-zero exit) rather than a false success -- never run
+    here against a real provisioned package, so the success path is
+    covered by a mocked-subprocess unit test, not an end-to-end one.
+    """
+    from core.admin_utils import is_admin
+    if not is_admin():
+        return False, "Administrator rights are required to deprovision a package."
+    from core.windows_utils import ps_quote
+    cmd = (
+        "try { Remove-AppxProvisionedPackage -Online -PackageName '"
+        + ps_quote(package_name)
+        + "' -ErrorAction Stop | Out-Null; Write-Output 'DEPROVISIONED' } "
+        "catch { Write-Error $_.Exception.Message; exit 1 }"
+    )
+    outcome = _run_ps_bounded(cmd)
+    if outcome is None:
+        return False, "The deprovision command did not complete in time."
+    returncode, stdout, stderr = outcome
+    if returncode == 0 and "DEPROVISIONED" in stdout:
+        global _prov_cache
+        with _lock:
+            _prov_cache = None
+        return True, ""
+    return False, (stderr or stdout).strip() or "Unknown failure"
 
 
 def _version_key(version: str) -> tuple:

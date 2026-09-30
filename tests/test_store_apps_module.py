@@ -733,3 +733,165 @@ def test_get_search_provider_before_any_load_finds_nothing_not_none():
     mod = store_module()
     provider = mod.get_search_provider()
     assert provider.search(SearchQuery(text="anything")) == []
+
+
+# ----------------------------------------------------------------------
+# Store Apps sysadmin pass (2026-09-30): "New Users" (provisioned) column
+# and provisioned-only virtual rows.
+#
+# Real-machine finding: `Get-AppxPackage` (what this table has always been
+# built from) only lists what is installed for the CURRENT user; a package
+# `Get-AppxProvisionedPackage -Online` still provisions for every NEW user
+# account does not appear there at all once removed for the current one.
+# Confirmed live 2026-09-30: 8 such packages on this machine (Clipchamp,
+# BingNews, BingSearch, BingWeather, MicrosoftSolitaireCollection,
+# OutlookForWindows, Windows.DevHome, ZuneMusic) -- so without a synthesized
+# row, that gap stays invisible no matter how this table is filtered.
+# ----------------------------------------------------------------------
+
+
+def test_provisioned_column_shows_unknown_when_the_map_is_none(monkeypatch):
+    """provisioned_map=None means the query never ran or was refused
+    (unelevated) -- must read as its own state, not silently as "No"."""
+    mod = store_module()
+    apps = [{"Name": "Microsoft.WindowsCalculator", "InstallLocation": "",
+             "Publisher": "", "Version": ""}]
+    mod._on_apps_loaded(apps, None, provisioned_map=None)
+    assert mod._table.item(0, 7).text() == "❔ Unknown"
+
+
+def test_provisioned_column_shows_yes_and_no_correctly(monkeypatch):
+    mod = store_module()
+    apps = [
+        {"Name": "Microsoft.WindowsCalculator", "InstallLocation": "",
+         "Publisher": "", "Version": ""},
+        {"Name": "SpotifyAB.SpotifyMusic", "InstallLocation": "",
+         "Publisher": "", "Version": ""},
+    ]
+    provisioned_map = {"Microsoft.WindowsCalculator": "Microsoft.WindowsCalculator_1.0_x64__abc"}
+    mod._on_apps_loaded(apps, None, provisioned_map=provisioned_map)
+    calc_row = mod._row_of("Microsoft.WindowsCalculator")
+    spotify_row = mod._row_of("SpotifyAB.SpotifyMusic")
+    assert mod._table.item(calc_row, 7).text() == "Yes"
+    assert mod._table.item(spotify_row, 7).text() == "No"
+
+
+def test_a_provisioned_only_package_gets_its_own_row(monkeypatch):
+    """The real gap this feature exists to catch: a package provisioned
+    for new users but not installed for the current one must appear as a
+    row, even though it is absent from `apps` entirely."""
+    mod = store_module()
+    apps = [{"Name": "Microsoft.WindowsCalculator", "InstallLocation": "",
+             "Publisher": "", "Version": ""}]
+    provisioned_map = {
+        "Microsoft.WindowsCalculator": "Microsoft.WindowsCalculator_1.0_x64__abc",
+        "Clipchamp.Clipchamp": "Clipchamp.Clipchamp_4.6.10320.0_neutral_~_yxz26nhyzhsrt",
+    }
+    mod._on_apps_loaded(apps, None, provisioned_map=provisioned_map)
+
+    assert mod._table.rowCount() == 2
+    ghost_row = mod._row_of("Clipchamp.Clipchamp")
+    assert ghost_row >= 0
+    assert mod._table.item(ghost_row, 7).text() == "⚠️ Still provisioned"
+    assert mod._table.item(ghost_row, 4).text() == "➖ Not installed"
+
+
+def test_provisioned_only_rows_appear_even_when_nothing_is_installed(monkeypatch):
+    """`apps == []` used to mean the empty state unconditionally -- but a
+    provisioned-only ghost is real information that must not be thrown
+    away just because the (unrelated) installed list is empty."""
+    mod = store_module()
+    provisioned_map = {"Clipchamp.Clipchamp": "Clipchamp.Clipchamp_4.6.10320.0_neutral_~_yxz26nhyzhsrt"}
+    mod._on_apps_loaded([], None, provisioned_map=provisioned_map)
+    assert mod._table_stack.currentIndex() == 0
+    assert mod._table.rowCount() == 1
+
+
+def test_provisioned_only_row_is_excluded_from_bulk_uninstall(monkeypatch):
+    """Remove-AppxPackage on a name that is not installed is a harmless
+    no-op that would still verify as "removed" -- a false success for
+    something that was never there. The virtual row must be skipped, not
+    silently attempted."""
+    mod = store_module()
+    apps = [{"Name": "Microsoft.WindowsCalculator", "InstallLocation": "",
+             "Publisher": "", "Version": ""}]
+    provisioned_map = {
+        "Clipchamp.Clipchamp": "Clipchamp.Clipchamp_4.6.10320.0_neutral_~_yxz26nhyzhsrt"}
+    mod._on_apps_loaded(apps, None, provisioned_map=provisioned_map)
+    mod._table.selectAll()
+    targets, skipped = mod._selected_targets()
+    assert [t[0] for t in targets] == ["Microsoft.WindowsCalculator"]
+    assert "Clipchamp" in skipped[0] or "Clipchamp" in " ".join(skipped)
+
+
+def test_deprovision_action_disabled_without_a_provisioned_map(monkeypatch):
+    mod = store_module()
+    apps = [{"Name": "Microsoft.WindowsCalculator", "InstallLocation": "",
+             "Publisher": "", "Version": ""}]
+    monkeypatch.setattr(mod, "_start_size_scan", lambda: None)
+    mod._on_apps_loaded(apps, None, provisioned_map=None)
+
+    captured = []
+    actions = _open_context_menu(mod, "Microsoft.WindowsCalculator", monkeypatch, captured)
+    assert not actions["🚫 Stop provisioning for new users"].isEnabled()
+    assert not actions["Copy deprovision command"].isEnabled()
+
+
+def test_deprovision_action_enabled_for_a_provisioned_package(monkeypatch):
+    mod = store_module()
+    apps = [{"Name": "Microsoft.WindowsCalculator", "InstallLocation": "",
+             "Publisher": "", "Version": ""}]
+    provisioned_map = {"Microsoft.WindowsCalculator": "Microsoft.WindowsCalculator_1.0_x64__abc"}
+    monkeypatch.setattr(mod, "_start_size_scan", lambda: None)
+    mod._on_apps_loaded(apps, None, provisioned_map=provisioned_map)
+
+    captured = []
+    actions = _open_context_menu(mod, "Microsoft.WindowsCalculator", monkeypatch, captured)
+    assert actions["🚫 Stop provisioning for new users"].isEnabled()
+    assert actions["Copy deprovision command"].isEnabled()
+
+
+def test_deprovision_confirms_before_calling_remove_provisioned_package(monkeypatch):
+    """A no-click on the confirmation dialog must not run anything."""
+    mod = store_module()
+    monkeypatch.setattr(mod, "require_admin", lambda parent=None: True)
+    monkeypatch.setattr(sam.QMessageBox, "warning",
+                        lambda *a, **k: sam.QMessageBox.StandardButton.No)
+    calls = []
+    monkeypatch.setattr(sam, "remove_provisioned_package",
+                        lambda name: calls.append(name))
+    mod._deprovision("Clipchamp.Clipchamp", "Clipchamp",
+                     "Clipchamp.Clipchamp_4.6.10320.0_neutral_~_yxz26nhyzhsrt")
+    assert calls == []
+
+
+def test_deprovision_is_blocked_unelevated(monkeypatch):
+    mod = store_module()
+    monkeypatch.setattr(mod, "require_admin", lambda parent=None: False)
+    warned = []
+    monkeypatch.setattr(sam.QMessageBox, "warning",
+                        lambda *a, **k: warned.append(1))
+    mod._deprovision("Clipchamp.Clipchamp", "Clipchamp",
+                     "Clipchamp.Clipchamp_4.6.10320.0_neutral_~_yxz26nhyzhsrt")
+    assert warned == []  # require_admin() already showed its own dialog
+
+
+def test_on_deprovision_done_reports_failure_via_the_error_banner(monkeypatch):
+    mod = store_module()
+    monkeypatch.setattr(mod, "_load_apps", lambda: None)
+    errors = []
+    monkeypatch.setattr(mod._error_banner, "set_error", lambda msg: errors.append(msg))
+    mod._on_deprovision_done((False, "The parameter is incorrect.", "Clipchamp"))
+    assert errors and "Clipchamp" in errors[0]
+    assert "parameter is incorrect" in errors[0].lower()
+
+
+def test_on_deprovision_done_reports_success(monkeypatch):
+    mod = store_module()
+    monkeypatch.setattr(mod, "_load_apps", lambda: None)
+    monkeypatch.setattr(sam.QMessageBox, "information", lambda *a, **k: None)
+    # Must not raise, and must trigger a reload so the row disappears/updates.
+    reload_calls = []
+    monkeypatch.setattr(mod, "_load_apps", lambda: reload_calls.append(1))
+    mod._on_deprovision_done((True, "", "Clipchamp"))
+    assert reload_calls == [1]

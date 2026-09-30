@@ -153,3 +153,163 @@ def test_real_machine_architectures_are_names():
     assert packages
     assert all(isinstance(p["Architecture"], str) and not p["Architecture"].isdigit()
                for p in packages), {p["Architecture"] for p in packages}
+
+
+# ----------------------------------------------------------------------
+# fetch_provisioned_packages_or_none / provisioned_package_name_map_or_none
+# / remove_provisioned_package -- Store Apps sysadmin pass, 2026-09-30.
+#
+# Confirmed live, unelevated, on this real machine:
+#   Get-AppxProvisionedPackage -Online -> COMException "The requested
+#   operation requires elevation", exit code 1, empty stdout. So the read
+#   side must short-circuit to None unelevated rather than attempt (and
+#   parse) a query guaranteed to be refused.
+# ----------------------------------------------------------------------
+
+
+def test_fetch_provisioned_packages_short_circuits_when_unelevated(monkeypatch):
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: False)
+    calls = []
+    monkeypatch.setattr(appx_service, "_run_ps_bounded",
+                        lambda cmd, timeout=60: calls.append(cmd))
+    assert appx_service.fetch_provisioned_packages_or_none(use_cache=False) is None
+    assert calls == []  # never even spawned the guaranteed-refused query
+
+
+def test_fetch_provisioned_packages_parses_real_shaped_output(monkeypatch):
+    """Shape matches the real DisplayName/PackageName pairs captured live
+    2026-09-30 (Clipchamp.Clipchamp among the provisioned-but-not-installed
+    set on this machine)."""
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    monkeypatch.setattr(
+        appx_service, "_run_ps_bounded",
+        lambda cmd, timeout=60: (0,
+            '[{"DisplayName":"Clipchamp.Clipchamp",'
+            '"PackageName":"Clipchamp.Clipchamp_4.6.10320.0_neutral_~_yxz26nhyzhsrt"},'
+            '{"DisplayName":"Microsoft.WindowsCalculator",'
+            '"PackageName":"Microsoft.WindowsCalculator_2021.2607.0.0_neutral_~_8wekyb3d8bbwe"}]',
+            ""))
+    result = appx_service.fetch_provisioned_packages_or_none(use_cache=False)
+    assert result is not None
+    assert {p["DisplayName"] for p in result} == {
+        "Clipchamp.Clipchamp", "Microsoft.WindowsCalculator"}
+
+
+def test_fetch_provisioned_packages_handles_a_single_object_not_a_list(monkeypatch):
+    """`ConvertTo-Json` emits a bare object, not a one-element array, when
+    only one package is provisioned -- the same normalization `_clean()`
+    already needs for `Get-AppxPackage`."""
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    monkeypatch.setattr(
+        appx_service, "_run_ps_bounded",
+        lambda cmd, timeout=60: (0, '{"DisplayName":"Solo.App","PackageName":"Solo.App_1.0_x64__abc"}', ""))
+    result = appx_service.fetch_provisioned_packages_or_none(use_cache=False)
+    assert result == [{"DisplayName": "Solo.App", "PackageName": "Solo.App_1.0_x64__abc"}]
+
+
+def test_fetch_provisioned_packages_returns_none_on_a_refused_query(monkeypatch):
+    """Elevated but still refused for some other reason (e.g. a corporate
+    policy) -- must not be read as "nothing is provisioned"."""
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    monkeypatch.setattr(
+        appx_service, "_run_ps_bounded",
+        lambda cmd, timeout=60: (1, "", "Some DISM failure"))
+    assert appx_service.fetch_provisioned_packages_or_none(use_cache=False) is None
+
+
+def test_fetch_provisioned_packages_returns_none_on_unparseable_output(monkeypatch):
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    monkeypatch.setattr(
+        appx_service, "_run_ps_bounded",
+        lambda cmd, timeout=60: (0, "not json at all", ""))
+    assert appx_service.fetch_provisioned_packages_or_none(use_cache=False) is None
+
+
+def test_provisioned_package_name_map_or_none_builds_displayname_to_packagename(
+        monkeypatch):
+    monkeypatch.setattr(
+        appx_service, "fetch_provisioned_packages_or_none",
+        lambda use_cache=True: [
+            {"DisplayName": "Microsoft.BingWeather",
+             "PackageName": "Microsoft.BingWeather_4.54.63045.0_neutral_~_8wekyb3d8bbwe"}])
+    result = appx_service.provisioned_package_name_map_or_none(use_cache=False)
+    assert result == {
+        "Microsoft.BingWeather": "Microsoft.BingWeather_4.54.63045.0_neutral_~_8wekyb3d8bbwe"}
+
+
+def test_provisioned_package_name_map_or_none_preserves_none(monkeypatch):
+    """Never collapsed to `{}` -- that would read as "nothing provisioned"
+    rather than "we could not check"."""
+    monkeypatch.setattr(
+        appx_service, "fetch_provisioned_packages_or_none",
+        lambda use_cache=True: None)
+    assert appx_service.provisioned_package_name_map_or_none(use_cache=False) is None
+
+
+def test_remove_provisioned_package_refuses_unelevated_without_running_anything(
+        monkeypatch):
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: False)
+    calls = []
+    monkeypatch.setattr(appx_service, "_run_ps_bounded",
+                        lambda cmd, timeout=60: calls.append(cmd))
+    ok, reason = appx_service.remove_provisioned_package("Some.Package_1.0_x64__abc")
+    assert ok is False
+    assert "administrator" in reason.lower()
+    assert calls == []
+
+
+def test_remove_provisioned_package_reads_success_from_stdout_not_returncode_alone(
+        monkeypatch):
+    """DISM-backed cmdlets in this app refuse while exiting 0 elsewhere
+    (CLAUDE.md's netsh/dism note); this call must key success off the
+    explicit marker text, not the return code by itself."""
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    monkeypatch.setattr(
+        appx_service, "_run_ps_bounded",
+        lambda cmd, timeout=60: (0, "DEPROVISIONED\r\n", ""))
+    ok, reason = appx_service.remove_provisioned_package("Some.Package_1.0_x64__abc")
+    assert ok is True
+    assert reason == ""
+
+
+def test_remove_provisioned_package_reports_a_distinguishable_failure(monkeypatch):
+    """Mirrors the real failure text captured live against a nonexistent
+    package name: exit 1, no success marker, a real error message."""
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    monkeypatch.setattr(
+        appx_service, "_run_ps_bounded",
+        lambda cmd, timeout=60: (1, "", "The parameter is incorrect."))
+    ok, reason = appx_service.remove_provisioned_package("Definitely.Not.Real_1.0_x64__abc")
+    assert ok is False
+    assert "parameter is incorrect" in reason.lower()
+
+
+def test_remove_provisioned_package_quotes_the_package_name(monkeypatch):
+    """A package name containing a single quote must not break out of the
+    PowerShell string literal -- same discipline as every other ps_quote
+    call site in this app."""
+    monkeypatch.setattr("core.admin_utils.is_admin", lambda: True)
+    seen = {}
+    def fake(cmd, timeout=60):
+        seen["cmd"] = cmd
+        return 0, "DEPROVISIONED", ""
+    monkeypatch.setattr(appx_service, "_run_ps_bounded", fake)
+    appx_service.remove_provisioned_package("Weird'Name_1.0_x64__abc")
+    assert "Weird''Name" in seen["cmd"]
+
+
+@pytest.mark.real_machine
+def test_real_machine_provisioned_query_is_none_unelevated_or_a_real_list():
+    """Confirms the live shape this whole feature is built against: either
+    the query is refused outright (this session is unelevated) or it comes
+    back as a real list of DisplayName/PackageName dicts -- never `[]` (an
+    elevated DISM query with zero provisioned packages has not been
+    observed on any real Windows install)."""
+    from core.admin_utils import is_admin
+    result = appx_service.fetch_provisioned_packages_or_none(use_cache=False)
+    if not is_admin():
+        assert result is None
+    else:
+        assert result is not None
+        assert len(result) > 0
+        assert all("DisplayName" in p and "PackageName" in p for p in result)

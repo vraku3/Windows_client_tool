@@ -300,6 +300,43 @@ class BackupService:
             # refusal is not an absent value.
             return None
 
+    @staticmethod
+    def _verify_registry_revert(hive, sub: str, value_name: str,
+                                 expected: Any) -> Optional[bool]:
+        """Read a value back after `revert_step` wrote or deleted it.
+
+        True/False answer the question directly. None means the read itself
+        could not (access denied) — not evidence either way, the same
+        distinction every registry read in this app draws (`_registry_key_exists`
+        above, `TweakEngine.detect()`) between "refused" and "absent". A
+        write or delete not raising is not proof it landed; `expected=None`
+        means the revert deleted the value, so anything still readable there
+        is a real mismatch, not a pass.
+        """
+        import winreg
+        try:
+            with winreg.OpenKey(hive, sub) as k:
+                try:
+                    actual, _kind = winreg.QueryValueEx(k, value_name)
+                except FileNotFoundError:
+                    return expected is None
+                except OSError as e:
+                    if getattr(e, "winerror", None) == 5:
+                        return None
+                    raise
+        except FileNotFoundError:
+            # The whole key is gone (e.g. `_delete_key_if_empty` took it with
+            # the value) — that is still "the value is absent".
+            return expected is None
+        except OSError as e:
+            if getattr(e, "winerror", None) == 5:
+                return None
+            raise
+        if expected is None:
+            # We deleted it, but something is still there.
+            return False
+        return actual == expected
+
     def backup_service_state(self, service_name: str, restore_point_id: str) -> None:
         folder = self._get_restore_point_folder(restore_point_id)
         if folder is None:
@@ -427,6 +464,78 @@ class BackupService:
         ).fetchall()
         return self._revert_steps([row["id"] for row in rows])
 
+    def _revert_registry_step(self, row, target: str, before: Any) -> None:
+        """Write (or delete) the recorded before_value back, then confirm it
+        actually landed by reading it back.
+
+        Direct per-value revert from the recorded before_value — NOT a whole-key
+        .reg re-import. A .reg re-import is unreliable here: it's missing entirely
+        for keys that didn't exist before the tweak created them (reg export fails
+        silently on a nonexistent key), and gets overwritten every time the same key
+        is touched by a later step, so a key hit by two tweaks in one session would
+        only unwind the *last* touch. The before_value captured at apply time doesn't
+        have either problem.
+
+        `SetValueEx`/`DeleteValue` not raising is not proof the value actually
+        landed — the same gap TweakEngine.detect() and Security Dashboard's
+        "verified by reading the control back" exist to close on the APPLY
+        side, never checked on the revert side until now. Real, previously-hit
+        defect class this would catch: CLAUDE.md's own registry-explorer notes
+        record `SetValueEx` silently retyping a value (REG_SZ forced to
+        REG_EXPAND_SZ) when the write's own kind argument was wrong — a write
+        like that raises nothing, so only a read-back proves it landed as the
+        recorded before_value, not as something the kind coerced it into.
+        Raises on a mismatch so the caller's normal exception handling records
+        it as a failed revert, the same as any other step type.
+        """
+        import winreg
+        value_name = row["value_name"] or ""
+        reg_kind = row["reg_kind"]
+        hive_name, _, sub = target.partition("\\")
+        hive = {
+            "HKLM": winreg.HKEY_LOCAL_MACHINE, "HKCU": winreg.HKEY_CURRENT_USER,
+            "HKCR": winreg.HKEY_CLASSES_ROOT, "HKU": winreg.HKEY_USERS,
+            "HKCC": winreg.HKEY_CURRENT_CONFIG,
+        }.get(hive_name.upper(), winreg.HKEY_LOCAL_MACHINE)
+        if before is None:
+            # No prior value recorded — the tweak created it from nothing, so
+            # reverting means removing it, not writing some other value.
+            try:
+                with winreg.OpenKey(hive, sub, 0, winreg.KEY_SET_VALUE) as k:
+                    winreg.DeleteValue(k, value_name)
+            except FileNotFoundError:
+                logger.warning("revert_step: this step could not be reverted; the machine is left as the tweak set it", exc_info=True)
+                pass  # already absent — fine
+            if row["key_created"]:
+                # The apply made this key too, so the value going away
+                # is only half the way back. Measured: an elevated
+                # LLMNR round-trip left
+                # HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient
+                # behind with 0 values and 0 subkeys while reporting
+                # "back to exactly what it was".
+                self._delete_key_if_empty(hive, sub)
+            verify_expected = None
+        else:
+            kind = reg_kind if reg_kind is not None else winreg.REG_DWORD
+            if kind == winreg.REG_BINARY and isinstance(before, str):
+                before = bytes.fromhex(before)
+            with winreg.CreateKeyEx(hive, sub, access=winreg.KEY_SET_VALUE) as k:
+                winreg.SetValueEx(k, value_name, 0, kind, before)
+            verify_expected = before
+
+        verified = self._verify_registry_revert(hive, sub, value_name, verify_expected)
+        if verified is False:
+            raise RuntimeError(
+                f"revert of {target}\\{value_name} wrote without error, "
+                "but reading it back afterwards does not match the "
+                "recorded before-value — the machine was not actually "
+                "restored")
+        if verified is None:
+            logger.warning(
+                "revert_step: wrote %s\\%s back but the read-back to "
+                "confirm it was refused — treating the write as done, "
+                "not verified", target, value_name)
+
     def revert_step(self, step_id: str) -> bool:
         row = self._conn.execute(
             "SELECT step_type, target, before_value, revert_command, restore_point_id, "
@@ -442,45 +551,7 @@ class BackupService:
                       if row["before_value"] else None)
             revert_cmd = row["revert_command"]
             if step_type == "registry":
-                # Direct per-value revert from the recorded before_value — NOT a whole-key
-                # .reg re-import. A .reg re-import is unreliable here: it's missing entirely
-                # for keys that didn't exist before the tweak created them (reg export fails
-                # silently on a nonexistent key), and gets overwritten every time the same key
-                # is touched by a later step, so a key hit by two tweaks in one session would
-                # only unwind the *last* touch. The before_value captured at apply time doesn't
-                # have either problem.
-                import winreg
-                value_name = row["value_name"] or ""
-                reg_kind = row["reg_kind"]
-                hive_name, _, sub = target.partition("\\")
-                hive = {
-                    "HKLM": winreg.HKEY_LOCAL_MACHINE, "HKCU": winreg.HKEY_CURRENT_USER,
-                    "HKCR": winreg.HKEY_CLASSES_ROOT, "HKU": winreg.HKEY_USERS,
-                    "HKCC": winreg.HKEY_CURRENT_CONFIG,
-                }.get(hive_name.upper(), winreg.HKEY_LOCAL_MACHINE)
-                if before is None:
-                    # No prior value recorded — the tweak created it from nothing, so
-                    # reverting means removing it, not writing some other value.
-                    try:
-                        with winreg.OpenKey(hive, sub, 0, winreg.KEY_SET_VALUE) as k:
-                            winreg.DeleteValue(k, value_name)
-                    except FileNotFoundError:
-                        logger.warning("revert_step: this step could not be reverted; the machine is left as the tweak set it", exc_info=True)
-                        pass  # already absent — fine
-                    if row["key_created"]:
-                        # The apply made this key too, so the value going away
-                        # is only half the way back. Measured: an elevated
-                        # LLMNR round-trip left
-                        # HKLM\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient
-                        # behind with 0 values and 0 subkeys while reporting
-                        # "back to exactly what it was".
-                        self._delete_key_if_empty(hive, sub)
-                else:
-                    kind = reg_kind if reg_kind is not None else winreg.REG_DWORD
-                    if kind == winreg.REG_BINARY and isinstance(before, str):
-                        before = bytes.fromhex(before)
-                    with winreg.CreateKeyEx(hive, sub, access=winreg.KEY_SET_VALUE) as k:
-                        winreg.SetValueEx(k, value_name, 0, kind, before)
+                self._revert_registry_step(row, target, before)
             elif step_type == "service":
                 import win32service
                 hscm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_CONNECT)

@@ -131,6 +131,150 @@ def test_delete_prefers_netsh_when_it_works(spies):
     assert spies["ps"] == []
 
 
+# ── group toggling ───────────────────────────────────────────────────────────
+
+def test_set_group_enabled_uses_the_group_selector_not_name(monkeypatch):
+    captured = {}
+
+    def fake_netsh(args):
+        captured["args"] = args
+        return True, "Ok."
+
+    monkeypatch.setattr(fw, "_run_netsh", fake_netsh)
+    ok, _msg = fw.set_group_enabled("Network Discovery", True)
+    assert ok is True
+    assert 'group="Network Discovery"' in captured["args"]
+    assert "enable=yes" in captured["args"]
+    assert not any(a.startswith("name=") for a in captured["args"])
+
+
+def test_set_group_enabled_falls_back_to_powershell_group_cmdlet(monkeypatch):
+    monkeypatch.setattr(fw, "_run_netsh", lambda args: (False, "elevation required"))
+
+    class _Proc:
+        returncode, stdout, stderr = 0, "", ""
+
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["cmd"] = args[-1]
+        return _Proc()
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    ok, _msg = fw.set_group_enabled("Remote Assistance", False)
+    assert ok is True
+    assert "Set-NetFirewallRule -Group 'Remote Assistance' -Enabled False" in captured["cmd"]
+
+
+def test_set_group_enabled_escapes_a_quote_in_the_group_name(monkeypatch):
+    monkeypatch.setattr(fw, "_run_netsh", lambda args: (False, "nope"))
+    captured = {}
+
+    class _Proc:
+        returncode, stdout, stderr = 0, "", ""
+
+    def fake_run(args, **kwargs):
+        captured["cmd"] = args[-1]
+        return _Proc()
+
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
+    fw.set_group_enabled("Bob's Group", True)
+    assert "'Bob''s Group'" in captured["cmd"]
+
+
+def test_set_group_enabled_reports_both_backends_when_both_fail(monkeypatch):
+    monkeypatch.setattr(fw, "_run_netsh", lambda args: (False, "No rules match the specified criteria."))
+
+    class _Proc:
+        returncode, stdout, stderr = 1, "", "Access is denied."
+
+    monkeypatch.setattr(fw.subprocess, "run", lambda *a, **k: _Proc())
+    ok, message = fw.set_group_enabled("Ghost Group", True)
+    assert ok is False
+    assert "No rules match" in message and "Access is denied." in message
+
+
+# ── the Rule Groups dialog ───────────────────────────────────────────────────
+
+@pytest.fixture
+def groups_dialog(qapp, pane):
+    groups = [fw.fa.GroupInfo("Network Discovery", 52, 22, 30, True),
+              fw.fa.GroupInfo("WhatsApp", 4, 4, 0, False)]
+    dlg = fw._GroupsDialog(pane._outer, groups, lambda name, enable: None)
+    return dlg
+
+
+def test_groups_dialog_lists_every_group_and_flags_mixed_state(groups_dialog):
+    dlg = groups_dialog
+    assert dlg._table.rowCount() == 2
+    assert dlg._table.item(0, 0).text() == "Network Discovery"
+    assert dlg._table.item(0, 4).text() == "Mixed"
+    assert dlg._table.item(1, 4).text() == "On"
+
+
+def test_groups_dialog_buttons_disabled_until_a_group_is_selected(groups_dialog):
+    dlg = groups_dialog
+    assert dlg._enable_btn.isEnabled() is False
+    dlg._table.selectRow(0)
+    assert dlg._enable_btn.isEnabled() is True
+    assert dlg._disable_btn.isEnabled() is True
+
+
+def test_groups_dialog_toggle_calls_back_with_the_selected_group(groups_dialog):
+    dlg = groups_dialog
+    calls = []
+    dlg._toggle = lambda name, enable: calls.append((name, enable))
+    dlg._table.selectRow(0)
+    dlg._on_toggle(False)
+    assert calls == [("Network Discovery", False)]
+    # Buttons are disabled while the change is in flight.
+    assert dlg._enable_btn.isEnabled() is False
+
+
+def test_groups_dialog_report_failure_shows_a_warning(groups_dialog, monkeypatch):
+    dlg = groups_dialog
+    seen = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        staticmethod(lambda *a, **k: seen.append(a)))
+    dlg._table.selectRow(0)
+    dlg.report("Network Discovery", False, "Access is denied.")
+    assert seen and "Access is denied." in seen[0][2]
+    assert "Could not update" in dlg._status_lbl.text()
+
+
+def test_pane_opens_groups_dialog_from_the_live_snapshot(pane, qapp, monkeypatch):
+    """The button reads groups off the registry snapshot the audit already
+    took, not a second live read -- test_firewall_audit.py covers the
+    group_summary computation itself; this pins that the pane wires it up."""
+    rules = [_rule("a", direction="In")]
+    extras = [fw.fa.RuleExtra(grouping="Network Discovery")]
+    pane._snap = fw.fa.Snapshot(rules=rules, extras=extras, profiles=[])
+
+    opened = {}
+
+    class _FakeDialog:
+        def __init__(self, parent, groups, toggle):
+            opened["groups"] = groups
+            opened["toggle"] = toggle
+
+        def exec(self):
+            opened["exec"] = True
+
+    monkeypatch.setattr(fw, "_GroupsDialog", _FakeDialog)
+    pane._open_groups_dialog()
+    assert opened.get("exec") is True
+    assert [g.name for g in opened["groups"]] == ["Network Discovery"]
+
+
+def test_pane_shows_a_message_when_no_rule_carries_a_group(pane, qapp, monkeypatch):
+    pane._snap = fw.fa.Snapshot(rules=[], extras=[], profiles=[])
+    seen = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: seen.append(a)))
+    pane._open_groups_dialog()
+    assert seen, "an empty group list must be reported, not silently opened"
+
+
 # ── the PowerShell command string ───────────────────────────────────────────
 
 def test_a_quote_in_a_rule_name_is_escaped_not_interpolated(monkeypatch):

@@ -191,6 +191,81 @@ def test_real_registry_program_missing_is_a_handful_not_hundreds():
     assert [p.name for p in profiles] == ["Domain", "Private", "Public"]
 
 
+def test_group_summary_counts_and_flags_mixed_state():
+    rules = [_rule(name="a", enabled="Yes"), _rule(name="b", enabled="No"),
+             _rule(name="c", enabled="Yes"), _rule(name="ungrouped", enabled="No")]
+    extras = [fa.RuleExtra(grouping="Network Discovery"),
+              fa.RuleExtra(grouping="Network Discovery"),
+              fa.RuleExtra(grouping="WhatsApp"),
+              fa.RuleExtra()]  # no group at all -- must not appear
+    groups = {g.name: g for g in fa.group_summary(rules, extras)}
+    assert set(groups) == {"Network Discovery", "WhatsApp"}
+    nd = groups["Network Discovery"]
+    assert (nd.total, nd.enabled, nd.disabled, nd.mixed) == (2, 1, 1, True)
+    wa = groups["WhatsApp"]
+    assert (wa.total, wa.enabled, wa.mixed) == (1, 1, False)
+
+
+def test_group_summary_sorts_mixed_groups_first():
+    rules = [_rule(name="x", enabled="Yes"), _rule(name="y", enabled="Yes"),
+             _rule(name="z", enabled="No")]
+    extras = [fa.RuleExtra(grouping="Zebra"), fa.RuleExtra(grouping="Alpha"),
+              fa.RuleExtra(grouping="Alpha")]
+    groups = fa.group_summary(rules, extras)
+    assert groups[0].name == "Alpha" and groups[0].mixed
+    assert groups[1].name == "Zebra" and not groups[1].mixed
+
+
+def test_group_summary_resolves_a_windows_resource_group_name():
+    """The registry stores a group as a bare `@dll,-id` string, exactly the
+    shape parse_registry_rule's Name field handles -- resolve_group_name must
+    apply the same %SystemRoot%-qualifying step before resolving, or every
+    Windows-supplied group name comes back as the raw resource string."""
+    seen = []
+    resolve = lambda full: seen.append(full) or "Network Discovery"  # noqa: E731
+    rules = [_rule(name="a", enabled="Yes")]
+    extras = [fa.RuleExtra(grouping="@FirewallAPI.dll,-32752")]
+    groups = fa.group_summary(rules, extras, resolve)
+    assert groups[0].name == "Network Discovery" and groups[0].builtin
+    assert seen and seen[0].startswith("@%SystemRoot%") and seen[0].endswith(",-32752")
+
+
+def test_group_summary_falls_back_to_the_raw_string_when_resolution_fails():
+    rules = [_rule(name="a", enabled="Yes")]
+    extras = [fa.RuleExtra(grouping="@FirewallAPI.dll,-99999")]
+    groups = fa.group_summary(rules, extras, resolve=lambda _n: "")
+    assert groups[0].name == "@FirewallAPI.dll,-99999"
+
+
+def test_group_summary_treats_a_literal_third_party_group_as_non_builtin():
+    rules = [_rule(name="a", enabled="Yes")]
+    extras = [fa.RuleExtra(grouping="WhatsApp")]
+    groups = fa.group_summary(rules, extras)
+    assert groups[0].builtin is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
+def test_real_registry_has_a_mixed_state_group_worth_a_bulk_toggle():
+    """Measured on this real machine (529 rules, 109 named groups): exactly
+    three groups are mixed -- Network Discovery (22 enabled / 30 disabled),
+    Remote Assistance and Windows Media Player. That is the real, actionable
+    case this feature exists for: Windows' own per-profile toggling left a
+    group neither fully on nor fully off, and finding that by scanning rows
+    one at a time in a 500+ row table is impractical."""
+    try:
+        rules, extras = fa.read_registry_rules(fa.resolve_indirect)
+    except OSError:
+        pytest.skip("firewall policy unreadable here")
+    groups = fa.group_summary(rules, extras)
+    assert len(groups) > 50  # most rules on a real machine carry a group
+    mixed = [g for g in groups if g.mixed]
+    assert 0 < len(mixed) < 10
+    assert any(g.name == "Network Discovery" for g in mixed)
+    # Sorted mixed-first: every mixed group precedes every non-mixed one.
+    first_non_mixed = next(i for i, g in enumerate(groups) if not g.mixed)
+    assert all(g.mixed for g in groups[:first_non_mixed])
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows registry")
 def test_real_registry_scoped_open_public_is_rare_and_third_party():
     """Measured on this real machine (529 rules): 30 program/service-scoped

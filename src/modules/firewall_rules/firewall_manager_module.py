@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTableWidget,
     QTableWidgetItem, QHeaderView, QLabel, QProgressBar, QLineEdit,
-    QComboBox, QMessageBox, QInputDialog, QFileDialog,
+    QComboBox, QMessageBox, QInputDialog, QFileDialog, QDialog,
 )
 
 from core.base_module import BaseModule
@@ -29,6 +29,15 @@ from core.table_ui import set_role
 from modules.firewall_rules import firewall_audit as fa
 
 logger = logging.getLogger(__name__)
+
+try:
+    from PyQt6 import sip
+
+    def _widget_is_valid(w) -> bool:
+        return w is not None and not sip.isdeleted(w)
+except ImportError:  # pragma: no cover - PyQt6 always ships sip in this app
+    def _widget_is_valid(w) -> bool:
+        return w is not None
 
 
 @dataclass
@@ -282,6 +291,41 @@ def set_rule_enabled(name: str, enable: bool) -> Tuple[bool, str]:
     return False, "netsh: %s\nPowerShell: %s" % (message, ps_message)
 
 
+def set_group_enabled(group_name: str, enable: bool) -> Tuple[bool, str]:
+    """Enable or disable every rule in a named group with one call.
+
+    `netsh advfirewall firewall set rule group=<name> new enable=yes|no` is a
+    real, documented selector distinct from `name=` (confirmed live: a
+    nonexistent group answers "No rules match the specified criteria." while
+    a real one -- e.g. "Remote Assistance" -- gets past that check and only
+    then reports the elevation requirement, so the matching itself works
+    unelevated). `Set-NetFirewallRule -Group` is the PowerShell fallback for
+    a group name netsh's quoting cannot carry, the same shape as
+    `set_rule_enabled`'s per-rule fallback above.
+    """
+    escaped = group_name.replace('"', '\\"')
+    ok, message = _run_netsh(
+        ["advfirewall", "firewall", "set", "rule", 'group="%s"' % escaped,
+         "new", "enable=%s" % ("yes" if enable else "no")]
+    )
+    if ok:
+        return True, message
+
+    ps_escaped = group_name.replace("'", "''")
+    command = "Set-NetFirewallRule -Group '%s' -Enabled %s -ErrorAction Stop" % (
+        ps_escaped, "True" if enable else "False")
+    proc = subprocess.run(
+        ["powershell", "-NoProfile", "-Command", command],
+        capture_output=True, text=True, timeout=60,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if proc.returncode == 0 and "ErrorRecord" not in output:
+        return True, output
+    ps_message = output or "Set-NetFirewallRule exited with code %d" % proc.returncode
+    return False, "netsh: %s\nPowerShell: %s" % (message, ps_message)
+
+
 def delete_rule(name: str) -> Tuple[bool, str]:
     """Delete every rule with this name, reporting why rather than raising."""
     ok, message = _run_netsh(
@@ -467,6 +511,133 @@ def unblock_rules(rules: List["FirewallRule"]) -> Tuple[int, List[str]]:
         else:
             errors.append("%s: %s" % (r.name, message))
     return deleted, errors
+
+
+# ------------------------------------------------------------------
+# Rule Groups dialog
+# ------------------------------------------------------------------
+
+_GROUP_COLS = ["Group", "Total", "Enabled", "Disabled", "State"]
+
+
+class _GroupsDialog(QDialog):
+    """Bulk enable/disable every rule in a named group at once.
+
+    Windows groups related rules under one name (`netsh`'s "Grouping:", the
+    registry's `EmbedCtxt`) -- "Network Discovery", "Remote Assistance",
+    "File and Printer Sharing". Measured on this real machine (529 rules,
+    109 groups): 3 groups are MIXED -- some rules enabled, some not --
+    including Network Discovery at 22 enabled / 30 disabled, which is not a
+    state a person chose rule-by-rule but the residue of Windows' own
+    per-network-profile toggling. This dialog surfaces that and lets one
+    click resolve it, rather than hunting through hundreds of individual
+    rows for the ones sharing a name.
+    """
+
+    def __init__(self, parent: QWidget, groups: List["fa.GroupInfo"],
+                toggle: Callable[[str, bool], None]) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Firewall Rule Groups")
+        self.resize(620, 460)
+        self._toggle = toggle
+
+        layout = QVBoxLayout(self)
+        info = QLabel(
+            "Enable or disable every rule in a group with one action -- the "
+            "same unit netsh's own group= selector addresses. Mixed groups "
+            "(some rules on, some off) are listed first."
+        )
+        info.setWordWrap(True)
+        set_role(info, "muted")
+        layout.addWidget(info)
+
+        self._table = QTableWidget(0, len(_GROUP_COLS))
+        self._table.setHorizontalHeaderLabels(_GROUP_COLS)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setAlternatingRowColors(True)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for i in range(1, len(_GROUP_COLS)):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        center_header(self._table)
+        layout.addWidget(self._table, 1)
+
+        btn_row = QHBoxLayout()
+        self._enable_btn = QPushButton("Enable Group")
+        self._disable_btn = QPushButton("Disable Group")
+        btn_row.addWidget(self._enable_btn)
+        btn_row.addWidget(self._disable_btn)
+        btn_row.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        self._status_lbl = QLabel("")
+        set_role(self._status_lbl, "muted")
+        layout.addWidget(self._status_lbl)
+
+        self._enable_btn.clicked.connect(lambda: self._on_toggle(True))
+        self._disable_btn.clicked.connect(lambda: self._on_toggle(False))
+        self._table.itemSelectionChanged.connect(self._update_buttons)
+
+        self.set_groups(groups)
+        self._update_buttons()
+
+    def set_groups(self, groups: List["fa.GroupInfo"]) -> None:
+        self._groups = groups
+        self._table.setRowCount(len(groups))
+        for row, g in enumerate(groups):
+            state = "Mixed" if g.mixed else ("On" if g.enabled else "Off")
+            vals = [g.name, str(g.total), str(g.enabled), str(g.disabled), state]
+            for col, val in enumerate(vals):
+                item = centered_item(val, sortable=(col == 0))
+                if col == 4:
+                    if g.mixed:
+                        item.setForeground(QColor(semantic("warning")))
+                    elif g.enabled:
+                        item.setForeground(QColor(semantic("success")))
+                    else:
+                        item.setForeground(QColor(semantic("error")))
+                self._table.setItem(row, col, item)
+        self._update_buttons()
+
+    def _selected_group(self) -> Optional["fa.GroupInfo"]:
+        items = self._table.selectedItems()
+        if not items:
+            return None
+        row = items[0].row()
+        if row >= len(self._groups):
+            return None
+        return self._groups[row]
+
+    def _update_buttons(self) -> None:
+        has = self._selected_group() is not None
+        self._enable_btn.setEnabled(has)
+        self._disable_btn.setEnabled(has)
+
+    def _on_toggle(self, enable: bool) -> None:
+        group = self._selected_group()
+        if group is None:
+            return
+        self._enable_btn.setEnabled(False)
+        self._disable_btn.setEnabled(False)
+        self._status_lbl.setText(
+            "%s group '%s'..." % ("Enabling" if enable else "Disabling", group.name))
+        self._toggle(group.name, enable)
+
+    def report(self, group_name: str, ok: bool, message: str) -> None:
+        if ok:
+            self._status_lbl.setText("Group '%s' updated." % group_name)
+        else:
+            self._status_lbl.setText("Could not update group '%s'." % group_name)
+            QMessageBox.warning(
+                self, "Could Not Change Group",
+                "Windows would not change every rule in this group:\n%s\n\n%s"
+                % (group_name, message),
+            )
+        self._update_buttons()
 
 
 # ------------------------------------------------------------------
@@ -752,6 +923,14 @@ class FirewallManagerModule(BaseModule):
         self._csv_btn.clicked.connect(self._export_csv)
         toolbar.insertWidget(toolbar.count() - 5, self._csv_btn)
 
+        self._groups_btn = QPushButton("Rule Groups...")
+        self._groups_btn.setToolTip(
+            "Enable or disable every rule in a named group at once "
+            "(netsh's own group= selector)"
+        )
+        self._groups_btn.clicked.connect(self._open_groups_dialog)
+        toolbar.insertWidget(toolbar.count() - 5, self._groups_btn)
+
         chip_row = QHBoxLayout()
         self._chip_buttons = {}
         for key, label in fa.CHIPS:
@@ -842,6 +1021,45 @@ class FirewallManagerModule(BaseModule):
         except OSError as exc:
             logger.warning("CSV export failed: %s", exc)
             QMessageBox.warning(self._outer, "Export failed", str(exc))
+
+    def _open_groups_dialog(self) -> None:
+        groups = fa.group_summary(self._snap.rules, self._snap.extras)
+        if not groups:
+            QMessageBox.information(
+                self._outer, "No Rule Groups",
+                "No rule carries a group (netsh's Grouping / registry EmbedCtxt) "
+                "in the currently loaded rules. Refresh first if the list looks stale.",
+            )
+            return
+        self._groups_dialog = _GroupsDialog(self._outer, groups, self._toggle_group)
+        self._groups_dialog.exec()
+
+    def _toggle_group(self, group_name: str, enable: bool) -> None:
+        """Change every rule in a group, verify against Windows, then refresh
+        both the dialog's own table and the main rule list -- the same
+        verify-by-reread discipline as every other write in this module."""
+        def work(_w):
+            ok, message = set_group_enabled(group_name, enable)
+            rules, extras = fa.read_registry_rules(fa.resolve_indirect)
+            groups = fa.group_summary(rules, extras)
+            updated = next((g for g in groups if g.name == group_name), None)
+            wanted = updated is not None and (
+                updated.enabled == updated.total if enable else updated.enabled == 0)
+            return ok and wanted, message, groups
+
+        def on_done(result) -> None:
+            ok, message, groups = result
+            dlg = getattr(self, "_groups_dialog", None)
+            if _widget_is_valid(dlg):
+                dlg.set_groups(groups)
+                dlg.report(group_name, ok, message)
+            self._do_refresh()
+
+        worker = Worker(work)
+        worker.signals.result.connect(on_done)
+        worker.signals.error.connect(self._on_error)
+        self._workers.append(worker)
+        QThreadPool.globalInstance().start(worker)
 
     def _do_refresh(self) -> None:
         self._set_buttons_enabled(False)

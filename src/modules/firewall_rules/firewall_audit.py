@@ -73,6 +73,27 @@ class ProfileState:
     note: str = ""
 
 
+@dataclass
+class GroupInfo:
+    """One netsh/PowerShell rule "group" -- the same unit
+    `netsh advfirewall firewall set rule group=<name> new enable=yes|no` and
+    `Set-NetFirewallRule -Group <name>` address in one call.
+
+    `mixed` is the reason this exists: a group with some rules enabled and
+    some disabled is neither "on" nor "off" as a whole, and is the one shape
+    where a bulk toggle changes real behaviour rather than being a no-op.
+    """
+    name: str
+    total: int
+    enabled: int
+    disabled: int
+    builtin: bool
+
+    @property
+    def mixed(self) -> bool:
+        return 0 < self.enabled < self.total
+
+
 # ---------------------------------------------------------------- registry
 
 def parse_registry_rule(value: str, resolve: Optional[Callable[[str], str]] = None):
@@ -138,6 +159,30 @@ def resolve_indirect(name: str) -> str:
     """Resolve any `@dll,-id` / `@{pkg?ms-resource:...}` name; "" if MRT cannot."""
     from modules.firewall_rules.firewall_manager_module import _mrt_lookup
     return _mrt_lookup(name)
+
+
+def resolve_group_name(raw: str, resolve: Optional[Callable[[str], str]] = None) -> str:
+    """The registry's `EmbedCtxt` value -> the group name netsh/PowerShell show.
+
+    A Windows-supplied group is stored as a bare resource string
+    (`@FirewallAPI.dll,-32752`), exactly like the Name field, and needs the
+    same `%SystemRoot%`-qualifying step before `SHLoadIndirectString` can
+    resolve it -- confirmed live 2026-09-30: `-32752` resolves to "Network
+    Discovery", matching netsh's own "Grouping:" column for the same rules.
+    A third-party group (WhatsApp, Google Chrome, ...) is a plain literal
+    string with no `@` prefix and passes through unchanged. A resolve
+    failure falls back to the raw string rather than hiding the group.
+    """
+    raw = (raw or "").strip()
+    if not raw or not raw.startswith("@"):
+        return raw
+    resolve = resolve or resolve_indirect
+    try:
+        resolved = resolve(_full_resource_path(raw))
+    except Exception:
+        logger.debug("group name resolve failed for %r", raw, exc_info=True)
+        return raw
+    return resolved or raw
 
 
 def _uniq(items: List[str]) -> str:
@@ -236,6 +281,43 @@ def is_builtin(rule, extra: Optional[RuleExtra] = None) -> bool:
     prog = expand_program(rule.program).lower()
     root = system_root().lower()
     return bool(prog) and prog.startswith(root + "\\")
+
+
+def group_summary(rules: Sequence, extras: Sequence[RuleExtra],
+                  resolve: Optional[Callable[[str], str]] = None) -> List[GroupInfo]:
+    """One `GroupInfo` per named rule group, sorted mixed-first then by name.
+
+    Only rules that actually carry a group (most third-party and many
+    Windows rules do not) contribute; a rule with no `EmbedCtxt` is not part
+    of any group and never appears here. Cached per raw string within one
+    call so 511 registry rules do not each pay for their own MRT lookup.
+    """
+    cache: Dict[str, str] = {}
+
+    def name_for(raw: str) -> str:
+        if raw not in cache:
+            cache[raw] = resolve_group_name(raw, resolve)
+        return cache[raw]
+
+    counts: Dict[str, Dict[str, int]] = {}
+    builtin: Dict[str, bool] = {}
+    for r, e in zip(rules, extras or []):
+        raw = (e.grouping if e else "") or ""
+        if not raw.strip():
+            continue
+        name = name_for(raw)
+        if not name:
+            continue
+        c = counts.setdefault(name, {"total": 0, "enabled": 0})
+        c["total"] += 1
+        if r.enabled == "Yes":
+            c["enabled"] += 1
+        builtin.setdefault(name, raw.startswith("@"))
+
+    out = [GroupInfo(name, c["total"], c["enabled"], c["total"] - c["enabled"], builtin[name])
+           for name, c in counts.items()]
+    out.sort(key=lambda g: (not g.mixed, g.name.lower()))
+    return out
 
 
 def is_scoped(rule, extra: Optional[RuleExtra]) -> bool:

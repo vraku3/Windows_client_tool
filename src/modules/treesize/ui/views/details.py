@@ -7,17 +7,34 @@ Shows the children of the selected node, not the whole tree: it is the
 right-hand companion to the directory tree, and the tree is what does depth.
 """
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView, QHeaderView, QTreeWidget, QTreeWidgetItem,
 )
 
+from core.semantic_colors import chrome, semantic
+
+from ...scan.filters import filetime_now
 from ...store.node_store import (
     ADS, COMPRESSED, DIR, EXCLUDED, HARDLINK_DUP, HIDDEN, REPARSE, SPARSE,
 )
 from ..directory_tree import ProportionBarDelegate
-from ..formatting import Unit, format_bytes, format_count, percent_of_parent
+from ..formatting import (
+    Unit, age_tier, format_bytes, format_count, percent_of_parent,
+)
 from ..panels import format_filetime
 from ..tree_model import BarFractionRole
+
+#: age_tier() -> the colour its Last Modified cell gets. "active" uses the
+#: same "something to look at" meaning `info` carries everywhere else in the
+#: app; "stale" is dimmed with the muted chrome text colour rather than a
+#: semantic one, because a year-old file is not a warning or an error -- it
+#: is exactly what most of a disk is supposed to be.
+_AGE_TIER_COLOR = {
+    "active": lambda: semantic("info"),
+    "stale": lambda: chrome("text_muted"),
+}
+LAST_MODIFIED_COLUMN = 6
 
 
 def _signed(value: int, unit, decimals: int) -> str:
@@ -133,13 +150,19 @@ class DetailsView(QTreeWidget):
         # Sorting is suspended while filling: re-sorting per insertion is
         # quadratic, and a folder with 40,000 children is ordinary.
         self.setSortingEnabled(False)
+        # Captured once per fill, not per row, so a folder with 40,000
+        # children does not have entries near a tier boundary land on
+        # different sides of it depending on how long the fill took --
+        # the same reasoning FilterSet.now in scan/filters.py uses for age
+        # filtering.
+        now = filetime_now()
         for child in store.children(node):
             if store.attrs[child] & EXCLUDED:
                 continue
-            self.addTopLevelItem(self._row(store, child))
+            self.addTopLevelItem(self._row(store, child, now))
         self.setSortingEnabled(True)
 
-    def _row(self, store, node: int) -> QTreeWidgetItem:
+    def _row(self, store, node: int, now: int) -> QTreeWidgetItem:
         percent = percent_of_parent(store, node)
         is_dir = bool(store.attrs[node] & DIR)
         name = store.name(node)
@@ -175,6 +198,10 @@ class DetailsView(QTreeWidget):
         for column in range(1, len(COLUMNS)):
             item.setTextAlignment(column, Qt.AlignmentFlag.AlignRight
                                   | Qt.AlignmentFlag.AlignVCenter)
+        tier = age_tier(store.mtime[node], now)
+        color_fn = _AGE_TIER_COLOR.get(tier)
+        if color_fn is not None:
+            item.setForeground(LAST_MODIFIED_COLUMN, QColor(color_fn()))
         return item
 
     def _on_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:

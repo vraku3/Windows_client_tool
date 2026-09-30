@@ -191,6 +191,42 @@ def test_details_shows_counts_only_for_folders(qapp):
     assert rows["Windows"].text(3) == "1"
 
 
+def test_details_colours_last_modified_by_age(qapp):
+    """A recently-touched file, a year-stale one, and one with no
+    timestamp at all get three different Last Modified treatments -- and
+    the untouched-timestamp one must NOT be coloured, since an unknown
+    age is not evidence of either extreme (see age_tier's own docstring)."""
+    from PyQt6.QtGui import QColor
+
+    from core.semantic_colors import chrome, semantic
+    from modules.treesize.scan.filters import days_to_filetime, filetime_now
+    from modules.treesize.ui.views.details import LAST_MODIFIED_COLUMN
+
+    now = filetime_now()
+    store = NodeStore()
+    root = store.add(-1, "C:", attrs=DIR)
+    store.add(root, "fresh.txt", size=1, mtime=now - days_to_filetime(1))
+    store.add(root, "ancient.txt", size=1, mtime=now - days_to_filetime(400))
+    store.add(root, "no_timestamp.txt", size=1, mtime=0)
+    store.build_child_lists()
+    rollup(store)
+
+    view = DetailsView()
+    view.show_children_of(store, root)
+    rows = {view.topLevelItem(i).text(0): view.topLevelItem(i)
+            for i in range(view.topLevelItemCount())}
+
+    fresh_color = rows["fresh.txt"].foreground(LAST_MODIFIED_COLUMN).color()
+    ancient_color = rows["ancient.txt"].foreground(LAST_MODIFIED_COLUMN).color()
+    unknown_brush = rows["no_timestamp.txt"].foreground(LAST_MODIFIED_COLUMN)
+
+    assert fresh_color == QColor(semantic("info"))
+    assert ancient_color == QColor(chrome("text_muted"))
+    # Never explicitly coloured: the default brush, not one of the two tiers.
+    assert unknown_brush.color() not in (fresh_color, ancient_color)
+    assert unknown_brush.style() == Qt.BrushStyle.NoBrush
+
+
 # ---- theme --------------------------------------------------------------
 
 def test_both_themes_define_the_same_tokens():

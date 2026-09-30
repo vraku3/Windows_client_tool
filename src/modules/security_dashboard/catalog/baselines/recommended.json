@@ -93,6 +93,7 @@
     "telnet_client": false,
     "test_signing": false,
     "uac": true,
+    "usb_storage": false,
     "wdigest_credential_caching": false,
     "winrm_service": false
   }

@@ -93,6 +93,93 @@ def test_autorun_partly_disabled_still_reads_as_able_to_run(registry):
     assert result["color"] == "amber"
 
 
+# -- check_usb_storage --------------------------------------------------------
+# This reader goes straight through winreg.OpenKey/QueryValueEx rather than
+# the `_reg_read` helper (it needs to tell "key absent" apart from "access
+# denied", which `_reg_read` collapses into one None), so it needs its own
+# fake rather than the `registry` fixture above.
+
+class _FakeUsbstorKey:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _patch_usbstor_start(monkeypatch, value):
+    monkeypatch.setattr(security_reader.winreg, "OpenKey",
+                        lambda hive, sub: _FakeUsbstorKey())
+    monkeypatch.setattr(security_reader.winreg, "QueryValueEx",
+                        lambda handle, name: (value, 4))
+
+
+def test_usb_storage_start_3_reads_allowed(monkeypatch):
+    _patch_usbstor_start(monkeypatch, 3)
+
+    result = security_reader.check_usb_storage()
+
+    assert result["available"] is True
+    assert result["enabled"] is True, "Start=3 is the permissive default"
+    assert result["color"] == "amber"
+
+
+def test_usb_storage_start_4_reads_blocked(monkeypatch):
+    _patch_usbstor_start(monkeypatch, 4)
+
+    result = security_reader.check_usb_storage()
+
+    assert result["enabled"] is False
+    assert result["color"] == "green"
+
+
+def test_usb_storage_missing_service_key_is_a_definite_state(monkeypatch):
+    """No USBSTOR key at all means no mass-storage driver, not a refusal."""
+    def raise_missing(hive, sub):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(security_reader.winreg, "OpenKey", raise_missing)
+
+    result = security_reader.check_usb_storage()
+
+    assert result["available"] is True
+    assert result["enabled"] is False
+
+
+def test_usb_storage_access_denied_is_never_collapsed_into_a_value(monkeypatch):
+    """A refused read must come back `available: False`, and `.read()` must
+    then answer None -- never False, which would claim USB storage is
+    blocked when the truth is simply unknown."""
+    def raise_denied(hive, sub):
+        raise PermissionError()
+
+    monkeypatch.setattr(security_reader.winreg, "OpenKey", raise_denied)
+
+    result = security_reader.check_usb_storage()
+    assert result["available"] is False
+
+    from modules.security_dashboard.catalog.model import Category, SecurityControl
+    control = SecurityControl(
+        id="usb_storage_test", title="t", category=Category.DEVICE_BOOT,
+        description="d", why_it_matters="w",
+        reader=security_reader.check_usb_storage,
+        off_steps=({"type": "registry", "key": "HKLM\\A", "value": "V",
+                    "data": 1, "kind": "DWORD"},))
+    assert control.read() is None
+
+
+def test_usb_storage_real_machine_reads_a_definite_value():
+    """No mocking: the real USBSTOR service key on THIS machine, read
+    unelevated. Measured 2026-09-29: Start=3 (allowed, the out-of-box
+    default) -- this only pins that the reader comes back with a real,
+    available answer, not a specific Start value that could change."""
+    result = security_reader.check_usb_storage()
+
+    assert result["available"] is True
+    assert result["enabled"] in (True, False)
+    assert result["status"] in ("Allowed", "Blocked")
+
+
 # -- check_hvci --------------------------------------------------------------
 
 def test_hvci_running_reads_as_enabled(powershell):

@@ -54,6 +54,7 @@ class _Snapshot:
     frequency: int = ra.DEFAULT_FREQUENCY_MINUTES
     mounts: List[str] = field(default_factory=list)
     vss_disabled: dict = field(default_factory=dict)
+    sr_task: ra.SrTaskStatus = field(default_factory=ra.SrTaskStatus)
 
 
 def _fixed_mounts() -> List[str]:
@@ -81,6 +82,7 @@ def read_snapshot() -> _Snapshot:
     snap.policy_disabled = ra.read_policy_disabled()
     snap.frequency = ra.read_frequency_minutes()
     snap.vss_disabled = ra.read_vss_services_disabled()
+    snap.sr_task = ra.read_sr_task_status()
     try:
         snap.mounts = _fixed_mounts()
     except OSError as e:
@@ -326,7 +328,8 @@ class RestoreManagerModule(BaseModule):
         snap = self._snapshot
         findings = ra.restore_findings(
             self._infos, snap.protection, snap.storage, snap.storage_error,
-            snap.policy_disabled, snap.frequency, vss_disabled=snap.vss_disabled)
+            snap.policy_disabled, snap.frequency, vss_disabled=snap.vss_disabled,
+            sr_task=snap.sr_task)
         self._render_findings(findings)
         self._fill_drives()
         counts = ra.summary_counts(findings)
@@ -624,7 +627,8 @@ class RestoreManagerModule(BaseModule):
         import socket
         snap = self._snapshot
         findings = ra.restore_findings(self._infos, snap.protection, snap.storage, snap.storage_error,
-                                       snap.policy_disabled, snap.frequency, vss_disabled=snap.vss_disabled)
+                                       snap.policy_disabled, snap.frequency, vss_disabled=snap.vss_disabled,
+                                       sr_task=snap.sr_task)
         QApplication.clipboard().setText(
             ra.points_to_markdown(self._infos, snap.storage, findings, socket.gethostname()))
         self._show_status("Copied the restore report as Markdown.")

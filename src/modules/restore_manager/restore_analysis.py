@@ -283,6 +283,69 @@ def read_vss_services_disabled() -> Dict[str, Optional[bool]]:
 
 
 # --------------------------------------------------------------------------
+# Automatic restore point task (Task Scheduler; readable unelevated)
+# --------------------------------------------------------------------------
+
+#: The task Windows itself runs to create automatic ("System Checkpoint")
+#: restore points -- `srtasks.exe ExecuteScheduledSPPCreation`. Measured on
+#: this machine with a plain unelevated `schtasks /query /v`: no prompt,
+#: full detail including "Scheduled Task State" and "Last Result". This is a
+#: FOURTH, independent place automatic creation can be silently off, distinct
+#: from System Protection being off, the DisableSR policy, and VSS/swprv --
+#: none of those three reads would ever show a disabled task, and a task
+#: disabled by e.g. a hardening script or a cleanup tool leaves every other
+#: signal here looking perfectly healthy while nothing gets created.
+SR_TASK_PATH = r"\Microsoft\Windows\SystemRestore\SR"
+
+
+@dataclass
+class SrTaskStatus:
+    """None fields mean "could not be read", never a default. ``last_result``
+    is the raw schtasks exit code (0 = success); ``last_run`` and
+    ``next_run`` are kept as the RAW text schtasks prints -- its date format
+    is locale-dependent, so parsing it into a datetime would be a guess."""
+    enabled: Optional[bool] = None
+    last_result: Optional[int] = None
+    last_run: str = ""
+    next_run: str = ""
+    error: str = ""
+
+
+def read_sr_task_status() -> SrTaskStatus:
+    try:
+        rc, out, err = _run(["schtasks", "/query", "/tn", SR_TASK_PATH, "/v", "/fo", "LIST"], 20)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("schtasks query for %s failed: %s", SR_TASK_PATH, e)
+        return SrTaskStatus(error=f"schtasks could not be run ({e}).")
+    if rc != 0:
+        text = (err.strip() or out.strip() or f"exit code {rc}").splitlines()[-1][:160]
+        if "access is denied" in text.lower():
+            return SrTaskStatus(error=f"Task Scheduler refused to list \"{SR_TASK_PATH}\" (access denied).")
+        return SrTaskStatus(error=f"The automatic restore point task could not be read: {text}")
+    fields: Dict[str, str] = {}
+    for line in out.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        fields[key.strip().lower()] = value.strip()
+    state = fields.get("scheduled task state", "")
+    enabled = (state.lower() == "enabled") if state else None
+    last_result_raw = fields.get("last result", "")
+    last_result: Optional[int] = None
+    if last_result_raw:
+        try:
+            last_result = int(last_result_raw)
+        except ValueError:
+            logger.debug("unparseable schtasks Last Result %r", last_result_raw)
+    return SrTaskStatus(
+        enabled=enabled,
+        last_result=last_result,
+        last_run=fields.get("last run time", ""),
+        next_run=fields.get("next run time", ""),
+    )
+
+
+# --------------------------------------------------------------------------
 # Protection state and frequency (registry; readable unelevated)
 # --------------------------------------------------------------------------
 
@@ -387,7 +450,8 @@ def restore_findings(points: Sequence[PointInfo], protection: Optional[Protectio
                      storage: Optional[List[ShadowStorage]], storage_error: str,
                      policy_disabled: Optional[bool], frequency_minutes: int,
                      system_mount: Optional[str] = None,
-                     vss_disabled: Optional[Dict[str, Optional[bool]]] = None) -> List[Finding]:
+                     vss_disabled: Optional[Dict[str, Optional[bool]]] = None,
+                     sr_task: Optional[SrTaskStatus] = None) -> List[Finding]:
     out: List[Finding] = []
     system_mount = (system_mount or _system_mount()).upper()
     if policy_disabled:
@@ -400,6 +464,20 @@ def restore_findings(points: Sequence[PointInfo], protection: Optional[Protectio
                 f"No restore point can be created while the \"{svc_name}\" service's start type "
                 "is Disabled, regardless of System Protection or the shadow-storage limit. "
                 "Set it back to Manual in Services.msc."))
+    if sr_task is not None:
+        if sr_task.enabled is False:
+            out.append(Finding(
+                "error", "Automatic restore point task is disabled",
+                f"Task Scheduler's \"{SR_TASK_PATH}\" task is what creates Windows' own scheduled "
+                "restore points; it is Disabled, so none will be created automatically even with "
+                "System Protection on. Enable it in Task Scheduler."))
+        elif sr_task.last_result not in (None, 0):
+            out.append(Finding(
+                "warning", "Last automatic restore point run failed",
+                f"\"{SR_TASK_PATH}\" last ran {sr_task.last_run or 'at an unknown time'} and "
+                f"returned result 0x{sr_task.last_result:X}, not success."))
+        elif sr_task.error:
+            out.append(Finding("info", "Automatic restore point task state could not be read", sr_task.error))
     if protection is None:
         out.append(Finding("info", "System Protection state could not be read", ""))
     elif system_mount not in protection.mounts:

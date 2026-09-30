@@ -129,7 +129,7 @@ def _findings(points=(), protection=None, storage=(), **kw):
     prot = ra.Protection(mounts=["C:"]) if protection is None else protection
     return ra.restore_findings(ra.analyze_points(points, now=NOW), prot, list(storage) or [], "",
                                kw.get("policy", False), kw.get("freq", 0), system_mount="C:",
-                               vss_disabled=kw.get("vss_disabled"))
+                               vss_disabled=kw.get("vss_disabled"), sr_task=kw.get("sr_task"))
 
 
 def test_protection_off_on_system_drive_is_an_error():
@@ -217,6 +217,88 @@ def test_vss_service_unreadable_reports_nothing_not_a_false_positive():
     # protection and policy reads already guard against.
     f = _findings([_pt(1, "20260926000000.000000-000")], vss_disabled={"VSS": None})
     assert not any("Volume Shadow Copy" in x.title for x in f)
+
+
+SCHTASKS_ENABLED = """Folder: \\Microsoft\\Windows\\SystemRestore
+HostName:                             VRAKU
+TaskName:                             \\Microsoft\\Windows\\SystemRestore\\SR
+Next Run Time:                        N/A
+Status:                               Ready
+Last Run Time:                        9/29/2026 4:18:14 PM
+Last Result:                          0
+Scheduled Task State:                 Enabled
+"""
+
+SCHTASKS_DISABLED = SCHTASKS_ENABLED.replace("Scheduled Task State:                 Enabled",
+                                             "Scheduled Task State:                 Disabled")
+
+SCHTASKS_FAILED_RUN = SCHTASKS_ENABLED.replace("Last Result:                          0",
+                                               "Last Result:                          2147943645")
+
+
+def test_sr_task_status_parses_enabled_and_result(monkeypatch):
+    monkeypatch.setattr(ra, "_run", lambda *a, **k: (0, SCHTASKS_ENABLED, ""))
+    s = ra.read_sr_task_status()
+    assert s.enabled is True and s.last_result == 0
+    assert s.last_run == "9/29/2026 4:18:14 PM" and s.next_run == "N/A"
+    assert s.error == ""
+
+
+def test_sr_task_disabled_is_parsed(monkeypatch):
+    monkeypatch.setattr(ra, "_run", lambda *a, **k: (0, SCHTASKS_DISABLED, ""))
+    s = ra.read_sr_task_status()
+    assert s.enabled is False
+
+
+def test_sr_task_query_refusal_is_none_with_a_reason(monkeypatch):
+    monkeypatch.setattr(ra, "_run", lambda *a, **k: (1, "", "ERROR: Access is denied."))
+    s = ra.read_sr_task_status()
+    assert s.enabled is None and "access denied" in s.error.lower()
+
+
+def test_sr_task_not_found_is_none_with_a_reason(monkeypatch):
+    monkeypatch.setattr(ra, "_run", lambda *a, **k: (
+        1, "", "ERROR: The system cannot find the file specified."))
+    s = ra.read_sr_task_status()
+    assert s.enabled is None and s.error
+
+
+def test_sr_task_disabled_is_an_error_finding():
+    disabled = ra.SrTaskStatus(enabled=False)
+    f = _findings([_pt(1, "20260926000000.000000-000")], sr_task=disabled)
+    assert any(x.severity == "error" and "Automatic restore point task is disabled" in x.title for x in f)
+
+
+def test_sr_task_failed_run_is_a_warning_finding():
+    failed = ra.SrTaskStatus(enabled=True, last_result=2147943645, last_run="9/1/2026 1:00:00 AM")
+    f = _findings([_pt(1, "20260926000000.000000-000")], sr_task=failed)
+    hit = next(x for x in f if x.title == "Last automatic restore point run failed")
+    assert hit.severity == "warning"
+    assert "0x800704dd" in hit.detail.lower() and "9/1/2026" in hit.detail
+
+
+def test_sr_task_healthy_reports_nothing():
+    healthy = ra.SrTaskStatus(enabled=True, last_result=0, last_run="today")
+    f = _findings([_pt(1, "20260926000000.000000-000")], sr_task=healthy)
+    assert not any("Automatic restore point task" in x.title or "automatic restore point run" in x.title
+                  for x in f)
+
+
+def test_sr_task_unreadable_is_info_not_error():
+    unreadable = ra.SrTaskStatus(error="Task Scheduler refused to list it (access denied).")
+    f = _findings([_pt(1, "20260926000000.000000-000")], sr_task=unreadable)
+    assert any(x.severity == "info" and "could not be read" in x.title for x in f)
+    assert not any(x.severity == "error" and "Automatic restore point" in x.title for x in f)
+
+
+def test_real_machine_sr_task_status_is_readable_unelevated():
+    # Measured on this machine: `schtasks /query /v` on
+    # \\Microsoft\\Windows\\SystemRestore\\SR succeeds with no elevation
+    # prompt and reports Enabled, Last Result 0. A None here would mean the
+    # unelevated read stopped working on this machine.
+    s = ra.read_sr_task_status()
+    assert s.error == "", s.error
+    assert s.enabled is not None, "SR task Enabled/Disabled state could not be read unelevated"
 
 
 def test_real_machine_vss_services_are_queryable_unelevated():

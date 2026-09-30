@@ -37,14 +37,45 @@ def _parse_features(output: str) -> List[Tuple[str, str]]:
     return features
 
 
+def _raise_if_dism_refused(returncode: int, combined: str, what: str) -> None:
+    """Turn a real DISM refusal into a distinct exception, not a false result.
+
+    Confirmed live on this machine, unelevated, 2026-09-30: `/get-features`,
+    `/get-featureinfo` and (by the same "740 / elevated permissions" wording
+    DISM always uses for this refusal) `/enable-feature` and
+    `/disable-feature` all exit **740** with "Elevated permissions are
+    required to run DISM." A caller that only looks at stdout/stderr text --
+    or, worse, ignores `returncode` altogether -- reads that refusal as a
+    real answer: an empty feature list, blank feature detail, or (for
+    enable/disable) a "complete" click that changed nothing on the machine.
+    `_fetch_all_features` already raised `PermissionError` for its own call;
+    `_get_feature_info` and the enable/disable Popen calls did not.
+    """
+    if returncode == 0:
+        return
+    if "740" in combined or "elevated permissions" in combined.lower():
+        raise PermissionError("Requires administrator")
+    raise RuntimeError(f"DISM {what} failed (exit {returncode})")
+
+
 def _get_feature_info(name: str) -> str:
-    """Get detailed info for a feature."""
+    """Get detailed info for a feature, or say why it could not be read.
+
+    Confirmed live, unelevated: this refuses with the same rc=740 wording
+    `_fetch_all_features` guards against. Left unguarded, the raw refusal
+    text ("Elevated permissions are required to run DISM.") was shown in the
+    detail panel as if it were the feature's actual description -- readable,
+    but not distinguishable from a real answer by anything checking this
+    function's return value.
+    """
     result = subprocess.run(
         ["dism", "/online", "/get-featureinfo", f"/featurename:{name}"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         creationflags=CREATE_NO_WINDOW, timeout=30,
     )
-    return result.stdout + result.stderr
+    combined = (result.stdout or "") + (result.stderr or "")
+    _raise_if_dism_refused(result.returncode, combined, "/get-featureinfo")
+    return combined
 
 
 def _fetch_all_features() -> List[Tuple[str, str]]:
@@ -63,12 +94,8 @@ def _fetch_all_features() -> List[Tuple[str, str]]:
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         creationflags=CREATE_NO_WINDOW, timeout=120,
     )
-    if result.returncode != 0:
-        combined = (result.stdout or "") + (result.stderr or "")
-        if "740" in combined or "elevated permissions" in combined.lower():
-            raise PermissionError("Requires administrator")
-        raise RuntimeError(
-            f"DISM failed (exit {result.returncode})")
+    combined = (result.stdout or "") + (result.stderr or "")
+    _raise_if_dism_refused(result.returncode, combined, "/get-features")
     return _parse_features(result.stdout)
 
 
@@ -82,6 +109,10 @@ def _run_dism_action(args: List[str], output_cb, is_cancelled: Callable[[], bool
     with no way to stop it. A side thread polls `is_cancelled` and kills the
     whole process tree (matching `core/appx_service.py::_run_ps_bounded`'s
     established pattern) rather than restructuring the blocking stdout read.
+
+    Returns DISM's real exit code -- the caller (`_run_feature_action`)
+    decides what a non-zero code means via `_raise_if_dism_refused`, using
+    the streamed lines already handed to `output_cb`.
     """
     proc = subprocess.Popen(
         args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -327,9 +358,21 @@ class WindowsFeaturesModule(BaseModule):
             status_lbl.setText(f"{action_name}: {feat_name}...")
 
             def run(_w):
+                lines: list = []
+
                 def safe_append(line: str):
+                    lines.append(line)
                     _w.signals.log_line.emit(line)
-                return action_fn(feat_name, safe_append, lambda: _w.is_cancelled)
+                returncode = action_fn(feat_name, safe_append, lambda: _w.is_cancelled)
+                # DISM's own exit code is the only reliable signal here --
+                # `dism /online /enable-feature ... /norestart` can print
+                # progress and still fail (unelevated: exit 740, "Elevated
+                # permissions are required to run DISM."). Without this
+                # check, on_done below reported "Enable complete." whether
+                # or not anything actually changed on the machine.
+                _raise_if_dism_refused(
+                    returncode, "\n".join(lines), f"/{action_name.lower()}-feature")
+                return returncode
 
             worker = Worker(run)
             worker.signals.log_line.connect(output_view.appendPlainText)

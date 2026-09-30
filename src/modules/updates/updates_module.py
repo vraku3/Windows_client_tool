@@ -18,7 +18,7 @@ from core.worker import Worker, COMWorker
 from core.windows_utils import is_reboot_pending
 from core.blocklist import add_pattern, normalize_patterns
 from core.events import NOTIFY_BALLOON, BalloonNotifyData
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
 from modules.updates.winget_updater import (
     fetch_updates, install_update, show_package_details, AppUpdate,
 )
@@ -795,13 +795,23 @@ class _UpdateSettingsTab(QWidget):
         self._sched_save_btn = QPushButton("Create / Update Task")
         self._sched_remove_btn = QPushButton("Remove Task")
         self._sched_run_btn = QPushButton("Run Now")
+        self._sched_health_refresh_btn = QPushButton("Refresh Task Health")
         sched_btn_row.addWidget(self._sched_save_btn)
         sched_btn_row.addWidget(self._sched_remove_btn)
         sched_btn_row.addWidget(self._sched_run_btn)
+        sched_btn_row.addWidget(self._sched_health_refresh_btn)
         sched_btn_row.addStretch()
         sched_lay.addLayout(sched_btn_row)
         self._sched_status_lbl = QLabel("")
         sched_lay.addWidget(self._sched_status_lbl)
+        # Distinct from _sched_status_lbl above, which only ever echoes the
+        # result of the button just clicked here (Task saved / removed /
+        # started) and says nothing about whether a PAST scheduled run
+        # actually succeeded. This is read fresh from `schtasks` itself —
+        # see task_health.py for why that matters.
+        self._task_health_lbl = QLabel("Task health: not checked yet.")
+        self._task_health_lbl.setWordWrap(True)
+        sched_lay.addWidget(self._task_health_lbl)
         layout.addWidget(sched_box)
 
         # -- Legacy quick winget-only schedule (kept as-is for existing users) --
@@ -842,6 +852,7 @@ class _UpdateSettingsTab(QWidget):
         self._sched_save_btn.clicked.connect(self._save_schedule)
         self._sched_remove_btn.clicked.connect(self._remove_schedule)
         self._sched_run_btn.clicked.connect(self._run_schedule_now)
+        self._sched_health_refresh_btn.clicked.connect(self._refresh_task_health)
         self._legacy_save_btn.clicked.connect(self._save_legacy)
         self._legacy_remove_btn.clicked.connect(self._remove_legacy)
 
@@ -879,6 +890,50 @@ class _UpdateSettingsTab(QWidget):
             self._sched_time.setTime(QTime(h, m))
         except Exception:
             logger.warning("Ignored bad saved unattended time %r", time_str)
+
+        self._refresh_task_health()
+
+    def _refresh_task_health(self) -> None:
+        """Re-read the scheduled task's actual last-run outcome from
+        `schtasks` and reflect it in `_task_health_lbl`. Cheap enough
+        (~tens of ms, measured) to run synchronously on the UI thread, same
+        as every other schtasks call already in this class."""
+        from modules.updates.task_health import check_task_health
+        health = check_task_health(UNATTENDED_TASK_NAME)
+
+        if health.exists is None:
+            set_role(self._task_health_lbl, "statusWarning")
+            self._task_health_lbl.setText(
+                f"Task health: could not be checked — {health.error}"
+            )
+            return
+        if not health.exists:
+            set_role(self._task_health_lbl, "statusInfo")
+            self._task_health_lbl.setText(
+                "Task health: no scheduled task exists yet — click Create / Update Task."
+            )
+            return
+
+        state_text = (
+            "Enabled" if health.enabled else "Disabled" if health.enabled is False else "unknown state"
+        )
+        if health.last_run:
+            run_text = f"last ran {health.last_run} — {health.last_result_text or 'unknown result'}"
+        else:
+            run_text = "has never run"
+        next_text = f"next run {health.next_run}" if health.next_run else "no next run scheduled"
+        self._task_health_lbl.setText(f"Task health: {state_text}; {run_text}; {next_text}.")
+
+        failed_last_run = (
+            health.last_run is not None
+            and health.last_result_code not in (None, 0)
+        )
+        if failed_last_run:
+            set_role(self._task_health_lbl, "statusError")
+        elif health.enabled is False:
+            set_role(self._task_health_lbl, "statusWarning")
+        else:
+            set_role(self._task_health_lbl, "statusSuccess")
 
     def _save_blocklist(self) -> None:
         if self.app is None:
@@ -944,6 +999,7 @@ class _UpdateSettingsTab(QWidget):
                 self._sched_status_lbl.setText(f"Error: {result.stderr.strip()}")
         except Exception as e:
             self._sched_status_lbl.setText(f"Error: {e}")
+        self._refresh_task_health()
 
     def _remove_schedule(self) -> None:
         try:
@@ -957,6 +1013,7 @@ class _UpdateSettingsTab(QWidget):
             )
         except Exception as e:
             self._sched_status_lbl.setText(f"Error: {e}")
+        self._refresh_task_health()
 
     def _run_schedule_now(self) -> None:
         try:
@@ -1073,6 +1130,10 @@ class UpdatesModule(BaseModule):
         elif index == 2:
             # Store tab piggybacks on the shared winget scan — no separate call.
             self._app_tab.auto_scan()
+        elif index == 4:
+            # Settings' task-health line is a live read, not a cache — refresh
+            # it every time the tab becomes visible, not just at module build.
+            self._settings_tab._refresh_task_health()
 
     def on_deactivate(self) -> None:
         for tab in (self._app_tab, self._win_tab, self._store_tab, self._runall_tab):

@@ -6,15 +6,30 @@ from typing import Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.table_ui import centered_item, fit_table, set_role
 from core.worker import Worker
+from modules.boot_analyzer.boot_history import (
+    BootHistoryResult,
+    get_boot_history,
+    trend_summary,
+)
 import logging
 
 logger = logging.getLogger(__name__)
+
+try:
+    from PyQt6 import sip
+
+    def _widget_is_valid(w) -> bool:
+        return w is not None and not sip.isdeleted(w)
+except ImportError:  # pragma: no cover - sip always ships with PyQt6 here
+    def _widget_is_valid(w) -> bool:
+        return w is not None
 
 
 class BootAnalyzerModule(BaseModule):
@@ -53,6 +68,28 @@ class BootAnalyzerModule(BaseModule):
         self._info_cards = QVBoxLayout()
         self._info_cards.setSpacing(8)
         content_layout.addLayout(self._info_cards)
+
+        # Boot-time trend: measured from the System log (see boot_history.py)
+        history_title = QLabel("Boot Time Trend")
+        history_title.setObjectName("heading")
+        content_layout.addWidget(history_title)
+
+        self._boot_trend_label = QLabel("")
+        content_layout.addWidget(self._boot_trend_label)
+
+        self._boot_history_table = QTableWidget(0, 3)
+        self._boot_history_table.setHorizontalHeaderLabels(
+            ["Boot Time", "Time to Ready", "Prior Shutdown"]
+        )
+        self._boot_history_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._boot_history_table.setSelectionMode(
+            QTableWidget.SelectionMode.NoSelection
+        )
+        self._boot_history_table.verticalHeader().setVisible(False)
+        fit_table(self._boot_history_table, stretch=(0,), content=(1, 2))
+        content_layout.addWidget(self._boot_history_table)
 
         # Action buttons row
         actions_layout = QHBoxLayout()
@@ -204,6 +241,10 @@ class BootAnalyzerModule(BaseModule):
                 logger.debug("Failed to get uptime", exc_info=True)
                 info["uptime_days"] = "N/A"
 
+            # Boot-time trend from the System log (see boot_history.py for
+            # why this reads System rather than Diagnostics-Performance).
+            info["boot_history"] = get_boot_history()
+
             return info
 
         self._worker = Worker(do_analyze)
@@ -213,6 +254,13 @@ class BootAnalyzerModule(BaseModule):
 
     def _display_info(self, info: dict) -> None:
         self._scanning = False
+        # A worker can still be in flight when the tab is torn down (switch
+        # away mid-scan); cancel() only sets a flag, it does not stop an
+        # already-queued signal. Without this guard, a result landing after
+        # the widget is gone crashes the app (measured elsewhere in this
+        # codebase as exit -1073740791, not a catchable exception).
+        if not _widget_is_valid(self._widget):
+            return
         # Clear
         while self._info_cards.count():
             item = self._info_cards.takeAt(0)
@@ -281,6 +329,60 @@ class BootAnalyzerModule(BaseModule):
             card_layout.addWidget(d, 2, 0)
 
             self._info_cards.addWidget(card)
+
+        self._render_boot_history(info.get("boot_history"))
+
+    def _render_boot_history(self, result: Optional[BootHistoryResult]) -> None:
+        """Fill the Boot Time Trend table and summary label. `result` is
+        `None` only when this dict predates the boot-history key ever being
+        set, which never happens on the live path -- guarded anyway since
+        `_display_info` also runs against whatever a test hands it."""
+        if result is None:
+            return
+        if not result.available:
+            self._boot_trend_label.setText(
+                f"Boot history could not be read: {result.reason}"
+            )
+            set_role(self._boot_trend_label, "statusWarning")
+            self._boot_history_table.setRowCount(0)
+            return
+
+        summary = trend_summary(result.records)
+        if summary is None:
+            self._boot_trend_label.setText(
+                "Not enough measured boots yet for a trend."
+            )
+            set_role(self._boot_trend_label, "statusInfo")
+        else:
+            self._boot_trend_label.setText(summary)
+            if "slower" in summary:
+                role = "statusWarning"
+            elif "faster" in summary:
+                role = "statusSuccess"
+            else:
+                role = "statusInfo"
+            set_role(self._boot_trend_label, role)
+
+        newest_first = list(reversed(result.records))
+        self._boot_history_table.setRowCount(len(newest_first))
+        for row, rec in enumerate(newest_first):
+            self._boot_history_table.setItem(
+                row, 0,
+                centered_item(rec.boot_time.astimezone().strftime("%Y-%m-%d %H:%M")),
+            )
+            duration_text = (
+                f"{rec.duration_seconds:.0f}s"
+                if rec.duration_seconds is not None
+                else "Unknown"
+            )
+            self._boot_history_table.setItem(row, 1, centered_item(duration_text))
+            if rec.prior_shutdown_clean is None:
+                shutdown_text = "Unknown"
+            elif rec.prior_shutdown_clean:
+                shutdown_text = "Clean shutdown"
+            else:
+                shutdown_text = "Unexpected shutdown"
+            self._boot_history_table.setItem(row, 2, centered_item(shutdown_text))
 
     def _reduce_timeout(self) -> None:
         reply = QMessageBox.question(

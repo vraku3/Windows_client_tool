@@ -15,7 +15,7 @@ from core.widget_life import widget_is_valid
 from core.worker import Worker
 from modules.cleanup import cleanup_scanner as cs
 from modules.cleanup import clean_safe_runner as csr
-from modules.cleanup.cleanup_scanner import breakdown, scan_cache
+from modules.cleanup.cleanup_scanner import breakdown, exclusions, scan_cache
 
 logger = logging.getLogger(__name__)
 
@@ -641,6 +641,32 @@ class _ScanTab(QWidget):
             return
         menu = QMenu(self)
         open_act = menu.addAction("Open in Explorer")
-        if menu.exec(self._tree.viewport().mapToGlobal(pos)) == open_act:
+        exclude_act = menu.addAction("Exclude this path from all scans…")
+        chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
+        if chosen == open_act:
             target = si.path if si.is_dir else os.path.dirname(si.path)
             os.startfile(target)
+        elif chosen == exclude_act:
+            self._exclude_path(si.path)
+
+    def _exclude_path(self, path: str) -> None:
+        """Never offer `path` (or anything under it) again, on any tab.
+
+        Enforced centrally in `scan_cache.cached_scan`, so this tab does
+        not need to touch its own tree beyond re-running the scan to pick
+        up the now-smaller result.
+        """
+        from PyQt6.QtWidgets import QMessageBox
+        added = exclusions.add_exclusion(path)
+        if not added:
+            QMessageBox.information(
+                self, "Already Excluded",
+                f"“{path}” is already on the exclusion list.")
+            return
+        logger.info("Cleanup: excluded %s from all future scans", path)
+        QMessageBox.information(
+            self, "Path Excluded",
+            f"“{path}” will no longer be offered by any Cleanup tab.\n\n"
+            "Manage exclusions from the module's \"Exclusions…\" button.")
+        if self._scanned:
+            self._do_scan()

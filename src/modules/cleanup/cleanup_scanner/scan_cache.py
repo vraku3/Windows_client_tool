@@ -29,6 +29,7 @@ import threading
 import time
 from typing import Callable, Dict, Tuple
 
+from modules.cleanup.cleanup_scanner import exclusions
 from modules.cleanup.cleanup_scanner._common import ScanResult
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,25 @@ def _copy(result: ScanResult) -> ScanResult:
     return clone
 
 
+def _excluded(result: ScanResult) -> ScanResult:
+    """`result` with anything the user has excluded removed.
+
+    Applied to the CALLER'S COPY, never to the entry held in `_entries` --
+    the raw measurement stays intact so removing an exclusion later
+    reveals the item again immediately, on the very next call, without
+    waiting out the TTL or needing an explicit `invalidate()`.
+    """
+    rules = exclusions.list_exclusions()
+    if not rules:
+        return result
+    kept = exclusions.filter_items(result.items, rules)
+    if len(kept) == len(result.items):
+        return result
+    result.items = kept
+    result.total_size = sum(i.size for i in kept)
+    return result
+
+
 def cached_scan(scanner: Callable[..., ScanResult], min_age_days: int = 0,
                 ttl_seconds: float = DEFAULT_TTL_SECONDS) -> ScanResult:
     """Run `scanner`, or hand back a recent measurement of the same thing.
@@ -56,6 +76,12 @@ def cached_scan(scanner: Callable[..., ScanResult], min_age_days: int = 0,
     Keyed on the scanner's name and the age filter, because those are what
     change the answer. A scanner that raises is not cached — the next
     caller tries again rather than inheriting a failure.
+
+    Anything the user has excluded (`cleanup_scanner.exclusions`) is
+    filtered out of every result this returns, cached or fresh -- this is
+    the one function every tab in the module is required to call scanners
+    through, so it is also the one place an exclusion is guaranteed to be
+    enforced no matter which tab is asking.
     """
     key = (getattr(scanner, "__name__", repr(scanner)), int(min_age_days))
     now = time.monotonic()
@@ -63,7 +89,7 @@ def cached_scan(scanner: Callable[..., ScanResult], min_age_days: int = 0,
     with _lock:
         entry = _entries.get(key)
         if entry is not None and now - entry[0] < ttl_seconds:
-            return _copy(entry[1])
+            return _excluded(_copy(entry[1]))
 
     # Deliberately outside the lock: scans are seconds long, and holding it
     # would serialise every tab's worker behind the slowest walk.
@@ -71,7 +97,7 @@ def cached_scan(scanner: Callable[..., ScanResult], min_age_days: int = 0,
 
     with _lock:
         _entries[key] = (time.monotonic(), result)
-    return _copy(result)
+    return _excluded(_copy(result))
 
 
 def invalidate() -> None:

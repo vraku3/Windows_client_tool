@@ -13,7 +13,7 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
-    QDialog, QListWidget, QPushButton,
+    QDialog, QListWidget, QPushButton, QFileDialog, QMessageBox,
 )
 
 from core.base_module import BaseModule
@@ -21,6 +21,7 @@ from core.module_groups import ModuleGroup
 from core.table_ui import set_role
 from modules.cleanup import cleanup_history
 from modules.cleanup import cleanup_scanner as cs
+from modules.cleanup.cleanup_scanner import exclusions
 from modules.cleanup.tabs import (
     _ScanTab,
     _BrowserCleanupTab,
@@ -226,6 +227,73 @@ class _CleanupHistoryDialog(QDialog):
         root.addLayout(btn_row)
 
 
+class _CleanupExclusionsDialog(QDialog):
+    """Add/remove paths the user never wants offered by any scan tab again.
+
+    Mirrors `_CleanupHistoryDialog`'s shape (a QListWidget over a small
+    JSON file under the app data dir) but editable, since an exclusion is
+    a rule the user actively maintains rather than a read-only log.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Cleanup Exclusions")
+        self.resize(480, 380)
+        root = QVBoxLayout(self)
+
+        info = QLabel(
+            "Paths listed here (and everything inside them) are never "
+            "shown or deleted by any Cleanup tab, regardless of which "
+            "scanner would otherwise find them.")
+        info.setWordWrap(True)
+        set_role(info, "muted")
+        root.addWidget(info)
+
+        self._list = QListWidget()
+        root.addWidget(self._list, 1)
+        self._reload()
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add Folder…")
+        add_btn.clicked.connect(self._add)
+        remove_btn = QPushButton("Remove Selected")
+        remove_btn.clicked.connect(self._remove_selected)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        root.addLayout(btn_row)
+
+    def _reload(self) -> None:
+        self._list.clear()
+        rules = exclusions.list_exclusions()
+        if not rules:
+            self._list.addItem("(no exclusions -- every scanner is unfiltered)")
+            return
+        for path in rules:
+            self._list.addItem(path)
+
+    def _add(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self, "Choose a folder to exclude")
+        if not folder:
+            return
+        if exclusions.add_exclusion(folder):
+            self._reload()
+        else:
+            QMessageBox.information(self, "Already Excluded",
+                                     f"“{folder}” is already excluded.")
+
+    def _remove_selected(self) -> None:
+        item = self._list.currentItem()
+        if item is None:
+            return
+        path = item.text()
+        if exclusions.remove_exclusion(path):
+            self._reload()
+
+
 class CleanupModule(BaseModule):
     name = "Cleanup"
     icon = "🗑️"
@@ -249,10 +317,13 @@ class CleanupModule(BaseModule):
         self._freed_bytes = 0
         history_btn = QPushButton("History")
         history_btn.clicked.connect(self._show_history)
+        exclusions_btn = QPushButton("Exclusions…")
+        exclusions_btn.clicked.connect(self._show_exclusions)
         header.addStretch()
         header.addWidget(self._all_time_lbl)
         header.addWidget(self._freed_lbl)
         header.addWidget(history_btn)
+        header.addWidget(exclusions_btn)
         main_lay.addLayout(header)
 
         # ── Tabs ──
@@ -357,6 +428,16 @@ class CleanupModule(BaseModule):
 
     def _show_history(self) -> None:
         _CleanupHistoryDialog(self._tabs.window()).exec()
+
+    def _show_exclusions(self) -> None:
+        """Open the exclusions editor, then re-scan whatever tab is
+        showing -- `scan_cache.cached_scan` enforces a new exclusion on
+        its very next call, but a tab's own tree only redraws when it is
+        told to scan again."""
+        _CleanupExclusionsDialog(self._tabs.window()).exec()
+        current = self._tabs.currentWidget()
+        if hasattr(current, "_do_scan") and getattr(current, "_scanned", False):
+            current._do_scan()
 
     # ── Auto-scan on tab switch ──
 

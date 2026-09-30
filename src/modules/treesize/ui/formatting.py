@@ -19,7 +19,15 @@ from enum import Enum
 # `from .formatting import Unit, format_bytes` still resolves.
 from core.formatting import Unit, format_bytes  # noqa: F401
 
+from ..store.aggregates import FILETIME_TICKS_PER_DAY
 from ..store.node_store import DIR
+
+# Same cutoffs the Age view (store/aggregates.py's AGE_BUCKETS) already uses
+# for "This week" and "Older": one source of truth for what "recent" and
+# "stale" mean in this module, so the Last Modified colour and the Age
+# histogram never disagree about where a file lands.
+ACTIVE_WITHIN_DAYS = 7
+STALE_AFTER_DAYS = 365
 
 
 class Mode(str, Enum):
@@ -96,6 +104,29 @@ def format_value(store, node: int, mode: Mode, unit: Unit = Unit.AUTO,
     if mode is Mode.PERCENT:
         return format_percent(percent_of_parent(store, node), decimals)
     return format_bytes(int(node_value(store, node, mode)), unit, decimals)
+
+
+def age_tier(mtime: int, now: int) -> str | None:
+    """"active" (touched within the last week), "stale" (untouched for a
+    year or more), or None for the ordinary middle ground -- which is also
+    what a missing or future timestamp returns, since neither is evidence
+    of either extreme and colouring one of them is a guess, not a reading.
+
+    `mtime` and `now` are both Windows FILETIME ticks (see
+    `scan/filters.py`'s `filetime_now`), matching every other age
+    calculation in this module rather than converting to Unix time and
+    risking a second, disagreeing epoch conversion.
+    """
+    if not mtime:
+        return None
+    age_days = (now - mtime) / FILETIME_TICKS_PER_DAY
+    if age_days < 0:
+        return None
+    if age_days < ACTIVE_WITHIN_DAYS:
+        return "active"
+    if age_days >= STALE_AFTER_DAYS:
+        return "stale"
+    return None
 
 
 def bar_fraction(store, node: int, mode: Mode) -> float:

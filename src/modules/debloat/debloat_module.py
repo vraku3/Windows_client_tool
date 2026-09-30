@@ -22,10 +22,30 @@ from modules.debloat.debloat_scanner import (
     get_installed_packages, PROTECTED_APPS, PROTECTED_REASONS,
 )
 from modules.debloat.debloat_search_provider import DebloatSearchProvider
-from modules.tweaks.tweak_engine import TweakEngine
+from modules.tweaks.tweak_engine import (
+    APPLIED, NOT_APPLIED, NOT_APPLICABLE, PARTIAL, UNKNOWN, TweakEngine,
+)
 from core.semantic_colors import semantic
 
 logger = logging.getLogger(__name__)
+
+#: `TweakEngine.detect_status()` already returns the real five-value verdict
+#: (see its own docstring), but this tab used to only know three of them and
+#: folded PARTIAL and NOT_APPLICABLE into "Unknown" via a dict .get() default
+#: -- exactly the collapse the engine's five-value vocabulary exists to
+#: prevent. Measured on this machine across privacy.json/telemetry.json/
+#: services.json/network.json (185 tweaks): 4 partial, 11 not_applicable and
+#: 1 unknown were all being shown as "Unknown" with no way to tell them
+#: apart. Mirrors `tweaks_module._STATUS_DISPLAY` -- same icons, same
+#: semantic roles ("Not Applicable" is grey, not red: nothing to do here is
+#: not a failure).
+_STATUS_DISPLAY = {
+    APPLIED:        ("● Applied",      "success"),
+    NOT_APPLIED:    ("○ Not Applied",  None),
+    PARTIAL:        ("◐ Partial",      "warning"),
+    NOT_APPLICABLE: ("⊘ N/A",          None),
+    UNKNOWN:        ("? Unknown",       "info"),
+}
 
 
 class _SortableItem(QTableWidgetItem):
@@ -449,6 +469,7 @@ class DebloatToolsModule(BaseModule):
             self._engine = TweakEngine(self.app.backup)
         engine = self._engine
 
+        status_counts: Dict[str, int] = {}
         for tweak in sorted(tweaks, key=lambda t: t.get("name", "").lower()):
             row = table.rowCount()
             table.insertRow(row)
@@ -468,12 +489,10 @@ class DebloatToolsModule(BaseModule):
             table.setItem(row, 3, risk_item)
 
             status = engine.detect_status(tweak)
-            status_map = {
-                "applied": ("\u25cf Applied", QColor(semantic("success"))),
-                "not_applied": ("\u25cb Not Applied", QColor("#e0e0e0")),
-                "unknown": ("\u25cb Unknown", QColor("#888888")),
-            }
-            status_text, status_color = status_map.get(status, status_map["unknown"])
+            status_counts[status] = status_counts.get(status, 0) + 1
+            status_text, colour_role = _STATUS_DISPLAY.get(
+                status, (f"? {status}", "info"))
+            status_color = QColor(semantic(colour_role)) if colour_role else QColor("#e0e0e0")
             si = QTableWidgetItem(status_text)
             si.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             si.setForeground(status_color)
@@ -484,7 +503,26 @@ class DebloatToolsModule(BaseModule):
         table.sortItems(1, Qt.SortOrder.AscendingOrder)
 
         if status_lbl:
-            status_lbl.setText(f"{len(tweaks)} tweak(s) loaded")
+            status_lbl.setText(self._status_summary(len(tweaks), status_counts))
+
+    @staticmethod
+    def _status_summary(total: int, counts: Dict[str, int]) -> str:
+        """"N tweak(s) loaded" plus a per-verdict breakdown.
+
+        An admin opening this tab wants to know how much of it is already
+        done before touching anything -- not just how many rows loaded.
+        Every bucket that actually occurred is named; a bucket this machine
+        never hit (e.g. no "partial" tweaks in AI & Navigation) is left out
+        rather than reported as a padded zero.
+        """
+        order = [
+            (APPLIED, "applied"), (PARTIAL, "partial"),
+            (NOT_APPLIED, "not applied"), (NOT_APPLICABLE, "not applicable"),
+            (UNKNOWN, "unknown"),
+        ]
+        parts = [f"{counts[code]} {label}" for code, label in order if counts.get(code)]
+        summary = ", ".join(parts) if parts else "nothing detected yet"
+        return f"{total} tweak(s) loaded \u2014 {summary}"
 
     def _on_preset(self, preset: str, tab_type: str) -> None:
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")

@@ -777,12 +777,15 @@ class DriverModule(BaseModule):
         "No driver installed": "Windows found this device but has no "
                               "driver for it at all -- it will not work "
                               "until one is installed.",
-        "Shared Hardware ID": "This device's hardware ID is claimed by "
-                             "more than one installed driver package -- "
-                             "for example a generic driver and a vendor "
-                             "one both bound to it. Not necessarily a "
-                             "problem, but worth a look in Device Manager "
-                             "if the device is misbehaving.",
+        "Driver Version Mismatch": "This device's hardware ID is claimed "
+                             "by more than one installed driver package, "
+                             "and they genuinely disagree -- different "
+                             "version, date, publisher or signed state. "
+                             "For example a generic driver and a vendor "
+                             "one both bound to it, or one instance left "
+                             "behind on an older package than its "
+                             "otherwise-identical siblings. Worth a look "
+                             "in Device Manager.",
     }
 
     def _explain_flags(self, flags: str) -> str:

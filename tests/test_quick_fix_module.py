@@ -40,12 +40,15 @@ def _no_real_history(monkeypatch):
     function, until monkeypatch's own teardown restores that at the end
     of the test.
 
-    Also patches `last_by_action` to a fixed empty dict: `QuickFixModule
-    .create_widget()` calls it once to seed every card's "Last run" label,
-    and leaving it live would make these tests read the same real history
-    file `record` is patched away from writing to -- harmless (read-only),
-    but non-hermetic, since the result would depend on whatever this
-    machine's own Quick Fix history happens to contain.
+    Also patches `last_by_action` and `recurring_actions` to fixed empty
+    results: `QuickFixModule.create_widget()` calls both once to seed every
+    card's "Last run" label and recurring-run warning, and leaving either
+    live would make these tests read the same real history file `record`
+    is patched away from writing to -- harmless (read-only), but
+    non-hermetic, since the result would depend on whatever this machine's
+    own Quick Fix history happens to contain. A test that wants to exercise
+    either lookup for real patches it back with its own `monkeypatch`/
+    `with patch(...)` after this fixture runs.
 
     Declared BEFORE `_drain_thread_pools` and taken as that fixture's own
     dependency (see its signature) so pytest tears this one down AFTER
@@ -59,6 +62,8 @@ def _no_real_history(monkeypatch):
         "modules.quick_fix.quick_fix_history.record", lambda *a, **k: None)
     monkeypatch.setattr(
         "modules.quick_fix.quick_fix_history.last_by_action", lambda *a, **k: {})
+    monkeypatch.setattr(
+        "modules.quick_fix.quick_fix_history.recurring_actions", lambda *a, **k: {})
 
 
 @pytest.fixture(autouse=True)
@@ -372,6 +377,66 @@ def test_create_widget_wires_each_cards_last_run_from_history(qapp, monkeypatch)
     assert "2026-09-28T09:00:00" in dns_card._status.text()
     other_card = next(c for c in mod._cards if c._action.title != "Flush DNS")
     assert "2026-09-28T09:00:00" not in other_card._status.text()
+
+
+def test_create_widget_wires_each_cards_recurring_count_from_history(qapp, monkeypatch):
+    """Same wiring as the last-run test above, for the recurring-run
+    warning: one read of `recurring_actions()`, applied per-card by title."""
+    from modules.quick_fix.quick_fix_module import QuickFixModule
+    from modules.quick_fix import quick_fix_history
+
+    monkeypatch.setattr(quick_fix_history, "recurring_actions",
+                         lambda *a, **k: {"Flush DNS": 4})
+
+    class FakeApp:
+        pass
+    mod = QuickFixModule()
+    mod.on_start(FakeApp())
+    widget = mod.create_widget()
+    widget.show()
+
+    dns_card = next(c for c in mod._cards if c._action.title == "Flush DNS")
+    assert "4 times" in dns_card._status.text()
+    other_card = next(c for c in mod._cards if c._action.title != "Flush DNS")
+    assert "times" not in other_card._status.text()
+
+
+def test_a_recurring_run_warning_shows_alongside_a_blocked_precondition(qapp):
+    """A recurring problem is worth flagging even on a card whose
+    precondition currently blocks it (e.g. an admin keeps turning
+    hibernation back on and resizing it) -- the warning must not be lost
+    just because `_refresh_status` returns early on the precondition."""
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None,
+                        precondition=lambda: "blocked now")
+    c = _FixCard(action, recurring_count=5)
+    assert "5 times" in c._status.text()
+    assert "blocked now" in c._status.text()
+
+
+def test_a_recurring_run_warning_shows_alongside_the_last_run_line(qapp):
+    entry = {"at": "2026-09-20T10:00:00", "action": "Test", "outcome": "ok"}
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None)
+    c = _FixCard(action, last_entry=entry, recurring_count=3)
+    text = c._status.text()
+    assert "3 times" in text
+    assert "2026-09-20T10:00:00" in text
+
+
+def test_on_done_recomputes_the_recurring_count_from_the_live_history(qapp, monkeypatch):
+    """A run completing inside this session must re-check for the
+    recurring-run threshold immediately, not just on the next full module
+    rebuild -- three Flush DNS runs in one sitting should warn on the
+    third, not require reopening the tab."""
+    from modules.quick_fix import quick_fix_history
+    monkeypatch.setattr(QThreadPool, "globalInstance", staticmethod(lambda: _SyncPool()))
+    monkeypatch.setattr(quick_fix_history, "recurring_actions",
+                         lambda *a, **k: {"Test": 3})
+    action = FixAction("t", "Test", "desc", "Test", fn=lambda cb: None)
+    c = _FixCard(action)
+    assert c._recurring_count == 0
+    c._run()   # synchronous via _SyncPool -- _on_done already fired
+    assert c._recurring_count == 3
+    assert "3 times" in c._status.text()
 
 
 def test_clearing_the_search_shows_everything_again(qapp):

@@ -22,13 +22,15 @@ logger = logging.getLogger(__name__)
 class _FixCard(QFrame):
     _line = pyqtSignal(str)   # marshals output to main thread
 
-    def __init__(self, action: FixAction, last_entry: dict = None, parent=None):
+    def __init__(self, action: FixAction, last_entry: dict = None,
+                 recurring_count: int = 0, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self._action = action
         self._running = False
         self._worker = None   # track for cancellation
         self._last_entry = last_entry   # most recent history row for this action, if any
+        self._recurring_count = recurring_count   # >= quick_fix_history.recurring_actions' min_count, or 0
         self._thread_pool = QThreadPool.globalInstance()
         self._setup_ui()
 
@@ -82,22 +84,32 @@ class _FixCard(QFrame):
         self._line.connect(self._output.appendPlainText)
 
     def _refresh_status(self) -> None:
-        """What the status label shows while nothing is running: a blocked
+        """What the status label shows while nothing is running: a
+        recurring-run warning first if this action has hit
+        quick_fix_history.recurring_actions' threshold (shown regardless of
+        what follows -- a problem that keeps coming back is worth knowing
+        about even on a machine where the precondition now blocks a further
+        run, or where there is no last-run line at all), then a blocked
         precondition's own reason (checked eagerly, at build time, not only
         after a click that then goes nowhere -- e.g. "Right-size Hibernation
         File" on a machine with hibernation off, which this label now says
         up front instead of making the admin click Run to find out), else
         the most recent history entry for this exact action, else nothing."""
+        parts = []
+        if self._recurring_count:
+            parts.append(
+                f"⚠ Run {self._recurring_count} times in the last 14 days — "
+                f"if this keeps happening, the underlying cause needs a look.")
         if self._action.precondition is not None:
             msg = self._action.precondition()
             if msg is not None:
-                self._status.setText(msg)
+                parts.append(msg)
+                self._status.setText(" ".join(parts))
                 return
         if self._last_entry is not None:
-            self._status.setText(
+            parts.append(
                 f"Last run: {self._last_entry['at']} — {self._last_entry['outcome']}")
-        else:
-            self._status.setText("")
+        self._status.setText(" ".join(parts))
 
     def _run(self):
         if self._running:
@@ -155,6 +167,8 @@ class _FixCard(QFrame):
         self._run_btn.setEnabled(True)
         from modules.quick_fix import quick_fix_history
         self._last_entry = quick_fix_history.record(self._action.title, "ok")
+        self._recurring_count = quick_fix_history.recurring_actions().get(
+            self._action.title, 0)
         self._refresh_status()
 
     def _on_error(self, error_str: str, worker) -> None:
@@ -168,6 +182,8 @@ class _FixCard(QFrame):
         self._output.appendPlainText(f"ERROR: {error_str}")
         from modules.quick_fix import quick_fix_history
         self._last_entry = quick_fix_history.record(self._action.title, "error")
+        self._recurring_count = quick_fix_history.recurring_actions().get(
+            self._action.title, 0)
         self._refresh_status()
 
     def cancel(self) -> None:
@@ -180,6 +196,8 @@ class _FixCard(QFrame):
             self._output.appendPlainText("Cancelled.")
             from modules.quick_fix import quick_fix_history
             self._last_entry = quick_fix_history.record(self._action.title, "cancelled")
+            self._recurring_count = quick_fix_history.recurring_actions().get(
+                self._action.title, 0)
             self._refresh_status()
 
 
@@ -269,6 +287,7 @@ class QuickFixModule(BaseModule):
         # card -- see quick_fix_history.last_by_action's docstring.
         from modules.quick_fix import quick_fix_history
         last_outcomes = quick_fix_history.last_by_action()
+        recurring = quick_fix_history.recurring_actions()
 
         self._cards.clear()
         self._category_headers.clear()
@@ -286,7 +305,8 @@ class QuickFixModule(BaseModule):
             grid = QGridLayout()
             grid.setSpacing(8)
             for i, action in enumerate(actions):
-                card = _FixCard(action, last_outcomes.get(action.title))
+                card = _FixCard(action, last_outcomes.get(action.title),
+                                 recurring.get(action.title, 0))
                 card._category = cat_name
                 self._cards.append(card)
                 grid.addWidget(card, i // 2, i % 2)

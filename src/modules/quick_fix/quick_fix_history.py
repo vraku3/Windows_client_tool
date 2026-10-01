@@ -6,9 +6,12 @@ module-consolidation merge (docs/superpowers/specs/
 one "runs things" module in this app without any history of its own.
 """
 import json
+import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List
+
+logger = logging.getLogger(__name__)
 
 
 def _history_path() -> str:
@@ -71,3 +74,40 @@ def last_by_action(limit: int = 200) -> Dict[str, dict]:
     for entry in recent(limit=limit):
         result.setdefault(entry["action"], entry)
     return result
+
+
+def recurring_actions(min_count: int = 3, days: int = 14) -> Dict[str, int]:
+    """Actions run `min_count` or more times within the last `days` days --
+    a signal that whatever the fix addresses keeps coming back rather than
+    staying fixed after one run (Flush DNS run five times in two weeks
+    points at a real, unresolved DNS/network problem, not a fix that
+    legitimately needs repeating). The card for a flagged action shows the
+    count instead of staying silent the Nth time someone reaches for the
+    same button.
+
+    Scans the full history (`recent(limit=200)` covers everything the file
+    can ever hold -- `record()` caps the file itself at 200 entries), not
+    just the "View History" dialog's default 20-row window, since a
+    recurring pattern can span more runs than that.
+
+    An entry with a malformed or missing timestamp is skipped rather than
+    raising or being silently counted as "now" -- `record()` has always
+    written `datetime.now().isoformat()`, so a bad value here would only
+    come from hand-edited or corrupted history, not normal operation."""
+    cutoff = datetime.now() - timedelta(days=days)
+    counts: Dict[str, int] = {}
+    for entry in recent(limit=200):
+        at_raw = entry.get("at")
+        action = entry.get("action")
+        if not at_raw or not action:
+            continue
+        try:
+            at = datetime.fromisoformat(at_raw)
+        except ValueError:
+            logger.debug("Skipping history entry with unparseable timestamp %r for action %r",
+                         at_raw, action)
+            continue
+        if at < cutoff:
+            continue
+        counts[action] = counts.get(action, 0) + 1
+    return {action: n for action, n in counts.items() if n >= min_count}

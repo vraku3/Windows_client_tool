@@ -16,7 +16,7 @@ An unreadable directory is REPORTED, never the same as an empty one.
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
 from core.types import LogEntry
@@ -208,6 +208,52 @@ def read_crash_evidence(progress_callback: Optional[Callable[[int], None]] = Non
     return entries, notes
 
 
+#: How far back the two comparison windows reach. 30/30 was picked because it is the
+#: smallest window that still reads as "recent" to an admin while giving a crash that
+#: happens every couple of weeks a chance to show up on both sides of the split.
+_TREND_WINDOW_DAYS = 30
+#: Below this many total records across both windows, "more/less frequent" is not a
+#: trend -- it is one or two isolated incidents, and saying "100% more frequent" about
+#: 2 crashes vs 1 is the kind of alarming-not-actionable reading the sysadmin review
+#: process exists to avoid.
+_TREND_MIN_RECORDS = 3
+
+
+def crash_frequency_trend(entries: List[LogEntry], now: Optional[datetime] = None) -> Optional[str]:
+    """Is this machine bugchecking more or less often lately?
+
+    Compares the count of actual crash records (kernel dumps and BugCheck events --
+    the same `crashes` definition `summary_text` uses, NOT live kernel reports, which
+    are watchdog recoveries rather than blue screens) in the last `_TREND_WINDOW_DAYS`
+    days against the `_TREND_WINDOW_DAYS` days before that.
+
+    Returns None rather than a sentence when there isn't enough data to say anything
+    useful: no crash records at all, or all of them older than both windows, or too
+    few total records for "more/less frequent" to mean anything (see
+    `_TREND_MIN_RECORDS`). A trend needs real data on both sides of the split to be
+    worth stating -- an admin who sees "2 in the last 30 days vs 0 before" from a
+    machine with exactly 2 crashes in its lifetime is being alarmed, not informed.
+    """
+    now = now or datetime.now()
+    crashes = [e for e in entries if e.source in ("Minidump", "MEMORY.DMP", "BugCheck event")]
+    if not crashes:
+        return None
+    recent_cut = now - timedelta(days=_TREND_WINDOW_DAYS)
+    prior_cut = now - timedelta(days=2 * _TREND_WINDOW_DAYS)
+    recent = sum(1 for e in crashes if e.timestamp >= recent_cut)
+    prior = sum(1 for e in crashes if prior_cut <= e.timestamp < recent_cut)
+    if recent + prior < _TREND_MIN_RECORDS:
+        return None
+    if recent > prior:
+        verdict = "getting MORE frequent"
+    elif recent < prior:
+        verdict = "getting LESS frequent"
+    else:
+        verdict = "holding steady"
+    return (f"Crash frequency: {recent} in the last {_TREND_WINDOW_DAYS} days vs {prior} in the "
+            f"{_TREND_WINDOW_DAYS} days before that — {verdict}.")
+
+
 def summary_text(entries: List[LogEntry], notes: List[str]) -> str:
     crashes = [e for e in entries if e.source in ("Minidump", "MEMORY.DMP", "BugCheck event")]
     live = [e for e in entries if e.source.startswith("LiveKernelReports")]
@@ -221,6 +267,9 @@ def summary_text(entries: List[LogEntry], notes: List[str]) -> str:
             kinds[e.source.split("\\", 1)[1]] = kinds.get(e.source.split("\\", 1)[1], 0) + 1
         if kinds:
             base += " Live reports by driver/watchdog: " + ", ".join(f"{k} x{n}" for k, n in sorted(kinds.items())) + "."
+        trend = crash_frequency_trend(entries)
+        if trend:
+            base += " " + trend
     return base + ("  " + " ".join(notes) if notes else "")
 
 

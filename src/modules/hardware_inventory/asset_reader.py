@@ -284,8 +284,16 @@ def physical_drives() -> List[Dict[str, str]]:
     return rows
 
 
-def read_asset_record() -> Tuple[Dict[str, str], List[ap.Finding]]:
-    """Gather everything and build the flat record plus firmware findings."""
+def read_asset_record(app_data_dir: Optional[str] = None) -> Tuple[Dict[str, str], List[ap.Finding]]:
+    """Gather everything and build the flat record plus firmware findings.
+
+    When ``app_data_dir`` is given, the record is also compared against the
+    one saved on this machine the previous time this ran, and any difference
+    (a drive swapped, a DIMM added or removed, a different monitor) is added
+    as its own finding before the new record overwrites the saved snapshot.
+    Omitting it (tests, or any caller with nowhere to persist to) skips that
+    comparison entirely rather than guessing a location to write to.
+    """
     import psutil
     from modules.hardware_inventory import hardware_reader as hr
 
@@ -313,4 +321,11 @@ def read_asset_record() -> Tuple[Dict[str, str], List[ap.Finding]]:
         bios=f"{ver} ({fw.bios_date.isoformat()})" if fw.bios_date else ver,
         fw=fw,
     )
-    return rec, ap.firmware_findings(fw) + ap.memory_findings(slots, mem_report.max_capacity_bytes)
+    findings = ap.firmware_findings(fw) + ap.memory_findings(slots, mem_report.max_capacity_bytes)
+    if app_data_dir:
+        from modules.hardware_inventory import asset_snapshot as snap
+        prev = snap.load_snapshot(app_data_dir)
+        if prev is not None:
+            findings = findings + ap.diff_asset_records(prev, rec)
+        snap.save_snapshot(app_data_dir, rec)
+    return rec, findings

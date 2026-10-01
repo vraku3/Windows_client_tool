@@ -193,6 +193,81 @@ def test_placeholder_serial_is_not_exported():
     assert r["Serial number"] == ""
 
 
+def test_diff_ignores_reordered_list_items():
+    old = {"Storage": "SSD A (1TB, SN S1); SSD B (2TB, SN S2)", "Generated": "2026-01-01"}
+    new = {"Storage": "SSD B (2TB, SN S2); SSD A (1TB, SN S1)", "Generated": "2026-02-01"}
+    assert ap.diff_asset_records(old, new) == []
+
+
+def test_diff_flags_added_and_removed_list_items():
+    old = {"Monitors": "Dell S2719DGF (SN A, 2019); Gigabyte MO27Q28G (SN B, 2024)"}
+    new = {"Monitors": "Gigabyte MO27Q28G (SN B, 2024)"}
+    findings = ap.diff_asset_records(old, new)
+    assert [f.title for f in findings] == ["Monitors: item no longer detected"]
+    assert "Dell S2719DGF" in findings[0].detail
+
+
+def test_diff_flags_scalar_field_change():
+    old = {"Serial number": "ABC123"}
+    new = {"Serial number": "XYZ789"}
+    findings = ap.diff_asset_records(old, new)
+    assert findings[0].title == "Serial number changed"
+    assert "ABC123" in findings[0].detail and "XYZ789" in findings[0].detail
+
+
+def test_diff_skips_ignored_and_schema_only_fields():
+    old = {"Generated": "2026-01-01", "Warranty lookup": "Dell: url-a"}
+    new = {"Generated": "2026-02-01", "Warranty lookup": "Dell: url-b", "New Field": "value"}
+    # "Generated"/"Warranty lookup" always legitimately differ; "New Field"
+    # has no counterpart in the old record (a schema change, not hardware).
+    assert ap.diff_asset_records(old, new) == []
+
+
+def test_diff_no_findings_for_identical_records():
+    r = _record()
+    assert ap.diff_asset_records(r, r) == []
+
+
+def test_snapshot_round_trips_and_missing_file_is_none(tmp_path):
+    from modules.hardware_inventory import asset_snapshot as snap
+    app_dir = str(tmp_path)
+    assert snap.load_snapshot(app_dir) is None
+    rec = {"Hostname": "H", "Serial number": "ABC"}
+    snap.save_snapshot(app_dir, rec)
+    assert snap.load_snapshot(app_dir) == rec
+
+
+def test_snapshot_load_tolerates_corrupt_file(tmp_path):
+    from modules.hardware_inventory import asset_snapshot as snap
+    app_dir = str(tmp_path)
+    path = snap._snapshot_path(app_dir)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("{not json")
+    assert snap.load_snapshot(app_dir) is None
+
+
+def test_real_machine_two_consecutive_asset_reads_report_no_drift(tmp_path):
+    """Real-machine assertion: the hardware did not change between these two
+    calls a few milliseconds apart, so the drift comparison introduced here
+    must report none -- it would be a false positive on every single run if
+    list-field reordering or any other noise triggered it."""
+    pytest.importorskip("wmi")
+    import pythoncom
+    from modules.hardware_inventory import asset_reader as ar
+    pythoncom.CoInitialize()
+    try:
+        app_dir = str(tmp_path)
+        rec1, findings1 = ar.read_asset_record(app_dir)
+        assert not [f for f in findings1 if f.title.endswith("changed")
+                   or "item no longer detected" in f.title or "new item detected" in f.title]
+        rec2, findings2 = ar.read_asset_record(app_dir)
+        drift2 = [f for f in findings2 if f.title.endswith("changed")
+                 or "item no longer detected" in f.title or "new item detected" in f.title]
+        assert drift2 == [], f"False drift reported between two back-to-back reads: {drift2}"
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def test_real_machine_monitors_and_firmware_are_plausible():
     pytest.importorskip("wmi")
     import pythoncom

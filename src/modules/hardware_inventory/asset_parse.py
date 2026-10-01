@@ -454,6 +454,47 @@ def _tri(value: Optional[bool], no: str = "off") -> str:
     return "on" if value else no
 
 
+# --------------------------------------------------------------------------
+# Hardware drift: this asset record vs. the last one saved on this machine
+# --------------------------------------------------------------------------
+
+#: Semicolon-joined lists where re-ordering is not a change (a monitor cable
+#: swapped to a different port, or Win32_PhysicalMemory enumerating sticks in
+#: a different order after a reboot, must not read as "hardware changed").
+_LIST_FIELDS = {"RAM modules", "Storage", "Monitors"}
+
+#: Fields that legitimately change every run and say nothing about the
+#: hardware itself.
+_DRIFT_IGNORE = {"Generated", "Warranty lookup"}
+
+
+def diff_asset_records(old: Dict[str, str], new: Dict[str, str]) -> List[Finding]:
+    """Compare two ``build_asset_record`` dicts, field by field.
+
+    Only keys present in BOTH records are compared -- a key the old record
+    never had (an older build of this app, before a field was added) is a
+    schema change, not a hardware one, and is silently skipped rather than
+    reported as "removed".
+    """
+    out: List[Finding] = []
+    for key, new_val in new.items():
+        if key in _DRIFT_IGNORE or key not in old:
+            continue
+        old_val = old.get(key) or ""
+        new_val = new_val or ""
+        if key in _LIST_FIELDS:
+            old_items = {x.strip() for x in old_val.split(";") if x.strip()}
+            new_items = {x.strip() for x in new_val.split(";") if x.strip()}
+            for added in sorted(new_items - old_items):
+                out.append(Finding("warning", f"{key}: new item detected", added))
+            for removed in sorted(old_items - new_items):
+                out.append(Finding("warning", f"{key}: item no longer detected", removed))
+        elif old_val != new_val:
+            out.append(Finding("warning", f"{key} changed",
+                               f"was \"{old_val or '(blank)'}\", now \"{new_val or '(blank)'}\"."))
+    return out
+
+
 def record_to_markdown(rec: Dict[str, str]) -> str:
     lines = [f"### Asset record: {rec.get('Hostname', '')}", "", "| Field | Value |", "|---|---|"]
     for k, v in rec.items():

@@ -98,8 +98,15 @@ class _LoadingTab(QWidget):
         return self._status.text() == LOADING_TEXT
 
 
-def _tab_specs():
-    """(title, loader, setup) for every tab, in display order."""
+def _tab_specs(app_data_dir=None):
+    """(title, loader, setup) for every tab, in display order.
+
+    ``app_data_dir`` is only used by the Asset Record tab, to compare this
+    run's record against the one saved on this machine last time (a drive,
+    DIMM or monitor that changed). Default-arg capture (not a closure over
+    the outer name) so each tab's loader is a plain, independently-callable
+    function, same as every other entry here.
+    """
     return [
         ("Overview", hr.get_overview, ht.setup_kv),
         ("CPU", hr.get_cpu_info, ht.setup_kv),
@@ -110,7 +117,7 @@ def _tab_specs():
         ("Network Adapters", hr.get_network_info, ht.setup_dict(["Name", "IP", "MAC", "Speed", "Up"])),
         ("Devices", ht.load_devices, ht.setup_devices),
         ("Firmware and Security", ht.load_firmware, ht.setup_firmware),
-        ("Asset Record", ht.load_asset, ht.setup_asset),
+        ("Asset Record", lambda worker=None, _dir=app_data_dir: ht.load_asset(worker, _dir), ht.setup_asset),
     ]
 
 
@@ -135,7 +142,8 @@ class HardwareModule(BaseModule):
 
         tabs = QTabWidget()
         vbox.addWidget(tabs, 1)
-        for title, loader, setup in _tab_specs():
+        app_data_dir = getattr(self.app, "app_data_dir", None) if hasattr(self, "app") else None
+        for title, loader, setup in _tab_specs(app_data_dir):
             tabs.addTab(_LoadingTab(loader, setup), title)
         # After the addTab loop: adding the first tab fires currentChanged.
         tabs.currentChanged.connect(self._load_current_if_new)

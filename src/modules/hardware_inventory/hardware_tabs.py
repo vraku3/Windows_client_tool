@@ -285,8 +285,8 @@ def setup_firmware(layout, data) -> None:
 
 # -- asset record ----------------------------------------------------------
 
-def load_asset(worker=None):
-    return ar.read_asset_record()
+def load_asset(worker=None, app_data_dir=None):
+    return ar.read_asset_record(app_data_dir)
 
 
 class AssetRecordView(QWidget):

@@ -49,6 +49,7 @@ class LogPane(QWidget):
         extra_values: Optional[Callable[[object], list]] = None,
         detail_enricher: Optional[Callable[[object], str]] = None,
         summarizer: Optional[Callable[[list], str]] = None,
+        copy_formatter: Optional[Callable[[object], str]] = None,
         thread_pool=None,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -104,7 +105,8 @@ class LogPane(QWidget):
         root.addWidget(self._error_banner)
 
         splitter = QSplitter()
-        self._table = LogTableWidget(extra_columns=extra_columns, extra_values=extra_values)
+        self._table = LogTableWidget(extra_columns=extra_columns, extra_values=extra_values,
+                                      copy_formatter=copy_formatter)
         splitter.addWidget(self._table)
         self._detail = DetailPanel()
         splitter.addWidget(self._detail)

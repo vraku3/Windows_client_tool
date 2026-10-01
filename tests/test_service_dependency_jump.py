@@ -53,3 +53,34 @@ def test_required_by_shows_the_display_name_too(qapp):
     m = _module(qapp)
     m._fill_service_link_list(m._detail_rby_list, [("RpcSs", "Remote Procedure Call")], "(none)")
     assert "Remote Procedure Call" in m._detail_rby_list.item(0).text()
+
+
+def test_a_disabled_dependency_is_flagged_and_still_clickable(qapp):
+    """A dependency that is itself a known service AND Disabled must be
+    visibly marked (Windows refuses to start the selected service while that
+    holds) while staying navigable -- it is still a real row in the table."""
+    from core.semantic_colors import semantic
+    from PyQt6.QtGui import QColor
+
+    m = _module(qapp)
+    m._fill_service_link_list(m._detail_deps_list, [("RpcSs", "")], "(none)",
+                              blocked={"rpcss"})
+    item = m._detail_deps_list.item(0)
+    assert "DISABLED" in item.text()
+    assert item.foreground().color() == QColor(semantic("warning"))
+    assert item.data(Qt.ItemDataRole.UserRole) == "RpcSs"
+
+
+def test_a_dependency_not_blocked_has_no_warning_markup(qapp):
+    m = _module(qapp)
+    m._fill_service_link_list(m._detail_deps_list, [("RpcSs", "")], "(none)", blocked=set())
+    item = m._detail_deps_list.item(0)
+    assert "DISABLED" not in item.text()
+
+
+def test_apply_audit_reports_blocked_dependencies(qapp):
+    m = _module(qapp)
+    m._table.selectRow(0)  # selects RpcSs so _get_selected_service() finds it
+    m._apply_audit(None, ["BrokenDep"])
+    text = m._detail_audit_value.toPlainText()
+    assert "BrokenDep" in text and "cannot start" in text

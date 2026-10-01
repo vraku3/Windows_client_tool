@@ -117,3 +117,35 @@ def test_real_machine_services_are_plausible():
     assert len(rows) > 100
     assert len(flagged) < 40   # most machines have a handful, never most services
     assert all("svchost" not in s["Path"].lower() for s in flagged)
+
+
+# ---- blocked_dependencies: a service cannot start while a dependency is Disabled --------
+
+def test_blocked_dependencies_flags_a_disabled_dependency_case_insensitively():
+    assert a.blocked_dependencies(["RpcSs"], {"rpcss": "Disabled"}) == ["RpcSs"]
+
+
+def test_blocked_dependencies_ignores_enabled_and_unknown_names():
+    # "PNP_TDI" is a load-order GROUP, never a service -- not in the map at all.
+    start_types = {"rpcss": "Automatic"}
+    assert a.blocked_dependencies(["PNP_TDI", "RpcSs"], start_types) == []
+
+
+def test_blocked_dependencies_only_flags_disabled_not_manual_or_stopped():
+    start_types = {"bits": "Manual"}
+    assert a.blocked_dependencies(["BITS"], start_types) == []
+
+
+def test_real_machine_rpcss_dependents_are_not_blocked():
+    """RpcSs is the dependency nearly every real service on this machine
+    lists (confirmed via `sc.exe qc` on dozens of real services, 2026-10-01)
+    and it is Automatic by Windows design -- a service naming it as a
+    dependency must never be reported as blocked on a healthy machine."""
+    from modules.services_manager.services_module import get_services
+    from modules.services_manager import service_view as sv
+    import pythoncom
+    pythoncom.CoInitialize()
+    rows = get_services()
+    start_types = sv.start_type_map(rows)
+    assert start_types.get("rpcss", "").lower() != "disabled"
+    assert a.blocked_dependencies(["RpcSs", "AppID"], start_types) == []

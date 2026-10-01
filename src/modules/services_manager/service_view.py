@@ -104,6 +104,14 @@ def filter_counts(services: Iterable[Dict]) -> Dict[str, int]:
     return {key: sum(1 for s in services if fn(s)) for key, _, fn in FILTERS}
 
 
+def start_type_map(services: Iterable[Dict]) -> Dict[str, str]:
+    """{service name lower: Start Type} for every service `get_services()`
+    returned -- what `service_audit.blocked_dependencies` needs to tell a
+    real service's dependency apart from a driver or a group, which never
+    appear in this map at all."""
+    return {_text(s, "Name").lower(): _text(s, "Start Type") for s in services}
+
+
 def matches(svc: Dict, needle: str) -> bool:
     """Name, display name, description, path or account contains `needle`."""
     needle = needle.strip().lower()

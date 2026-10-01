@@ -66,7 +66,7 @@ class DriverGroup:
 
 def _split_flags(flags: str) -> List[str]:
     """Flags are space-joined but each carries a marker glyph and a phrase
-    ("🟠 Shared Hardware ID"), so split on the glyphs, not on spaces."""
+    ("🔴 Driver Version Mismatch"), so split on the glyphs, not on spaces."""
     parts: List[str] = []
     for token in (flags or "").split(" "):
         if not token:

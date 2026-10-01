@@ -3,7 +3,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 import logging
 logger = logging.getLogger(__name__)
 
@@ -319,17 +319,52 @@ def _dedup_key(d: DriverInfo) -> str:
 
 
 def detect_duplicate_hardware_ids(drivers: List[DriverInfo]) -> Dict[str, List[DriverInfo]]:
-    """Two installed driver packages both claiming the same hardware ID is
-    a real, if uncommon, source of instability (a generic driver and an
-    OEM one both bound to the same device). Groups by `hardware_id`,
-    excluding devices with no hardware_id at all (nothing to compare) and
-    excluding groups of exactly one (the normal case)."""
+    """Every group of 2+ devices that share a `hardware_id`, including the
+    overwhelmingly common and completely benign case of several identical
+    physical instances of one device (32 CPU cores are 32 "AMD Processor"
+    rows sharing `ACPI\\VEN_ACPI&DEV_0007`; the same is true of PCIe ports,
+    USB hubs, HID child devices...). This is raw grouping, nothing more --
+    `detect_conflicting_hardware_ids` is what callers wanting an actual
+    problem should use; do not flag from this function's output directly.
+    Excludes devices with no hardware_id at all (nothing to compare) and
+    groups of exactly one (the normal case)."""
     by_id: Dict[str, List[DriverInfo]] = {}
     for d in drivers:
         if not d.hardware_id:
             continue
         by_id.setdefault(d.hardware_id, []).append(d)
     return {hwid: group for hwid, group in by_id.items() if len(group) > 1}
+
+
+def _driver_identity(d: DriverInfo) -> Tuple:
+    return (d.version, d.date, d.publisher, d.signed, d.error_code)
+
+
+def detect_conflicting_hardware_ids(
+        drivers: List[DriverInfo]) -> Dict[str, List[DriverInfo]]:
+    """The real problem `detect_duplicate_hardware_ids` is named for: two
+    installed driver packages genuinely disagreeing (different version,
+    date, publisher, signed state, or error code) while both claim the
+    same hardware ID -- e.g. a generic driver and a vendor one both bound
+    to the same device, or an incomplete driver rollout leaving one
+    instance on an older package than its siblings.
+
+    Measured on the real dev machine (2026-10-01): raw hardware-id sharing
+    fires for 33 groups (334 drivers, 25 of the 122 grouped table rows),
+    and EVERY one of them is multiple identical instances of one device
+    (32 "AMD Processor" cores, 22 "USB Input Device" HID children, 21 PCIe
+    switch ports...) with an identical version/date/publisher/signed/
+    error_code across every member -- zero real conflicts. Flagging all 25
+    rows as "problem" noise on a perfectly healthy machine is exactly the
+    kind of false alarm that teaches an admin to stop trusting this tool's
+    flags; only a group with an actual attribute mismatch is a real
+    finding."""
+    conflicting: Dict[str, List[DriverInfo]] = {}
+    for hwid, group in detect_duplicate_hardware_ids(drivers).items():
+        identities = {_driver_identity(d) for d in group}
+        if len(identities) > 1:
+            conflicting[hwid] = group
+    return conflicting
 
 
 def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
@@ -369,9 +404,9 @@ def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
         driverless_raw = ""
     drivers = _merge_driverless_devices(drivers, driverless_raw)
 
-    for group in detect_duplicate_hardware_ids(drivers).values():
+    for group in detect_conflicting_hardware_ids(drivers).values():
         for d in group:
-            d.flags = (d.flags + " 🟠 Shared Hardware ID").strip()
+            d.flags = (d.flags + " 🔴 Driver Version Mismatch").strip()
 
     drivers.sort(key=lambda d: (d.error_code != 0, not d.signed, d.device_name))
     return drivers

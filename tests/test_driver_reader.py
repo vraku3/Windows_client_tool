@@ -303,7 +303,8 @@ def test_duplicate_hardware_ids_groups_only_real_collisions():
 def test_duplicate_hardware_id_is_surfaced_as_a_flag(monkeypatch):
     """detect_duplicate_hardware_ids() was tested but had no production
     consumer -- fetch_drivers() must now flag every device in a real
-    collision group, and leave an unrelated device alone."""
+    conflicting group (here A and B disagree on Publisher), and leave an
+    unrelated device alone."""
     def fake_run(cmd, **k):
         class R:
             returncode = 0
@@ -325,9 +326,81 @@ def test_duplicate_hardware_id_is_surfaced_as_a_flag(monkeypatch):
     monkeypatch.setattr(dr.subprocess, "run", fake_run)
     drivers = dr.fetch_drivers()
     by_name = {d.device_name: d for d in drivers}
-    assert "Shared Hardware ID" in by_name["Generic Driver A"].flags
-    assert "Shared Hardware ID" in by_name["Generic Driver B"].flags
-    assert "Shared Hardware ID" not in by_name["Unique Driver"].flags
+    assert "Driver Version Mismatch" in by_name["Generic Driver A"].flags
+    assert "Driver Version Mismatch" in by_name["Generic Driver B"].flags
+    assert "Driver Version Mismatch" not in by_name["Unique Driver"].flags
+
+
+def test_identical_instances_sharing_a_hardware_id_are_not_flagged(monkeypatch):
+    """Regression for a real false positive measured on the dev machine:
+    32 CPU cores (and PCIe ports, USB hubs, HID child devices...) all
+    legitimately share one hardware_id and run the identical driver --
+    that is normal, not a conflict, and must never be flagged. Only a
+    GENUINE mismatch (here: Generic Driver A/B disagree on Publisher,
+    same as the collision test above) is a real finding."""
+    def fake_run(cmd, **k):
+        class R:
+            returncode = 0
+            stdout = json.dumps([
+                {"Name": "AMD Processor", "Class": "Processor", "Version": "10.0.1",
+                 "Date": "", "Publisher": "Microsoft", "IsSigned": True, "ErrorCode": 0,
+                 "InfName": "", "DeviceID": "ACPI\\CPU0",
+                 "HardWareID": "ACPI\\VEN_ACPI&DEV_0007"},
+                {"Name": "AMD Processor", "Class": "Processor", "Version": "10.0.1",
+                 "Date": "", "Publisher": "Microsoft", "IsSigned": True, "ErrorCode": 0,
+                 "InfName": "", "DeviceID": "ACPI\\CPU1",
+                 "HardWareID": "ACPI\\VEN_ACPI&DEV_0007"},
+            ])
+        return R()
+    monkeypatch.setattr(dr.subprocess, "run", fake_run)
+    drivers = dr.fetch_drivers()
+    assert len(drivers) == 2
+    assert all("Driver Version Mismatch" not in d.flags for d in drivers)
+
+
+def test_detect_conflicting_hardware_ids_excludes_identical_instances():
+    identical_a = dr.DriverInfo(
+        device_name="AMD Processor", driver_class="Processor", version="10.0.1",
+        date="", publisher="Microsoft", signed=True, error_code=0, flags="",
+        hardware_id="ACPI\\VEN_ACPI&DEV_0007")
+    identical_b = dr.DriverInfo(
+        device_name="AMD Processor", driver_class="Processor", version="10.0.1",
+        date="", publisher="Microsoft", signed=True, error_code=0, flags="",
+        hardware_id="ACPI\\VEN_ACPI&DEV_0007")
+    conflict_a = dr.DriverInfo(
+        device_name="Generic Driver A", driver_class="Net", version="1.0",
+        date="", publisher="X", signed=True, error_code=0, flags="",
+        hardware_id="PCI\\VEN_AAAA")
+    conflict_b = dr.DriverInfo(
+        device_name="Generic Driver B", driver_class="Net", version="1.0",
+        date="", publisher="Y", signed=True, error_code=0, flags="",
+        hardware_id="PCI\\VEN_AAAA")
+    result = dr.detect_conflicting_hardware_ids(
+        [identical_a, identical_b, conflict_a, conflict_b])
+    assert result == {"PCI\\VEN_AAAA": [conflict_a, conflict_b]}
+
+
+@pytest.mark.real_machine
+def test_real_machine_identical_multi_instance_devices_are_not_flagged():
+    """Measured 2026-10-01: this machine's raw hardware-id sharing fires
+    for 33 groups (334 drivers) -- 32 CPU cores, 22 USB Input Device HID
+    children, 21 PCIe switch ports, etc. -- and every single one shares an
+    identical version/date/publisher/signed/error_code across its members.
+    Zero real conflicts exist on this machine, so detect_conflicting_
+    hardware_ids must report none, and fetch_drivers() must not flag a
+    single device with "Driver Version Mismatch" -- confirming the fix for
+    the false-positive flag that used to fire on all 33 benign groups."""
+    drivers = dr.fetch_drivers()
+    assert len(drivers) > 100, f"only {len(drivers)} drivers -- read likely failed"
+    raw_groups = dr.detect_duplicate_hardware_ids(drivers)
+    assert len(raw_groups) > 10, (
+        "expected plenty of raw hardware-id sharing on this real machine "
+        f"(CPU cores, PCIe ports, USB hubs...); got {len(raw_groups)}")
+    conflicts = dr.detect_conflicting_hardware_ids(drivers)
+    assert conflicts == {}, (
+        f"found {len(conflicts)} unexpected real driver conflicts: "
+        f"{list(conflicts.keys())}")
+    assert not any("Driver Version Mismatch" in d.flags for d in drivers)
 
 
 def test_list_restore_points_returns_none_on_a_failed_read(monkeypatch):

@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import Dict, List
 
 CHIPS = ["All", "Expired", "Expires <30 days", "Expires <90 days", "Weak algorithm",
-         "Self-signed (not root)", "Has private key", "Expired root (still trusted)"]
+         "Self-signed (not root)", "Has private key", "Expired root (still trusted)",
+         "Exportable private key"]
 
 MIN_RSA_BITS = 2048
 
@@ -38,6 +39,22 @@ def weakness(c) -> List[str]:
 def self_signed_non_root(c) -> bool:
     """Self-signed certificate sitting anywhere but a Root store."""
     return bool(c.self_signed) and c.store_name != "ROOT"
+
+
+def has_exportable_private_key(c) -> bool:
+    """A private key this app can confirm is extractable off the machine.
+
+    `key_exportable` is read from the CNG key container's own `ExportPolicy`
+    (or the legacy CAPI `CspKeyContainerInfo.Exportable` for a pre-CNG key),
+    not guessed: `None` means no private key, or the mechanism itself was
+    refused -- never collapsed into "not exportable". A cert most admins
+    expect to be bound to this machine (AD autoenrollment, Windows Hello,
+    a device cert) is provisioned with its key marked non-exportable; one
+    that answers True can be pulled off this machine as a usable PFX by
+    anyone who can open the store, which is a materially different risk
+    than merely "has a private key" (every TLS server cert does).
+    """
+    return c.key_exportable is True
 
 
 def is_expired_root_anchor(c) -> bool:
@@ -75,6 +92,8 @@ def matches_chip(c, chip: str) -> bool:
         return bool(c.has_private_key)
     if chip == "Expired root (still trusted)":
         return is_expired_root_anchor(c)
+    if chip == "Exportable private key":
+        return has_exportable_private_key(c)
     raise ValueError(chip)
 
 
@@ -97,6 +116,8 @@ def findings_text(c) -> str:
         parts.insert(0, f"expires in {c.days_until_expiry} days")
     if self_signed_non_root(c):
         parts.append("self-signed outside a Root store")
+    if has_exportable_private_key(c):
+        parts.append("private key is exportable off this machine")
     return "; ".join(parts)
 
 
@@ -110,6 +131,7 @@ def details_text(c) -> str:
         ("Key usage", c.key_usage),
         ("CA", {True: "yes", False: "no", None: "not stated"}[c.is_ca]),
         ("Private key", "yes" if c.has_private_key else "no"),
+        ("Key exportable", {True: "yes", False: "no", None: "n/a / not determined"}[c.key_exportable]),
         ("Findings", findings_text(c) or "none"),
     ]
     return "\n".join(f"{k}: {v}" for k, v in rows)

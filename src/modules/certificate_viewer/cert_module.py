@@ -178,7 +178,8 @@ class _CertTab(QWidget):
                 c.flag, cf.findings_text(c),
             ]
             problem = c.days_until_expiry < 0 or bool(cf.weakness(c))
-            soon = c.days_until_expiry < 90 or cf.self_signed_non_root(c)
+            soon = (c.days_until_expiry < 90 or cf.self_signed_non_root(c)
+                    or cf.has_exportable_private_key(c))
             fg = None
             if problem:
                 fg = QColor(semantic("error"))

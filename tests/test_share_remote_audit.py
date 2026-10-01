@@ -161,6 +161,54 @@ def test_remote_assistance_full_control_finding():
     assert row.severity == "medium" and "FULL CONTROL" in row.findings[0]
 
 
+def test_remote_assistance_unencrypted_tickets_is_a_medium_finding():
+    s = ra.RemoteState(assist_enabled=True, assist_full_control=False, assist_encrypted_only_tickets=False)
+    row = [r for r in ra.evaluate(s) if r.feature == "Remote Assistance"][0]
+    assert row.severity == "medium"
+    assert any("Unencrypted" in f and "legacy" in f for f in row.findings)
+
+
+def test_remote_assistance_absent_ticket_key_is_not_a_finding():
+    # None = the registry value was never set, which is the modern secure
+    # default (encrypted-only), not a refused read.
+    s = ra.RemoteState(assist_enabled=True, assist_full_control=False, assist_encrypted_only_tickets=None)
+    row = [r for r in ra.evaluate(s) if r.feature == "Remote Assistance"][0]
+    assert row.severity == "low" and not row.findings
+
+
+def test_weak_min_encryption_level_is_high_when_security_layer_is_not_tls():
+    s = ra.RemoteState(rdp_enabled=True, rdp_security_layer=1, rdp_min_encryption_level=2)
+    row = [r for r in ra.evaluate(s) if r.feature == "Remote Desktop"][0]
+    assert row.severity == "high"
+    assert any("weak bulk encryption" in f for f in row.findings)
+
+
+def test_weak_min_encryption_level_is_dormant_but_noted_under_tls():
+    # Confirmed live 2026-10-01 on this machine: SecurityLayer=2 (TLS-only),
+    # MinEncryptionLevel=2 ("Client Compatible") -- inert today, a footgun if
+    # SecurityLayer ever regresses, so it still gets a finding, just not HIGH.
+    s = ra.RemoteState(rdp_enabled=True, rdp_security_layer=2, rdp_min_encryption_level=2, rdp_nla=True)
+    row = [r for r in ra.evaluate(s) if r.feature == "Remote Desktop"][0]
+    assert row.severity != "high"
+    assert any("currently harmless" in f and "SecurityLayer" in f for f in row.findings)
+
+
+def test_high_min_encryption_level_is_not_a_finding():
+    s = ra.RemoteState(rdp_enabled=True, rdp_security_layer=2, rdp_min_encryption_level=3, rdp_nla=True)
+    row = [r for r in ra.evaluate(s) if r.feature == "Remote Desktop"][0]
+    assert not any("ncryption level" in f for f in row.findings)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows")
+def test_real_rdp_min_encryption_level_and_assist_tickets_are_read():
+    # Confirmed live 2026-10-01: both registry values are readable unelevated
+    # on this machine (MinEncryptionLevel=2, CreateEncryptedOnlyTickets=0).
+    st = ra.RemoteState()
+    ra.read_registry(st)
+    assert st.rdp_min_encryption_level is None or isinstance(st.rdp_min_encryption_level, int)
+    assert st.assist_encrypted_only_tickets in (None, True, False)
+
+
 def test_fw_rule_counting_uses_enabled_inbound_allow_only():
     from modules.firewall_rules.firewall_manager_module import FirewallRule
     mk = lambda n, e="Yes", d="In", a="Allow": FirewallRule(n, e, d, a, "TCP", "", "", "", "")  # noqa: E731

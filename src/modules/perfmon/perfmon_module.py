@@ -6,8 +6,9 @@ from typing import Optional
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
-    QComboBox, QGridLayout, QHBoxLayout, QLabel, QProgressBar, QPushButton,
-    QStackedWidget, QTableWidget, QTabWidget, QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+    QProgressBar, QPushButton, QStackedWidget, QTableWidget, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
@@ -15,7 +16,10 @@ from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 from core.table_ui import centered_item, fit_table
 from core.types import LogEntry
-from modules.perfmon.perfmon_collector import PerfMonStore, REPLAYABLE_COUNTERS, collect_snapshot, downsample
+from modules.perfmon.perfmon_collector import (
+    PerfMonStore, REPLAYABLE_COUNTERS, collect_snapshot, compute_summary,
+    downsample, write_history_csv,
+)
 from modules.perfmon.perfmon_charts import HistoryDashboard, PerfMonDashboard, _QtLineChart
 from modules.perfmon.perfmon_alerts import AlertRule
 from modules.perfmon.perfmon_search_provider import PerfMonSearchProvider
@@ -184,9 +188,20 @@ class PerfMonModule(BaseModule):
         refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_history)
         controls.addWidget(refresh_btn)
+        export_btn = QPushButton("Export CSV...")
+        export_btn.clicked.connect(self._export_history_csv)
+        controls.addWidget(export_btn)
         controls.addStretch()
         layout.addLayout(controls)
 
+        # Min/avg/max per counter over the currently-loaded range -- the
+        # charts answer "what did it look like", this answers "how bad did
+        # it get", without reading a peak off a 300-point downsampled line.
+        self._history_summary_label = QLabel("")
+        self._history_summary_label.setWordWrap(True)
+        layout.addWidget(self._history_summary_label)
+
+        self._history_raw_rows: dict = {}
         self._history_stack = QStackedWidget()
         self._history_dashboard = HistoryDashboard()
         self._history_stack.addWidget(self._history_dashboard)
@@ -211,17 +226,68 @@ class PerfMonModule(BaseModule):
             return
         idx = self._history_range.currentIndex()
         hours_back = self._HISTORY_RANGES[idx][1] if 0 <= idx < len(self._HISTORY_RANGES) else 1
-        rows_by_counter = {}
+        raw_by_counter = {}
         try:
             for counter in REPLAYABLE_COUNTERS:
-                rows = self._store.query(counter, hours_back=hours_back)
-                rows_by_counter[counter] = downsample(rows)
+                raw_by_counter[counter] = self._store.query(counter, hours_back=hours_back)
         except Exception as e:
             logger.error("PerfMon history query failed: %s", e)
             self._history_stack.setCurrentIndex(1)
             return
+        # Kept at full fidelity for the summary and CSV export -- the charts
+        # get a separately downsampled copy, so a clipped peak on screen
+        # never clips the number reported here or in the exported file.
+        self._history_raw_rows = raw_by_counter
+        rows_by_counter = {c: downsample(rows) for c, rows in raw_by_counter.items()}
         has_data = self._history_dashboard.load(rows_by_counter)
         self._history_stack.setCurrentIndex(0 if has_data else 1)
+        self._update_history_summary(raw_by_counter)
+
+    def _update_history_summary(self, raw_by_counter: dict) -> None:
+        parts = []
+        for counter, label in REPLAYABLE_COUNTERS.items():
+            values = [v for _ts, v in raw_by_counter.get(counter, [])]
+            summary = compute_summary(values)
+            if summary is None:
+                parts.append(f"{label}: no data")
+            else:
+                parts.append(
+                    f"{label}: min {summary['min']:.1f} / avg {summary['avg']:.1f} / "
+                    f"max {summary['max']:.1f}  ({int(summary['count'])} samples)"
+                )
+        self._history_summary_label.setText("    ".join(parts))
+
+    def _export_history_csv(self) -> None:
+        if not any(self._history_raw_rows.values()):
+            QMessageBox.information(
+                self._widget, "Export CSV",
+                "No history loaded for this range yet -- open the History "
+                "tab (or hit Refresh) first.",
+            )
+            return
+        idx = self._history_range.currentIndex()
+        range_label = (
+            self._HISTORY_RANGES[idx][0] if 0 <= idx < len(self._HISTORY_RANGES) else "history"
+        )
+        default_name = "perfmon_" + range_label.lower().replace(" ", "_") + ".csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self._widget, "Export PerfMon History", default_name, "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            count = write_history_csv(self._history_raw_rows, path)
+        except OSError as e:
+            logger.error("PerfMon CSV export to %s failed: %s", path, e)
+            QMessageBox.critical(self._widget, "Export CSV", f"Could not write {path}:\n{e}")
+            return
+        if count == 0:
+            QMessageBox.information(
+                self._widget, "Export CSV",
+                f"Wrote a header-only file to {path} -- there is no history in this range yet.",
+            )
+        else:
+            QMessageBox.information(self._widget, "Export CSV", f"Wrote {count} row(s) to {path}.")
 
     def _sync_chart_theme(self, theme: str) -> None:
         if self._widget is None:

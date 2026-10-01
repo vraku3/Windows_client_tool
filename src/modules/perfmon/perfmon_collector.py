@@ -1,3 +1,4 @@
+import csv
 import logging
 import os
 import sqlite3
@@ -132,3 +133,61 @@ def downsample(rows: List[Tuple[str, float]], max_points: int = 300) -> List[Tup
     step = (n - 1) / (max_points - 1)
     indices = {round(i * step) for i in range(max_points)}
     return [rows[i] for i in sorted(indices)]
+
+
+def compute_summary(values: List[float]) -> Optional[Dict[str, float]]:
+    """Min/avg/max/count over a history window -- the "how bad did it get"
+    question the History tab's charts don't answer at a glance: reading a
+    peak off a 300-point downsampled line is a guess, this is the exact
+    number from every raw sample in the window. `None` for an empty window,
+    never a 0/0/0 that would read as a perfectly idle machine when the real
+    answer is "nothing recorded yet".
+    """
+    if not values:
+        return None
+    return {
+        "min": min(values),
+        "max": max(values),
+        "avg": sum(values) / len(values),
+        "count": float(len(values)),
+    }
+
+
+def write_history_csv(rows_by_counter: Dict[str, List[Tuple[str, float]]], path: str) -> int:
+    """Write `rows_by_counter` (as returned by repeated `PerfMonStore.query`
+    calls, one per `REPLAYABLE_COUNTERS` key) as a single wide-format CSV --
+    one row per sample timestamp, one column per counter -- so the history
+    this app already collects can be handed to another engineer or opened in
+    Excel, which a SQLite file cannot do on its own.
+
+    Merges rows across counters by an EXACT timestamp string match, which is
+    safe here specifically because `PerfMonStore.store_snapshot` writes every
+    counter from one snapshot in a single `executemany` call sharing one
+    `datetime.now().isoformat()` string -- samples from the same collection
+    tick line up exactly. A counter missing a value for a given timestamp
+    (e.g. a counter added to `REPLAYABLE_COUNTERS` after the others were
+    already running) is written as an empty cell, never a fabricated 0.
+
+    Returns the number of timestamp rows written (0 for an empty range --
+    the file still gets a header, it is never left unwritten).
+    """
+    counters = list(rows_by_counter.keys())
+    merged: Dict[str, Dict[str, float]] = {}
+    for counter, rows in rows_by_counter.items():
+        for ts, value in rows:
+            merged.setdefault(ts, {})[counter] = value
+    timestamps = sorted(merged.keys())
+
+    header = ["timestamp"] + [REPLAYABLE_COUNTERS.get(c, c) for c in counters]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
+        for ts in timestamps:
+            row_values = merged[ts]
+            writer.writerow(
+                [ts] + [
+                    "" if counter not in row_values else f"{row_values[counter]:.2f}"
+                    for counter in counters
+                ]
+            )
+    return len(timestamps)

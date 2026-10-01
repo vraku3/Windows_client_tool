@@ -97,7 +97,10 @@ def test_scan_health_success_enables_reset_base(qapp, monkeypatch):
     try:
         monkeypatch.setattr(
             "modules.system_health.servicing.run_scan_health",
-            lambda: DismResult("dism /Online /Cleanup-Image /ScanHealth", 0, "No corruption"))
+            lambda: DismResult(
+                "dism /Online /Cleanup-Image /ScanHealth", 0,
+                "No component store corruption detected.\n"
+                "The operation completed successfully."))
         module._run_scan_health()
 
         from PyQt6.QtCore import QThreadPool
@@ -134,6 +137,44 @@ def test_scan_health_failure_does_not_enable_reset_base(qapp, monkeypatch):
 
         assert module._last_scan_health_clean is False
         assert module._reset_base_btn.isEnabled() is False
+    finally:
+        app.shutdown()
+
+
+def test_scan_health_repairable_text_does_not_enable_reset_base_despite_exit_zero(qapp, monkeypatch):
+    """Regression test for the real bug this app's own /CheckHealth work
+    (commit 14f5404) exposed: DISM /Online /Cleanup-Image /ScanHealth
+    exits 0 even when it found and recorded real component-store damage.
+    Measured live on this dev machine (2026-10-01, elevated):
+        exit=0
+        stdout: "The component store is repairable.\n"
+                "The operation completed successfully."
+    Trusting returncode==0 alone would have enabled the permanent,
+    hard-to-reverse ResetBase action on a store DISM itself just reported
+    as damaged. Only a "healthy" text verdict may enable it."""
+    from modules.system_health.servicing import DismResult
+
+    module, app = _module(qapp)
+    try:
+        monkeypatch.setattr(
+            "modules.system_health.servicing.run_scan_health",
+            lambda: DismResult(
+                "dism /Online /Cleanup-Image /ScanHealth", 0,
+                "The component store is repairable.\n"
+                "The operation completed successfully."))
+        module._run_scan_health()
+
+        from PyQt6.QtCore import QThreadPool
+        import time
+        QThreadPool.globalInstance().waitForDone(5000)
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert module._last_scan_health_clean is False
+        assert module._reset_base_btn.isEnabled() is False
+        assert "repairable" in module._servicing_out.text().lower()
     finally:
         app.shutdown()
 

@@ -23,7 +23,10 @@ from core.base_module import BaseModule
 from core.events import NOTIFY_BALLOON, BalloonNotifyData
 from core.module_groups import ModuleGroup
 from core.procengine.actions import end_process
-from core.procengine.signatures import COULD_NOT_VERIFY, INVALID, NOT_SIGNED
+from core.procengine.signatures import (
+    COULD_NOT_VERIFY, INVALID, NOT_SIGNED, VALID,
+)
+from core.semantic_colors import semantic
 from core.widget_life import widget_is_valid as _widget_valid
 from core.worker import Worker
 from ui.empty_state import EmptyState
@@ -33,11 +36,24 @@ from . import history_log
 from .engine.analysis import FileAnalysis, analyze
 from .engine.folder_watcher import FolderWatcher
 
-_COLUMNS = ["Name", "Path", "Size", "Created", "Owner", "Locked By", "Likely Creator"]
+_COLUMNS = ["Name", "Path", "Size", "Created", "Owner", "Locked By",
+            "Likely Creator", "File Signature"]
 
 _LOCKED_COLOR = QColor("#5c4a1a")        # amber -- in use
 _CREATOR_HIGH_COLOR = QColor("#1a5c2a")  # green -- confident single match
 _CREATOR_LOW_COLOR = QColor("#5c4a1a")   # amber -- ambiguous/multiple
+
+#: Label + foreground colour for the found file's OWN signature column.
+#: `None` (not a signable type) and `COULD_NOT_VERIFY` (a real refusal on a
+#: signable type) are deliberately different rows -- see
+#: engine/reputation.py's `check_own_signature` docstring -- so both get
+#: their own text rather than one sharing the other's blank/neutral look.
+_SIGNATURE_LABELS = {
+    VALID: "Signed",
+    NOT_SIGNED: "Unsigned",
+    INVALID: "INVALID",
+    COULD_NOT_VERIFY: "Could not verify",
+}
 
 
 class _WatchBridge(QObject):
@@ -361,6 +377,16 @@ class FileForensicsModule(BaseModule):
             elif len(analysis.creator_candidates) > 1:
                 creator_item.setBackground(_CREATOR_LOW_COLOR)
             self._table.setItem(row, 6, creator_item)
+
+            sig = analysis.own_signature
+            sig_text = _SIGNATURE_LABELS.get(sig.status, "") if sig else ""
+            sig_item = QTableWidgetItem(sig_text)
+            if sig is not None:
+                if sig.status == INVALID:
+                    sig_item.setForeground(QColor(semantic("error")))
+                elif sig.status in (NOT_SIGNED, COULD_NOT_VERIFY):
+                    sig_item.setForeground(QColor(semantic("warning")))
+            self._table.setItem(row, 7, sig_item)
         if not _widget_valid(self._results_stack):
             return
         self._results_stack.setCurrentIndex(0 if results else 1)
@@ -382,6 +408,22 @@ class FileForensicsModule(BaseModule):
             return
 
         lines = [f"Path: {analysis.metadata.path}", f"Owner: {analysis.metadata.owner}"]
+        own_sig = analysis.own_signature
+        # Three answers, same discipline as the creator-signature block
+        # below: not-a-signable-type (own_sig is None, nothing printed),
+        # a definite verdict, and a genuine refusal, never collapsed.
+        if own_sig is not None:
+            if own_sig.status == VALID:
+                signer = f" ({own_sig.signer})" if own_sig.signer else ""
+                lines.append(f"This file's own signature: valid{signer}.")
+            elif own_sig.status == NOT_SIGNED:
+                lines.append("⚠ This file itself is UNSIGNED.")
+            elif own_sig.status == INVALID:
+                lines.append(
+                    f"⚠ This file's own signature is INVALID: {own_sig.reason or ''}".rstrip())
+            elif own_sig.status == COULD_NOT_VERIFY:
+                lines.append(
+                    f"This file's own signature could not be verified: {own_sig.reason or ''}".rstrip())
         if analysis.locking_processes:
             lines.append("Locked by:")
             for p in analysis.locking_processes:
@@ -450,13 +492,17 @@ class FileForensicsModule(BaseModule):
             return
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
-            writer.writerow(["Path", "Size", "Created", "Owner", "Locked By", "Likely Creator"])
+            writer.writerow(["Path", "Size", "Created", "Owner", "Locked By",
+                              "Likely Creator", "File Signature"])
             for analysis in self._current_results:
                 meta = analysis.metadata
                 locked = ", ".join(p.process for p in analysis.locking_processes)
                 creator = (analysis.creator_candidates[0].name
                           if analysis.creator_candidates else "")
-                writer.writerow([meta.path, meta.size, meta.created, meta.owner, locked, creator])
+                sig = analysis.own_signature
+                sig_text = _SIGNATURE_LABELS.get(sig.status, "") if sig else ""
+                writer.writerow([meta.path, meta.size, meta.created, meta.owner,
+                                 locked, creator, sig_text])
 
     def _refresh_history(self) -> None:
         entries = history_log.recent(limit=50)

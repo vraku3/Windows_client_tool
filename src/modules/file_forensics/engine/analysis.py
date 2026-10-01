@@ -10,7 +10,9 @@ from typing import List, Optional
 from .creator_heuristic import CreatorCandidate, find_creator_candidates
 from .file_metadata import FileMetadata, read_metadata
 from .locking_processes import LockingProcess, find_locking_processes
-from .reputation import SignatureFacts, check_reputation, check_signature
+from .reputation import (
+    SignatureFacts, check_own_signature, check_reputation, check_signature,
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,12 @@ class FileAnalysis:
     #: object, not a pre-collapsed bool).
     top_creator_signature: Optional[SignatureFacts]
     reputation: object  # VTResult | None
+    #: The FOUND file's own Authenticode verdict -- answers "is this exe/dll
+    #: /msi itself signed, and validly", a different question from whether
+    #: the process that dropped it was signed. `None` means the file is not
+    #: a signable type at all (see `reputation.check_own_signature`), never
+    #: collapsed with a real refusal.
+    own_signature: Optional[SignatureFacts] = None
 
 
 def analyze(path: str, tolerance_seconds: float = 5.0,
@@ -34,6 +42,7 @@ def analyze(path: str, tolerance_seconds: float = 5.0,
     metadata = read_metadata(path)
     locking, locking_summary = find_locking_processes(path)
     candidates = find_creator_candidates(metadata.created, tolerance_seconds)
+    own_signature = check_own_signature(path)
 
     top_creator_signature = None
     reputation = None
@@ -48,4 +57,5 @@ def analyze(path: str, tolerance_seconds: float = 5.0,
         creator_candidates=candidates,
         top_creator_signature=top_creator_signature,
         reputation=reputation,
+        own_signature=own_signature,
     )

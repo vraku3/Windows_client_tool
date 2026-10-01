@@ -827,4 +827,78 @@ def test_kill_failure_survives_a_refresh_that_also_fails(module, monkeypatch, qa
     assert not module._error_banner.isHidden()
     assert "Notepad cannot be ended." in text
     assert "Access is denied" in text
+
+
+def _make_analysis(path, own_signature):
+    from modules.file_forensics.engine.analysis import FileAnalysis
+    from modules.file_forensics.engine.file_metadata import FileMetadata
+    import datetime
+    return FileAnalysis(
+        metadata=FileMetadata(
+            path=path, size=1,
+            created=datetime.datetime(2026, 1, 1), modified=datetime.datetime(2026, 1, 1),
+            accessed=datetime.datetime(2026, 1, 1), owner="me", read_only=False,
+        ),
+        locking_processes=[], locking_summary="ok", creator_candidates=[],
+        top_creator_signature=None, reputation=None, own_signature=own_signature,
+    )
+
+
+def test_signature_column_blank_for_a_non_signable_file(module, monkeypatch, qapp):
+    monkeypatch.setattr(module, "_analyze_folder",
+                        lambda *a, **k: [_make_analysis(r"C:\notes.txt", None)])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    _settle(qapp)
+    assert module._table.item(0, 7).text() == ""
+
+
+def test_signature_column_flags_an_invalid_signature(module, monkeypatch, qapp):
+    from core.procengine.signatures import SignatureFacts, INVALID
+    facts = SignatureFacts(path=r"C:\dropped.exe", status=INVALID,
+                           reason="the file has been modified since it was signed")
+    monkeypatch.setattr(module, "_analyze_folder",
+                        lambda *a, **k: [_make_analysis(r"C:\dropped.exe", facts)])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    _settle(qapp)
+    assert module._table.item(0, 7).text() == "INVALID"
+
+    module._table.selectRow(0)
+    module._on_row_selected()
+    text = module._detail_label.text()
+    assert "INVALID" in text
+    assert "modified since it was signed" in text
+
+
+def test_signature_column_shows_valid_signer(module, monkeypatch, qapp):
+    from core.procengine.signatures import SignatureFacts, VALID
+    facts = SignatureFacts(path=r"C:\tool.exe", status=VALID, signer="Contoso Inc.")
+    monkeypatch.setattr(module, "_analyze_folder",
+                        lambda *a, **k: [_make_analysis(r"C:\tool.exe", facts)])
+    module._folder_edit.setText(r"C:\x")
+    module._on_search_clicked()
+    _settle(qapp)
+    assert module._table.item(0, 7).text() == "Signed"
+
+    module._table.selectRow(0)
+    module._on_row_selected()
+    assert "Contoso Inc." in module._detail_label.text()
+
+
+def test_csv_export_includes_the_signature_column(module, tmp_path, monkeypatch):
+    from core.procengine.signatures import SignatureFacts, NOT_SIGNED
+    facts = SignatureFacts(path=r"C:\unsigned.exe", status=NOT_SIGNED)
+    module._current_results = [_make_analysis(r"C:\unsigned.exe", facts)]
+    out_path = str(tmp_path / "export.csv")
+    monkeypatch.setattr(
+        "modules.file_forensics.file_forensics_module.QFileDialog.getSaveFileName",
+        lambda *a, **k: (out_path, "CSV"))
+
+    module._on_export_clicked()
+
+    with open(out_path, encoding="utf-8") as f:
+        content = f.read()
+    assert "File Signature" in content
+    assert "Unsigned" in content
     assert module._pending_banner_message is None  # displayed, not left dangling

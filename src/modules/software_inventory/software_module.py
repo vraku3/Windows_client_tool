@@ -278,7 +278,7 @@ class _SoftwarePane(QWidget):
             centered_item(e.type_), centered_item(category), centered_item(sa._note(row)),
         ]
         cells[0].setData(Qt.ItemDataRole.UserRole, row)
-        if row.eol is not None and (row.eol_days_left or 0) < 0:
+        if row.uninstaller_missing is True or (row.eol is not None and (row.eol_days_left or 0) < 0):
             paint_severity(cells[8], "warning")
         elif row.winget_available or row.superseded_by:
             paint_severity(cells[8], "info")
@@ -317,6 +317,14 @@ class _SoftwarePane(QWidget):
             self.status.setText("No uninstall string available.")
             return
         e = row.entry
+        if row.uninstaller_missing is True:
+            # The command would launch nothing -- its own program is gone from
+            # disk (see software_analysis.uninstaller_target_status). Saying
+            # "Uninstall launched" here would be false reassurance.
+            self.status.setText(
+                f"Cannot uninstall '{e.name}': its own uninstaller program no longer exists on disk. "
+                "Remove its install folder by hand, or try Programs and Features / msiexec if those still work.")
+            return
         if not confirm_destructive(
                 self, "Uninstall", f"Uninstall '{e.name}'?",
                 detail=f"Runs: {e.uninstall_string}", irreversible=False):

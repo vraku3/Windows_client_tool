@@ -450,6 +450,67 @@ def list_profiles(directory: Optional[str] = None) -> List[ProfileSummary]:
     return summaries
 
 
+@dataclass(frozen=True)
+class ProfileStatus:
+    """Whether a saved profile would apply RIGHT NOW, without applying it.
+
+    Browsing the saved-profile list previously gave no hint that a profile
+    was stale -- "office docked" and "laptop only" sit side by side with
+    identical-looking rows, and the only way to learn one no longer matches
+    anything connected was to select it, click Apply, and read the refusal
+    `can_apply` already computes. This runs that same check for every saved
+    profile up front, against one shared read of the current topology, so
+    the list itself carries the answer.
+    """
+
+    summary: ProfileSummary
+    available: bool
+    #: `can_apply`'s own reason, verbatim -- names the monitor, never rounds
+    #: a refusal off into a plain "no".
+    reason: str
+
+
+def profiles_with_status(directory: Optional[str] = None,
+                         present: Optional[Sequence[MonitorIdentity]] = None
+                         ) -> List[ProfileStatus]:
+    """Every saved profile, each checked against what is connected now.
+
+    The topology is read ONCE for the whole list, not once per profile --
+    `present` is threaded through so a browse of ten profiles costs one
+    `live_identities()` call. A topology read that fails is reported as the
+    reason on every profile rather than silently treating "could not read
+    the screen" as "nothing is connected", which `can_apply` would do if
+    handed an empty list instead of the failure.
+    """
+    directory = directory or default_profile_dir()
+    summaries = list_profiles(directory)
+    if not summaries:
+        return []
+
+    topology_reason = ""
+    if present is None:
+        try:
+            present = live_identities()
+        except OSError as exc:
+            present = None
+            topology_reason = f"could not read the current topology: {exc}"
+
+    statuses: List[ProfileStatus] = []
+    for summary in summaries:
+        try:
+            profile = load_profile(summary.name, directory)
+        except (OSError, ValueError) as exc:
+            statuses.append(ProfileStatus(summary, False,
+                                          f"could not load: {exc}"))
+            continue
+        if present is None:
+            statuses.append(ProfileStatus(summary, False, topology_reason))
+            continue
+        ok, reason = can_apply(profile, present)
+        statuses.append(ProfileStatus(summary, ok, reason))
+    return statuses
+
+
 def delete_profile(name: str, directory: Optional[str] = None) -> bool:
     """True if it was there and is gone. False if it was never there — that
     is not an error, and an exception would make a double-click on Delete a

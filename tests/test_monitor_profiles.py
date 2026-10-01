@@ -303,6 +303,74 @@ def test_a_name_with_path_separators_cannot_escape_the_profile_directory(tmp_pat
         P.save_profile(_profile(r"..\..\evil"), directory=str(tmp_path))
 
 
+# ── profiles_with_status: staleness, up front ──────────────────────────
+
+def test_a_profile_whose_monitors_are_all_present_is_reported_available(tmp_path):
+    P.save_profile(_profile("desk"), directory=str(tmp_path))
+    statuses = P.profiles_with_status(directory=str(tmp_path),
+                                      present=[GIGABYTE, DELL, LG])
+    assert len(statuses) == 1
+    assert statuses[0].summary.name == "desk"
+    assert statuses[0].available is True
+    assert statuses[0].reason
+
+
+def test_a_profile_whose_monitor_is_unplugged_is_reported_unavailable_and_named(
+        tmp_path):
+    """The whole point: this must say so WITHOUT anyone clicking Apply, and
+    the reason has to name the missing monitor, the same as `can_apply`."""
+    P.save_profile(_profile("desk"), directory=str(tmp_path))
+    statuses = P.profiles_with_status(directory=str(tmp_path),
+                                      present=[GIGABYTE])
+    assert statuses[0].available is False
+    assert DELL.key in statuses[0].reason
+
+
+def test_each_profile_in_the_list_is_judged_on_its_own(tmp_path):
+    P.save_profile(_profile("desk"), directory=str(tmp_path))
+    only_gigabyte = P.DisplayProfile(
+        name="gigabyte only", created_at="2026-09-03T12:00:00",
+        monitors=[_monitor(GIGABYTE, position=(0, 0), primary=True)])
+    P.save_profile(only_gigabyte, directory=str(tmp_path))
+
+    statuses = {s.summary.name: s for s in
+               P.profiles_with_status(directory=str(tmp_path),
+                                      present=[GIGABYTE])}
+    assert statuses["desk"].available is False
+    assert statuses["gigabyte only"].available is True
+
+
+def test_a_topology_read_failure_is_the_reason_on_every_profile_not_silence(
+        tmp_path, monkeypatch):
+    """A refused read is never collapsed into an empty `present` list, which
+    `can_apply` would read as "nothing is connected" and refuse for the
+    wrong reason."""
+    P.save_profile(_profile("desk"), directory=str(tmp_path))
+
+    def _broken():
+        raise OSError("display topology refused")
+
+    monkeypatch.setattr(P, "live_identities", _broken)
+    statuses = P.profiles_with_status(directory=str(tmp_path))
+    assert statuses[0].available is False
+    assert "could not read the current topology" in statuses[0].reason
+
+
+def test_listing_an_empty_directory_has_no_statuses(tmp_path):
+    assert P.profiles_with_status(directory=str(tmp_path)) == []
+
+
+def test_live_profiles_with_status_matches_the_machine_it_was_saved_from(
+        tmp_path, live_profile):
+    """Real machine, read-only. Saving the live topology and immediately
+    asking `profiles_with_status` about it must report it available — the
+    same guarantee `can_apply` gives, now surfaced before Apply is clicked."""
+    P.save_profile(live_profile, directory=str(tmp_path))
+    statuses = P.profiles_with_status(directory=str(tmp_path))
+    assert len(statuses) == 1
+    assert statuses[0].available is True, statuses[0].reason
+
+
 def test_profiles_live_under_the_apps_own_appdata_directory(monkeypatch):
     r"""The same `%APPDATA%\WindowsTweaker` every other persisted thing in
     this app uses — computed, not imported from `app`, so this module stays

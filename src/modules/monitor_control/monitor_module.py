@@ -34,7 +34,7 @@ import logging
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtWidgets import (
     QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QSlider, QVBoxLayout, QWidget,
@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.semantic_colors import semantic
 from core.widget_life import widget_is_valid
 from core.worker import Worker
 from modules.monitor_control import _apply_guard as guard
@@ -605,21 +606,39 @@ class MonitorControlModule(BaseModule):
         return row
 
     def _reload_profiles(self) -> None:
-        """Refill the list from disk. Cheap: reads sidecar summaries only."""
+        """Refill the list from disk, each row coloured by whether it would
+        apply RIGHT NOW against what is connected.
+
+        Previously this only listed names -- a stale profile ("office
+        docked", saved for monitors no longer plugged in) looked identical
+        to a current one until Apply was clicked and refused. `can_apply`
+        already answers that question; this just asks it for every saved
+        profile up front, against one shared read of the topology, and
+        shows the answer rather than making someone discover it by trying.
+        """
         from modules.monitor_control import profiles as pf
 
         self._profile_combo.clear()
         try:
-            summaries = pf.list_profiles()
+            statuses = pf.profiles_with_status()
         except Exception as exc:                         # noqa: BLE001
             logger.warning("Could not list display profiles: %s", exc)
             self._profile_note.setText(f"profiles unreadable: {exc}")
-            summaries = []
-        for summary in summaries:
+            statuses = []
+        for status in statuses:
+            summary = status.summary
+            index = self._profile_combo.count()
+            prefix = "" if status.available else "⚠ "
             self._profile_combo.addItem(
-                f"{summary.name}  ({summary.active_count} of "
-                f"{summary.monitor_count} on)", summary.name)
-        has_any = bool(summaries)
+                f"{prefix}{summary.name}  ({summary.active_count} of "
+                f"{summary.monitor_count} on)",
+                summary.name)
+            colour = semantic("success" if status.available else "warning")
+            self._profile_combo.setItemData(
+                index, QColor(colour), Qt.ItemDataRole.ForegroundRole)
+            self._profile_combo.setItemData(
+                index, status.reason, Qt.ItemDataRole.ToolTipRole)
+        has_any = bool(statuses)
         self._profile_apply.setEnabled(has_any)
         self._profile_delete.setEnabled(has_any)
         if not has_any:

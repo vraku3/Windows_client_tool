@@ -41,6 +41,7 @@ from core.worker import Worker
 from ui.error_banner import ErrorBanner
 
 from modules.gpresult.admx_catalog import get_catalog
+from modules.gpresult.audit_report import write_audit_report
 from modules.gpresult.policy_drift import (
     APPLIED, DIFFERENT, DriftReport, MISSING, UNREADABLE, drift_report,
 )
@@ -135,6 +136,11 @@ class GPResultModule(BaseModule):
             "See what has changed since a saved report")
         self._export_btn = QPushButton("Export HTML")
         self._export_btn.setToolTip("Microsoft's own full RSOP report")
+        self._export_audit_btn = QPushButton("Export Audit Report")
+        self._export_audit_btn.setToolTip(
+            "One report over everything this pane found: RSOP, local policy "
+            "drift, tattooed registry values, tweaks at risk, and per-user "
+            "local policy -- not just gpresult's own RSOP-only report")
         self._gpedit_btn = QPushButton("Open gpedit.msc")
         self._rsop_btn = QPushButton("Open rsop.msc")
         self._search_edit = QLineEdit()
@@ -156,7 +162,8 @@ class GPResultModule(BaseModule):
 
         for btn in (self._refresh_btn, self._gpupdate_btn, self._snapshot_btn,
                     self._compare_btn, self._expand_btn, self._collapse_btn,
-                    self._export_btn, self._gpedit_btn, self._rsop_btn):
+                    self._export_btn, self._export_audit_btn,
+                    self._gpedit_btn, self._rsop_btn):
             toolbar.addWidget(btn)
         toolbar.addWidget(self._search_edit)
         toolbar.addStretch()
@@ -201,6 +208,7 @@ class GPResultModule(BaseModule):
         self._expand_btn.clicked.connect(self._tree.expandAll)
         self._collapse_btn.clicked.connect(self._collapse_to_roots)
         self._export_btn.clicked.connect(self._export_html)
+        self._export_audit_btn.clicked.connect(self._export_audit_report)
         self._gpupdate_btn.clicked.connect(self._open_gpupdate)
         self._snapshot_btn.clicked.connect(self._save_snapshot)
         self._compare_btn.clicked.connect(self._open_compare)
@@ -892,6 +900,35 @@ class GPResultModule(BaseModule):
         worker.signals.error.connect(self._on_error)
         self._workers.append(worker)
         self.thread_pool.start(worker)
+
+    def _export_audit_report(self) -> None:
+        """Everything this pane found -- RSOP plus drift/tattooed/conflicts
+        plus per-user local policy -- in one HTML file. Unlike `_export_html`
+        this runs no command: it renders the results already on screen from
+        the last Refresh, so it needs no worker."""
+        if self._result is None:
+            self._status_lbl.setText(
+                "Refresh first -- nothing has been collected yet.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self._outer, "Export Group Policy audit report",
+            "gpresult-audit.html", "HTML (*.html)")
+        if not path:
+            return
+        try:
+            write_audit_report(
+                path, self._result, self._local_policy, self._drift,
+                self._tattoo, self._conflicts, self._per_user_policy)
+        except OSError as exc:
+            self._status_lbl.setText("Export failed.")
+            self._error_banner.set_error(
+                "Could not write the audit report: %s" % exc)
+            return
+        self._status_lbl.setText("Audit report written.")
+        try:
+            os.startfile(path)  # noqa: S606 - opening the user's own file
+        except OSError:
+            logger.debug("Could not open %s", path, exc_info=True)
 
     # ------------------------------------------------------------------
     # Lifecycle

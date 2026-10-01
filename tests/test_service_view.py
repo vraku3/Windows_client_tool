@@ -66,3 +66,9 @@ def test_set_start_type_trusts_success_line_not_exit_code(monkeypatch):
 def test_set_start_type_refuses_bad_input():
     assert not sv.set_start_type("Foo", "Sideways")[0]
     assert not sv.set_start_type("Foo & calc", "Manual")[0]
+
+
+def test_start_type_map_is_keyed_on_lowercased_name():
+    rows = [svc(Name="RpcSs", **{"Start Type": "Auto"}), svc(Name="Foo", **{"Start Type": "Disabled"})]
+    m = sv.start_type_map(rows)
+    assert m == {"rpcss": "Auto", "foo": "Disabled"}

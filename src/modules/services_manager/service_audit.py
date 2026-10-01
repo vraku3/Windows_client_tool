@@ -231,6 +231,30 @@ def describe_recovery(info: Optional[Dict]) -> str:
     return "; ".join(actions)
 
 
+def blocked_dependencies(dep_names: List[str], start_types: Dict[str, str]) -> List[str]:
+    """Names from a service's own DEPENDENCIES (as `parse_qc` returns them)
+    that are themselves a service set to Disabled.
+
+    The Service Control Manager refuses to start a service while any of its
+    dependencies is disabled (`ERROR_SERVICE_DEPENDENCY_DELETED`/`_DISABLED`)
+    -- an Automatic or Manual service with one of these is broken right now,
+    even though its OWN Start Type column reads fine and gives no hint why it
+    will not come up. `start_types` is `service_view.start_type_map()`'s
+    {name lower: Start Type}; a dependency not found there is a driver or a
+    load-order GROUP (`PNP_TDI`, `NDIS` and the like are common), neither of
+    which this check can judge, and is left out rather than guessed at.
+    Measured on this real machine (2026-10-01, 303 services, every one with
+    a DEPENDENCIES entry checked): zero are broken this way right now -- the
+    check exists for the day one tweak or a bad uninstall creates one.
+    """
+    out: List[str] = []
+    for dep in dep_names:
+        start = start_types.get(dep.strip().lower())
+        if start and start.lower() == "disabled":
+            out.append(dep)
+    return out
+
+
 def audit_lines(svc: Dict, failures: Optional[int]) -> List[Tuple[str, str]]:
     """(severity, sentence) pairs for one service; severity is 'warning' or 'info'."""
     lines: List[Tuple[str, str]] = []

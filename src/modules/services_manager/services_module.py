@@ -639,33 +639,49 @@ class ServicesModule(BaseModule):
         self._detail_path_value.setPlainText(cfg.get("binary_path", "-"))
         self._detail_load_group_value.setText(cfg.get("load_order_group") or "(none)")
 
-        self._apply_audit(data.get("recovery"))
         deps = cfg.get("dependencies", [])
+        blocked = service_audit.blocked_dependencies(
+            deps, service_view.start_type_map(self._all_services))
+        self._apply_audit(data.get("recovery"), blocked)
         self._fill_service_link_list(self._detail_deps_list, [(d, "") for d in deps],
-                                     "(no dependencies)")
+                                     "(no dependencies)",
+                                     blocked={b.lower() for b in blocked})
         self._fill_service_link_list(
             self._detail_rby_list, [(d["name"], d["display"]) for d in req_by],
             "(no dependent services)")
 
-    def _fill_service_link_list(self, widget: QListWidget, rows, empty_text: str) -> None:
+    def _fill_service_link_list(self, widget: QListWidget, rows, empty_text: str,
+                                blocked: Optional[set] = None) -> None:
         """Each row is (service name, display name). Double-click jumps to it,
         if it is a service this pane actually has (a dependency can be a driver
-        or a group, which never appear in the service table at all)."""
+        or a group, which never appear in the service table at all). `blocked`
+        (lower-cased names) marks a dependency that is itself Disabled --
+        Windows refuses to start THIS service while that holds."""
         widget.clear()
         if not rows:
             widget.addItem(empty_text)
             return
         known = {s["Name"].lower() for s in self._all_services}
+        blocked = blocked or set()
         em_dash = chr(8212)
         for name, display in rows:
             label = f"{name}  {em_dash}  {display}" if display else name
+            if name.lower() in blocked:
+                label += "  [DISABLED -- blocks this service from starting]"
             item = QListWidgetItem(label)
-            if name.lower() in known:
+            if name.lower() in blocked:
+                item.setForeground(QColor(semantic("warning")))
+                item.setToolTip("This dependency is Disabled: the Service Control Manager "
+                                "will refuse to start the selected service while it stays "
+                                "that way. Double-click to jump to it.")
+            elif name.lower() in known:
                 item.setData(Qt.ItemDataRole.UserRole, name)
                 item.setToolTip("Double-click to jump to this service")
             else:
                 item.setToolTip("Not a service in this list (a driver, group, or "
                                 "one this session could not enumerate)")
+            if name.lower() in blocked and name.lower() in known:
+                item.setData(Qt.ItemDataRole.UserRole, name)
             widget.addItem(item)
 
     def _jump_to_dependency(self, item: QListWidgetItem) -> None:
@@ -683,10 +699,13 @@ class ServicesModule(BaseModule):
                 return
         self._status_label.setText(f"'{name}' is not in the current filter/search.")
 
-    def _apply_audit(self, recovery: Optional[Dict]) -> None:
+    def _apply_audit(self, recovery: Optional[Dict], blocked: Optional[List[str]] = None) -> None:
         svc = self._get_selected_service() or {}
         failures = service_audit.failures_for(self._failures, svc.get("Display Name", ""))
         lines = [f"[{sev}] {text}" for sev, text in service_audit.audit_lines(svc, failures)]
+        if blocked:
+            lines.append("[warning] Depends on disabled service(s): " + ", ".join(blocked)
+                         + " -- this service cannot start until they do.")
         if failures is None:
             lines.append("Failure history: could not be read (System log).")
         elif not failures:

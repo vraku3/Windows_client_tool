@@ -278,11 +278,24 @@ class SystemHealthModule(BaseModule):
             if not widget_is_valid(self._scan_health_btn):
                 return
             self._scan_health_btn.setEnabled(True)
-            self._last_scan_health_clean = (result.returncode == 0)
+            # DISM /ScanHealth exits 0 even when it found and recorded real
+            # corruption -- measured on this machine (2026-10-01):
+            # exit=0, stdout "The component store is repairable.\nThe
+            # operation completed successfully." That is the SAME wording
+            # family /CheckHealth already classifies text instead of
+            # trusting the exit code for (checkhealth.classify, see its
+            # own commit 14f5404 for the matching /CheckHealth measurement
+            # on this same real, damaged machine). Reuse that classifier
+            # rather than a second one for the same output family -- only
+            # "healthy" may enable ResetBase; "repairable" is exactly the
+            # damaged-store case this gate exists to block.
+            from modules.dism_log import checkhealth
+            verdict = checkhealth.classify(result.returncode, result.output)
+            self._last_scan_health_clean = (verdict.verdict == "healthy")
             self._reset_base_btn.setEnabled(self._last_scan_health_clean)
             self._servicing_out.setText(
-                f"ScanHealth: {'no corruption found' if self._last_scan_health_clean else 'issue detected'} "
-                f"(exit {result.returncode})\n{result.output[:500]}")
+                f"ScanHealth: {verdict.verdict} (exit {result.returncode})\n"
+                f"{verdict.detail}\n{result.output[:500]}")
             from modules.system_health import history
             history.append_run(self.app.app_data_dir, action="scan_health",
                                command=result.command, returncode=result.returncode)

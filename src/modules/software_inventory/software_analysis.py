@@ -10,12 +10,14 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from modules.software_inventory.software_reader import SoftwareEntry
+from modules.startup_manager.persistence import resolve_command
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,50 @@ def parse_install_date(text: str) -> Optional[date]:
 def version_key(version: str) -> Tuple[int, ...]:
     """Numeric sort key; '' when nothing numeric ('Unknown', '')."""
     return tuple(int(p) for p in re.findall(r"\d+", version or "")[:6])
+
+
+# --------------------------------------------------------------------------
+# Broken uninstallers
+# --------------------------------------------------------------------------
+
+
+def uninstaller_target_status(entry: SoftwareEntry) -> Optional[bool]:
+    """``True`` when the program ``UninstallString`` would launch is
+    CONFIRMED MISSING from disk; ``False`` when it was confirmed present.
+    ``None`` means the question does not apply or could not be answered --
+    never collapsed into either verdict:
+
+    - no ``UninstallString`` at all (a different, already-flagged problem);
+    - an MSI entry (``WindowsInstaller``), which resolves through msiexec and
+      a product code, not a file path, and through winget, which resolves
+      through its own database -- neither depends on anything checked here;
+    - the path itself could not be stat'd for a reason other than "not
+      found" (e.g. access denied partway down the tree) -- a refusal, not a
+      missing file.
+
+    A confirmed ``False`` is a real, specific admin headache: the installer's
+    own cached copy (common for WiX/Burn/NSIS/InstallShield bootstrappers,
+    e.g. a ``Package Cache`` folder a disk-cleanup tool removed) is gone, so
+    clicking Uninstall -- here or in Programs and Features -- launches
+    nothing and the entry never goes away on its own.
+    """
+    text = (entry.uninstall_string or "").strip()
+    if entry.windows_installer or not text:
+        return None
+    low = text.lower()
+    if low.startswith("winget ") or low.startswith("msiexec"):
+        return None
+    exe, _args = resolve_command(text)
+    if not exe:
+        return None
+    try:
+        os.stat(exe)
+        return False       # confirmed present
+    except FileNotFoundError:
+        return True        # confirmed missing -- the real finding
+    except OSError as e:
+        logger.debug("could not determine whether uninstaller %r exists: %s", exe, e)
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -206,6 +252,7 @@ class Row:
     eol_days_left: Optional[int] = None
     superseded_by: str = ""          # newest version string when an older duplicate
     winget_available: str = ""
+    uninstaller_missing: Optional[bool] = None   # True = confirmed gone; None = N/A or unknown
     tags: Set[str] = field(default_factory=set)
 
     @property
@@ -214,7 +261,8 @@ class Row:
 
 
 CHIPS = ["All", "Apps", "Runtimes", "System components", "Duplicates", "End of life",
-         f"Old ({OLD_YEARS}+ yr)", "32-bit", "User install", "Updates available", "No publisher"]
+         f"Old ({OLD_YEARS}+ yr)", "32-bit", "User install", "Updates available", "No publisher",
+         "Broken uninstaller"]
 
 
 def analyze(entries: Sequence[SoftwareEntry], today: Optional[date] = None,
@@ -236,6 +284,7 @@ def analyze(entries: Sequence[SoftwareEntry], today: Optional[date] = None,
         if row.eol:
             row.eol_days_left = row.eol.days_left(today)
         row.superseded_by = dup_newest.get(id(e), "")
+        row.uninstaller_missing = uninstaller_target_status(e)
         if winget:
             row.winget_available = winget.get(e.name.lower().strip(), "")
         row.tags = _tags(row, today)
@@ -266,6 +315,8 @@ def _tags(row: Row, today: date) -> Set[str]:
         tags.add("Updates available")
     if not e.publisher.strip() and not hidden:
         tags.add("No publisher")
+    if row.uninstaller_missing is True:
+        tags.add("Broken uninstaller")
     tags.add("All")
     return tags
 
@@ -307,6 +358,15 @@ class Finding:
 
 def software_findings(rows: Sequence[Row], winget_error: str = "") -> List[Finding]:
     out: List[Finding] = []
+    broken = [r for r in rows if r.uninstaller_missing is True]
+    if broken:
+        names = ", ".join(r.name for r in broken[:5]) + (" ..." if len(broken) > 5 else "")
+        out.append(Finding(
+            "warning",
+            f"{len(broken)} uninstall entr{'y points' if len(broken) == 1 else 'ies point'} at a program that no longer exists",
+            f"{names}. Clicking Uninstall will launch nothing and the entry stays. "
+            "Its own installer cache is gone (common after a disk-cleanup tool removed it) -- "
+            "remove the program's own folder by hand, or try msiexec/Programs and Features if those still work."))
     seen_eol: Set[str] = set()
     for r in rows:
         if r.eol is None or r.eol_days_left is None or r.entry.is_update:
@@ -383,6 +443,8 @@ EXPORT_COLUMNS = ["Name", "Version", "Publisher", "Install date", "Size", "Archi
 
 def _note(r: Row) -> str:
     notes = []
+    if r.uninstaller_missing is True:
+        notes.append("uninstaller program missing -- Uninstall will not work")
     if r.superseded_by:
         notes.append(f"older than installed {r.superseded_by}")
     if r.eol is not None and r.eol_days_left is not None and r.eol_days_left < 0:
@@ -438,6 +500,9 @@ def detail_text(r: Row) -> str:
                      f"table as of {EOL_TABLE_AS_OF:%Y-%m-%d})")
     if r.winget_available:
         lines.append(f"winget: update to {r.winget_available} is available")
+    if r.uninstaller_missing is True:
+        lines.append("Uninstall: BROKEN -- the uninstaller's own program no longer exists on disk. "
+                     "This entry cannot remove itself; delete its install folder by hand.")
     lines.append(f"Location: {e.install_location or 'not recorded'}")
     lines.append(f"Registry: {e.registry_key}")
     if e.product_code:

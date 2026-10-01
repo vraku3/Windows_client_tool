@@ -96,15 +96,27 @@ def test_uninstall_asks_first_and_declining_launches_nothing(pane, monkeypatch):
     pane._uninstall()
 
 
-def test_uninstall_with_consent_runs_the_recorded_command(pane, monkeypatch):
-    pane.set_entries([_e("Tool", "1", uninstall_string="x.exe /S")])
+def test_uninstall_with_consent_runs_the_recorded_command(pane, monkeypatch, tmp_path):
+    real = tmp_path / "x.exe"
+    real.write_bytes(b"x")       # must actually exist, or the new broken-uninstaller guard refuses it
+    pane.set_entries([_e("Tool", "1", uninstall_string=f'"{real}" /S')])
     pane.table.selectRow(0)
     monkeypatch.setattr(sm, "confirm_destructive", lambda *a, **k: True)
     ran = []
     monkeypatch.setattr(sm.subprocess, "Popen", lambda cmd, **k: ran.append(cmd))
     pane._uninstall()
-    assert ran == ["x.exe /S"]
+    assert ran == [f'"{real}" /S']
     assert "Refresh" in pane.status.text()
+
+
+def test_uninstall_refuses_when_target_is_confirmed_missing(pane, monkeypatch, tmp_path):
+    missing = tmp_path / "nope" / "uninst.exe"
+    pane.set_entries([_e("Ghost", "1", uninstall_string=f'"{missing}" /S')])
+    pane.table.selectRow(0)
+    monkeypatch.setattr(sm, "confirm_destructive", lambda *a, **k: pytest.fail("should never ask"))
+    monkeypatch.setattr(sm.subprocess, "Popen", lambda *a, **k: pytest.fail("should never launch"))
+    pane._uninstall()
+    assert "no longer exists" in pane.status.text()
 
 
 def test_copy_markdown_uses_the_visible_rows(pane, qapp):

@@ -196,3 +196,75 @@ def test_real_machine_inventory_is_plausible():
     for e in full:
         if e.product_code:
             assert e.msi_uninstall.startswith("msiexec /x {")
+
+
+# ---------------------------------------------------------------------------
+# Broken uninstallers
+# ---------------------------------------------------------------------------
+
+def test_uninstaller_target_status_none_when_not_applicable():
+    assert sa.uninstaller_target_status(_e("No string", uninstall_string="")) is None
+    assert sa.uninstaller_target_status(
+        _e("MSI", uninstall_string="MsiExec.exe /I{x}", windows_installer=True)) is None
+    assert sa.uninstaller_target_status(
+        _e("Winget", uninstall_string="winget uninstall --product-code X")) is None
+    assert sa.uninstaller_target_status(
+        _e("MsiexecRaw", uninstall_string="MsiExec.exe /X{22222222-2222-2222-2222-222222222222}")) is None
+
+
+def test_uninstaller_target_status_true_when_file_genuinely_missing(tmp_path):
+    missing = tmp_path / "does_not_exist" / "uninst.exe"
+    e = _e("Gone", uninstall_string=f'"{missing}" /S')
+    assert sa.uninstaller_target_status(e) is True
+
+
+def test_uninstaller_target_status_false_for_real_file(tmp_path):
+    real = tmp_path / "uninst.exe"
+    real.write_bytes(b"x")
+    e = _e("Present", uninstall_string=f'"{real}" /S')
+    assert sa.uninstaller_target_status(e) is False
+
+
+def test_uninstaller_target_status_unquoted_path_with_spaces(tmp_path):
+    sub = tmp_path / "Program Files" / "Thing"
+    sub.mkdir(parents=True)
+    real = sub / "uninst.exe"
+    real.write_bytes(b"x")
+    e = _e("Unquoted", uninstall_string=f"{real} /S")
+    assert sa.uninstaller_target_status(e) is False
+
+
+def test_broken_uninstaller_tag_and_finding_and_note(tmp_path):
+    missing = tmp_path / "ghost.exe"
+    e = _e("Ghost App", uninstall_string=f'"{missing}" /S')
+    rows = sa.analyze([e], today=TODAY)
+    row = rows[0]
+    assert row.uninstaller_missing is True
+    assert "Broken uninstaller" in row.tags
+    assert sa.chip_counts(rows)["Broken uninstaller"] == 1
+    assert "uninstaller program missing" in sa._note(row)
+    findings = sa.software_findings(rows)
+    assert any("no longer exists" in f.title and "Ghost App" in f.detail for f in findings)
+    assert "BROKEN" in sa.detail_text(row)
+
+
+def test_broken_uninstaller_absent_for_healthy_entry():
+    e = _e("Healthy", uninstall_string="MsiExec.exe /I{x}", windows_installer=True)
+    rows = sa.analyze([e], today=TODAY)
+    row = rows[0]
+    assert row.uninstaller_missing is None
+    assert "Broken uninstaller" not in row.tags
+    assert not sa.software_findings(rows)
+
+
+def test_real_machine_broken_uninstaller_check_runs_clean():
+    """Every non-MSI, non-winget uninstall string on THIS machine currently
+    resolves to a real file -- confirmed by direct registry probe (2026-10-01)
+    before building this check. Asserts the detector agrees, not that it finds
+    something: a module this mature having zero broken uninstallers right now
+    is the expected, correct answer."""
+    from modules.software_inventory import software_reader as sr
+    full = sr.fetch_software_inventory()
+    rows = sa.analyze(full)
+    broken = [r for r in rows if r.uninstaller_missing is True]
+    assert broken == [], f"unexpected broken uninstallers found: {[r.name for r in broken]}"

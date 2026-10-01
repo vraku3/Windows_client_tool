@@ -63,3 +63,36 @@ def test_event_viewer_module_creates_widget(qapp):
     assert isinstance(widget, LogPane)
     assert widget.row_count() == 0
     assert widget.extra["hours_combo"].currentText() == "24 hours"
+
+
+def test_event_viewer_wires_up_a_ticket_ready_copy_formatter(qapp):
+    # entry_as_text() (log name, computer, record number, the event's own
+    # structured data) existed but was never called from anywhere -- "Copy
+    # row" fell back to LogTableWidget's generic one-liner, which drops all
+    # of that. Event Viewer's pane_options() must hand it to the pane.
+    from modules.event_viewer import event_analysis as ea
+    from modules.event_viewer.event_viewer_module import EventViewerModule
+
+    mod = EventViewerModule()
+    options = mod.pane_options()
+    assert options["copy_formatter"] is ea.entry_as_text
+
+
+def test_copy_row_on_a_real_event_pastes_more_than_the_message(qapp):
+    # Real-machine: pull one real System/Application event through the same
+    # reader the module uses, and confirm the ticket-ready text actually adds
+    # real fields (log name, record number) a plain "time [level] source:
+    # message" line does not carry.
+    from modules.event_viewer import event_analysis as ea
+    from modules.event_viewer.event_reader import read_logs
+
+    entries, _notes = read_logs(hours_back=24, max_events_per_log=50, include_security=False)
+    if not entries:
+        import pytest
+        pytest.skip("no events in the last 24 hours on this machine")
+    entry = entries[0]
+    generic = f"{entry.timestamp} [{entry.level}] {entry.source}: {entry.message}"
+    ticket_text = ea.entry_as_text(entry)
+    assert ticket_text != generic
+    assert entry.raw.get("log_name", "") in ticket_text
+    assert str(entry.raw.get("record_number", "")) in ticket_text

@@ -43,12 +43,17 @@ class LogTableWidget(QWidget):
     COLUMNS = ["Time", "Source", "Level", "Message"]
 
     def __init__(self, parent: QWidget = None, extra_columns: list = None,
-                 extra_values: Optional[Callable[[LogEntry], list]] = None):
+                 extra_values: Optional[Callable[[LogEntry], list]] = None,
+                 copy_formatter: Optional[Callable[[LogEntry], str]] = None):
         """`extra_columns` are extra headers placed AFTER Message; `extra_values`
-        maps an entry to one value per extra column (an int sorts numerically)."""
+        maps an entry to one value per extra column (an int sorts numerically).
+        `copy_formatter`, when given, replaces the plain one-line clipboard text
+        with whatever a reader module considers paste-ready for a ticket (log
+        name, computer, record number, the event's own structured data)."""
         super().__init__(parent)
         self._entries: List[LogEntry] = []
         self._extra_values = extra_values
+        self._copy_formatter = copy_formatter
         self._n_extra = len(extra_columns or [])
         # Extras sit between Level and Message so Message stays last and stretches.
         self._columns = self.COLUMNS[:3] + list(extra_columns or []) + self.COLUMNS[3:]
@@ -228,8 +233,11 @@ class LogTableWidget(QWidget):
         entry = self.selected_entry()
         if entry is None:
             return
-        extra = " ".join(self._extra_text(entry))
-        text = f"{entry.timestamp} [{entry.level}] {entry.source}: {entry.message}"
-        if extra:
-            text += f"  ({extra})"
+        if self._copy_formatter is not None:
+            text = self._copy_formatter(entry)
+        else:
+            extra = " ".join(self._extra_text(entry))
+            text = f"{entry.timestamp} [{entry.level}] {entry.source}: {entry.message}"
+            if extra:
+                text += f"  ({extra})"
         QApplication.clipboard().setText(text)

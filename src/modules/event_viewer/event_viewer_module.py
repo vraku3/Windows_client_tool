@@ -52,6 +52,7 @@ class EventViewerModule(LogReaderModule):
             "extra_values": ea.row_values,
             "detail_enricher": self._detail,
             "summarizer": self._summary,
+            "copy_formatter": ea.entry_as_text,
         }
 
     def build_controls(self, toolbar, extra) -> None:

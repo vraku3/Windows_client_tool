@@ -5,6 +5,24 @@ Remote Desktop Users group, firewall rules); `evaluate()` is pure and turns a
 `RemoteState` into rows + findings. A field that could not be read is None and
 becomes "unknown" -- never "off". RDP being off by `fDenyTSConnections` is a
 definite answer; a service we could not query is not.
+
+Two more registry values were being read nowhere in this app's own exposure
+view even though the Tweak System already ships a fix for one of them
+(`remote.json`'s "Set Maximum RDP Encryption Level" writes `MinEncryptionLevel
+= 3`): confirmed live 2026-10-01, this machine carries `SecurityLayer = 2`
+(TLS-only) but `MinEncryptionLevel = 2` ("Client Compatible", not "High").
+`MinEncryptionLevel` only governs the legacy bulk-encryption cipher used by
+the native RDP Security Layer -- with `SecurityLayer = 2` forcing TLS, the
+weak value is currently inert, but it is a live footgun: nothing stops
+`SecurityLayer` being set back to Negotiate/legacy RDP later (by a GPO, by
+someone "fixing" a connectivity complaint), at which point this dormant value
+takes over with no NLA-style warning anywhere else in this app. Also read:
+`CreateEncryptedOnlyTickets` under the same Remote Assistance key already
+used for `fAllowToGetHelp`/`fAllowFullControl` -- confirmed live 2026-10-01 as
+`0` on this machine, meaning the legacy unencrypted Remote Assistance ticket
+format is allowed alongside the modern encrypted one. An absent value (never
+set) is read as the modern secure default and raises no finding; this is
+distinct from the registry read itself failing.
 """
 from __future__ import annotations
 
@@ -34,10 +52,12 @@ class RemoteState:
     rdp_nla: Optional[bool] = None
     rdp_port: Optional[int] = None
     rdp_security_layer: Optional[int] = None  # 0 RDP, 1 negotiate, 2 TLS
+    rdp_min_encryption_level: Optional[int] = None  # 1 Low, 2 Client Compatible, 3 High, 4 FIPS
     rdp_users: Optional[List[str]] = None     # Remote Desktop Users members
     rdp_listening: Optional[bool] = None
     assist_enabled: Optional[bool] = None
     assist_full_control: Optional[bool] = None
+    assist_encrypted_only_tickets: Optional[bool] = None  # None = key absent (modern default)
     services: Dict[str, ServiceInfo] = field(default_factory=dict)
     listening: Optional[Dict[int, bool]] = None   # port -> listening (any address)
     fw_enabled: Optional[Dict[str, int]] = None    # feature -> count of ENABLED inbound allow rules
@@ -85,6 +105,19 @@ def _rdp_row(s: RemoteState) -> Row:
     if s.rdp_security_layer == 0:
         finds.append("Security layer is legacy RDP (no TLS).")
         sev = SEV_HIGH
+    if s.rdp_min_encryption_level is not None and s.rdp_min_encryption_level < 3:
+        level_name = {1: "Low", 2: "Client Compatible"}.get(
+            s.rdp_min_encryption_level, str(s.rdp_min_encryption_level))
+        if s.rdp_security_layer == 2:
+            finds.append(
+                "Minimum encryption level is \"%s\", not High -- currently harmless because the "
+                "security layer is TLS-only (SecurityLayer=2), but this value takes over the moment "
+                "SecurityLayer is ever changed back to Negotiate or legacy RDP." % level_name)
+        else:
+            finds.append(
+                "Minimum encryption level is \"%s\": the active RDP security layer can negotiate down "
+                "to weak bulk encryption." % level_name)
+            sev = SEV_HIGH
     if s.rdp_port not in (None, 3389):
         bits.append("non-default port")
     if s.rdp_users is not None:
@@ -146,9 +179,15 @@ def _assist_row(s: RemoteState) -> Row:
     finds = []
     if s.assist_full_control:
         finds.append("A helper who is invited may take FULL CONTROL, not just view.")
+    if s.assist_encrypted_only_tickets is False:
+        finds.append(
+            "Unencrypted (legacy) Remote Assistance tickets are allowed, not just the modern "
+            "encrypted format -- an invitation file sent over email or chat can be read by anyone "
+            "who intercepts it.")
+    sev = SEV_MEDIUM if (s.assist_full_control or s.assist_encrypted_only_tickets is False) else SEV_LOW
     return Row("Remote Assistance", "On", "Solicited assistance allowed%s; %s" % (
         ", full control permitted" if s.assist_full_control else ", view only", _fw_line(s, "assist")),
-        SEV_MEDIUM if s.assist_full_control else SEV_LOW, finds, JUMP_FIREWALL)
+        sev, finds, JUMP_FIREWALL)
 
 
 def evaluate(state: RemoteState) -> List[Row]:
@@ -182,11 +221,14 @@ def read_registry(state: RemoteState) -> None:
         state.rdp_nla = None if nla is None else nla == 1
         state.rdp_port = _dword(winreg, winreg.HKEY_LOCAL_MACHINE, tcp, "PortNumber")
         state.rdp_security_layer = _dword(winreg, winreg.HKEY_LOCAL_MACHINE, tcp, "SecurityLayer")
+        state.rdp_min_encryption_level = _dword(winreg, winreg.HKEY_LOCAL_MACHINE, tcp, "MinEncryptionLevel")
         ra = r"SYSTEM\CurrentControlSet\Control\Remote Assistance"
         allow = _dword(winreg, winreg.HKEY_LOCAL_MACHINE, ra, "fAllowToGetHelp")
         state.assist_enabled = None if allow is None else allow == 1
         full = _dword(winreg, winreg.HKEY_LOCAL_MACHINE, ra, "fAllowFullControl")
         state.assist_full_control = None if full is None else full == 1
+        enc_only = _dword(winreg, winreg.HKEY_LOCAL_MACHINE, ra, "CreateEncryptedOnlyTickets")
+        state.assist_encrypted_only_tickets = None if enc_only is None else enc_only == 1
     except OSError as exc:
         state.errors["rdp"] = "registry read refused: %s" % exc
 

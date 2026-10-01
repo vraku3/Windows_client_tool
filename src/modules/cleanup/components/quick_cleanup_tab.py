@@ -432,6 +432,7 @@ class QuickCleanupTab(QWidget):
         self._watchdog = QTimer(self)
         self._watchdog.setSingleShot(True)
         self._watchdog.timeout.connect(self._on_scan_watchdog)
+        self._clean_after_scan = False
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -654,6 +655,21 @@ class QuickCleanupTab(QWidget):
 
     def cancel(self) -> None:
         self._reset_after_cancel()
+
+    def clean_now(self) -> None:
+        """The module-level "Clean Now" button's entry point. Scans first
+        if this tab has never been scanned (or was reset by a cancel) --
+        the button is reachable before anyone has visited this tab at
+        all, so it cannot assume `_results` is already populated. Once a
+        scan genuinely has nothing cleanable, this is a no-op, same as
+        clicking the (disabled) Clean button directly would be."""
+        if self._scanning:
+            return
+        if self._scanned:
+            self._do_clean_all_safe()
+            return
+        self._clean_after_scan = True
+        self._do_scan_all()
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -1011,6 +1027,10 @@ class QuickCleanupTab(QWidget):
         )
         self.scan_done.emit(total_items, total_size)
 
+        if self._clean_after_scan:
+            self._clean_after_scan = False
+            self._do_clean_all_safe()
+
     def _on_scan_watchdog(self) -> None:
         if not self._scanning:
             return
@@ -1037,6 +1057,9 @@ class QuickCleanupTab(QWidget):
             w.cancel()
         self._workers.clear()
         self._scanning = False
+        # A cancelled scan must not leave clean_now()'s deferred action
+        # armed -- it would otherwise fire on the NEXT unrelated scan.
+        self._clean_after_scan = False
         # Nothing was measured, so the tab has NOT been scanned: let
         # auto_scan() run again the next time the module is activated.
         self._scanned = False

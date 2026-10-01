@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.semantic_colors import semantic
 from core.table_ui import set_role
 from modules.cleanup import cleanup_history
 from modules.cleanup import cleanup_scanner as cs
@@ -313,12 +314,24 @@ class CleanupModule(BaseModule):
             f"All-time freed: {cs.format_size(cleanup_history.total_freed_all_time())}")
         set_role(self._all_time_lbl, "muted")
         self._freed_lbl = QLabel("Freed this session: 0 B")
-        self._freed_lbl.setStyleSheet("color: #4caf50; font-weight: bold; padding: 2px 6px;")
+        self._freed_lbl.setStyleSheet(
+            f"color: {semantic('success')}; font-weight: bold; padding: 2px 6px;")
         self._freed_bytes = 0
         history_btn = QPushButton("History")
         history_btn.clicked.connect(self._show_history)
         exclusions_btn = QPushButton("Exclusions…")
         exclusions_btn.clicked.connect(self._show_exclusions)
+        # The one action this whole module exists to let someone take,
+        # reachable from any of the 8 tabs rather than only from Quick
+        # Cleanup's own toolbar -- reuses that tab's existing scan/confirm/
+        # delete pipeline rather than a second implementation of it.
+        self._clean_now_btn = QPushButton("🧹  Clean Now")
+        self._clean_now_btn.setObjectName("accentButton")
+        self._clean_now_btn.setToolTip(
+            "Scans (if needed) and removes everything Quick Cleanup's "
+            "active preset marks safe, with one confirmation first.")
+        self._clean_now_btn.clicked.connect(self._clean_now)
+        header.addWidget(self._clean_now_btn)
         header.addStretch()
         header.addWidget(self._all_time_lbl)
         header.addWidget(self._freed_lbl)
@@ -425,6 +438,14 @@ class CleanupModule(BaseModule):
         cleanup_history.record(nbytes)
         self._all_time_lbl.setText(
             f"All-time freed: {cs.format_size(cleanup_history.total_freed_all_time())}")
+
+    def _clean_now(self) -> None:
+        """Switch to Quick Cleanup and run its Clean All Safe action --
+        the confirmation dialog and the actual deletion are entirely
+        QuickCleanupTab's own already-tested code; this button only makes
+        that action reachable without first navigating to that tab."""
+        self._tabs.setCurrentWidget(self._quick)
+        self._quick.clean_now()
 
     def _show_history(self) -> None:
         _CleanupHistoryDialog(self._tabs.window()).exec()

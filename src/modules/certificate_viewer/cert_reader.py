@@ -29,6 +29,7 @@ class CertInfo:
     self_signed: bool = False
     store_name: str = ""
     store_location: str = ""
+    key_exportable: Optional[bool] = None   # None = no private key, or mechanism refused
 
 
 _STORE_PATHS = {
@@ -54,14 +55,9 @@ def _parse_time(text) -> Optional[datetime.datetime]:
         return None
 
 
-def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]:
-    """Load certificates from a Windows certificate store using PowerShell."""
-    store_path = _STORE_PATHS.get(
-        (store_name, store_location),
-        rf"Cert:\CurrentUser\{store_name}",
-    )
-
-    ps = f"""
+def _build_ps_script(store_path: str) -> str:
+    """The PowerShell enumeration script for one certificate store path."""
+    return f"""
 $ErrorActionPreference = 'SilentlyContinue'
 $certs = Get-ChildItem -Path '{store_path}'
 if (-not $certs) {{ Write-Output '[]'; exit 0 }}
@@ -79,6 +75,27 @@ foreach ($cert in $certs) {{
     $isCa = $null
     $bc = $cert.Extensions | Where-Object {{ $_ -is [System.Security.Cryptography.X509Certificates.X509BasicConstraintsExtension] }}
     if ($bc) {{ $isCa = [bool]$bc.CertificateAuthority }}
+    $keyExportable = $null
+    if ($cert.HasPrivateKey) {{
+        try {{
+            $cngKey = $null
+            $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($cert)
+            if ($rsaKey -is [System.Security.Cryptography.RSACng]) {{ $cngKey = $rsaKey.Key }}
+            if ($cngKey -eq $null) {{
+                $ecKey = [System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions]::GetECDsaPrivateKey($cert)
+                if ($ecKey -is [System.Security.Cryptography.ECDsaCng]) {{ $cngKey = $ecKey.Key }}
+            }}
+            if ($cngKey -ne $null) {{
+                $keyExportable = [bool]($cngKey.ExportPolicy -ne [System.Security.Cryptography.CngExportPolicies]::None)
+            }} else {{
+                # Pre-CNG legacy CAPI key container (e.g. an older PFX import).
+                try {{
+                    $csp = $cert.PrivateKey.CspKeyContainerInfo
+                    if ($csp) {{ $keyExportable = [bool]$csp.Exportable }}
+                }} catch {{ }}
+            }}
+        }} catch {{ }}
+    }}
     try {{
         $derB64 = [Convert]::ToBase64String(
             $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Cert)
@@ -98,12 +115,56 @@ foreach ($cert in $certs) {{
         KeyAlg        = $cert.PublicKey.Oid.FriendlyName
         KeySize       = $keySize
         IsCA          = $isCa
+        KeyExportable = $keyExportable
         DerBase64     = $derB64
     }}
 }}
 if ($result.Count -eq 0) {{ Write-Output '[]'; exit 0 }}
 $result | ConvertTo-Json -Depth 3 -Compress
 """
+
+
+def _parse_cert_item(item: dict, store_name: str, store_location: str,
+                      today: datetime.datetime) -> CertInfo:
+    """Build one CertInfo from a single decoded JSON record."""
+    expiry = datetime.datetime.strptime(item["Expiry"], "%Y-%m-%d %H:%M:%S")
+    days = (expiry - today).days
+    flag = ""
+    if days < 0:
+        flag = "🔴 Expired"
+    elif days <= 30:
+        flag = "🟠 Expiring Soon"
+    raw_der = base64.b64decode(item.get("DerBase64") or "")
+    return CertInfo(
+        subject_cn=item.get("SubjectCN") or "",
+        subject_full=item.get("SubjectFull") or "",
+        issuer=item.get("Issuer") or "",
+        expiry=expiry,
+        thumbprint=item.get("Thumbprint") or "",
+        key_usage=item.get("KeyUsage") or "N/A",
+        has_private_key=bool(item.get("HasPrivateKey", False)),
+        raw_der=raw_der,
+        days_until_expiry=days,
+        flag=flag,
+        not_before=_parse_time(item.get("NotBefore")),
+        sig_algorithm=item.get("SigAlg") or "",
+        key_algorithm=item.get("KeyAlg") or "",
+        key_size=int(item.get("KeySize") or 0),
+        is_ca=item.get("IsCA"),
+        self_signed=(item.get("SubjectFull") or "") == (item.get("IssuerFull") or "<none>"),
+        store_name=store_name,
+        store_location=store_location,
+        key_exportable=item.get("KeyExportable"),
+    )
+
+
+def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]:
+    """Load certificates from a Windows certificate store using PowerShell."""
+    store_path = _STORE_PATHS.get(
+        (store_name, store_location),
+        rf"Cert:\CurrentUser\{store_name}",
+    )
+    ps = _build_ps_script(store_path)
 
     try:
         proc = subprocess.run(
@@ -131,34 +192,7 @@ $result | ConvertTo-Json -Depth 3 -Compress
     certs: List[CertInfo] = []
     for item in data:
         try:
-            expiry = datetime.datetime.strptime(item["Expiry"], "%Y-%m-%d %H:%M:%S")
-            days = (expiry - today).days
-            flag = ""
-            if days < 0:
-                flag = "🔴 Expired"
-            elif days <= 30:
-                flag = "🟠 Expiring Soon"
-            raw_der = base64.b64decode(item.get("DerBase64") or "")
-            certs.append(CertInfo(
-                subject_cn=item.get("SubjectCN") or "",
-                subject_full=item.get("SubjectFull") or "",
-                issuer=item.get("Issuer") or "",
-                expiry=expiry,
-                thumbprint=item.get("Thumbprint") or "",
-                key_usage=item.get("KeyUsage") or "N/A",
-                has_private_key=bool(item.get("HasPrivateKey", False)),
-                raw_der=raw_der,
-                days_until_expiry=days,
-                flag=flag,
-                not_before=_parse_time(item.get("NotBefore")),
-                sig_algorithm=item.get("SigAlg") or "",
-                key_algorithm=item.get("KeyAlg") or "",
-                key_size=int(item.get("KeySize") or 0),
-                is_ca=item.get("IsCA"),
-                self_signed=(item.get("SubjectFull") or "") == (item.get("IssuerFull") or "<none>"),
-                store_name=store_name,
-                store_location=store_location,
-            ))
+            certs.append(_parse_cert_item(item, store_name, store_location, today))
         except Exception:
             logger.warning("Ignored Exception reading certificate", exc_info=True)
             continue

@@ -4,10 +4,11 @@ from modules.certificate_viewer import cert_findings as cf
 from modules.certificate_viewer.cert_reader import CertInfo, fetch_certs
 
 
-def mk(days=400, sig="sha256RSA", alg="RSA", size=2048, store="MY", selfs=False, key=False):
+def mk(days=400, sig="sha256RSA", alg="RSA", size=2048, store="MY", selfs=False, key=False,
+       exportable=None):
     return CertInfo("cn", "CN=cn", "iss", datetime.datetime.utcnow(), "AB CD", "N/A", key, b"",
                     days, "", sig_algorithm=sig, key_algorithm=alg, key_size=size,
-                    self_signed=selfs, store_name=store)
+                    self_signed=selfs, store_name=store, key_exportable=exportable)
 
 
 def test_weakness():
@@ -55,6 +56,55 @@ def test_expired_root_anchor_is_a_distinct_finding_from_an_expired_leaf():
 
     # A not-yet-expired Root cert never trips it.
     assert not cf.is_expired_root_anchor(mk(400, store="ROOT"))
+
+
+def test_exportable_private_key_is_a_distinct_finding_from_merely_having_one():
+    # A cert with a private key that is NOT exportable (the common case for
+    # AD-autoenrolled, Windows Hello, or device-bound certs) never trips it.
+    bound = mk(key=True, exportable=False)
+    assert not cf.has_exportable_private_key(bound)
+    assert "exportable" not in cf.findings_text(bound)
+
+    # A cert whose private key IS confirmed exportable does.
+    exportable = mk(key=True, exportable=True)
+    assert cf.has_exportable_private_key(exportable)
+    assert "private key is exportable off this machine" in cf.findings_text(exportable)
+    assert cf.matches_chip(exportable, "Exportable private key")
+    assert not cf.matches_chip(bound, "Exportable private key")
+
+    # `None` (no private key, or the mechanism itself was refused) is never
+    # collapsed into "not exportable" being reported as a clean answer --
+    # it simply never trips the finding, same as an unread field elsewhere
+    # in this module.
+    unread = mk(key=True, exportable=None)
+    assert not cf.has_exportable_private_key(unread)
+
+
+def test_chips_count_exportable_private_key():
+    certs = [mk(key=True, exportable=True), mk(key=True, exportable=False), mk(key=False)]
+    counts = cf.chip_counts(certs)
+    assert counts["Exportable private key"] == 1
+    assert counts["Has private key"] == 2
+
+
+def test_real_personal_store_private_keys_report_exportability_or_na():
+    # Probed live 2026-10-01: every CurrentUser\\My cert on this machine is a
+    # device-bound WHfB/device-trust cert (CN is a GUID), backed by a CNG key
+    # container with ExportPolicy == None -- confirmed exportable=False, not
+    # merely absent. This pins that the mechanism actually READS a real
+    # answer (not stuck on None/unknown for every cert), while never
+    # asserting the interesting True case exists on this particular machine.
+    certs = fetch_certs("MY", "user")
+    with_key = [c for c in certs if c.has_private_key]
+    if not with_key:
+        return  # nothing to check on a machine with no personal certs
+    determined = [c for c in with_key if c.key_exportable is not None]
+    assert determined, "key_exportable must be determined for at least one real private key"
+    assert all(c.key_exportable is False for c in determined), (
+        "measured 2026-10-01: every CurrentUser\\My private key on this machine is "
+        "CNG-backed with ExportPolicy None (non-exportable); if this ever shows True "
+        "it means a real exportable key was added, not that the probe broke"
+    )
 
 
 def test_search_by_spaced_thumbprint():

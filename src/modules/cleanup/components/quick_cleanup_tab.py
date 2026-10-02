@@ -417,6 +417,19 @@ class QuickCleanupTab(QWidget):
     #: scan measures, not a number copied from a different, smaller sweep.
     SCAN_WATCHDOG_MS = 300_000
 
+    #: A real-world report: Scan All ran for over an hour producing
+    #: nothing, while each category's own manual Scan button (which only
+    #: runs ONE scanner) worked fine -- because _on_all_scanned only fires
+    #: once EVERY scanner among ~137 has reported, one pathologically slow
+    #: scanner (a huge personal folder, a slow network share, a OneDrive
+    #: placeholder needing hydration) blocks the whole dashboard, and nothing
+    #: short of the full 5-minute SCAN_WATCHDOG_MS would ever show anything.
+    #: A category stuck past this (45s -- real sweeps here measure single
+    #: seconds per scanner) is marked timed-out and counted as reported, so
+    #: the other ~136 results still render; its own real worker keeps
+    #: running and corrects the result in place if it finishes later.
+    PER_SCANNER_TIMEOUT_MS = 45_000
+
     def __init__(self, parent=None, on_category_clicked=None):
         super().__init__(parent)
         self._on_category_clicked = on_category_clicked
@@ -428,6 +441,8 @@ class QuickCleanupTab(QWidget):
         self._refresh_timer.timeout.connect(self._on_timer_refresh)
         self._refresh_interval_ms = 30_000
         self._workers: List[Worker] = []
+        self._timed_out_cids: set = set()
+        self._per_category_timers: List[QTimer] = []
         self._scanned = False
         self._watchdog = QTimer(self)
         self._watchdog.setSingleShot(True)
@@ -839,6 +854,44 @@ class QuickCleanupTab(QWidget):
 
     # ── Scan All ────────────────────────────────────────────────────────────
 
+    def _start_timeout_guard(self, cid: str, scan_targets: list) -> QTimer:
+        """A per-category watchdog, started alongside that category's
+        worker: if `cid` hasn't reported within PER_SCANNER_TIMEOUT_MS, it
+        is counted as done (timed out) so one slow scanner cannot block
+        every other category from ever being shown. The real worker keeps
+        running and corrects the placeholder in place if it finishes
+        later. Returns the timer so the caller stops it once a real
+        result (or error) lands."""
+        def _on_timeout():
+            if not _alive(self) or cid in self._results:
+                return
+            logger.warning(
+                "Quick Cleanup: %s did not report within %.0fs -- "
+                "continuing without it (its own worker keeps running "
+                "and will correct this if it finishes later)",
+                cid, self.PER_SCANNER_TIMEOUT_MS / 1000)
+            self._timed_out_cids.add(cid)
+            self._total_scanned += 1
+            if self._total_scanned == len(scan_targets):
+                self._on_all_scanned()
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(_on_timeout)
+        timer.start(self.PER_SCANNER_TIMEOUT_MS)
+        self._per_category_timers.append(timer)
+        return timer
+
+    def _count_scanner_result(self, cid: str, scan_targets: list) -> None:
+        """Count `cid` toward completion -- unless its timeout guard
+        already counted it, in which case this is a late, corrected
+        result and must not increment _total_scanned a second time."""
+        already_counted = cid in self._timed_out_cids
+        if not already_counted:
+            self._total_scanned += 1
+        if self._total_scanned == len(scan_targets):
+            self._on_all_scanned()
+
     def _do_scan_all(self):
         if self._scanning:
             return
@@ -850,6 +903,10 @@ class QuickCleanupTab(QWidget):
         self._progress.show()
         self._results.clear()
         self._total_scanned = 0
+        self._timed_out_cids = set()
+        for t in self._per_category_timers:
+            t.stop()
+        self._per_category_timers = []
 
         from modules.cleanup import cleanup_scanner as cs
 
@@ -860,26 +917,28 @@ class QuickCleanupTab(QWidget):
         browser_target = "browser" in [c[0] for c in self._categories]
 
         def _start_worker(cid: str, scanner_fn, category_list: list):
-            """Launch a worker for a scanner function."""
+            """Launch a worker for a scanner function, with its own timeout
+            so one slow scanner cannot block every other category from ever
+            being shown (see PER_SCANNER_TIMEOUT_MS)."""
             def _run(_worker):
                 from modules.cleanup.cleanup_scanner import scan_cache
                 return scan_cache.cached_scan(scanner_fn, 0)
 
+            timer = self._start_timeout_guard(cid, scan_targets)
+
             def _done(result):
+                timer.stop()
                 if not _alive(self):
                     return
                 self._results[cid] = result
-                self._total_scanned += 1
-                if self._total_scanned == len(scan_targets):
-                    self._on_all_scanned()
+                self._count_scanner_result(cid, scan_targets)
 
             def _err(_e):
+                timer.stop()
                 if not _alive(self):
                     return
                 self._results[cid] = cs.ScanResult()
-                self._total_scanned += 1
-                if self._total_scanned == len(scan_targets):
-                    self._on_all_scanned()
+                self._count_scanner_result(cid, scan_targets)
 
             w = Worker(_run)
             w.signals.result.connect(_done)
@@ -914,21 +973,21 @@ class QuickCleanupTab(QWidget):
             def _run_browser(_worker):
                 return self._browser_scanner()
 
+            browser_timer = self._start_timeout_guard("browser", scan_targets)
+
             def _done_browser(results):
+                browser_timer.stop()
                 if not _alive(self):
                     return
                 self._results["browser"] = results
-                self._total_scanned += 1
-                if self._total_scanned == len(scan_targets):
-                    self._on_all_scanned()
+                self._count_scanner_result("browser", scan_targets)
 
             def _err_browser(_e):
+                browser_timer.stop()
                 if not _alive(self):
                     return
                 self._results["browser"] = []
-                self._total_scanned += 1
-                if self._total_scanned == len(scan_targets):
-                    self._on_all_scanned()
+                self._count_scanner_result("browser", scan_targets)
 
             wb = Worker(_run_browser)
             wb.signals.result.connect(_done_browser)
@@ -1020,11 +1079,18 @@ class QuickCleanupTab(QWidget):
         self._item_lbl.setText(f"Items found: {total_items}")
         self._cat_lbl.setText(f"Categories: {len(self._categories)} + {len(self._advanced_categories)} advanced")
         self._clean_all_btn.setEnabled(self._has_cleanable_items())
-        self._status_lbl.setText(
+        status = (
             f"Found {total_items} item(s) across {categories_with_data} categories"
             if categories_with_data
             else "No reclaimable space found"
         )
+        if self._timed_out_cids:
+            label_by_id = {cid: label for cid, label, _ in
+                          self._categories + self._advanced_categories}
+            names = ", ".join(
+                label_by_id.get(cid, cid) for cid in sorted(self._timed_out_cids))
+            status += f" ({len(self._timed_out_cids)} slow and still scanning: {names})"
+        self._status_lbl.setText(status)
         self.scan_done.emit(total_items, total_size)
 
         if self._clean_after_scan:
@@ -1056,6 +1122,9 @@ class QuickCleanupTab(QWidget):
         for w in self._workers:
             w.cancel()
         self._workers.clear()
+        for t in self._per_category_timers:
+            t.stop()
+        self._per_category_timers = []
         self._scanning = False
         # A cancelled scan must not leave clean_now()'s deferred action
         # armed -- it would otherwise fire on the NEXT unrelated scan.

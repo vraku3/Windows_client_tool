@@ -20,6 +20,23 @@ def test_benchmarks_tab_runs_quick_and_remembers_the_run(qapp, tmp_path):
     assert fresh._table.rowCount() >= 5                   # previous results are shown on open
 
 
+def test_benchmarks_tab_shows_a_trend_warning_only_once_the_bar_is_cleared(qapp, tmp_path):
+    import os
+    from modules.dashboard import benchmarks as bm
+    from modules.dashboard.benchmarks_tab import BenchmarksTab
+    d = os.path.join(str(tmp_path), "benchmarks")       # BenchmarksTab._history_dir()'s own layout
+    for v in (400.0, 350.0, 300.0):                       # two drops only: not enough yet
+        bm.save_run(d, [bm.BenchResult("Disk read (C:)", v, "MB/s")])
+    tab = BenchmarksTab()
+    tab.set_app(SimpleNamespace(thread_pool=None, app_data_dir=str(tmp_path)))
+    assert tab._trend_label.isHidden()
+    bm.save_run(d, [bm.BenchResult("Disk read (C:)", 250.0, "MB/s")])  # the third straight drop
+    fresh = BenchmarksTab()
+    fresh.set_app(SimpleNamespace(thread_pool=None, app_data_dir=str(tmp_path)))
+    assert not fresh._trend_label.isHidden()
+    assert "Disk read (C:)" in fresh._trend_label.text()
+
+
 def _loaded_tab(tmp_path):
     from modules.dashboard.flight_tab import FlightTab
     t = fr.Trace(interval=1.0, machine="PC")

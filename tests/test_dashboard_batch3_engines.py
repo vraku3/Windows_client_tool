@@ -69,6 +69,50 @@ def test_a_corrupt_history_file_is_reported_as_empty_not_a_crash(tmp_path):
     assert bm.load_history(str(tmp_path)) == []
 
 
+def _save(d, name, value):
+    bm.save_run(d, [bm.BenchResult(name, value, "MB/s")])
+
+
+def test_trend_flags_a_test_that_declined_every_run_in_a_row(tmp_path):
+    d = str(tmp_path)
+    for v in (400.0, 350.0, 300.0, 250.0):               # four straight drops
+        _save(d, "Disk read (C:)", v)
+    declines = bm.trend(bm.load_history(d), min_runs=3)
+    assert "Disk read (C:)" in declines
+    assert declines["Disk read (C:)"]["values"] == [400.0, 350.0, 300.0, 250.0]
+    assert declines["Disk read (C:)"]["pct_change"] == pytest.approx(-37.5)
+
+
+def test_trend_does_not_flag_a_single_bad_run_inside_a_longer_recovery(tmp_path):
+    """One slow run that then recovers is noise, not a trend -- it must not
+    appear just because SOME earlier pair of points happened to drop."""
+    d = str(tmp_path)
+    for v in (300.0, 200.0, 350.0, 360.0):               # dip then recovers twice
+        _save(d, "Disk read (C:)", v)
+    assert bm.trend(bm.load_history(d), min_runs=3) == {}
+
+
+def test_trend_needs_enough_history_before_it_will_say_anything(tmp_path):
+    d = str(tmp_path)
+    for v in (300.0, 250.0):                             # one drop, not three
+        _save(d, "Disk read (C:)", v)
+    assert bm.trend(bm.load_history(d), min_runs=3) == {}
+
+
+def test_trend_on_a_real_bench_run_round_trip_does_not_crash_or_false_flag(tmp_path):
+    """Real CPU/memory/disk numbers from THIS machine, run back-to-back and
+    saved through the real history file -- trend() must handle genuine
+    measured noise without raising, and a mere two real runs (one comparison)
+    can never clear the three-drop bar on its own."""
+    d = str(tmp_path)
+    first = bm.run_all(d, quick=True)
+    bm.save_run(d, first)
+    second = bm.run_all(d, quick=True)
+    bm.save_run(d, second)
+    declines = bm.trend(bm.load_history(d), min_runs=3)
+    assert declines == {}
+
+
 # ---- flight recorder --------------------------------------------------------------------
 
 def _trace(n=5):

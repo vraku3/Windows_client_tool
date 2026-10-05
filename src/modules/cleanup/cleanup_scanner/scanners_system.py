@@ -1737,8 +1737,8 @@ def protected_system_dirs() -> List[str]:
     missing exes. It used to be a catalog entry rated only "caution",
     which the Thorough and Aggressive presets both sweep.
     """
-    program_data = os.environ.get("ProgramData") or r"C:\ProgramData"
-    return [os.path.join(program_data, "Package Cache")]
+    from core.windows_utils import program_data
+    return [os.path.join(program_data(), "Package Cache")]
 
 
 def _is_inside(path: str, folder: str) -> bool:

@@ -74,6 +74,11 @@ class BenchmarksTab(DashTab):
         self.status.setWordWrap(True)
         set_role(self.status, "muted")
         layout.addWidget(self.status)
+        self._trend_label = QLabel("", self)
+        self._trend_label.setWordWrap(True)
+        self._trend_label.hide()
+        set_role(self._trend_label, "statusWarning")
+        layout.addWidget(self._trend_label)
         self._fill_drives()
         self._show_last_run()
 
@@ -103,6 +108,20 @@ class BenchmarksTab(DashTab):
         if history and not self._results:
             results = [bm.BenchResult(**r) for r in history[-1]["results"]]
             self._render(results, {}, f"Last run: {history[-1]['when']}")
+        self._show_trend(history)
+
+    def _show_trend(self, history: list) -> None:
+        declines = bm.trend(history)
+        if not declines:
+            self._trend_label.hide()
+            return
+        lines = [f"{name}: " + " → ".join(f"{v:,.0f}" for v in d["values"]) +
+                 f"  ({d['pct_change']:+.0f}% over the last {len(d['values']) - 1} runs)"
+                 for name, d in declines.items()]
+        self._trend_label.setText(
+            "Declined in every one of the last few runs (not just one slow run):\n" +
+            "\n".join(lines))
+        self._trend_label.show()
 
     # ---- running ------------------------------------------------------------------
 
@@ -178,6 +197,7 @@ class BenchmarksTab(DashTab):
             logger.warning("could not save benchmark history: %s", e)
             saved = f"NOT saved ({e})"
         self._render(self._results, change, f"Finished, {saved}.")
+        self._show_trend(bm.load_history(self._history_dir()))
 
     # ---- results ------------------------------------------------------------------
 

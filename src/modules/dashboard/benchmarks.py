@@ -24,7 +24,7 @@ import time
 from ctypes import wintypes
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -233,3 +233,35 @@ def compare(previous: list, current: List[BenchResult]) -> dict:
                 last[r["name"]] = r["value"]
     return {r.name: (r.value - last[r.name]) * 100.0 / last[r.name]
             for r in current if r.name in last and last[r.name] and r.value}
+
+
+def trend(history: list, min_runs: int = 3) -> Dict[str, dict]:
+    """Per-test name -> {"values": [...], "pct_change": float} for a test whose
+    value DROPPED in every one of the last `min_runs` consecutive saved runs.
+
+    `compare()` above answers "vs the one run before this" -- noisy by itself:
+    a single slow run (another process using the disk, a thermal blip) reads
+    as a regression and a recovered one reads as an improvement, both wrongly.
+    Requiring a STRICT run-over-run decline across `min_runs` transitions
+    (so `min_runs + 1` data points) is what tells a one-off dip apart from an
+    SSD actually wearing out or a driver regression that holds -- it only
+    fires on a run of bad luck that keeps not getting better.
+
+    For every test here, more is better (MB/s), so "declined" always means
+    the same direction; no per-test sign table is needed.
+    """
+    series: Dict[str, List[float]] = {}
+    for run in history:
+        for r in run.get("results", []):
+            value = r.get("value")
+            if value:
+                series.setdefault(r["name"], []).append(value)
+    out: Dict[str, dict] = {}
+    for name, values in series.items():
+        if len(values) < min_runs + 1:
+            continue
+        window = values[-(min_runs + 1):]
+        if all(window[i + 1] < window[i] for i in range(len(window) - 1)):
+            out[name] = {"values": window,
+                        "pct_change": (window[-1] - window[0]) * 100.0 / window[0]}
+    return out

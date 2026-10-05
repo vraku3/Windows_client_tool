@@ -36,8 +36,7 @@ def check_pending_servicing() -> Optional[Finding]:
     exactly what it sounds like -- a file-existence check -- but it
     answers a real question ("why won't DISM let me run ResetBase right
     now") that this module's own ResetBase gate (2.3) needs to ask too."""
-    windir = os.environ.get("windir", r"C:\Windows")
-    path = os.path.join(windir, "WinSxS", "pending.xml")
+    path = os.path.join(system_root(), "WinSxS", "pending.xml")
     if not os.path.exists(path):
         return None
     return Finding(

@@ -15,6 +15,7 @@ from modules.system_health.findings import (
 
 def test_pending_servicing_absent_returns_none(tmp_path, monkeypatch):
     monkeypatch.setenv("windir", str(tmp_path))  # no WinSxS\pending.xml here
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
     assert check_pending_servicing() is None
 
 
@@ -23,6 +24,7 @@ def test_pending_servicing_present_returns_a_warning(tmp_path, monkeypatch):
     winsxs.mkdir()
     (winsxs / "pending.xml").write_text("<root/>")
     monkeypatch.setenv("windir", str(tmp_path))
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
 
     finding = check_pending_servicing()
 
@@ -359,6 +361,7 @@ def test_upgrade_headroom_above_threshold_is_info(monkeypatch):
 
 def test_all_findings_combines_all_five_checks(monkeypatch, tmp_path):
     monkeypatch.setenv("windir", str(tmp_path))  # no pending.xml
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
     monkeypatch.setattr("shutil.disk_usage", lambda path: (500 * 1024**3, 100 * 1024**3, 400 * 1024**3))
     monkeypatch.setattr("modules.system_health.findings.check_orphaned_services", lambda: [])

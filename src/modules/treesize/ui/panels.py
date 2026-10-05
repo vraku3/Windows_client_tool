@@ -261,6 +261,9 @@ class TreeSizeStatusBar(QWidget):
         self._cluster.setText("—")
         self._notice.setText("")
 
+    def show_notice(self, text: str) -> None:
+        self._notice.setText(text)
+
     def show_result(self, result, drive_total: int = 0, drive_free: int = 0) -> None:
         if drive_total:
             self._free.setText(

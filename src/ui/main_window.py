@@ -157,7 +157,7 @@ class MainWindow(QMainWindow):
         self._tray_manager.show_balloon(data.title, data.message, icon)
 
     def _on_nav_request(self, data) -> None:
-        self._navigate_to_module(data.module_name)
+        self._navigate_to_module(data.module_name, getattr(data, "path", None))
 
     def _restore_window_geometry(self) -> None:
         """Put the window back where it was, on the screen it was on.
@@ -546,12 +546,17 @@ class MainWindow(QMainWindow):
         palette.move(x, y)
         palette.exec()
 
-    def _navigate_to_module(self, name: str) -> None:
+    def _navigate_to_module(self, name: str, path: Optional[str] = None) -> None:
         """Select the module called `name` — or whatever now contains it.
 
         A module that became a tab of a composite has no sidebar entry of its
         own any more, so a plain sidebar lookup would silently do nothing for
         every caller that still asks for it by name.
+
+        `path`, when given, is handed to the resolved module's own
+        `open_path(path)` if it has one (TreeSize does) — e.g. Disk Space's
+        folder-scan rows jump straight to that folder instead of landing on
+        whatever TreeSize last showed and making someone re-browse to it.
         """
         from ui.navigation import resolve_target
 
@@ -565,11 +570,15 @@ class MainWindow(QMainWindow):
             return
         self._sidebar.select(target)
         self._on_module_selected(target)
-        if tab is not None:
-            module = self._module_map.get(target)
+        module = self._module_map.get(target)
+        if tab is not None and module is not None:
             select_child = getattr(module, "select_child", None)
             if callable(select_child):
                 select_child(name)
+        if path and module is not None:
+            open_path = getattr(module, "open_path", None)
+            if callable(open_path):
+                open_path(path)
 
     def _schedule_update_check(self) -> None:
         """Run the update check once in the background 3 seconds after startup."""

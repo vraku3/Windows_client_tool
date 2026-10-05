@@ -87,6 +87,24 @@ class TreeSizeModule(BaseModule):
             # for a view nobody is looking at.
             self._shell._stop_watching()
 
+    def open_path(self, path: str) -> None:
+        """Jump straight to scanning `path`, for a caller (Disk Space's
+        folder-scan rows) that already knows the exact folder — rather than
+        landing on the Home tab and making the user re-browse to it.
+        `_navigate_to_module` calls this after `on_activate`, so the shell is
+        already built by the time this runs.
+
+        `start_scan` ignores a request while another scan runs, so say so
+        rather than letting the double-click look like it did nothing.
+        """
+        if self._shell is None:
+            return
+        if self._shell._worker is not None:
+            self._shell.status_bar.show_notice(
+                f"A scan is still running. Stop it to open {path}")
+            return
+        self._shell.start_scan(path)
+
     def get_search_provider(self) -> Optional[SearchProvider]:
         """Spec 9. TreeSize was the one module without one, so the global bar
         could not reach the paths it had already indexed."""

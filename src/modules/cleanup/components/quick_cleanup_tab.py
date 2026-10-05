@@ -927,16 +927,16 @@ class QuickCleanupTab(QWidget):
             timer = self._start_timeout_guard(cid, scan_targets)
 
             def _done(result):
-                timer.stop()
                 if not _alive(self):
                     return
+                timer.stop()
                 self._results[cid] = result
                 self._count_scanner_result(cid, scan_targets)
 
             def _err(_e):
-                timer.stop()
                 if not _alive(self):
                     return
+                timer.stop()
                 self._results[cid] = cs.ScanResult()
                 self._count_scanner_result(cid, scan_targets)
 
@@ -976,16 +976,16 @@ class QuickCleanupTab(QWidget):
             browser_timer = self._start_timeout_guard("browser", scan_targets)
 
             def _done_browser(results):
-                browser_timer.stop()
                 if not _alive(self):
                     return
+                browser_timer.stop()
                 self._results["browser"] = results
                 self._count_scanner_result("browser", scan_targets)
 
             def _err_browser(_e):
-                browser_timer.stop()
                 if not _alive(self):
                     return
+                browser_timer.stop()
                 self._results["browser"] = []
                 self._count_scanner_result("browser", scan_targets)
 

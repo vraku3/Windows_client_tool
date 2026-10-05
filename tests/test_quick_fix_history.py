@@ -4,6 +4,9 @@
 import json
 from datetime import datetime, timedelta
 
+import pytest
+
+from core.admin_utils import is_admin
 from modules.quick_fix import quick_fix_history as qfh
 
 
@@ -105,6 +108,10 @@ def test_recurring_actions_skips_a_malformed_timestamp_rather_than_raising(tmp_p
     assert qfh.recurring_actions() == {}
 
 
+@pytest.mark.skipif(not is_admin(), reason=(
+    "ipconfig /flushdns refuses unelevated on current Windows builds "
+    "('The requested operation requires elevation.'); Quick Fix itself is "
+    "requires_admin, so the button never runs it unelevated"))
 def test_recurring_actions_against_a_real_flush_dns_run_on_this_machine(tmp_path, monkeypatch):
     """Real-machine assertion: run the actual catalog action (`ipconfig
     /flushdns`, via `fix_actions.flush_dns`) against a scratch history

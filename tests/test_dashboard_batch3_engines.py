@@ -1,5 +1,6 @@
 """Benchmarks and Flight Recorder logic (no Qt)."""
 import json
+import os
 import time
 
 import pytest
@@ -134,3 +135,55 @@ def test_the_real_sampler_produces_every_panel():
     s = sampler.sample()
     assert s and all(k in s for k, _, _ in fr.PANELS) and s["top"] == "x.exe" and s["mhz"] == 4321.0
     assert 0 <= s["cpu"] <= 100 and s["disk"] >= 0 and s["net"] >= 0
+
+
+# ---- saved-trace library -----------------------------------------------------------------
+
+def test_list_saved_traces_reports_size_and_duration_newest_first(tmp_path):
+    older = str(tmp_path / "a.trace")
+    newer = str(tmp_path / "b.trace")
+    fr.save(_trace(3), older)
+    os.utime(older, (time.time() - 100, time.time() - 100))
+    fr.save(_trace(7), newer)
+    found = fr.list_saved_traces(str(tmp_path))
+    assert [t.name for t in found] == ["b.trace", "a.trace"]
+    assert found[0].sample_count == 7 and found[0].duration == pytest.approx(6.0)
+    assert found[1].sample_count == 3 and found[1].duration == pytest.approx(2.0)
+    assert all(t.readable and t.machine == "PC" and t.size_bytes > 0 for t in found)
+
+
+def test_list_saved_traces_lists_an_unreadable_file_rather_than_hiding_it(tmp_path):
+    bad = tmp_path / "corrupt.trace"
+    bad.write_text("not json at all\n", encoding="utf-8")
+    found = fr.list_saved_traces(str(tmp_path))
+    assert len(found) == 1
+    assert found[0].readable is False and found[0].duration is None and found[0].size_bytes > 0
+
+
+def test_list_saved_traces_tolerates_a_torn_final_sample(tmp_path):
+    path = tmp_path / "cut.trace"
+    fr.save(_trace(5), str(path))
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text[:-20], encoding="utf-8")       # chop the final line in half
+    found = fr.list_saved_traces(str(tmp_path))
+    assert found[0].readable is True
+    assert found[0].sample_count == 4 and found[0].duration == pytest.approx(3.0)
+
+
+def test_list_saved_traces_on_an_empty_or_missing_directory(tmp_path):
+    assert fr.list_saved_traces(str(tmp_path / "does-not-exist")) == []
+    assert fr.list_saved_traces(str(tmp_path)) == []
+
+
+def test_list_saved_traces_against_the_real_recordings_on_this_machine():
+    """Real-machine assertion: this app's own flight directory under %APPDATA%
+    already has recordings saved from an earlier real session."""
+    directory = os.path.join(os.environ["APPDATA"], "WindowsTweaker", "flight")
+    if not os.path.isdir(directory):
+        pytest.skip("no real flight directory on this machine")
+    found = fr.list_saved_traces(directory)
+    assert len(found) >= 1
+    for t in found:
+        assert t.size_bytes > 0
+        if t.readable:
+            assert t.duration is None or t.duration >= 0.0

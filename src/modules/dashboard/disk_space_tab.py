@@ -1,10 +1,11 @@
 """Disk Space: every volume, and where the space on the chosen one went."""
 import logging
-from typing import List
+import os
+from typing import List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
-                             QProgressBar, QPushButton, QTableWidget,
+                             QMenu, QProgressBar, QPushButton, QTableWidget,
                              QVBoxLayout)
 
 from core.events import NAV_REQUEST_MODULE, NavRequestData
@@ -24,6 +25,7 @@ class DiskSpaceTab(DashTab):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._scan_worker = None
+        self._last_scan: Optional[fs.FolderScan] = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -65,6 +67,10 @@ class DiskSpaceTab(DashTab):
         self._folders.verticalHeader().setVisible(False)
         self._folders.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._folders.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self._folders.setToolTip("Double-click, or right-click, to open a folder in TreeSize")
+        self._folders.cellDoubleClicked.connect(self._open_folder_in_treesize)
+        self._folders.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._folders.customContextMenuRequested.connect(self._show_folder_menu)
         layout.addWidget(self._folders, 1)
         self.status = QLabel("Select a drive, then find its biggest folders.", self)
         layout.addWidget(self.status)
@@ -146,6 +152,7 @@ class DiskSpaceTab(DashTab):
 
     def _scan_done(self, scan) -> None:
         self._scan_finished_ui()
+        self._last_scan = scan
         table = self._folders
         volume_total = next((v for v in fs.volumes() if v["mount"] == scan.root), None)
         capacity = volume_total["used"] if volume_total else scan.total
@@ -165,8 +172,39 @@ class DiskSpaceTab(DashTab):
         self.status.setText("   ·   ".join(parts))
 
     def _open_treesize(self) -> None:
+        # Pass the selected drive along: landing on TreeSize's empty Home tab
+        # after already picking a drive here means re-typing or re-browsing
+        # to the exact same letter a second time.
         if self._app is not None:
-            self._app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name="TreeSize"))
+            self._app.event_bus.publish(
+                NAV_REQUEST_MODULE,
+                NavRequestData(module_name="TreeSize", path=self._selected_mount()))
+
+    def _folder_path_at(self, row: int) -> Optional[str]:
+        """The real path a folder-scan row stands for, or None for the
+        "(files in the root)" sentinel row, which names no folder to open."""
+        if self._last_scan is None or not (0 <= row < len(self._last_scan.entries)):
+            return None
+        name, _size = self._last_scan.entries[row]
+        if name == "(files in the root)":
+            return None
+        return os.path.join(self._last_scan.root, name)
+
+    def _open_folder_in_treesize(self, row: int, _column: int = 0) -> None:
+        path = self._folder_path_at(row)
+        if path is None or self._app is None:
+            return
+        self._app.event_bus.publish(
+            NAV_REQUEST_MODULE, NavRequestData(module_name="TreeSize", path=path))
+
+    def _show_folder_menu(self, pos) -> None:
+        row = self._folders.rowAt(pos.y())
+        path = self._folder_path_at(row)
+        menu = QMenu(self)
+        action = menu.addAction("Open in TreeSize…")
+        action.setEnabled(path is not None)
+        action.triggered.connect(lambda: self._open_folder_in_treesize(row))
+        menu.exec(self._folders.viewport().mapToGlobal(pos))
 
     def cancel_all(self) -> None:
         super().cancel_all()

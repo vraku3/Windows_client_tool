@@ -65,3 +65,64 @@ def test_disk_space_tab_lists_volumes_and_scans_a_folder(qapp, tmp_path):
     cancelled = fs.scan_top_level(str(tmp_path), cancelled=lambda: True)
     tab._scan_done(cancelled)
     assert "partial" in tab.status.text()
+
+
+def test_disk_space_folder_row_jumps_into_treesize_at_its_own_path(qapp, tmp_path):
+    """A row in the folder-scan table must open TreeSize AT THAT FOLDER, not
+    on TreeSize's own last-shown state -- the whole point of the jump is to
+    skip re-browsing to a path already found here."""
+    import os
+    from modules.dashboard import folder_sizes as fs
+    from core.events import NAV_REQUEST_MODULE
+    from modules.dashboard.disk_space_tab import DiskSpaceTab
+    (tmp_path / "big").mkdir()
+    (tmp_path / "big" / "f").write_bytes(b"1" * 4096)
+    (tmp_path / "loose.txt").write_bytes(b"1" * 10)
+
+    tab = DiskSpaceTab()
+    tab._scan_done(fs.scan_top_level(str(tmp_path)))
+    assert tab._folders.rowCount() == 2  # the "big" folder + the loose-files row
+
+    published = []
+
+    class _FakeBus:
+        def publish(self, topic, data):
+            published.append((topic, data))
+
+    tab._app = SimpleNamespace(event_bus=_FakeBus())
+
+    # Row 0 is the real folder (it sorts first, being bigger) -- double-click
+    # must resolve to an absolute path TreeSize can scan directly.
+    real_row = next(r for r in range(tab._folders.rowCount())
+                     if tab._folders.item(r, 0).text() == "big")
+    tab._open_folder_in_treesize(real_row, 0)
+    assert len(published) == 1
+    topic, data = published[0]
+    assert topic == NAV_REQUEST_MODULE
+    assert data.module_name == "TreeSize"
+    assert data.path == os.path.join(str(tmp_path), "big")
+
+    # The "(files in the root)" sentinel row names no folder -- it must not
+    # publish a bogus path TreeSize would then fail to scan.
+    sentinel_row = next(r for r in range(tab._folders.rowCount())
+                         if tab._folders.item(r, 0).text() == "(files in the root)")
+    published.clear()
+    tab._open_folder_in_treesize(sentinel_row, 0)
+    assert published == []
+
+
+def test_disk_space_open_treesize_button_passes_the_selected_drive(qapp):
+    from core.events import NAV_REQUEST_MODULE
+    from modules.dashboard.disk_space_tab import DiskSpaceTab
+
+    tab = DiskSpaceTab()
+    published = []
+
+    class _FakeBus:
+        def publish(self, topic, data):
+            published.append((topic, data))
+
+    tab._app = SimpleNamespace(event_bus=_FakeBus())
+    tab._selected_mount = lambda: "C:\\"
+    tab._open_treesize()
+    assert published and published[0][1].path == "C:\\"

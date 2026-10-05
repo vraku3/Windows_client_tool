@@ -11,6 +11,7 @@ added into its layout. Never removeWidget/insertWidget on the current page:
 that re-enters the handler that asked for the build.
 """
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 from PyQt6.QtWidgets import QLabel, QWidget
@@ -126,6 +127,68 @@ def test_a_failed_build_is_not_retried_on_every_visit(window):
     window._on_module_selected("Broken")
 
     assert module.builds == 1
+
+
+class _OpenPathModule(_CountingModule):
+    """Records the path it was asked to jump to, like TreeSizeModule.open_path."""
+
+    def __init__(self, name: str = "Pathable") -> None:
+        super().__init__(name)
+        self.opened_paths = []
+
+    def open_path(self, path: str) -> None:
+        self.opened_paths.append(path)
+
+
+def test_navigate_to_module_forwards_a_path_to_open_path(window):
+    """NavRequestData.path (Disk Space's folder-jump into TreeSize) must
+    reach the resolved module's own open_path -- and only after the widget
+    is built, since open_path on a real module (TreeSize) touches its
+    widget."""
+    module = _OpenPathModule()
+    window.register_module(module)
+
+    window._navigate_to_module("Pathable", "C:\\Users\\Someone\\Downloads")
+
+    assert module.builds == 1, "open_path must run after the widget exists"
+    assert module.opened_paths == ["C:\\Users\\Someone\\Downloads"]
+
+    # No path given (every other existing caller) must not call it at all.
+    window._navigate_to_module("Pathable")
+    assert module.opened_paths == ["C:\\Users\\Someone\\Downloads"]
+
+
+def test_treesize_module_open_path_starts_a_real_scan(qapp, tmp_path):
+    """Real-machine assertion: TreeSizeModule.open_path on an actual folder on
+    this disk must land in the shell's path combo and kick off a scan --
+    exactly the jump Disk Space's folder rows rely on."""
+    from modules.treesize.treesize_module import TreeSizeModule
+    (tmp_path / "f").write_bytes(b"x")
+
+    module = TreeSizeModule()
+    module.on_start(SimpleNamespace(config=None))
+    module.create_widget()
+
+    module.open_path(str(tmp_path))
+
+    assert module._shell.path_combo.currentText() == str(tmp_path)
+    module.cancel_all_workers()
+
+
+def test_treesize_open_path_during_a_scan_says_why_nothing_happened(qapp, tmp_path):
+    """start_scan ignores a second request while one runs; open_path must
+    say so in the status bar instead of leaving the double-click looking dead."""
+    from modules.treesize.treesize_module import TreeSizeModule
+    module = TreeSizeModule()
+    module.on_start(SimpleNamespace(config=None))
+    module.create_widget()
+    module._shell._worker = object()          # a scan in flight
+    try:
+        module.open_path(str(tmp_path))
+        assert str(tmp_path) in module._shell.status_bar._notice.text()
+        assert module._shell.path_combo.currentText() != str(tmp_path)
+    finally:
+        module._shell._worker = None
 
 
 def test_a_disabled_module_still_shows_its_admin_placeholder(window, monkeypatch):

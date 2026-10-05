@@ -46,3 +46,6 @@ class BalloonNotifyData:
 @dataclass
 class NavRequestData:
     module_name: str
+    #: Optional: a module that understands `open_path(path)` (TreeSize) jumps
+    #: straight to it instead of landing on whatever it last showed.
+    path: Optional[str] = None

@@ -127,7 +127,6 @@ def test_a_small_virtual_disk_is_not_worth_reporting(tmp_path, monkeypatch):
 # ── new catalog entries ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("spec_id,expected_path_fragment", [
-    ("package_cache", r"Package Cache"),
     ("minidump", r"Minidump"),
 ])
 def test_the_new_catalog_entries_point_where_they_say(

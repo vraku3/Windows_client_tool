@@ -223,15 +223,6 @@
       "description": "Windows notification history and toast cache."
     },
     {
-      "id": "package_cache",
-      "label": "Installer payload cache (Visual Studio, .NET, redistributables)",
-      "paths": [
-        "%ProgramData%\\Package Cache"
-      ],
-      "safety": "caution",
-      "description": "Setup payloads kept by Visual Studio, .NET and the VC++ redistributables so they can repair or modify themselves without the original download. Routinely several GB on a dev machine and covered by nothing before this. Caution, not safe: removing it means the next repair re-downloads. No age floor, deliberately: min_age_default tests the DIRECTORY's own mtime, so any recent write inside hides the whole folder from the report. Safety level is what conveys the caution here."
-    },
-    {
       "id": "panther_logs",
       "label": "Windows Setup/Imagex logs in Panther directory — safe after setup completes",
       "paths": [

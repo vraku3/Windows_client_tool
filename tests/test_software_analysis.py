@@ -1,4 +1,5 @@
 """Software inventory: runtimes, duplicates, end of life, chips, winget, exports."""
+import os
 import csv
 import io
 from datetime import date
@@ -257,14 +258,20 @@ def test_broken_uninstaller_absent_for_healthy_entry():
     assert not sa.software_findings(rows)
 
 
-def test_real_machine_broken_uninstaller_check_runs_clean():
-    """Every non-MSI, non-winget uninstall string on THIS machine currently
-    resolves to a real file -- confirmed by direct registry probe (2026-10-01)
-    before building this check. Asserts the detector agrees, not that it finds
-    something: a module this mature having zero broken uninstallers right now
-    is the expected, correct answer."""
+def test_real_machine_broken_uninstaller_check_only_flags_what_is_really_gone():
+    r"""Every entry the detector flags on THIS machine must point at a file
+    that genuinely does not exist, re-checked independently here.
+
+    It used to assert zero flags (true on 2026-10-01). On 2026-10-05
+    C:\ProgramData\Package Cache was gone and 16 Burn-bundle uninstallers
+    pointed into it -- the detector was RIGHT and the test was pinning machine
+    state. What is worth pinning is that a flag is never a false positive.
+    """
     from modules.software_inventory import software_reader as sr
     full = sr.fetch_software_inventory()
     rows = sa.analyze(full)
     broken = [r for r in rows if r.uninstaller_missing is True]
-    assert broken == [], f"unexpected broken uninstallers found: {[r.name for r in broken]}"
+    for row in broken:
+        exe, _args = sa.resolve_command(row.entry.uninstall_string)
+        assert exe and not os.path.exists(exe), (
+            f"{row.name} is flagged broken but its uninstaller exists: {exe!r}")

@@ -364,7 +364,11 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: libraries. perforce_cache was reviewed and deliberately left as-is --
 #: real but lower-severity (a workflow confusion recoverable via `p4
 #: reconcile`, not permanent loss).
-REACHABLE_SCANNERS = 522
+#: 521 after package_cache was removed (2026-10-05): it was rated only
+#: "caution", which Thorough and Aggressive sweep, but Burn bundles RUN
+#: their uninstaller from that folder -- 16 uninstall entries were broken
+#: on the real machine once it was gone. delete_items now refuses it too.
+REACHABLE_SCANNERS = 521
 
 
 def _scanners_the_tabs_offer():

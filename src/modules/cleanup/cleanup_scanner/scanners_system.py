@@ -1725,6 +1725,22 @@ def protected_app_dirs() -> List[str]:
     return found
 
 
+def protected_system_dirs() -> List[str]:
+    r"""Folders Cleanup must never delete from, whatever scanner offers them.
+
+    `%ProgramData%\Package Cache` is where Burn bundles (the VC++
+    redistributables, .NET, Visual Studio, most vendor RGB/driver suites)
+    keep the setup exe their own uninstall entry RUNS. It is not a download
+    cache: removing it does not mean "the next repair re-downloads", it
+    means uninstall and repair stop working. Measured 2026-10-05 on a
+    machine where the folder was gone: 16 uninstall entries pointed at
+    missing exes. It used to be a catalog entry rated only "caution",
+    which the Thorough and Aggressive presets both sweep.
+    """
+    program_data = os.environ.get("ProgramData") or r"C:\ProgramData"
+    return [os.path.join(program_data, "Package Cache")]
+
+
 def _is_inside(path: str, folder: str) -> bool:
     path = os.path.normcase(os.path.abspath(path))
     folder = os.path.normcase(os.path.abspath(folder))
@@ -1791,6 +1807,8 @@ def delete_items(items: List[ScanItem],
     def _do_delete():
         deleted = 0
         errors = 0
+        removed: List[Tuple[str, int]] = []
+        refused: List[str] = []
         selected = [i for i in items if i.selected]
         total = len(selected)
         for idx, item in enumerate(selected):
@@ -1804,14 +1822,26 @@ def delete_items(items: List[ScanItem],
                     logger.warning("Refusing to delete %s: it is inside this "
                                    "application's own folder", item.path)
                     errors += 1
+                    refused.append(item.path)
+                    continue
+                if any(_is_inside(item.path, guarded) or
+                       (item.is_dir and _is_inside(guarded, item.path))
+                       for guarded in protected_system_dirs()):
+                    logger.warning("Refusing to delete %s: uninstall and repair "
+                                   "of installed software depend on it", item.path)
+                    errors += 1
+                    refused.append(item.path)
                     continue
                 if item.is_dir:
                     shutil.rmtree(item.path, ignore_errors=True)
                 else:
                     os.remove(item.path)
                 deleted += 1
+                removed.append((item.path, item.size))
             except OSError:
                 errors += 1
+        from modules.cleanup import cleanup_history
+        cleanup_history.record_deleted(removed, refused)
         return deleted, errors
 
     if stop_wuauserv:

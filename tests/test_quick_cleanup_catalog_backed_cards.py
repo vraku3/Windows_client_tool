@@ -20,7 +20,7 @@ _NEW_CATALOG_IDS = {
     "xbox_app_cache", "amd_radeon_cache", "browser_caches",
     "d3d_shader_cache", "diag_logs", "directx_shader_cache", "dxgi_cache",
     "event_logs", "font_cache", "language_packs", "memory_dumps",
-    "minidump", "package_cache", "per_drive_recycle_bin", "per_drive_temp",
+    "minidump", "per_drive_recycle_bin", "per_drive_temp",
     "sfc_logs", "sysprep_logs", "thumbnail_cache_central", "update_cleanup",
     "wer_reports", "windows_backup_catalog", "windows_backup_logs",
     "windows_setup_diags", "windows_tweaker_logs",

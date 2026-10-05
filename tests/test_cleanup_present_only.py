@@ -86,8 +86,11 @@ def test_the_catalog_still_defines_everything():
     qgis_cache, sas_cache, kontakt_cache, logic_pro_cache removed --
     real saved work, connection credentials, or license/activation state
     reached via a whole-folder "safe" tier scope.
+
+    Lowered again, 440 to 439 (2026-10-05): package_cache removed --
+    Burn bundles run their own uninstaller from it.
     """
-    assert len(catalog.load_catalog()) >= 440
+    assert len(catalog.load_catalog()) >= 439
 
 
 def test_the_app_tab_is_not_mostly_scanners_that_cannot_apply(qapp):

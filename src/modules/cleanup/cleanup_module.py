@@ -14,6 +14,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QLabel,
     QDialog, QListWidget, QPushButton, QFileDialog, QMessageBox,
+    QTreeWidget, QTreeWidgetItem,
 )
 
 from core.base_module import BaseModule
@@ -201,7 +202,7 @@ class _CleanupHistoryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Cleanup History")
-        self.resize(420, 420)
+        self.resize(620, 560)
         root = QVBoxLayout(self)
 
         self._list = QListWidget()
@@ -219,6 +220,26 @@ class _CleanupHistoryDialog(QDialog):
             f"{cs.format_size(cleanup_history.total_freed_all_time())}")
         set_role(total_lbl, "muted")
         root.addWidget(total_lbl)
+
+        root.addWidget(QLabel("What was deleted (largest paths of each clean):"))
+        self._deleted = QTreeWidget()
+        self._deleted.setHeaderLabels(["When / path", "Size"])
+        self._deleted.setColumnWidth(0, 360)
+        deletions = cleanup_history.recent_deleted(limit=20)
+        for entry in deletions:
+            refused = entry.get("refused", [])
+            summary = (f"{entry['at']} — deleted {entry.get('count', 0):,} item(s)"
+                       + (f", refused {len(refused)}" if refused else ""))
+            top = QTreeWidgetItem([summary, cs.format_size(entry.get("bytes", 0))])
+            for path, size in entry.get("largest", []):
+                QTreeWidgetItem(top, [path, cs.format_size(size)])
+            for path in refused:
+                QTreeWidgetItem(top, [f"REFUSED: {path}", ""])
+            self._deleted.addTopLevelItem(top)
+        if not deletions:
+            self._deleted.addTopLevelItem(QTreeWidgetItem(
+                ["Nothing recorded yet -- paths are kept from this version on.", ""]))
+        root.addWidget(self._deleted, 1)
 
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)

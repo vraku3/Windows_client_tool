@@ -34,6 +34,16 @@ def _cleanup_scan_cache_cleared():
 
 
 @pytest.fixture(autouse=True)
+def _cleanup_deletion_log_isolated(tmp_path, monkeypatch):
+    """delete_items() logs every path it removes to %APPDATA%; dozens of
+    tests delete scratch files through it, and none of that belongs in the
+    real machine's audit log."""
+    from modules.cleanup import cleanup_history
+    monkeypatch.setattr(cleanup_history, "_deleted_path",
+                        lambda: str(tmp_path / "cleanup_deleted.json"))
+
+
+@pytest.fixture(autouse=True)
 def _catalog_readers_restored():
     """Put back any security-catalog reader a test swapped out.
 

@@ -19,9 +19,17 @@ Only clicks that actually freed something are recorded (`freed_bytes <=
 showing in a history a user reads to answer "did this help".
 """
 import json
+import logging
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Sequence, Tuple
+
+logger = logging.getLogger(__name__)
+
+#: How many paths one deletion entry keeps: the largest ones, which are the
+#: ones anyone looking back is asking about. A temp sweep is thousands of
+#: files; storing them all would make this log the junk it is meant to audit.
+PATHS_PER_ENTRY = 25
 
 
 def _history_path() -> str:
@@ -82,3 +90,59 @@ def total_freed_all_time() -> int:
     except (OSError, json.JSONDecodeError):
         return 0
     return sum(int(e.get("freed_bytes", 0)) for e in entries)
+
+
+def _deleted_path() -> str:
+    return os.path.join(os.path.dirname(_history_path()), "cleanup_deleted.json")
+
+
+def record_deleted(deleted: Sequence[Tuple[str, int]],
+                   refused: Sequence[str] = ()) -> None:
+    r"""Append WHAT one delete_items() call removed, and what it refused.
+
+    The run log above only ever kept bytes, so when C:\ProgramData\Package
+    Cache turned out to be missing (2026-10-05) nothing could say whether
+    Cleanup had removed it. Written from delete_items() itself, the one
+    place every Cleanup deletion passes through, so no tab can forget to.
+    Keeps the PATHS_PER_ENTRY largest paths plus the full count and size.
+    Never raises: a log that cannot be written must not fail a clean.
+    """
+    if not deleted and not refused:
+        return
+    largest = sorted(deleted, key=lambda d: d[1] or 0, reverse=True)[:PATHS_PER_ENTRY]
+    entry = {
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "count": len(deleted),
+        "bytes": int(sum(size or 0 for _path, size in deleted)),
+        "largest": [[path, int(size or 0)] for path, size in largest],
+        "refused": list(refused)[:PATHS_PER_ENTRY],
+    }
+    path = _deleted_path()
+    try:
+        entries = []
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    entries = json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning("cleanup deletion log unreadable, starting over: %s", e)
+                entries = []
+        entries.append(entry)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(entries[-200:], f, indent=2)
+    except OSError as e:
+        logger.warning("could not write the cleanup deletion log %s: %s", path, e)
+
+
+def recent_deleted(limit: int = 20) -> List[dict]:
+    """Most-recent-first deletion entries. [] if none were ever recorded."""
+    path = _deleted_path()
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            entries = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning("cleanup deletion log unreadable: %s", e)
+        return []
+    return list(reversed(entries))[:limit]

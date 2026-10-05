@@ -183,7 +183,7 @@ class SavedTracesDialog(QDialog):
         if not path:
             return
         if not confirm_destructive(self, "Delete recording",
-                                    f"Delete {os.path.basename(path)}?\n\nThis cannot be undone.",
+                                    f"Delete {os.path.basename(path)}?",
                                     irreversible=True):
             return
         try:

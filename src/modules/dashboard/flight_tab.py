@@ -1,18 +1,21 @@
 """Flight Recorder: record the vital signs, save them, scrub and replay them."""
 import logging
 import os
+from datetime import datetime
 from typing import List, Optional
 
 from PyQt6.QtCore import QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PyQt6.QtWidgets import (QComboBox, QFileDialog, QGridLayout, QHBoxLayout,
-                             QLabel, QPushButton, QSlider, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QComboBox, QDialog, QFileDialog, QGridLayout,
+                             QHBoxLayout, QHeaderView, QLabel, QPushButton,
+                             QSlider, QTableWidget, QVBoxLayout, QWidget)
 
+from core.confirm import confirm_destructive
 from core.table_ui import set_role
 from core.semantic_colors import semantic
 
 from . import flight_recorder as fr
-from .tab_base import DashModule, DashTab
+from .tab_base import DashModule, DashTab, fmt_size, numeric_item
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,117 @@ class TraceChart(QWidget):
         p.drawLine(int(x), 0, int(x), h)
 
 
+_LIB_HEADERS = ("Name", "Started", "Machine", "Duration", "Samples", "Size", "Modified")
+_LIB_NAME, _LIB_STARTED, _LIB_MACHINE, _LIB_DURATION, _LIB_SAMPLES, _LIB_SIZE, _LIB_MODIFIED = range(7)
+
+
+def _fmt_duration(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "unknown"
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m{secs:02d}s" if hours else f"{minutes}m{secs:02d}s"
+
+
+class SavedTracesDialog(QDialog):
+    """Browse every recording saved to disk -- the library `Open…`'s plain
+    file picker does not give you: size and duration at a glance, newest
+    first, so an old recording from 03:12 does not have to be guessed by
+    filename alone."""
+
+    def __init__(self, directory: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Saved recordings")
+        self.resize(620, 360)
+        self._dir = directory
+        self.chosen_path: Optional[str] = None
+        layout = QVBoxLayout(self)
+        self._table = QTableWidget(0, len(_LIB_HEADERS), self)
+        self._table.setHorizontalHeaderLabels(list(_LIB_HEADERS))
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.doubleClicked.connect(self._open)
+        layout.addWidget(self._table, 1)
+        self.status = QLabel("", self)
+        set_role(self.status, "muted")
+        layout.addWidget(self.status)
+        row = QHBoxLayout()
+        self._open_btn = QPushButton("Open", self)
+        self._open_btn.setEnabled(False)
+        self._open_btn.clicked.connect(self._open)
+        self._delete_btn = QPushButton("Delete…", self)
+        self._delete_btn.setEnabled(False)
+        self._delete_btn.clicked.connect(self._delete)
+        self._table.itemSelectionChanged.connect(self._selection_changed)
+        row.addWidget(self._open_btn)
+        row.addWidget(self._delete_btn)
+        row.addStretch(1)
+        close = QPushButton("Close", self)
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        layout.addLayout(row)
+        self.reload()
+
+    def reload(self) -> None:
+        traces = fr.list_saved_traces(self._dir)
+        table = self._table
+        table.setSortingEnabled(False)
+        table.setRowCount(len(traces))
+        for row, t in enumerate(traces):
+            table.setItem(row, _LIB_NAME, numeric_item(t.name, t.name))
+            table.setItem(row, _LIB_STARTED, numeric_item(t.started, t.started or "—"))
+            table.setItem(row, _LIB_MACHINE, numeric_item(t.machine, t.machine or "—"))
+            dur_text = _fmt_duration(t.duration) if t.readable else "unreadable"
+            table.setItem(row, _LIB_DURATION, numeric_item(t.duration or -1, dur_text))
+            table.setItem(row, _LIB_SAMPLES, numeric_item(t.sample_count or 0,
+                          str(t.sample_count) if t.sample_count is not None else "—"))
+            table.setItem(row, _LIB_SIZE, numeric_item(t.size_bytes, fmt_size(t.size_bytes)))
+            when = datetime.fromtimestamp(t.modified).strftime("%Y-%m-%d %H:%M:%S")
+            table.setItem(row, _LIB_MODIFIED, numeric_item(t.modified, when))
+            table.item(row, _LIB_NAME).setData(Qt.ItemDataRole.UserRole, t.path)
+        table.setSortingEnabled(True)
+        self.status.setText(f"{len(traces):,} recording(s) in {self._dir}")
+        self._selection_changed()
+
+    def _selected_path(self) -> Optional[str]:
+        rows = self._table.selectionModel().selectedRows() if self._table.selectionModel() else []
+        if not rows:
+            return None
+        item = self._table.item(rows[0].row(), _LIB_NAME)
+        return item.data(Qt.ItemDataRole.UserRole) if item else None
+
+    def _selection_changed(self) -> None:
+        has = self._selected_path() is not None
+        self._open_btn.setEnabled(has)
+        self._delete_btn.setEnabled(has)
+
+    def _open(self) -> None:
+        path = self._selected_path()
+        if path:
+            self.chosen_path = path
+            self.accept()
+
+    def _delete(self) -> None:
+        path = self._selected_path()
+        if not path:
+            return
+        if not confirm_destructive(self, "Delete recording",
+                                    f"Delete {os.path.basename(path)}?",
+                                    irreversible=True):
+            return
+        try:
+            os.remove(path)
+        except OSError as e:
+            logger.warning("could not delete %s: %s", path, e)
+            self.status.setText(f"Could not delete: {e}")
+            return
+        self.reload()
+
+
 class FlightTab(DashTab):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -110,9 +224,11 @@ class FlightTab(DashTab):
             self._interval.addItem(label, seconds)
         self._open_btn = QPushButton("Open…", self)
         self._open_btn.clicked.connect(self._open)
+        self._library_btn = QPushButton("Saved recordings…", self)
+        self._library_btn.clicked.connect(self._open_library)
         self._save_btn = QPushButton("Save as…", self)
         self._save_btn.clicked.connect(self._save_as)
-        for w in (self._rec_btn, self._interval, self._open_btn, self._save_btn):
+        for w in (self._rec_btn, self._interval, self._open_btn, self._library_btn, self._save_btn):
             bar.addWidget(w)
         bar.addStretch(1)
         self._play_btn = QPushButton("Play", self)
@@ -256,6 +372,11 @@ class FlightTab(DashTab):
         path, _ = QFileDialog.getOpenFileName(self, "Open recording", self._dir(), "Trace files (*.trace)")
         if path:
             self.open_path(path)
+
+    def _open_library(self) -> None:
+        dialog = SavedTracesDialog(self._dir(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.chosen_path:
+            self.open_path(dialog.chosen_path)
 
     def open_path(self, path: str) -> bool:
         try:

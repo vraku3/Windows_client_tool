@@ -126,7 +126,10 @@ def test_effective_frequency_reads_a_plausible_clock_after_priming():
     finally:
         eff.close()
     assert out is not None and len(out) == len(freqs)
-    assert all(500 <= mhz <= 8000 for mhz in out), out
+    # An idle core's effective clock is nominal x '% Processor Performance',
+    # which deep power states take well under 500 MHz (4300 x 10% = 430);
+    # what would be a bug is zero, negative, or beyond any real part.
+    assert all(0 < mhz <= 8000 for mhz in out), out
 
 
 def test_node_loads_average_per_node_and_skip_nodes_without_data():

@@ -212,9 +212,14 @@ def test_a_budget_caps_how_many_are_resolved_per_sweep():
     rows = system_processes()
     cache = DetailCache()
     budget = [5]
+    resolved = 0
     for row in rows:
-        cache.get(row.pid, row.create_time, budget)
-    assert cache.tracked() == 5
+        if cache.get(row.pid, row.create_time, budget).path is not None:
+            resolved += 1
+    # Refusals are free (answered at once, not what the budget rations), so
+    # the cap is on resolutions that produced a path.
+    assert resolved == 5
+    assert budget == [0]
 
 
 def test_what_the_budget_skipped_is_none_not_a_claim():

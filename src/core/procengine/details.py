@@ -208,6 +208,13 @@ class DetailCache:
             budget[0] -= 1
         found = resolve(pid)
         self._entries[key] = found
+        if budget is not None and found.path is None and found.path_error:
+            # A refusal is answered at once and is not what the budget is
+            # rationing. Charging for it meant that, unelevated, the lowest
+            # PIDs -- Idle, System, Registry, smss, csrss, every one refused --
+            # spent the whole first tick: 0 of 331 paths after five reads of
+            # 10, measured 2026-10-06, though 185 resolve with no cap.
+            budget[0] += 1
         return found
 
     def retain(self, live_pids: Set[int]) -> None:

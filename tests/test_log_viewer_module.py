@@ -736,13 +736,22 @@ def test_the_context_menu_offers_the_range_and_the_lookup(qapp, threaded_log):
 # ---- Task 11: copy and export ----------------------------------------------
 
 def test_copying_the_selection_puts_the_rows_on_the_clipboard(qapp,
-                                                              threaded_log):
+                                                              threaded_log,
+                                                              monkeypatch):
+    # Capture what is handed to the clipboard rather than reading the real
+    # Windows one back: it is shared with every process on the machine, and
+    # anything else holding it during a full-suite run made this flaky.
+    from PyQt6.QtWidgets import QApplication
+    copied = []
+    monkeypatch.setattr(QApplication, "clipboard",
+                        staticmethod(lambda: type("C", (), {"setText": lambda _s, t: copied.append(t)})()))
     widget = LogViewerWidget()
     try:
         widget.open(str(threaded_log))
         widget.table.selectRow(0)
         widget.copy_selection()
-        text = qapp.clipboard().text()
+        assert len(copied) == 1
+        text = copied[0]
         assert "first" in text
         assert "second" not in text
         assert not text.startswith("#"), "no provenance header on a copy"

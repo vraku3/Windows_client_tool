@@ -91,9 +91,15 @@ def test_read_dns_cache_returns_none_when_the_command_cannot_run(monkeypatch):
     assert dc.read_dns_cache() is None
 
 
-def test_real_dns_cache_is_readable_on_this_machine():
+def test_real_dns_cache_read_on_this_machine_is_honest():
+    """Elevated, the cache is read. Unelevated, current Windows builds refuse
+    `ipconfig /displaydns` ("The requested operation requires elevation.",
+    rc=1, measured 2026-10-06) -- and that must come back as None, "could
+    not read", never [] ("the cache is empty")."""
+    from core.admin_utils import is_admin
     entries = dc.read_dns_cache()
-    assert entries is not None
+    if not is_admin() and entries is None:
+        return
     assert isinstance(entries, list)
     if entries:
         assert all(e.name and e.type_name for e in entries)

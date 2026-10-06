@@ -500,7 +500,17 @@ class _DnsCachePane(QWidget):
         if entries is None:
             self._entries = []
             self._table.setRowCount(0)
-            self._status.setText("Windows would not report the DNS cache (ipconfig refused).")
+            from core.admin_utils import is_admin
+            if is_admin():
+                self._status.setText("Windows would not report the DNS cache (ipconfig refused).")
+            else:
+                # Current Windows builds refuse `ipconfig /displaydns` without
+                # elevation ("The requested operation requires elevation."),
+                # and Get-DnsClientCache answers an EMPTY cache instead of an
+                # error -- so this is the one honest reader, and the reason is
+                # worth saying rather than a bare "refused".
+                self._status.setText("Reading the DNS cache needs administrator rights on "
+                                     "this version of Windows. Run the app as administrator.")
             return
         self._entries = entries
         self._status.setText(f"{len(entries)} cached record(s).")

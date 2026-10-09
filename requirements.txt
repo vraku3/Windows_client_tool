@@ -30,11 +30,11 @@ reportlab>=4.0
 #   azure-*     -> Azure Blob Storage
 #   google-*    -> Google Drive
 paramiko>=3.4
-httpx>=0.27
-boto3>=1.34
-azure-storage-blob>=12.19
-google-api-python-client>=2.120
-google-auth-oauthlib>=1.2
+httpx>=0.28.1
+boto3>=1.43.85
+azure-storage-blob>=12.30.1
+google-api-python-client>=2.200.0
+google-auth-oauthlib>=1.4.1
 
 # Dev / test only. Also declared in pyproject.toml's
 # [project.optional-dependencies] dev extra; this file stays the one CI

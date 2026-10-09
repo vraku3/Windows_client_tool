@@ -23,15 +23,44 @@ _SR_ACTIVITY = re.compile(r"\[SR\]\s+(Repairing|Repaired|Repair complete|Verifyi
 _SR_REPAIRED = re.compile(r"\[SR\]\s+(Repairing|Repaired|Repair complete)", re.IGNORECASE)
 _DISM_COMMAND = re.compile(r"Executing command line:\s*(.+)$", re.IGNORECASE)
 
+#: CBS asking whether a package is present and being told it is not. Each such
+#: lookup writes CBS_E_INVALID_PACKAGE on four chained lines. Measured
+#: 2026-10-09: all 72 occurrences of 0x800F0805 in CBS.log (and every one in
+#: the two CbsPersist logs) were 18 lookups of Package_for_KB3025096, a
+#: Windows 8.1-era package that is not installed -- and the summary led with
+#: "Failing codes: 0x800F0805 x72".
+CBS_E_INVALID_PACKAGE = 0x800F0805
+_PROBE_LINE = re.compile(r"InternalOpenPackage failed for|Failed to internally open package|"
+                         r"Failed to create open package|Failed to OpenPackage using worker session",
+                         re.IGNORECASE)
+_PROBED_PACKAGE = re.compile(r"InternalOpenPackage failed for (\S+?)~", re.IGNORECASE)
+
+
+def _is_probe(message: str, code: int) -> bool:
+    return code == CBS_E_INVALID_PACKAGE and bool(_PROBE_LINE.search(message))
+
 
 def failing_codes(entries: List[LogEntry]) -> Counter:
-    """Count of each failing HRESULT (sign bit set) across all messages."""
+    """Count of each failing HRESULT (sign bit set) across all messages,
+    leaving out package-presence lookups (see `_PROBE_LINE`)."""
     counts: Counter = Counter()
     for e in entries:
-        for m in _HRESULT.finditer(e.message or ""):
+        message = e.message or ""
+        for m in _HRESULT.finditer(message):
             code = int(m.group(1), 16)
-            if code & 0x80000000:
+            if code & 0x80000000 and not _is_probe(message, code):
                 counts[code] += 1
+    return counts
+
+
+def package_probes(entries: List[LogEntry]) -> Counter:
+    """Package name -> how many times CBS looked for it and found it absent."""
+    counts: Counter = Counter()
+    for e in entries:
+        message = e.message or ""
+        m = _PROBED_PACKAGE.search(message)
+        if m and any(_is_probe(message, int(h.group(1), 16)) for h in _HRESULT.finditer(message)):
+            counts[m.group(1)] += 1
     return counts
 
 
@@ -91,6 +120,11 @@ def summarize(entries: List[LogEntry], kind: str = "cbs") -> str:
                      + (f"; +{len(codes) - 4} more" if len(codes) > 4 else "") + ".")
     else:
         parts.append("No failing HRESULTs.")
+    probes = package_probes(entries)
+    if probes:
+        named = ", ".join(f"{name} x{n}" for name, n in probes.most_common(3))
+        parts.append(f"Routine: {sum(probes.values())} lookup(s) of packages not installed here "
+                     f"({named}), logged as CBS_E_INVALID_PACKAGE -- not a failure.")
     return " ".join(parts)
 
 

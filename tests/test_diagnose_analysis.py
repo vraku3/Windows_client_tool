@@ -235,8 +235,8 @@ def test_clean_log_is_positively_clean():
 
 def test_corruption_and_codes_surface_regardless_of_the_logged_level():
     entries = _lines(
-        "Failed to internally open package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
-        "Failed to create open package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+        "Exec: Failed to stage package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+        "Failed to install package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
         "[SR] Cannot repair member file [l:24]'x.dll' of Microsoft-Windows-Foo",
         "[SR] Repairing 1 components",
     )
@@ -244,6 +244,29 @@ def test_corruption_and_codes_surface_regardless_of_the_logged_level():
     assert "cannot repair x1" in text
     assert "0x800F0805 x2" in text and "CBS_E_INVALID_PACKAGE" in text
     assert "repair activity: 1" in text
+
+
+_PROBE = (
+    "InternalOpenPackage failed for Package_for_KB3025096~31bf3856ad364e35~amd64~~6.4.1.0 "
+    "[HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+    "Failed to internally open package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+    "Failed to create open package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+    "Failed to OpenPackage using worker session [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+)
+
+
+def test_a_lookup_of_an_absent_package_is_routine_not_a_failing_code():
+    """Real CBS.log 2026-10-09: 72 x 0x800F0805 were 18 such lookups, four lines each."""
+    text = ss.summarize(_lines(*(_PROBE * 3)), "cbs")
+    assert "No failing HRESULTs" in text
+    assert "Routine: 3 lookup(s) of packages not installed here (Package_for_KB3025096 x3)" in text
+
+
+def test_a_real_failure_beside_the_probes_still_counts():
+    entries = _lines(*_PROBE, "Exec: Failed to stage package. [HRESULT = 0x800f0805 - CBS_E_INVALID_PACKAGE]",
+                     "Failed to unload offline registry [HRESULT = 0x80070005 - E_ACCESSDENIED]")
+    codes = ss.failing_codes(entries)
+    assert codes[0x800F0805] == 1 and codes[0x80070005] == 1
 
 
 def test_dism_summary_lists_recent_commands():

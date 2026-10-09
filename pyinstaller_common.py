@@ -41,6 +41,10 @@ def get_datas(project_root: str) -> list:
         (os.path.join(project_root, "src", "modules", "cleanup",
                       "cleanup_scanner", "definitions"),
          "modules/cleanup/cleanup_scanner/definitions"),
+        # LibreHardwareMonitor (library only), loaded by
+        # thermal_control/engine/lhm_bridge.py from _get_resource_dir()/vendor/lhm.
+        # Without it the frozen Thermal Control silently falls back to GPU-only.
+        (os.path.join(project_root, "vendor", "lhm"), "vendor/lhm"),
     ]
 
 
@@ -236,6 +240,18 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.benchmarks_tab",
     "modules.dashboard.flight_recorder",
     "modules.dashboard.flight_sources",
+    "modules.thermal_control.thermal_module",
+    "modules.thermal_control.thermal_service",
+    "modules.thermal_control.curve_editor",
+    "modules.thermal_control.engine.model",
+    "modules.thermal_control.engine.gpu_kmt",
+    "modules.thermal_control.engine.lhm_bridge",
+    "modules.thermal_control.engine.curves",
+    "modules.thermal_control.engine.controller",
+    "modules.thermal_control.engine.view",
+    "pythonnet",
+    "clr_loader",
+    "clr",
     "modules.dashboard.flight_tab",
     "modules.dashboard.pdh_util",
     "modules.dashboard.net_trace",

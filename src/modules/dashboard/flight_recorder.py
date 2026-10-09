@@ -44,6 +44,8 @@ PANELS: Tuple[Tuple[str, str, str], ...] = (
     ("mhz", "Clock", "MHz"),
     ("gpu", "GPU", "%"),
     ("power", "CPU package", "W"),
+    ("cpu_temp", "CPU temp (Tctl)", "°C"),
+    ("gpu_temp", "GPU temp", "°C"),
 )
 
 #: How many processes each per-sample ranking keeps.
@@ -134,7 +136,8 @@ class Trace:
         return (f"{when}   CPU {val('cpu', '.0f')}%   RAM {val('mem', '.0f')}%   "
                 f"commit {val('commit', '.0f')}%   disk {val('disk', '.1f')} MB/s   "
                 f"net {val('net', '.2f')} MB/s   {val('mhz', ',.0f')} MHz   "
-                f"GPU {val('gpu', '.0f')}%   {val('power', '.0f')} W   top: {busiest}")
+                f"GPU {val('gpu', '.0f')}%   {val('power', '.0f')} W   "
+                f"CPU {val('cpu_temp', '.0f')}°C   GPU {val('gpu_temp', '.0f')}°C   top: {busiest}")
 
 
 def _ranked(rows: List[ProcRow], value: Callable[[ProcRow], Optional[float]], n: int,
@@ -170,12 +173,14 @@ class Sampler:
                  processes: Optional[Callable[[], Optional[List[ProcRow]]]] = None,
                  gpu: Optional[Callable[[], Optional[float]]] = None,
                  gpu_by_pid: Optional[Callable[[], Optional[Dict[int, float]]]] = None,
-                 power: Optional[Callable[[], Optional[float]]] = None) -> None:
+                 power: Optional[Callable[[], Optional[float]]] = None,
+                 extra: Optional[Dict[str, Callable[[], Optional[float]]]] = None) -> None:
         import psutil
         self._psutil = psutil
         self._top = top_process
         self._clock, self._processes, self._gpu = clock, processes, gpu
         self._gpu_by_pid, self._power = gpu_by_pid, power
+        self._extra = extra or {}
         self._last = None
         self._seen: set = set()
         self._calls = 0
@@ -202,6 +207,10 @@ class Sampler:
             "gpu": self._gpu() if self._gpu else None,
             "power": self._power() if self._power else None,
         }
+        for key, read in self._extra.items():
+            sample[key] = read()
+        for key, _title, _unit in PANELS:
+            sample.setdefault(key, None)        # no reader for it: a gap, stated
         self._add_who(sample, rows)
         if new:
             sample["new"] = new

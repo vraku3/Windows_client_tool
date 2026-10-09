@@ -100,6 +100,7 @@ def register_all_modules(app) -> None:
     from modules.tweaks.tweaks_module import TweaksModule
     from modules.cleanup.cleanup_module import CleanupModule
     from modules.monitor_control.monitor_module import MonitorControlModule
+    from modules.thermal_control.thermal_module import ThermalControlModule
     from modules.debloat.debloat_module import DebloatModule
     from modules.treesize.treesize_module import TreeSizeModule
     from modules.quick_fix.quick_fix_module import QuickFixModule
@@ -144,6 +145,7 @@ def register_all_modules(app) -> None:
     app.module_registry.register(UpdatesModule())
     app.module_registry.register(HardwareModule())
     app.module_registry.register(MonitorControlModule())
+    app.module_registry.register(ThermalControlModule())
     app.module_registry.register(SystemHealthModule())
     app.module_registry.register(NetworkDiagnosticsModule())
     app.module_registry.register(SecurityDashboardModule())

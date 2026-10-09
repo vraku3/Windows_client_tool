@@ -883,6 +883,43 @@ Harnesses, all read-only unless told otherwise: `tools/monitor_control_check.py`
 (what the hardware says) and `tools/monitor_revert_check.py` (the countdown
 against a real display).
 
+### Thermal Control (`src/modules/thermal_control/`)
+
+Every temperature, fan and fan header, and fan curves on the headers
+(2026-10-09). `requires_admin` + `read_only_unelevated`: unelevated it shows
+GPU temperatures only and says why. Qt-free `engine/` (model, gpu_kmt,
+lhm_bridge, curves, controller, view) is tested with no hardware; only
+`thermal_module.py`, `thermal_service.py` and `curve_editor.py` import Qt.
+
+- **CPU, motherboard and fan headers come from LibreHardwareMonitor 0.9.6**
+  (`vendor/lhm`, library only, MPL-2.0) on .NET Framework 4.8 via
+  `pythonnet`, over the **PawnIO** kernel driver (`winget install
+  namazso.PawnIO`; not bundled). Needs ELEVATION. `vendor/lhm` is in
+  `get_datas`; without it the frozen build silently falls back to GPU-only.
+- **Unelevated, LHM reports a refused read as 0.0** (Tctl read 0.0).
+  `clean_value` turns a 0.0 temperature into `None`.
+- **LHM has no sensors for the RX 7900 XTX.** GPU temperature/fan come from
+  `D3DKMTQueryAdapterInfo(ADAPTERPERFDATA)` -- Task Manager's source, no
+  admin. Sensor ids are name-based: adapter LUIDs change every boot.
+- **NVMe "Warning/Critical Temperature" are limits, not readings** --
+  `view.is_limit`; never a row, never a curve source.
+- **A crash leaves a header stuck at its last duty, and a new process's
+  `SetDefault()` does NOT fix it**: LHM captures the BIOS mode
+  (`Nct677X._initialFanControlMode`) only in memory on first write, so the
+  next process "restores" the stuck manual state. The controller writes the
+  captured mode/PWM into `fan_control_active.json`, and `recover()` puts
+  them back via reflection before `RestoreDefaultFanControl`. BIOS
+  automatic mode on the X870E Taichi's NCT6799D is `0x40` (SmartFan IV).
+  Verified: crash left ch0 at 0x00/PWM 249, recovery -> 0x40.
+- **Curve safety lives in `curves.py`**: never slower as it gets hotter
+  (rejected), floor 20% / pumps 70%, >= critical or a lost sensor -> 100%,
+  down 3%/tick with hysteresis. `ThermalService` is owned by the module (curves
+  run with the tab closed), recovers BEFORE loading curves, and hands every
+  header back on exit plus an `atexit` net; tick and shutdown share a lock.
+- Test any write on a header with NOTHING connected (0 RPM) -- five of eight
+  here -- via `tools/thermal_control_check.py --roundtrip`. Elevated runs go
+  through a `.ps1` wrapper that writes its own log.
+
 ### Driver Manager (`src/modules/driver_manager/`)
 
 Read, export, and (as of this pass) per-package uninstall for installed

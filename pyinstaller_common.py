@@ -235,6 +235,7 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.benchmarks",
     "modules.dashboard.benchmarks_tab",
     "modules.dashboard.flight_recorder",
+    "modules.dashboard.flight_sources",
     "modules.dashboard.flight_tab",
     "modules.dashboard.pdh_util",
     "modules.dashboard.net_trace",

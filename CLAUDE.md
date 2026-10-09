@@ -1160,8 +1160,17 @@ plumbing. Every one is in `HIDDEN_IMPORTS`.
   not extra stylesheets, so a new dark rule is themed for free. Their palettes
   join `SEMANTIC_PALETTES`/`CHROME_PALETTES` and the contrast tests cover all six.
 - **Flight Recorder keeps recording when you leave the tab** (its `stop()` only
-  pauses playback); `FlightModule.on_stop` finalises and saves it at shutdown.
-  Traces are JSON Lines so a cut-off recording still loads to its last line.
+  pauses playback); `FlightModule.on_stop` finalises it at shutdown. Traces are
+  JSON Lines and (v2, 2026-10-09) every sample is APPENDED as it is taken --
+  v1 kept the whole recording in memory until Stop, so a crash lost it all.
+  A reading that was not taken is stored as `None` and drawn as a gap, never 0
+  (v1 wrote `mhz or 0.0`). Each sample carries the top processes by CPU,
+  memory, GPU and disk (`procs`) and programs first seen mid-recording (`new`);
+  `flight_sources.LiveSources` builds them from the readers other tabs use.
+  The opt-in rolling history (`HistoryService`, config
+  `modules.dashboard.flight.history`) is owned by `FlightModule`, not the tab,
+  so it records from app start; one file per day under `flight/history/`,
+  `prune_history` deletes only `history-YYYYMMDD-*.trace` older than 7 days.
 - **Benchmarks read the disk unbuffered** (`FILE_FLAG_NO_BUFFERING` into a
   page-aligned `mmap` buffer) so the figure is the disk, not the cache; write is
   `fsync`ed; the temp file is removed in a `finally`.

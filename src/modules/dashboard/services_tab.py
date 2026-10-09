@@ -32,6 +32,10 @@ from modules.services_manager import service_view as sv
 
 logger = logging.getLogger(__name__)
 
+#: The pause between the END of one read and the start of the next. A
+#: Win32_Service read takes ~4.2 s here (2026-10-09), so a plain 5 s
+#: interval timer kept WMI busy ~85% of the time the tab was open and, under
+#: load, fired the next read the moment the last one landed.
 REFRESH_MS = 5000
 
 #: Task Manager column order. Path is stretched because it is prose; the
@@ -91,7 +95,9 @@ class ServicesTab(QWidget):
         self._required_by: Dict[str, List[str]] = {}
         self._setup_ui()
         self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.refresh)
+        self._running = False
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -257,12 +263,17 @@ class ServicesTab(QWidget):
         self._app = app
 
     def start(self) -> None:
+        self._running = True
         self.refresh()
-        self._timer.start(REFRESH_MS)
 
     def stop(self) -> None:
+        self._running = False
         self._timer.stop()
         self.cancel_all()
+
+    def _schedule_next(self) -> None:
+        if self._running:
+            self._timer.start(REFRESH_MS)
 
     def cancel_all(self) -> None:
         for worker in self._workers:
@@ -306,11 +317,13 @@ class ServicesTab(QWidget):
         self._services = list(result)
         self._refresh_chip_counts()
         self._repopulate()
+        self._schedule_next()
 
     def _failed(self, message) -> None:
         self._busy = False
         logger.error("Services refresh failed: %s", message)
         self.status.setText(f"Could not read the service list: {message}")
+        self._schedule_next()
 
     def _on_cancelled(self) -> None:
         self._busy = False

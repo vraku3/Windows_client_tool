@@ -253,3 +253,22 @@ def test_declining_the_confirmation_runs_no_action(tab, monkeypatch):
     tab._confirmed_action("stop", svc)
 
     assert not calls, "an action ran after the confirmation was declined"
+
+
+def test_the_next_read_waits_for_the_last_one_to_finish(qapp):
+    """A Win32_Service read takes ~4.2 s here; a 5 s interval timer kept WMI
+    busy ~85% of the time and, under load, started the next read the moment
+    the last one landed. The timer is single-shot, armed only by a result."""
+    from modules.dashboard import services_tab as st
+    view = ServicesTab()
+    try:
+        view.set_app(_FakeApp())
+        view.start()
+        assert view._timer.isSingleShot()
+        assert not view._timer.isActive(), "armed before the first read finished"
+        assert _settle(qapp, view, lambda: view._table.rowCount() > 0)
+        assert view._timer.isActive() and view._timer.interval() == st.REFRESH_MS
+        view.stop()
+        assert not view._timer.isActive()
+    finally:
+        view.stop()

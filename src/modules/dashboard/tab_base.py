@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QWidget
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import COMWorker, Worker
+from ui.chips import make_chips, set_chip_counts  # noqa: F401  (moved there; re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -117,32 +118,6 @@ class DashModule(BaseModule):
 
 # ---- small widgets several tabs share ------------------------------------------------
 
-def make_chips(parent, filters, on_pick):
-    """A row of exclusive filter buttons. Returns (layout, {key: (button, label)}).
-
-    `filters` is the (key, label, predicate) tuples the engine modules expose.
-    """
-    from PyQt6.QtWidgets import QButtonGroup, QHBoxLayout, QPushButton
-    row = QHBoxLayout()
-    row.setContentsMargins(4, 0, 4, 0)
-    group = QButtonGroup(parent)
-    group.setExclusive(True)
-    chips = {}
-    for key, label, _fn in filters:
-        chip = QPushButton(label, parent)
-        chip.setCheckable(True)
-        chip.setChecked(key == "all")
-        chip.clicked.connect(lambda _=False, k=key: on_pick(k))
-        group.addButton(chip)
-        chips[key] = (chip, label)
-        row.addWidget(chip)
-    row.addStretch(1)
-    return row, chips
-
-
-def set_chip_counts(chips, counts) -> None:
-    for key, (chip, label) in chips.items():
-        chip.setText(label if key == "all" else f"{label} ({counts.get(key, 0)})")
 
 
 def fmt_size(n) -> str:

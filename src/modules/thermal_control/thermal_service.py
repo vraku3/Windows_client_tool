@@ -13,7 +13,7 @@ hook repeats it in case the normal path never runs.
 import atexit
 import logging
 import os
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -163,6 +163,8 @@ class ThermalService(QObject):
     def save_curve(self, curve: cv.FanCurve) -> List[str]:
         """Store and (if enabled) start a curve; returns why it was refused."""
         problems = cv.validate(curve)
+        if curve.control_id.startswith("/gpu"):
+            problems.append("GPU fans are set through the GPU's own curve (the GPU entry), not as a header")
         if problems and curve.enabled:
             return problems
         if self.controller is None:

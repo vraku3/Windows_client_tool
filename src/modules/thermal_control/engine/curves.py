@@ -163,3 +163,30 @@ def step(curve_set: CurveSet, temps: Dict[str, Optional[float]],
         state = states.setdefault(curve.control_id, CurveState())
         out.append(decide(curve, temps.get(curve.source_id), state))
     return out
+
+
+# ---- presets -------------------------------------------------------------------------------
+
+#: Five points each, so every preset also fits a GPU (which takes exactly five).
+PRESETS = {
+    "silent": [(40.0, 20.0), (55.0, 30.0), (68.0, 48.0), (78.0, 72.0), (86.0, 100.0)],
+    "balanced": [(35.0, 25.0), (50.0, 35.0), (65.0, 55.0), (75.0, 80.0), (85.0, 100.0)],
+    "performance": [(30.0, 35.0), (45.0, 50.0), (58.0, 70.0), (68.0, 90.0), (76.0, 100.0)],
+    "full": [(30.0, 100.0), (40.0, 100.0), (50.0, 100.0), (60.0, 100.0), (70.0, 100.0)],
+}
+PRESET_LABELS = (("silent", "Silent"), ("balanced", "Balanced"),
+                 ("performance", "Performance"), ("full", "Full speed"))
+
+
+def preset_points(name: str, floor: float = 0.0,
+                  temp_range: Optional[Tuple[float, float]] = None) -> List[Tuple[float, float]]:
+    """A preset fitted to one fan: never below its floor (pumps, a GPU's own
+    minimum) and inside a GPU's allowed temperature range."""
+    lo_t, hi_t = temp_range or (0.0, 120.0)
+    out = []
+    for t, d in PRESETS[name]:
+        t = min(max(t, lo_t), hi_t)
+        if out and t <= out[-1][0]:
+            t = out[-1][0] + 1
+        out.append((t, max(d, floor)))
+    return out

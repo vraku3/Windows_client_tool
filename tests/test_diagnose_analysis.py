@@ -1,6 +1,8 @@
 """Reliability, Windows Update and CBS/DISM analysis (Qt-free)."""
 from datetime import datetime, timedelta
 
+import pytest
+
 from core.types import LogEntry
 from core import servicing_summary as ss
 from modules.reliability import reliability_analysis as ra
@@ -131,9 +133,82 @@ def test_failing_updates_are_named_with_translated_codes():
     assert "KB5124010" in name and code == 0x800F0820 and times == 2
     assert "pending" in meaning
     text = wu_analysis.summary_text(entries)
-    assert "KB5124010" in text and "0x800F0820" in text and "2 failed" in text
+    assert "KB5124010" in text and "0x800F0820" in text and "Still failing" in text and " x2" in text
     assert "0x800F0820" in wu_analysis.detail_html(entries[0])
     assert wu_analysis.detail_html(entries[2]) == ""
+
+
+def _wu(when, event, uid, hresult, client, result, category, message):
+    return WUParser("unused").parse_line("	".join([
+        "{CB6DE3B4-CC97-4BD7-B8F2-2AF4A0DB4FCC}", f"2026-10-0{when}:000+0300", "1", event,
+        "101", uid, "1", hresult, client, result, category, message, "id"]))
+
+
+_STORE = "9NKSQGP7F2NH-5319275A.WhatsAppDesktop"
+_IN_USE = "80073d02"
+
+
+def _store_fail(when, uid):
+    return _wu(when, "182 [AGENT_INSTALLING_FAILED]", uid, _IN_USE, "Acquisition;setup", "Failure",
+               "Content Install", f"Installation Failure: Windows failed to install the following "
+               f"update with error 0x80073d02: {_STORE}.")
+
+
+def _store_ok(when, uid):
+    return _wu(when, "183 [AGENT_INSTALLING_SUCCEEDED]", uid, "0", "Acquisition;setup", "Success",
+               "Content Install", f"Installation Successful: Windows successfully installed the "
+               f"following update: {_STORE}")
+
+
+def test_a_failure_that_later_succeeded_is_not_still_failing():
+    """Measured 2026-10-09: 8 of 14 failing updates here had since succeeded."""
+    entries = [_store_fail("2 09:47:44", "{E33B}"), _store_ok("2 09:47:51", "{E33B}")]
+    assert wu_analysis.failures(entries) == []
+    assert wu_analysis.resolved_count(entries) == 1
+    text = wu_analysis.summary_text(entries)
+    assert "Nothing is failing now" in text and "1 update(s) failed and later succeeded" in text
+
+
+def test_an_older_version_succeeding_does_not_hide_a_newer_one_failing():
+    """WhatsApp here: the 09-29 version installed, the 10-08 one did not."""
+    entries = [_store_ok("1 21:31:05", "{1FD3}"), _store_fail("8 12:41:01", "{A681}")]
+    ((name, code, _m, _n),) = wu_analysis.failures(entries)
+    assert name == _STORE and code == 0x80073D02
+
+
+def test_a_nameless_download_failure_takes_its_name_from_the_update_id():
+    """AGENT_DOWNLOAD_FAILED lines carry no title; 14 of 25 failures here were
+    named after the client ('Update;MoUpdateOrchestratorDeviceScan-...')."""
+    entries = [
+        _wu("7 09:45:44", "161 [AGENT_DOWNLOAD_FAILED]", "{9E21}", "80244022",
+            "Update;MoUpdateOrchestratorDeviceScan", "Failure", "Content Download", "Error: Download failed."),
+        _wu("7 09:50:00", "182 [AGENT_INSTALLING_FAILED]", "{9E21}", _IN_USE, "Acquisition;setup", "Failure",
+            "Content Install", "Installation Failure: Windows failed to install the following update "
+            "with error 0x80073d02: 9NRZT3Q9R3DL-Microsoft.WindowsAppRuntime.2."),
+    ]
+    names = {f[0] for f in wu_analysis.failures(entries)}
+    assert names == {"9NRZT3Q9R3DL-Microsoft.WindowsAppRuntime.2"}
+
+
+def test_store_apps_in_use_are_summarised_apart_from_windows_failures():
+    entries = [parser_line for parser_line in (WUParser("unused").parse_line(_FAIL),
+                                               _store_fail("8 12:41:01", "{A681}"))]
+    text = wu_analysis.summary_text(entries)
+    assert "Still failing: 2026-09 Preview Update (KB5124010)" in text
+    assert "1 Store app(s) not updated (1 because the app was running" in text
+    assert "5319275A.WhatsAppDesktop" in text
+
+
+def test_real_reporting_events_log_summary_is_well_formed():
+    import os
+    from modules.windows_update import wu_module
+    if not os.path.exists(wu_module.WU_LOG_PATH):
+        pytest.skip("no ReportingEvents.log on this machine")
+    entries = WUParser(wu_module.WU_LOG_PATH).parse()
+    text = wu_analysis.summary_text(entries)
+    assert "Update;MoUpdateOrchestrator" not in text, "a client named as if it were an update"
+    for name, _code, _meaning, _n in wu_analysis.failures(entries):
+        assert not name.startswith("Update;"), name
 
 
 def test_an_unknown_code_is_admitted_not_invented():

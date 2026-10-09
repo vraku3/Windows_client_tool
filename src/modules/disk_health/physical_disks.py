@@ -156,14 +156,28 @@ def hidden_from_smart(physical: Iterable[PhysicalDiskInfo],
                        smart_serials: Iterable[str]) -> List[PhysicalDiskInfo]:
     """Physical disks the Win32_DiskDrive-based SMART scan never mentioned.
 
-    Matched by serial number, the one identifier both APIs report in the
-    same format (confirmed live: `Win32_DiskDrive.SerialNumber` and
-    `Get-PhysicalDisk.SerialNumber` are byte-for-byte identical strings on
-    this machine, trailing dot included) -- never by index or name, which
-    the two APIs number and title differently for the same physical disk.
+    Matched by serial number -- never by index or name, which the two APIs
+    number and title differently for the same physical disk -- after
+    `_serial_key` normalises both sides: the readers no longer agree on the
+    NVMe serials' trailing dot (see there).
     """
-    known: Set[str] = {
-        s.strip() for s in smart_serials
-        if s and s.strip() and s.strip() != "—"
-    }
-    return [d for d in physical if d.serial.strip() not in known]
+    known: Set[str] = {_serial_key(s) for s in smart_serials if _serial_key(s)}
+    # A disk with no serial (the Msft Virtual Disk here) can never be matched,
+    # so it cannot be called hidden either -- it was, on every run.
+    return [d for d in physical if _serial_key(d.serial) and _serial_key(d.serial) not in known]
+
+
+def _serial_key(serial: Optional[str]) -> str:
+    """Serials as both readers can be compared.
+
+    Re-measured 2026-10-09: the drives table now lists all four disks here,
+    with the NVMe serials' trailing '.' stripped ('0025_384C_41C2_4DBF'),
+    while Get-PhysicalDisk keeps it ('0025_384C_41C2_4DBF.'). Compared raw,
+    nothing matched, and every disk -- all of them in the table -- was
+    reported 'Not shown above' (four false warnings; the two unpooled ones
+    as 'pooled in "None"').
+    """
+    text = (serial or "").strip()
+    if text == "—":
+        return ""
+    return text.rstrip(".").strip().upper()

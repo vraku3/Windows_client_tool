@@ -29,14 +29,15 @@ class CurveEditor(QWidget):
         self._live_temp: Optional[float] = None
         self._live_duty: Optional[float] = None
         self._drag: Optional[int] = None
+        self._fixed = False              # a GPU takes exactly its own number of points
         self.setMinimumSize(420, 260)
         self.setMouseTracking(True)
 
     # ---- data ------------------------------------------------------------------------
 
-    def set_curve(self, points, floor: float, critical: Optional[float]) -> None:
+    def set_curve(self, points, floor: float, critical: Optional[float], fixed: bool = False) -> None:
         self._points = [(float(t), float(d)) for t, d in points]
-        self._floor, self._critical = floor, critical
+        self._floor, self._critical, self._fixed = floor, critical, fixed
         self.update()
 
     def set_live(self, temp: Optional[float], duty: Optional[float]) -> None:
@@ -73,7 +74,7 @@ class CurveEditor(QWidget):
     def _clamped(self, i: int, t: float, d: float) -> Tuple[float, float]:
         lo_t = self._points[i - 1][0] + 1 if i > 0 else T_MIN
         hi_t = self._points[i + 1][0] - 1 if i < len(self._points) - 1 else T_MAX
-        lo_d = self._points[i - 1][1] if i > 0 else 0.0
+        lo_d = self._points[i - 1][1] if i > 0 else self._floor
         hi_d = self._points[i + 1][1] if i < len(self._points) - 1 else 100.0
         return min(max(t, lo_t), hi_t), min(max(d, lo_d), hi_d)
 
@@ -81,7 +82,7 @@ class CurveEditor(QWidget):
 
     def mousePressEvent(self, event) -> None:
         i = self._hit(event.position())
-        if event.button() == Qt.MouseButton.RightButton and i is not None and len(self._points) > 2:
+        if event.button() == Qt.MouseButton.RightButton and i is not None and len(self._points) > 2                 and not self._fixed:
             del self._points[i]
             self._emit()
         elif event.button() == Qt.MouseButton.LeftButton:
@@ -108,7 +109,7 @@ class CurveEditor(QWidget):
     def mouseDoubleClickEvent(self, event) -> None:
         t, d = self._from_px(event.position().x(), event.position().y())
         event.accept()
-        if any(abs(t - pt) < 2 for pt, _ in self._points):
+        if self._fixed or any(abs(t - pt) < 2 for pt, _ in self._points):
             return
         self._points.append((t, d))
         self._points.sort()

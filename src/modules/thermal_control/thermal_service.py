@@ -25,6 +25,8 @@ from .engine.model import Sensor
 logger = logging.getLogger(__name__)
 
 CURVES_KEY = "modules.thermal_control.curves"
+GPU_CURVES_KEY = "modules.thermal_control.gpu_curves"           # {gpu name: [[C, %], ...]}
+GPU_FACTORY_KEY = "modules.thermal_control.gpu_before"          # {gpu name: {factory, curve}}
 CONTROL_MS = 2000          # curve tick: fans and temperatures do not move faster
 VIEW_MS = 1000             # while someone is looking at the sensor list
 
@@ -48,6 +50,7 @@ class ThermalService(QObject):
         self._workers: list = []
         self._stopped = False
         self.gpu_fans: list = []
+        self.adlx_dir = ""
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.tick)
         atexit.register(self._atexit)
@@ -96,7 +99,12 @@ class ThermalService(QObject):
     def shutdown(self) -> None:
         """Hand every fan back to the BIOS. Safe to call more than once."""
         self._stopped = True
-        self._timer.stop()
+        try:
+            self._timer.stop()
+        except RuntimeError as e:
+            # From the atexit net, Qt has already destroyed the timer. That
+            # must never stop the part that matters: handing the fans back.
+            logger.info("thermal shutdown after Qt teardown: %s", e)
         for worker in self._workers:
             worker.cancel()
         if self.controller is not None:
@@ -181,28 +189,116 @@ class ThermalService(QObject):
             self.errors.append(f"{control_id}: {e}")
         self._reschedule()
 
-    # ---- GPU fans (AMD ADLX; read-only, needs no elevation) ---------------------------
+    # ---- GPU fans (AMD ADLX; needs no elevation) ---------------------------------------
+    #
+    # The curve lives in the GPU's firmware, so there is no tick: a write
+    # is one call, verified by reading it back. What this app remembers is
+    # the curve the user saved (re-applied at start if the driver dropped
+    # it) and whether the GPU was at factory before the first write -- that
+    # decides whether "back to factory" may use AMD's full reset.
 
     def _check_gpu_fans(self) -> None:
-        from core.worker import Worker
-        from .engine import adlx
+        self._gpu_job(self._read_gpu_fans, self._gpu_fans_read)
 
-        def work(_w):
-            gpus, why = adlx.read_gpus()
-            return adlx.diagnose(gpus, why, adlx.windows_gpus())
-        pool = getattr(self._app, "thread_pool", None)
-        if pool is None:
-            self._gpu_fans_read(work(None))
-            return
-        worker = Worker(work)
-        worker.signals.result.connect(self._gpu_fans_read)
-        worker.signals.error.connect(lambda m: logger.warning("GPU fan check failed: %s", m))
-        self._workers = self._workers[-3:] + [worker]
-        pool.start(worker)
+    def _read_gpu_fans(self, _w=None):
+        from .engine import adlx
+        win = adlx.windows_gpus()
+        self.adlx_dir = adlx.choose_copy(win, adlx.adlx_copies())
+        gpus, why = adlx.read_gpus(self.adlx_dir)
+        statuses = adlx.diagnose(gpus, why, win)
+        self._reapply_saved(statuses)
+        return statuses
+
+    def _reapply_saved(self, statuses) -> None:
+        from .engine import adlx
+        saved = self._config_get(GPU_CURVES_KEY, {}) or {}
+        for st in statuses:
+            points = saved.get(st.name)
+            if not (st.controllable and points and st.gpu):
+                continue
+            wanted = [tuple(int(v) for v in p) for p in points]
+            if wanted != [tuple(p) for p in st.gpu.curve]:
+                try:
+                    st.gpu.curve = adlx.set_curve(st.name, wanted, self.adlx_dir)
+                    st.reason = "fan curve available (your saved curve, re-applied at start)"
+                except adlx.AdlxError as e:
+                    logger.warning("could not re-apply the saved curve to %s: %s", st.name, e)
+                    st.reason = f"your saved curve could not be re-applied: {e}"
 
     def _gpu_fans_read(self, statuses) -> None:
         self.gpu_fans = list(statuses)
         self.gpu_fans_changed.emit(self.gpu_fans)
+
+    def gpu_status(self, name: str):
+        return next((s for s in self.gpu_fans if s.name == name), None)
+
+    def apply_gpu_curve(self, name: str, points) -> List[str]:
+        from .engine import adlx
+        st = self.gpu_status(name)
+        if st is None or not st.controllable or st.gpu is None:
+            return [st.reason if st else "this GPU is not available"]
+        problems = adlx.validate_gpu_curve(points, st.gpu)
+        if problems:
+            return problems
+        before = self._config_get(GPU_FACTORY_KEY, {}) or {}
+        if name not in before:
+            self._config_set(GPU_FACTORY_KEY, {**before, name: {"factory": bool(st.gpu.at_factory),
+                                                               "curve": [list(p) for p in st.gpu.curve]}})
+        self._config_set(GPU_CURVES_KEY, {**(self._config_get(GPU_CURVES_KEY, {}) or {}),
+                                          name: [[int(round(t)), int(round(d))] for t, d in points]})
+
+        def work(_w):
+            adlx.set_curve(name, points, self.adlx_dir)
+            return self._read_gpu_fans()
+        self._gpu_job(work, self._gpu_written)
+        return []
+
+    def gpu_back_to_factory(self, name: str) -> None:
+        from .engine import adlx
+        before = (self._config_get(GPU_FACTORY_KEY, {}) or {}).get(name)
+        saved = dict(self._config_get(GPU_CURVES_KEY, {}) or {})
+        saved.pop(name, None)
+        self._config_set(GPU_CURVES_KEY, saved)
+
+        def work(_w):
+            if before is None or before.get("factory", True):
+                adlx.reset_to_factory(name, self.adlx_dir)
+            else:                       # it had other tuning: put back only the curve it had
+                adlx.set_curve(name, [tuple(p) for p in before["curve"]], self.adlx_dir)
+            return self._read_gpu_fans()
+        self._gpu_job(work, self._gpu_written)
+
+    def set_gpu_zero_rpm(self, name: str, on: bool) -> None:
+        from .engine import adlx
+
+        def work(_w):
+            adlx.set_zero_rpm(name, on, self.adlx_dir)
+            return self._read_gpu_fans()
+        self._gpu_job(work, self._gpu_written)
+
+    def _gpu_written(self, statuses) -> None:
+        self._gpu_fans_read(statuses)
+        self.state_changed.emit("GPU fan settings written and read back.")
+
+    def _gpu_job(self, fn, on_result) -> None:
+        from core.worker import Worker
+        pool = getattr(self._app, "thread_pool", None)
+        if pool is None:
+            try:
+                on_result(fn(None))
+            except Exception as e:  # AdlxError, or the library failing outright
+                self._gpu_failed(str(e))
+            return
+        worker = Worker(fn)
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(self._gpu_failed)
+        self._workers = self._workers[-3:] + [worker]
+        pool.start(worker)
+
+    def _gpu_failed(self, message) -> None:
+        logger.warning("GPU fan operation failed: %s", message)
+        self.errors = [f"GPU fan: {message}"]
+        self.state_changed.emit(f"GPU fan: {message}")
 
     # ---- plumbing -------------------------------------------------------------------
 

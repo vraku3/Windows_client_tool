@@ -189,6 +189,27 @@ def health_sections(reader: Optional[Callable] = None) -> Tuple[List[Section], L
             [ReportFinding("Health", f.severity, f.title, f.detail) for f in found])
 
 
+def thermal_sections(reader: Optional[Callable] = None) -> Tuple[List[Section], List[ReportFinding]]:
+    """The temperatures and fans that matter, from Thermal Control's running
+    service (it never opens the hardware a second time). Unelevated the CPU
+    and board are not readable -- the section says so instead of omitting them."""
+    from modules.thermal_control.engine import gpu_kmt, lhm_bridge, view
+    if reader is None:
+        from modules.thermal_control.thermal_service import ThermalService
+        service = ThermalService.instance
+        sensors = service.read_now() if service is not None else gpu_kmt.read_gpus()
+        reason = lhm_bridge.unavailable_reason()
+    else:
+        sensors, reason = reader()
+    rows = [[label, s.hardware, s.display()] for label, s in view.key_readings(sensors)]
+    note = f"Partial: {reason}." if reason else ""
+    section = Section("Temperatures and fans", ["Reading", "Hardware", "Now"], rows, note=note)
+    findings = [ReportFinding("Thermals", "error" if sev == "critical" else "warning",
+                              f"{label} at {value:.0f} C", f"limit {limit:.0f} C")
+                for sev, label, value, limit in view.thermal_alerts(sensors)]
+    return [section], findings
+
+
 def _os_build() -> str:
     import winreg
     try:
@@ -247,7 +268,7 @@ def patch_sections(reader: Optional[Callable] = None, now=None
 
 
 BUILDERS: List[Callable[[], Tuple[List[Section], List[ReportFinding]]]] = [
-    hardware_sections, stability_sections, patch_sections, health_sections, disk_sections,
+    hardware_sections, thermal_sections, stability_sections, patch_sections, health_sections, disk_sections,
     restore_sections, software_sections,
 ]
 

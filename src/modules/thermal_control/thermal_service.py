@@ -32,6 +32,11 @@ VIEW_MS = 1000             # while someone is looking at the sensor list
 
 
 class ThermalService(QObject):
+    #: The running service, for readers elsewhere in the app (Dashboard
+    #: Thermals, Overview, System Report) -- they never open the hardware a
+    #: second time.
+    instance: Optional["ThermalService"] = None
+
     updated = pyqtSignal(object)            # List[Sensor]
     state_changed = pyqtSignal(str)         # a human sentence about what is going on
     gpu_fans_changed = pyqtSignal(object)   # List[adlx.GpuFanStatus]
@@ -54,6 +59,7 @@ class ThermalService(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.tick)
         atexit.register(self._atexit)
+        ThermalService.instance = self
 
     # ---- lifecycle ------------------------------------------------------------------
 
@@ -154,6 +160,18 @@ class ThermalService(QObject):
         if self.controller is not None:
             self.errors = list(self.controller.last_errors)
         self.updated.emit(self.sensors)
+
+    def read_now(self) -> List[Sensor]:
+        """A fresh reading, synchronously, from any thread: the open hardware
+        (the bridge serialises calls with its own lock) or, unelevated, the
+        driverless GPU reader. Never opens the hardware a second time."""
+        controller = self.controller
+        if controller is not None:
+            try:
+                return controller.read()
+            except Exception as e:  # a .NET exception from the driver path
+                logger.warning("thermal read_now failed: %s", e)
+        return gpu_kmt.read_gpus()
 
     # ---- curves -------------------------------------------------------------------
 

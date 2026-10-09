@@ -30,9 +30,14 @@ def test_thermal_tab_is_honest_without_sensors_and_shows_real_pressure(qapp):
         tab.refresh()
         time.sleep(1.1)
         tab.refresh()
-        if tab._unavailable:
-            assert "No temperature sensors" in tab._headline.text()
-            assert "°C" not in tab._headline.text()          # never invent a temperature
+        # No ACPI zones on this board, but the machine has real temperatures
+        # (GPU via D3DKMT always; CPU/board when elevated). Whatever the
+        # headline says must be one of the readings in the table -- never
+        # an invented number.
+        shown = [tab._readings.item(r, 2).text() for r in range(tab._readings.rowCount())]
+        if "°C" in tab._headline.text():
+            value = tab._headline.text().split(" °C")[0]
+            assert any(cell.startswith(value) or cell.startswith(value + ".") for cell in shown), shown
         assert "limiting" in tab._pressure.text()
     finally:
         tab.stop()

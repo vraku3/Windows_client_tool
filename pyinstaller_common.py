@@ -41,6 +41,10 @@ def get_datas(project_root: str) -> list:
         (os.path.join(project_root, "src", "modules", "cleanup",
                       "cleanup_scanner", "definitions"),
          "modules/cleanup/cleanup_scanner/definitions"),
+        # LibreHardwareMonitor (library only), loaded by
+        # thermal_control/engine/lhm_bridge.py from _get_resource_dir()/vendor/lhm.
+        # Without it the frozen Thermal Control silently falls back to GPU-only.
+        (os.path.join(project_root, "vendor", "lhm"), "vendor/lhm"),
     ]
 
 

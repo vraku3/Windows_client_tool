@@ -79,6 +79,9 @@ class ThermalService(QObject):
             return
         self.controller, self.recovered = result
         self.errors = list(self.controller.last_errors)
+        logger.info("thermal: hardware opened; %d curve(s) saved, %d active, recovered %s",
+                    len(self.controller.curves.curves), len(self.controller.curves.enabled()),
+                    self.recovered or "nothing")
         message = f"{len(self.controller.curves.enabled())} fan curve(s) active."
         if self.recovered:
             message += (f" The last run did not stop cleanly; {len(self.recovered)} fan(s) "

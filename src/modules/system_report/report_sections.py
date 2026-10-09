@@ -189,8 +189,65 @@ def health_sections(reader: Optional[Callable] = None) -> Tuple[List[Section], L
             [ReportFinding("Health", f.severity, f.title, f.detail) for f in found])
 
 
+def _os_build() -> str:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+            version = winreg.QueryValueEx(key, "DisplayVersion")[0]
+            build = winreg.QueryValueEx(key, "CurrentBuild")[0]
+            ubr = winreg.QueryValueEx(key, "UBR")[0]
+        return f"{version}, build {build}.{ubr}"
+    except OSError as e:
+        logger.warning("could not read the OS build: %s", e)
+        return f"could not be read ({e})"
+
+
+def patch_sections(reader: Optional[Callable] = None, now=None
+                   ) -> Tuple[List[Section], List[ReportFinding]]:
+    """When Windows itself was last patched -- not when Windows Update last
+    installed something, which Defender definitions make 'today' every day."""
+    from datetime import datetime, timezone
+    from core.wu_error_codes import decode_wu_error
+    from modules.updates import patch_status as ps
+    status, reason = (reader or ps.read_patch_status)()
+    if status is None:
+        return [Section("Windows Update", error=reason)], [
+            ReportFinding("Updates", "info", "Update history could not be read", reason)]
+    now = now or datetime.now(timezone.utc)
+
+    def _when(e) -> str:
+        if e is None:
+            return "none in history"
+        return f"{e.when.astimezone():%Y-%m-%d} ({(now - e.when).days} d ago): {e.title}"
+
+    rows = [("OS version", _os_build()),
+            ("Last security update", _when(status.last_security)),
+            ("Last OS update (incl. preview)", _when(status.last_os_update)),
+            ("Last feature update", _when(status.last_feature)),
+            ("History entries read", str(status.entries_read))]
+    sections = [_kv("Windows Update", rows)]
+    findings: List[ReportFinding] = []
+    if status.last_security is None:
+        findings.append(ReportFinding(
+            "Updates", "info", "No monthly security update in Windows Update history",
+            "Updates may come from WSUS/Intune, or the history was cleared."))
+    elif (now - status.last_security.when).days > ps.STALE_SECURITY_DAYS:
+        findings.append(ReportFinding(
+            "Updates", "warning",
+            f"No security update for {(now - status.last_security.when).days} days",
+            f"Last was {status.last_security.title}; monthly updates ship on the second Tuesday."))
+    if status.unresolved_failures:
+        sections.append(Section("Failed updates (not since installed)", ["When", "Update", "Error"],
+                                [[f"{e.when.astimezone():%Y-%m-%d}", e.title, decode_wu_error(e.hresult)]
+                                 for e in status.unresolved_failures]))
+        findings += [ReportFinding("Updates", "warning", f"Update failed: {e.title}",
+                                   decode_wu_error(e.hresult)) for e in status.unresolved_failures]
+    return sections, findings
+
+
 BUILDERS: List[Callable[[], Tuple[List[Section], List[ReportFinding]]]] = [
-    hardware_sections, stability_sections, health_sections, disk_sections,
+    hardware_sections, stability_sections, patch_sections, health_sections, disk_sections,
     restore_sections, software_sections,
 ]
 

@@ -249,6 +249,7 @@ HIDDEN_IMPORTS = [
     "modules.thermal_control.engine.curves",
     "modules.thermal_control.engine.controller",
     "modules.thermal_control.engine.view",
+    "modules.thermal_control.engine.adlx",
     "pythonnet",
     "clr_loader",
     "clr",

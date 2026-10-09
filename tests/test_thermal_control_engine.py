@@ -229,3 +229,41 @@ def test_a_tick_after_shutdown_never_takes_a_fan_back(tmp_path):
     ctl.shutdown()
     _s, decisions = ctl.tick()                       # a worker tick landing late
     assert decisions == [] and bridge.duty == {}
+
+
+# ---- GPU fans (ADLX diagnosis) ------------------------------------------------------------
+
+from modules.thermal_control.engine import adlx  # noqa: E402
+
+_WIN = [("AMD Radeon RX 7900 XTX", "31.0.14000.58004", "2022-12-02"),
+        ("AMD Radeon(TM) Graphics", "32.0.21036.18", "2025-11-12")]
+
+
+def test_a_card_adlx_cannot_see_is_explained_with_its_stale_driver():
+    """Measured here: the 7900 XTX on a 2022 driver Windows Update put back."""
+    found = adlx.diagnose([adlx.AdlxGpu("AMD Radeon(TM) Graphics", False, False)], "", _WIN)
+    xtx = next(s for s in found if "7900" in s.name)
+    assert not xtx.controllable
+    assert "31.0.14000.58004 (2022-12-02)" in xtx.reason and "older than 32.0.21036.18" in xtx.reason
+    igpu = next(s for s in found if "(TM)" in s.name)
+    assert "no adjustable fan" in igpu.reason
+
+
+def test_a_card_with_fan_tuning_is_reported_controllable():
+    gpu = adlx.AdlxGpu("AMD Radeon RX 7900 XTX", True, True, curve=[(40, 30), (90, 100)])
+    (xtx, _igpu) = adlx.diagnose([gpu], "", _WIN)
+    assert xtx.controllable
+
+
+def test_no_adlx_at_all_is_a_reason_not_an_empty_list():
+    found = adlx.diagnose(None, "AMD's ADLX library is not installed", _WIN)
+    assert all(not s.controllable and "not installed" in s.reason for s in found)
+
+
+def test_non_amd_adapters_are_ignored():
+    assert adlx.diagnose([], "", [("Microsoft Basic Display Adapter", "10.0", "2006-06-21")]) == []
+
+
+def test_real_adlx_reads_without_crashing():
+    gpus, reason = adlx.read_gpus()
+    assert gpus is not None or reason

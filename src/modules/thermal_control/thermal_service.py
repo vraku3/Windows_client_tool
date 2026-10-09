@@ -32,6 +32,7 @@ VIEW_MS = 1000             # while someone is looking at the sensor list
 class ThermalService(QObject):
     updated = pyqtSignal(object)            # List[Sensor]
     state_changed = pyqtSignal(str)         # a human sentence about what is going on
+    gpu_fans_changed = pyqtSignal(object)   # List[adlx.GpuFanStatus]
 
     def __init__(self, app, marker_path: str) -> None:
         super().__init__()
@@ -46,6 +47,7 @@ class ThermalService(QObject):
         self._busy = False
         self._workers: list = []
         self._stopped = False
+        self.gpu_fans: list = []
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.tick)
         atexit.register(self._atexit)
@@ -58,6 +60,7 @@ class ThermalService(QObject):
 
     def start(self) -> None:
         """Open the hardware off the UI thread; GPU-only if it cannot be."""
+        self._check_gpu_fans()
         if self.reason:
             self.state_changed.emit(f"GPU only: {self.reason}.")
             self._reschedule()
@@ -177,6 +180,29 @@ class ThermalService(QObject):
             logger.error("could not hand %s back to the BIOS: %s", control_id, e)
             self.errors.append(f"{control_id}: {e}")
         self._reschedule()
+
+    # ---- GPU fans (AMD ADLX; read-only, needs no elevation) ---------------------------
+
+    def _check_gpu_fans(self) -> None:
+        from core.worker import Worker
+        from .engine import adlx
+
+        def work(_w):
+            gpus, why = adlx.read_gpus()
+            return adlx.diagnose(gpus, why, adlx.windows_gpus())
+        pool = getattr(self._app, "thread_pool", None)
+        if pool is None:
+            self._gpu_fans_read(work(None))
+            return
+        worker = Worker(work)
+        worker.signals.result.connect(self._gpu_fans_read)
+        worker.signals.error.connect(lambda m: logger.warning("GPU fan check failed: %s", m))
+        self._workers = self._workers[-3:] + [worker]
+        pool.start(worker)
+
+    def _gpu_fans_read(self, statuses) -> None:
+        self.gpu_fans = list(statuses)
+        self.gpu_fans_changed.emit(self.gpu_fans)
 
     # ---- plumbing -------------------------------------------------------------------
 

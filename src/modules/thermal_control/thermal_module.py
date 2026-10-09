@@ -40,6 +40,8 @@ class ThermalWidget(QWidget):
         self._build()
         service.updated.connect(self._on_sensors)
         service.state_changed.connect(self._status.setText)
+        service.gpu_fans_changed.connect(self._on_gpu_fans)
+        self._on_gpu_fans(service.gpu_fans)
 
     # ---- layout ---------------------------------------------------------------------
 
@@ -71,8 +73,16 @@ class ThermalWidget(QWidget):
 
     def _build_curves(self) -> QWidget:
         page = QSplitter(Qt.Orientation.Horizontal, self)
-        self._headers = QListWidget(page)
+        left = QWidget(page)
+        left_col = QVBoxLayout(left)
+        left_col.setContentsMargins(0, 0, 0, 0)
+        self._headers = QListWidget(left)
         self._headers.currentItemChanged.connect(self._header_picked)
+        left_col.addWidget(self._headers, 1)
+        self._gpu_note = QLabel("Checking GPU fans…", left)
+        self._gpu_note.setWordWrap(True)
+        set_role(self._gpu_note, "muted")
+        left_col.addWidget(self._gpu_note)
         right = QWidget(page)
         col = QVBoxLayout(right)
         self._pump_note = QLabel("", right)
@@ -121,6 +131,12 @@ class ThermalWidget(QWidget):
             row.addWidget(b)
         row.addStretch(1)
         return row
+
+    def _on_gpu_fans(self, statuses) -> None:
+        if not statuses:
+            return
+        lines = [f"{s.name}: " + ("fan curve available" if s.controllable else s.reason) for s in statuses]
+        self._gpu_note.setText("GPU fans\n" + "\n".join(lines))
 
     # ---- live data ---------------------------------------------------------------------
 

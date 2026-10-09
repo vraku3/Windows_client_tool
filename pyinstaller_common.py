@@ -316,6 +316,10 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.thermal",
     "modules.dashboard.thermal_tab",
     "modules.process_explorer.process_explorer_module",
+    # The Security view imports both engines inside its read, on a thread.
+    "modules.process_explorer.lower_pane.security_view",
+    "core.procengine.tokeninfo",
+    "core.procengine.mitigations",
     # PerfMon is a Dashboard tab (imported inside DashboardModule.__init__),
     # so PyInstaller's static analysis would otherwise drop it.
     "modules.perfmon.perfmon_module",

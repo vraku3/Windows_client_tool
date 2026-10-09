@@ -4,7 +4,7 @@ from typing import Dict, List
 
 from PyQt6.QtCore import QAbstractItemModel, QModelIndex, Qt
 
-from modules.process_explorer.process_node import ProcessNode
+from modules.process_explorer.process_node import ProcessNode, link_children
 from modules.process_explorer.color_scheme import (describe, get_row_color,
                                                    get_row_text_color)
 
@@ -37,26 +37,104 @@ def _fmt_bytes(n: int) -> str:
     return f"{n/1024**3:.1f}G"
 
 
+def matches(node: ProcessNode, text: str) -> bool:
+    """Whether `node` answers to the search `text` (already lower-cased).
+
+    Name, pid, image path, user and command line -- the five things someone
+    types when hunting a process. A path or command line we were refused
+    is "" on the node, so it simply cannot match; it is never guessed.
+    """
+    if not text:
+        return True
+    if text.isdigit() and str(node.pid) == text:
+        return True
+    return any(text in (field or "").lower() for field in
+               (node.name, node.exe, node.user, node.cmdline))
+
+
 class ProcessTreeModel(QAbstractItemModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._snapshot: Dict[int, ProcessNode] = {}
         self._roots: List[ProcessNode] = []
         self._flat_mode = False
+        #: The toolbar's search text, lower-cased. Non-empty, the model
+        #: lists the matching processes flat -- a match three levels down
+        #: under a collapsed parent is a match nobody sees.
+        self._filter = ""
+        #: The rows shown when flat or filtered, kept rather than rebuilt
+        #: from the dict on every `index()` call (Qt calls it per cell).
+        self._flat: List[ProcessNode] = []
 
     # ── Public API ────────────────────────────────────────────────────
 
     def load_snapshot(self, snapshot: Dict[int, ProcessNode]):
         self.beginResetModel()
         self._snapshot = snapshot
-        self._roots = [n for n in snapshot.values()
-                       if n.parent_pid not in snapshot or n.parent_pid == n.pid]
+        # Relinked every time: the children lists a node arrived with
+        # describe the tick it was built on, not this one.
+        self._roots = link_children(snapshot)
+        self._rebuild_flat()
         self.endResetModel()
 
     def set_flat_mode(self, flat: bool):
         self.beginResetModel()
         self._flat_mode = flat
+        self._rebuild_flat()
         self.endResetModel()
+
+    def set_filter(self, text: str) -> None:
+        """Show only processes whose name, pid, path, user or command line
+        contains `text` (case-insensitive). Empty restores the view."""
+        text = (text or "").strip().lower()
+        if text == self._filter:
+            return
+        self.beginResetModel()
+        self._filter = text
+        self._rebuild_flat()
+        self.endResetModel()
+
+    def visible_count(self) -> int:
+        """How many processes the current filter lets through."""
+        return len(self._flat) if self._is_flat() else len(self._snapshot)
+
+    def _is_flat(self) -> bool:
+        return self._flat_mode or bool(self._filter)
+
+    def expandable_pids(self) -> List[int]:
+        """Pids of every row that has children (and so can be expanded)."""
+        if self._is_flat():
+            return []
+        return [pid for pid, node in self._snapshot.items() if node.children]
+
+    def index_for_pid(self, pid: int) -> QModelIndex:
+        """The column-0 index of `pid`'s row, or invalid if not shown."""
+        node = self._snapshot.get(pid)
+        if node is None:
+            return QModelIndex()
+        if self._is_flat():
+            siblings = self._flat
+        else:
+            parent = self._snapshot.get(node.parent_pid)
+            siblings = (parent.children if parent is not None
+                        and parent is not node else self._roots)
+        for row, candidate in enumerate(siblings):
+            if candidate is node:
+                return self.createIndex(row, 0, node)
+        return QModelIndex()
+
+    def _membership_moved(self) -> bool:
+        shown = {id(node) for node in self._flat}
+        wanted = {id(node) for node in self._snapshot.values()
+                  if matches(node, self._filter)}
+        return shown != wanted
+
+    def _rebuild_flat(self) -> None:
+        if not self._is_flat():
+            self._flat = []
+            return
+        self._flat = [node for node in self._snapshot.values()
+                      if matches(node, self._filter)]
 
     def update_nodes(self, changed: Dict[int, ProcessNode]):
         """Update metrics for changed pids and emit dataChanged."""
@@ -96,9 +174,17 @@ class ProcessTreeModel(QAbstractItemModel):
             if new_node.appcontainer is not None:
                 old.appcontainer = new_node.appcontainer
 
+        if changed and self._filter and self._membership_moved():
+            # A path or user that arrived this tick (the cold details fill
+            # in over several) can make a row match, or stop matching.
+            self.beginResetModel()
+            self._rebuild_flat()
+            self.endResetModel()
+            return
+
         if changed:
-            if self._flat_mode:
-                count = len(self._snapshot)
+            if self._is_flat():
+                count = len(self._flat)
                 if count > 0:
                     top_left = self.index(0, 0)
                     bot_right = self.index(count - 1, len(COLUMNS) - 1)
@@ -127,9 +213,9 @@ class ProcessTreeModel(QAbstractItemModel):
     def rowCount(self, parent: QModelIndex = None) -> int:
         if parent is None:
             parent = QModelIndex()
-        if self._flat_mode:
+        if self._is_flat():
             if not parent.isValid():
-                return len(self._snapshot)
+                return len(self._flat)
             return 0
         if not parent.isValid():
             return len(self._roots)
@@ -144,10 +230,9 @@ class ProcessTreeModel(QAbstractItemModel):
     def index(self, row: int, col: int, parent: QModelIndex = None) -> QModelIndex:
         if parent is None:
             parent = QModelIndex()
-        if self._flat_mode:
-            nodes = list(self._snapshot.values())
-            if 0 <= row < len(nodes):
-                return self.createIndex(row, col, nodes[row])
+        if self._is_flat():
+            if not parent.isValid() and 0 <= row < len(self._flat):
+                return self.createIndex(row, col, self._flat[row])
             return QModelIndex()
 
         if not parent.isValid():
@@ -160,7 +245,7 @@ class ProcessTreeModel(QAbstractItemModel):
         return QModelIndex()
 
     def parent(self, index: QModelIndex) -> QModelIndex:
-        if not index.isValid() or self._flat_mode:
+        if not index.isValid() or self._is_flat():
             return QModelIndex()
         node: ProcessNode = index.internalPointer()
         parent_node = self._snapshot.get(node.parent_pid)

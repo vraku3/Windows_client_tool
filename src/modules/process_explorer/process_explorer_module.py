@@ -31,6 +31,7 @@ from modules.process_explorer.lower_pane.strings_view import StringsView
 from modules.process_explorer.lower_pane.memory_map_view import MemoryMapView
 from modules.process_explorer.lower_pane.activity_view import ActivityView
 from ui.error_banner import ErrorBanner
+from modules.process_explorer.lower_pane.security_view import SecurityView
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class ProcessExplorerModule(BaseModule):
         self._strings_view: Optional[StringsView] = None
         self._memory_map_view: Optional[MemoryMapView] = None
         self._activity_view: Optional[ActivityView] = None
+        self._security_view: Optional[SecurityView] = None
         self._selected_node: Optional[ProcessNode] = None
 
     def on_start(self, app) -> None:
@@ -143,6 +145,7 @@ class ProcessExplorerModule(BaseModule):
         self._strings_view = StringsView()
         self._memory_map_view = MemoryMapView()
         self._activity_view = ActivityView()
+        self._security_view = SecurityView()
         if self.app:
             self._strings_view.set_thread_pool(self.app.thread_pool)
         self._lower_tabs.addTab(self._dll_view,        "DLLs")
@@ -152,6 +155,7 @@ class ProcessExplorerModule(BaseModule):
         self._lower_tabs.addTab(self._strings_view,    "Strings")
         self._lower_tabs.addTab(self._memory_map_view, "Memory Map")
         self._lower_tabs.addTab(self._activity_view,   "Activity")
+        self._lower_tabs.addTab(self._security_view,   "Security")
         self._lower_tabs.currentChanged.connect(self._on_lower_tab_changed)
         splitter.addWidget(self._lower_tabs)
         splitter.setSizes([600, 250])
@@ -209,6 +213,14 @@ class ProcessExplorerModule(BaseModule):
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText("Search processes…")
         self._search_box.setMaximumWidth(200)
+        self._search_box.setClearButtonEnabled(True)
+        self._search_box.setToolTip(
+            "Name, PID, image path, user or command line. Matches are "
+            "listed flat, so one buried under a collapsed parent still "
+            "shows.")
+        # This box sat in the toolbar connected to nothing: typing in it
+        # did not filter a single row.
+        self._search_box.textChanged.connect(self._on_search_changed)
         tb.addWidget(self._search_box)
 
         interval_combo = QComboBox()
@@ -227,6 +239,11 @@ class ProcessExplorerModule(BaseModule):
 
         return tb
 
+    def _on_search_changed(self, text: str) -> None:
+        if self._model is None:
+            return
+        self._reload_keeping_view(lambda: self._model.set_filter(text))
+
     def on_activate(self) -> None:
         if self._collector and not self._collector._timer.isActive():
             self._collector.start()
@@ -234,7 +251,7 @@ class ProcessExplorerModule(BaseModule):
     def _cancel_lower_pane(self) -> None:
         for view in (self._dll_view, self._handle_view, self._thread_view,
                       self._network_view, self._strings_view, self._memory_map_view,
-                      self._activity_view):
+                      self._activity_view, self._security_view):
             if view is not None:
                 view.cancel()
 
@@ -337,13 +354,43 @@ class ProcessExplorerModule(BaseModule):
         if self._model:
             snap = dict(self._model._snapshot)
             snap[node.pid] = node
-            self._model.load_snapshot(snap)
+            self._reload_keeping_view(lambda: self._model.load_snapshot(snap))
 
     def _on_process_removed(self, pid: int):
         if self._model:
             snap = dict(self._model._snapshot)
             snap.pop(pid, None)
-            self._model.load_snapshot(snap)
+            self._reload_keeping_view(lambda: self._model.load_snapshot(snap))
+
+    def _reload_keeping_view(self, reload) -> None:
+        """Run a model reset without throwing away what the user opened.
+
+        `load_snapshot` resets the model, and a reset collapses every
+        branch and drops the selection. It runs on EVERY process start and
+        exit -- on this machine that is several times a minute -- so a
+        branch someone expanded to read snapped shut under them. Expanded
+        and selected rows are remembered by pid and put back.
+        """
+        view, model = self._tree_view, self._model
+        if view is None or model is None:
+            reload()
+            return
+        expanded = [pid for pid in model.expandable_pids()
+                    if view.isExpanded(model.index_for_pid(pid))]
+        selected = self._selected_node.pid if self._selected_node else None
+        reload()
+        for pid in expanded:
+            index = model.index_for_pid(pid)
+            if index.isValid():
+                view.setExpanded(index, True)
+        if selected is not None:
+            index = model.index_for_pid(selected)
+            if index.isValid():
+                view.selectionModel().blockSignals(True)
+                view.setCurrentIndex(index)
+                view.selectionModel().blockSignals(False)
+                # Blocked signals also skip the view's own repaint.
+                view.viewport().update()
 
     def _on_processes_updated(self, changed_pids: list):
         if self._model and self._collector:
@@ -381,6 +428,8 @@ class ProcessExplorerModule(BaseModule):
             self._memory_map_view.load_pid(pid)
         elif idx == 6:
             self._activity_view.load_pid(pid)
+        elif idx == 7:
+            self._security_view.load_pid(pid, self._selected_node.exe or None)
 
     def _on_double_click(self, index):
         if not index.isValid():

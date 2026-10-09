@@ -6,7 +6,7 @@ from typing import Optional
 
 import psutil
 from PyQt6.QtWidgets import (QDialog, QTabWidget, QWidget, QVBoxLayout,
-                              QHBoxLayout, QGridLayout, QLabel, QTextEdit,
+                              QHBoxLayout, QGridLayout, QLabel,
                               QTableWidget, QPushButton, QDialogButtonBox, QLineEdit)
 from PyQt6.QtCore import Qt, QTimer
 
@@ -18,6 +18,7 @@ from modules.process_explorer.process_node import ProcessNode
 from modules.process_explorer.lower_pane.thread_view import ThreadView
 from modules.process_explorer.lower_pane.network_view import NetworkView
 from modules.process_explorer.lower_pane.strings_view import StringsView
+from modules.process_explorer.lower_pane.security_view import SecurityView
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class ProcessPropertiesDialog(QDialog):
         self._thread_view: Optional[ThreadView] = None
         self._network_view: Optional[NetworkView] = None
         self._strings_view: Optional[StringsView] = None
+        self._security_view: Optional[SecurityView] = None
 
         # One watch feeds every live tab, so the CPU, I/O and GPU figures
         # on the four of them always come from the same instant. Separate
@@ -341,25 +343,23 @@ class ProcessPropertiesDialog(QDialog):
         self._tabs.addTab(nv, "TCP/IP")
 
     def _build_security_tab(self):
+        """Token groups, privileges, protection and mitigations.
+
+        The same `SecurityView` the lower pane shows. The tab it replaces
+        printed the user and SID only, opened the process with
+        PROCESS_QUERY_INFORMATION (which more processes refuse than the
+        limited right the token actually needs) and blamed every failure
+        on elevation, whatever the real reason was.
+        """
         w = QWidget()
         layout = QVBoxLayout(w)
-        te = QTextEdit()
-        te.setReadOnly(True)
-        try:
-            import win32security
-            import win32api
-            import win32con
-            handle = win32api.OpenProcess(win32con.PROCESS_QUERY_INFORMATION, False, self._node.pid)
-            token = win32security.OpenProcessToken(handle, win32con.TOKEN_QUERY)
-            user_sid, attr = win32security.GetTokenInformation(token, win32security.TokenUser)
-            name, domain, _ = win32security.LookupAccountSid(None, user_sid)
-            te.setPlainText(f"User: {domain}\\{name}\nSID: {win32security.ConvertSidToStringSid(user_sid)}")
-        except Exception as e:
-            te.setPlainText(f"Security info unavailable: {e}\n(Requires elevated privileges)")
-        layout.addWidget(te)
         layout.addWidget(self._row("Integrity", self._node.integrity_level))
         layout.addWidget(self._row("Sandboxed (AppContainer)",
                                     _appcontainer_text(self._node.appcontainer)))
+        view = SecurityView(w)
+        view.load_pid(self._node.pid, self._node.exe or None)
+        self._security_view = view
+        layout.addWidget(view, 1)
         self._tabs.addTab(w, "Security")
 
     def _build_environment_tab(self):
@@ -420,6 +420,8 @@ class ProcessPropertiesDialog(QDialog):
             self._network_view.cancel()
         if self._strings_view is not None:
             self._strings_view.cancel()
+        if self._security_view is not None:
+            self._security_view.cancel()
         super().done(r)
 
 

@@ -138,6 +138,24 @@ class FanController:
             self._write_marker(self.bridge.touched)
         return sensors, decisions
 
+    def boost(self, control_id: str) -> None:
+        """Full speed on one header, to find which physical fan it is. 100% is
+        never unsafe; it is marked like any takeover, so a crash mid-identify
+        is still handed back on the next start."""
+        with self._apply_lock:
+            if self.closed:
+                return
+            self.bridge.set_percent(control_id, 100.0)
+            self._write_marker(self.bridge.touched)
+
+    def end_boost(self, control_id: str) -> None:
+        """Back to the curve if the header has one, else to the BIOS."""
+        curve = self.curves.for_control(control_id)
+        if curve is not None and curve.enabled and not cv.validate(curve):
+            self._states.pop(control_id, None)      # the next tick sets it from the curve
+            return
+        self.release(control_id)
+
     def release(self, control_id: str) -> None:
         """Hand one header back to the BIOS (a curve was disabled or removed)."""
         with self._apply_lock:

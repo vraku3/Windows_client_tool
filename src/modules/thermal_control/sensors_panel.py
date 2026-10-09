@@ -4,6 +4,7 @@ Rows are kept by sensor id and their cells rewritten each tick, never
 rebuilt: the first version cleared the tree every second, which threw away
 the sort, the scroll position and any selected row while you were reading it.
 """
+import logging
 from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt
@@ -16,6 +17,8 @@ from ui.chips import make_chips, set_chip_counts
 
 from .engine import view
 from .engine.model import CONTROL, TEMPERATURE, Sensor
+
+logger = logging.getLogger(__name__)
 
 _SORT = Qt.ItemDataRole.UserRole
 COLUMNS = ("Sensor", "Hardware", "Now", "Min", "Max", "Avg", "Limits")
@@ -63,9 +66,12 @@ class SensorsPanel(QWidget):
         self._grouped.toggled.connect(lambda _on: self._rebuild())
         reset = QPushButton("Reset min/max", self)
         reset.clicked.connect(self._reset_stats)
+        export = QPushButton("Export CSV…", self)
+        export.clicked.connect(self._export)
         bar.addWidget(self._search, 1)
         bar.addWidget(self._grouped)
         bar.addWidget(reset)
+        bar.addWidget(export)
         layout.addLayout(bar)
         tree = QTreeWidget(self)
         tree.setHeaderLabels(list(COLUMNS))
@@ -87,6 +93,43 @@ class SensorsPanel(QWidget):
             self._stats[s.id] = (min(lo, s.value), max(hi, s.value), total + s.value, n + 1)
         self._populate()
         set_chip_counts(self._chips, view.sensor_counts(sensors))
+
+    def visible_rows(self) -> List[List[str]]:
+        """What is on screen, in on-screen order: [hardware, sensor, now, min, max, avg]."""
+        out = []
+
+        def walk(item):
+            for i in range(item.childCount()):
+                child = item.child(i)
+                if child.isHidden():
+                    continue
+                if child.childCount():
+                    walk(child)
+                else:
+                    out.append([child.text(C_HW) or item.text(C_NAME), child.text(C_NAME), child.text(C_NOW),
+                                child.text(C_MIN), child.text(C_MAX), child.text(C_AVG)])
+        walk(self._tree.invisibleRootItem())
+        return out
+
+    def _export(self) -> None:
+        import csv
+        import os
+        from datetime import datetime
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export sensors", f"sensors-{datetime.now():%Y%m%d-%H%M%S}.csv", "CSV (*.csv)")
+        if not path:
+            return
+        tmp = path + ".tmp"
+        try:
+            with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Hardware", "Sensor", "Now", "Min", "Max", "Avg"])
+                writer.writerows(self.visible_rows())
+            os.replace(tmp, path)
+        except OSError as e:
+            logger.warning("sensor export failed: %s", e)
+            self._search.setPlaceholderText(f"Export failed: {e}")
 
     def _reset_stats(self) -> None:
         self._stats.clear()

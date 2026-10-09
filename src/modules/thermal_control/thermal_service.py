@@ -191,6 +191,29 @@ class ThermalService(QObject):
             self.errors.append(f"{control_id}: {e}")
         self._reschedule()
 
+    def identify(self, control_id: str, seconds: int = 5) -> str:
+        """Spin one header to 100% for a few seconds, then put it back."""
+        if self.controller is None:
+            return self.reason or "the hardware is not open yet"
+        controller = self.controller
+        try:
+            controller.boost(control_id)
+        except Exception as e:  # KeyError for a vanished header, or a driver error
+            logger.error("could not spin up %s: %s", control_id, e)
+            return str(e)
+        QTimer.singleShot(seconds * 1000, lambda: self._end_identify(controller, control_id))
+        return ""
+
+    def _end_identify(self, controller, control_id: str) -> None:
+        if controller is not self.controller or self._stopped:
+            return                              # shut down meanwhile: everything was handed back
+        try:
+            controller.end_boost(control_id)
+        except Exception as e:  # a .NET exception from the driver path
+            logger.error("could not end the spin-up of %s: %s", control_id, e)
+            self.errors = [f"{control_id}: {e}"]
+        self.tick()
+
     # ---- GPU fans (AMD ADLX; needs no elevation) ---------------------------------------
     #
     # The curve lives in the GPU's firmware, so there is no tick: a write

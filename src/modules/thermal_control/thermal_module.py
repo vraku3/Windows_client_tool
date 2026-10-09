@@ -162,7 +162,11 @@ class ThermalWidget(QWidget):
         bios_btn = QPushButton("Hand back to BIOS", parent)
         bios_btn.clicked.connect(self._hand_back)
         self._bios_btn = bios_btn
-        for b in (apply_btn, default_btn, bios_btn):
+        identify = QPushButton("Identify (5 s at 100%)", parent)
+        identify.setToolTip("Spin this header to full speed for 5 seconds to see which fan it is")
+        identify.clicked.connect(self._identify)
+        self._identify_btn = identify
+        for b in (apply_btn, default_btn, bios_btn, identify):
             row.addWidget(b)
         row.addStretch(1)
         return row
@@ -271,6 +275,7 @@ class ThermalWidget(QWidget):
             self._form.setRowVisible(w, not is_gpu)      # header-only settings
         self._form.setRowVisible(self._zero, is_gpu)
         self._bios_btn.setText("Back to factory" if is_gpu else "Hand back to BIOS")
+        self._identify_btn.setVisible(not is_gpu)
         if is_gpu:
             self._gpu_picked(self._selected[len(GPU_PREFIX):])
             return
@@ -383,6 +388,16 @@ class ThermalWidget(QWidget):
         else:
             self._banner.clear()
             self._status.setText(f"{name}: writing the curve…")
+
+    def _identify(self) -> None:
+        if self._selected is None or self._selected.startswith(GPU_PREFIX):
+            return
+        problem = self._service.identify(self._selected)
+        name = next((s.name for s in self._sensors if s.id == self._selected), "")
+        if problem:
+            self._banner.set_error(f"Could not spin up {name}: {problem}")
+        else:
+            self._status.setText(f"{name}: full speed for 5 seconds -- listen or look for the fan that speeds up.")
 
     def _zero_clicked(self, on: bool) -> None:
         if self._selected and self._selected.startswith(GPU_PREFIX):

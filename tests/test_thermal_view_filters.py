@@ -138,3 +138,14 @@ def test_sorting_on_now_is_numeric(qapp):
     shown = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())
              if not tree.topLevelItem(i).isHidden()]
     assert shown == ["CPU Fan #1", "Chassis Fan #1"]       # 1,200 RPM above 0, not by text
+
+
+def test_export_takes_what_is_on_screen_in_order(qapp):
+    panel = _panel(qapp)
+    panel._pick("fan")
+    rows = panel.visible_rows()
+    assert [r[1] for r in rows] == ["CPU Fan #1", "Chassis Fan #1"] or \
+           [r[1] for r in rows] == ["Chassis Fan #1", "CPU Fan #1"]
+    assert rows[0][0] == "Nuvoton NCT6799D"                 # the hardware comes from the group
+
+

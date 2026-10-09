@@ -144,8 +144,54 @@ def software_sections() -> Tuple[List[Section], List[ReportFinding]]:
     return [summary, table], _findings("Software", sa.software_findings(rows))
 
 
+def stability_sections(days: int = 30, reader: Optional[Callable] = None
+                       ) -> Tuple[List[Section], List[ReportFinding]]:
+    """Unexpected shutdowns and blue screens, one row per INCIDENT.
+
+    The first thing asked about a machine on a ticket is "does it crash", and
+    the report had no answer. Measured here: 7 raw events in 30 days were 4
+    incidents -- two power losses, one held power button, one with no detail.
+    """
+    from core import stability
+    incidents, reason = (reader or stability.read_incidents)(days)
+    title = f"Stability (last {days} days)"
+    if incidents is None:
+        return [Section(title, error=reason)], [
+            ReportFinding("Stability", "info", "Crash history could not be read", reason)]
+    rows = [[f"{i.when:%Y-%m-%d %H:%M}", i.summary, ", ".join(str(e) for e in i.event_ids)]
+            for i in incidents]
+    section = Section(title, ["When", "What happened", "Events"], rows,
+                      note="" if rows else "No unexpected shutdowns or blue screens.")
+    if not incidents:
+        return [section], []
+    counts: Dict[str, int] = {}
+    for i in incidents:
+        counts[i.cause] = counts.get(i.cause, 0) + 1
+    labels = {stability.BUGCHECK: "blue screen", stability.POWER_LOSS: "power loss/hard reset",
+              stability.POWER_BUTTON: "power button held", stability.SLEEP: "died in sleep",
+              stability.UNKNOWN: "no detail recorded"}
+    breakdown = ", ".join(f"{n} {labels.get(c, c)}" for c, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+    severity = "error" if counts.get(stability.BUGCHECK) else "warning"
+    return [section], [ReportFinding(
+        "Stability", severity, f"{len(incidents)} unexpected shutdown(s) in {days} days",
+        f"{breakdown}; most recent {incidents[0].when:%Y-%m-%d %H:%M}")]
+
+
+def health_sections(reader: Optional[Callable] = None) -> Tuple[List[Section], List[ReportFinding]]:
+    """The System Health pane's own checks: pending restart and why, time sync,
+    WMI repository, commit, CBS corruption, stopped auto-start services,
+    WHEA hardware errors. Reused as-is so the report and the pane never disagree."""
+    from modules.system_health import findings as health
+    found = (reader or health.full_findings)()
+    rows = [[f.severity, f.title, f.detail] for f in found]
+    return ([Section("System health checks", ["Severity", "Finding", "Detail"], rows,
+                     note="" if rows else "Every check passed.")],
+            [ReportFinding("Health", f.severity, f.title, f.detail) for f in found])
+
+
 BUILDERS: List[Callable[[], Tuple[List[Section], List[ReportFinding]]]] = [
-    hardware_sections, disk_sections, restore_sections, software_sections,
+    hardware_sections, stability_sections, health_sections, disk_sections,
+    restore_sections, software_sections,
 ]
 
 
@@ -196,7 +242,8 @@ def sections_html(sections: Sequence[Section]) -> str:
         if s.note:
             out.append(f"<p>{html.escape(s.note)}</p>")
         if not s.rows:
-            out.append("<p>None.</p>")
+            if not s.note:
+                out.append("<p>None.</p>")
             continue
         head = "".join(f"<th>{html.escape(h)}</th>" for h in s.headers)
         body = "".join("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in row) + "</tr>"
@@ -219,7 +266,8 @@ def sections_markdown(sections: Sequence[Section]) -> str:
         if s.note:
             out += [f"_{s.note}_", ""]
         if not s.rows:
-            out += ["None.", ""]
+            if not s.note:
+                out += ["None.", ""]
             continue
         out.append("| " + " | ".join(s.headers) + " |")
         out.append("|" + "---|" * len(s.headers))

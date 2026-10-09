@@ -128,8 +128,8 @@ def judge_shutdowns(count: Optional[int], days: int = 7) -> Optional[Finding]:
     if count == 0:
         return None
     return Finding(WARNING if count < 3 else CRITICAL,
-                   f"{count} unexpected shutdown/crash event(s) in {days} days",
-                   "Kernel-Power 41, unclean shutdown 6008 or a bugcheck 1001",
+                   f"{count} unexpected shutdown(s) in {days} days",
+                   "Blue screens, power losses and forced power-offs; see System Report for each one",
                    "Diagnose", "Open Event Viewer")
 
 
@@ -195,22 +195,16 @@ def judge_reboot(reasons: Optional[List[str]]) -> Optional[Finding]:
 
 
 def unexpected_shutdown_count(days: int = 7) -> Optional[int]:
-    """Kernel-Power 41, EventLog 6008 and bugcheck 1001 in the last `days`."""
-    ms = days * 86400 * 1000
-    query = ("*[System[(EventID=41 or EventID=6008 or EventID=1001) and "
-             f"TimeCreated[timediff(@SystemTime) <= {ms}]]]")
-    try:
-        done = subprocess.run(
-            ["wevtutil", "qe", "System", f"/q:{query}", "/c:100", "/f:xml"],
-            capture_output=True, text=True, timeout=20,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.warning("wevtutil failed: %s", e)
-        return None
-    if done.returncode != 0:
-        logger.warning("wevtutil rc=%s: %s", done.returncode, done.stderr.strip())
-        return None
-    return done.stdout.count("<Event ")
+    """Unexpected shutdowns and blue screens in the last `days`, as INCIDENTS.
+
+    It used to count raw Kernel-Power 41 / EventLog 6008 / BugCheck 1001
+    events, but one bad shutdown logs two or three of them at the next boot:
+    measured here, 7 events in 30 days were 4 incidents, so two real
+    shutdowns read as four and tipped this into CRITICAL. None = unreadable.
+    """
+    from core.stability import read_incidents
+    incidents, _reason = read_incidents(days)
+    return None if incidents is None else len(incidents)
 
 
 # ---- assembly ---------------------------------------------------------------

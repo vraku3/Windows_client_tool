@@ -170,3 +170,57 @@ def is_header_control(sensor: Sensor) -> bool:
     Two controls for one fan fight each other, so GPU fans go only through
     ADLX (the GPU firmware's own curve) and never through a header curve."""
     return sensor.kind == CONTROL and sensor.controllable and not sensor.id.startswith("/gpu")
+
+
+# ---- the few readings that matter (Dashboard, Overview, System Report) ---------------------
+
+#: (label, kind, predicate) -- the first sensor matching each, in this order.
+_KEY = (
+    ("CPU (Tctl)", TEMPERATURE, lambda s: "tctl" in s.name.lower()),
+    ("CPU CCD max", TEMPERATURE, lambda s: s.name.lower().startswith("ccds max")),
+    ("GPU", TEMPERATURE, lambda s: s.source == "d3dkmt" and "(tm)" not in s.hardware.lower()),
+    ("GPU hot spot", TEMPERATURE, lambda s: "hot spot" in s.name.lower()),
+    ("VRM", TEMPERATURE, lambda s: "vrm" in s.name.lower()),
+    ("Motherboard", TEMPERATURE, lambda s: s.name.lower() == "motherboard"),
+    ("CPU fan", FAN, lambda s: s.name.lower() == "cpu fan #1"),
+    ("Pump", FAN, lambda s: "pump" in s.name.lower() and bool(s.value)),
+    ("GPU fan", FAN, lambda s: s.source == "d3dkmt"),
+)
+
+
+def key_readings(sensors: List[Sensor]) -> List[Tuple[str, Sensor]]:
+    """The readings worth a glance, labelled; plus every drive's composite
+    temperature. Missing hardware is simply absent (unelevated: GPU only)."""
+    out: List[Tuple[str, Sensor]] = []
+    for label, kind, match in _KEY:
+        hit = next((s for s in sensors if s.kind == kind and not is_limit(s) and match(s)), None)
+        if hit is not None:
+            out.append((label, hit))
+    for s in sensors:
+        if s.kind == TEMPERATURE and s.name.lower() == "composite temperature":
+            out.append((s.hardware, s))
+    return out
+
+
+#: Temperatures that call for attention when the hardware publishes no limit.
+#: Ryzen 9000 throttles at Tctl 95 C; RDNA3 junction (hot spot) at 110 C.
+DEFAULT_LIMITS = {"CPU (Tctl)": (90.0, 95.0), "CPU CCD max": (90.0, 95.0),
+                  "GPU hot spot": (100.0, 108.0), "GPU": (90.0, 100.0), "VRM": (100.0, 115.0)}
+
+
+def thermal_alerts(sensors: List[Sensor]) -> List[Tuple[str, str, float, float]]:
+    """(severity 'warning'/'critical', label, value, limit) for every key
+    temperature at or over its warning limit -- the drive's own published
+    limits for drives, DEFAULT_LIMITS for the rest."""
+    limits = limits_by_hardware(sensors)
+    out = []
+    for label, s in key_readings(sensors):
+        if s.kind != TEMPERATURE or s.value is None:
+            continue
+        own = limits.get(s.hardware, {})
+        warn, crit = (own.get("warn"), own.get("crit")) if own else DEFAULT_LIMITS.get(label, (None, None))
+        if crit is not None and s.value >= crit:
+            out.append(("critical", label, s.value, crit))
+        elif warn is not None and s.value >= warn:
+            out.append(("warning", label, s.value, warn))
+    return out

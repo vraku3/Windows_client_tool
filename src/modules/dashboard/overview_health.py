@@ -133,6 +133,32 @@ def judge_shutdowns(count: Optional[int], days: int = 7) -> Optional[Finding]:
                    "Diagnose", "Open Event Viewer")
 
 
+def judge_thermals(alerts) -> List[Finding]:
+    """One finding per key temperature at/over its limit: a drive's own
+    published warning/critical, else Ryzen's 95 C Tctl throttle point and
+    RDNA3's hot-spot limit (`view.DEFAULT_LIMITS`). Silence when everything is
+    under -- the Thermals tab shows the readings themselves."""
+    out = []
+    for severity, label, value, limit in alerts or []:
+        out.append(Finding(CRITICAL if severity == "critical" else WARNING,
+                           f"{label} at {value:.0f} °C",
+                           f"{'Critical' if severity == 'critical' else 'Warning'} limit {limit:.0f} °C",
+                           "Thermal Control", "Open Thermal Control"))
+    return out
+
+
+def thermal_alerts() -> list:
+    """Alerts from Thermal Control's running service; never opens the hardware."""
+    try:
+        from modules.thermal_control.engine import gpu_kmt, view
+        from modules.thermal_control.thermal_service import ThermalService
+        service = ThermalService.instance
+        return view.thermal_alerts(service.read_now() if service else gpu_kmt.read_gpus())
+    except Exception as e:  # the thermal stack must never take the Overview down
+        logger.warning("thermal alerts unavailable: %s", e)
+        return []
+
+
 def judge_drivers(count: Optional[int]) -> Optional[Finding]:
     if not count:      # None = not scanned yet: nothing to say, not "fine"
         return None
@@ -211,7 +237,8 @@ def unexpected_shutdown_count(days: int = 7) -> Optional[int]:
 
 def collect_findings(driver_problems: Optional[int] = None,
                      shutdown_counter: Callable = unexpected_shutdown_count,
-                     reboot_reader: Callable = pending_reboot_reasons) -> List[Finding]:
+                     reboot_reader: Callable = pending_reboot_reasons,
+                     thermal_reader: Callable = thermal_alerts) -> List[Finding]:
     """Everything that needs attention, worst first. Run on a worker thread."""
     import psutil
     found: List[Optional[Finding]] = []
@@ -238,6 +265,7 @@ def collect_findings(driver_problems: Optional[int] = None,
     found.append(judge_reboot(reboot_reader()))
     found.append(judge_shutdowns(shutdown_counter()))
     found.append(judge_drivers(driver_problems))
+    found.extend(judge_thermals(thermal_reader()))
     return sort_findings([f for f in found if f is not None])
 
 

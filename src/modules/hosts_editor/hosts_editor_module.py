@@ -1,35 +1,51 @@
-r"""Hosts File Editor — manage C:\Windows\System32\drivers\etc\hosts entries.
+r"""Hosts File Editor — manage the hosts file the Windows DNS client reads.
 
-Saves are lossless (comments and headers survive), backed up first, verified by
-reading the file back, and rolled back if the read-back disagrees. The model
-lives in `hosts_analysis.py`.
+Saves are lossless (comments and headers survive, and the file is written
+back in the encoding it was read in), backed up first, verified by reading
+the file back, and rolled back if the read-back disagrees. An absent hosts
+file is "no overrides", and Save creates it. Which file is edited follows
+Tcpip's DataBasePath, not a hard-coded System32 path. Unelevated, the tab
+opens read-only: the file is world-readable and the DNS cross-check needs no
+elevation. The models live in `hosts_analysis.py`, `hosts_file.py` and
+`hosts_dns_check.py`, none of which import Qt.
 """
 import logging
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QCheckBox, QFileDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMessageBox, QPushButton, QTableWidget, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QTableWidget, QVBoxLayout, QWidget,
 )
 
+from core.admin_utils import is_admin
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import centered_item, fit_table, set_role
 from core.windows_utils import system32
+from core.worker import Worker
 from modules.hosts_editor import hosts_analysis as ha
+from modules.hosts_editor import hosts_dns_check as dc
+from modules.hosts_editor import hosts_file as hf
 
 logger = logging.getLogger(__name__)
 
+#: The default location. The file actually edited is `hf.hosts_location().path`,
+#: which follows Tcpip\Parameters\DataBasePath.
 HOSTS_PATH = os.path.join(system32(), "drivers", "etc", "hosts")
 
 
 def backup_dir() -> str:
     return os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")),
                         "WindowsTweaker", "hosts_backups")
+
+
+def _alive(w) -> bool:
+    return w is not None and not sip.isdeleted(w)
 
 
 # Pre-built telemetry blocklist
@@ -49,6 +65,11 @@ TELEMETRY_BLOCKLIST = [
     ("0.0.0.0", "pixel.facebook.com", "Facebook pixel"),
 ]
 
+_SEV_RANK = {ha.SEV_HIGH: 0, ha.SEV_MEDIUM: 1, ha.SEV_LOW: 2, ha.SEV_INFO: 3}
+
+#: Buttons that change the file or the table; disabled while read-only.
+_EDIT_ACTIONS = ("Save", "Restore...", "Add Entry", "Delete Selected", "Import Blocklist")
+
 
 class HostsEditorModule(BaseModule):
     name = "Hosts Editor"
@@ -56,6 +77,7 @@ class HostsEditorModule(BaseModule):
     description = "Edit the Windows hosts file to block telemetry and manage DNS"
     group = ModuleGroup.TOOLS
     requires_admin = True
+    read_only_unelevated = True
 
     def __init__(self):
         super().__init__()
@@ -65,29 +87,30 @@ class HostsEditorModule(BaseModule):
         self._loaded = False
         self._filling = False
         self._current_findings: list = []
+        self._location = hf.HostsLocation(HOSTS_PATH, None, False)
+        self._read = hf.HostsText("", False)
+        self._dns_checks: List[dc.DnsCheck] = []
+        self._buttons: Dict[str, QPushButton] = {}
+
+    # -- seam so tests can pretend to be elevated --------------------------
+    def _is_admin(self) -> bool:
+        return is_admin()
+
+    @property
+    def hosts_path(self) -> str:
+        return self._location.path
 
     def create_widget(self) -> QWidget:
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.addLayout(self._build_toolbar())
 
-        toolbar = QHBoxLayout()
-        for text, tip, slot in (
-            ("Save", "Back up, write, then read the file back to verify", self._save),
-            ("Backup", "Copy the current hosts file to the backup folder", self._backup),
-            ("Restore...", "Restore the hosts file from a backup", self._restore),
-            ("Reload", "Discard edits and re-read the file", self._reload),
-            ("Add Entry", "", self._add_entry),
-            ("Delete Selected", "", self._delete_selected),
-            ("Import Blocklist", "Import telemetry blocklist", self._import_blocklist),
-        ):
-            b = QPushButton(text)
-            if tip:
-                b.setToolTip(tip)
-            b.clicked.connect(slot)
-            toolbar.addWidget(b)
-        toolbar.addStretch()
-        layout.addLayout(toolbar)
+        self._banner = QLabel("")
+        self._banner.setWordWrap(True)
+        set_role(self._banner, "statusWarning")
+        self._banner.hide()
+        layout.addWidget(self._banner)
 
         self._table = QTableWidget()
         self._table.setColumnCount(4)
@@ -98,14 +121,37 @@ class HostsEditorModule(BaseModule):
         layout.addWidget(self._table, 1)
 
         self._findings = QListWidget()
-        self._findings.setMaximumHeight(130)
+        self._findings.setMaximumHeight(150)
         self._findings.itemSelectionChanged.connect(self._select_finding_rows)
         layout.addWidget(self._findings)
 
         self._status = QLabel("")
+        self._status.setWordWrap(True)
         set_role(self._status, "muted")
         layout.addWidget(self._status)
         return self._widget
+
+    def _build_toolbar(self) -> QHBoxLayout:
+        toolbar = QHBoxLayout()
+        for text, tip, slot in (
+            ("Save", "Back up, write, then read the file back to verify", self._save),
+            ("Backup", "Copy the current hosts file to the backup folder", self._backup),
+            ("Restore...", "Restore the hosts file from a backup", self._restore),
+            ("Reload", "Discard edits and re-read the file", self._reload),
+            ("Add Entry", "", self._add_entry),
+            ("Delete Selected", "", self._delete_selected),
+            ("Import Blocklist", "Import telemetry blocklist", self._import_blocklist),
+            ("Check against DNS", "Ask the Windows DNS client what each override would resolve to "
+                                  "WITHOUT the hosts file (Resolve-DnsName -NoHostsFile)", self._check_dns),
+        ):
+            b = QPushButton(text)
+            if tip:
+                b.setToolTip(tip)
+            b.clicked.connect(slot)
+            toolbar.addWidget(b)
+            self._buttons[text] = b
+        toolbar.addStretch()
+        return toolbar
 
     def on_start(self, app) -> None:
         self.app = app
@@ -133,39 +179,55 @@ class HostsEditorModule(BaseModule):
 
     # ── loading ─────────────────────────────────────────────────────────────
 
-    def _read_file(self) -> Tuple[str, str]:
-        """(text, error). A refusal is an error, never an empty file."""
-        if not os.path.exists(HOSTS_PATH):
-            return "", "Hosts file not found"
-        try:
-            with open(HOSTS_PATH, "r", encoding="utf-8", errors="replace") as f:
-                return f.read(), ""
-        except PermissionError:
-            return "", "Permission denied — run as Administrator"
-        except OSError as exc:
-            logger.warning("Cannot read hosts file: %s", exc)
-            return "", "Could not read the hosts file: %s" % exc
-
     def _load(self) -> None:
-        text, err = self._read_file()
+        self._location = hf.hosts_location()
+        self._read = hf.read_hosts_text(self.hosts_path)
+        self._dns_checks = []
         self._filling = True
         self._table.setRowCount(0)
-        self._filling = False
-        self._orig_lines = []
-        if err:
-            self._status.setText(err)
-            self._findings.clear()
-            return
-        self._orig_lines = ha.parse_hosts(text)
-        self._filling = True
+        self._orig_lines = [] if self._read.error else ha.parse_hosts(self._read.text)
         for ln in ha.entries(self._orig_lines):
             self._add_row(ln.enabled, ln.ip, " ".join(ln.hosts), ln.comment, ln.index)
         self._filling = False
         self._modified = False
-        self._status.setText("%d entries; %d other line(s) (comments) are preserved on save."
-                             % (len(ha.entries(self._orig_lines)),
-                                len(self._orig_lines) - len(ha.entries(self._orig_lines))))
+        self._apply_read_only()
+        self._status.setText(self._describe_file())
         self._update_findings()
+
+    def _describe_file(self) -> str:
+        if self._read.error:
+            return self._read.error
+        if not self._read.exists:
+            return ("No hosts file at %s. Windows treats that as no overrides; Save creates it."
+                    % self.hosts_path)
+        n = len(ha.entries(self._orig_lines))
+        return ("%s: %d entries; %d other line(s) (comments) are preserved on save. Encoding %s."
+                % (self.hosts_path, n, len(self._orig_lines) - n, self._read.describe()))
+
+    def _read_only_reason(self) -> str:
+        if self._read.error:
+            return self._read.error
+        if self._read.read_only_reason:
+            return self._read.read_only_reason
+        if not self._is_admin():
+            return ("Read-only: not running as administrator. The hosts file can be viewed, "
+                    "backed up and checked against DNS; saving needs elevation.")
+        return ""
+
+    def _apply_read_only(self) -> None:
+        reason = self._read_only_reason()
+        for name in _EDIT_ACTIONS:
+            self._buttons[name].setEnabled(not reason)
+        self._table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers if reason
+            else QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.EditKeyPressed
+            | QAbstractItemView.EditTrigger.AnyKeyPressed)
+        for i in range(self._table.rowCount()):
+            cb = self._table.cellWidget(i, 0)
+            if cb is not None:
+                cb.setEnabled(not reason)
+        self._banner.setText(reason)
+        self._banner.setVisible(bool(reason))
 
     def _reload(self) -> None:
         if self._modified and not confirm_destructive(
@@ -189,20 +251,28 @@ class HostsEditorModule(BaseModule):
         self._table.setItem(row, 2, centered_item(hosts))
         self._table.setItem(row, 3, centered_item(comment))
 
+    def _cell(self, row: int, col: int) -> str:
+        item = self._table.item(row, col)
+        return item.text().strip() if item else ""
+
     def _rows(self) -> List[Dict]:
         rows = []
         for i in range(self._table.rowCount()):
             cb = self._table.cellWidget(i, 0)
             ip_item = self._table.item(i, 1)
-            text = lambda c: self._table.item(i, c).text().strip() if self._table.item(i, c) else ""  # noqa: E731
             origin = ip_item.data(Qt.ItemDataRole.UserRole) if ip_item else None
-            hosts = text(2).split()
+            hosts = self._cell(i, 2).split()
             if not hosts:
                 continue
             rows.append({"origin": -1 if origin is None else int(origin),
                          "enabled": cb.isChecked() if cb else True,
-                         "ip": text(1), "hosts": hosts, "comment": text(3), "row": i})
+                         "ip": self._cell(i, 1), "hosts": hosts, "comment": self._cell(i, 3), "row": i})
         return rows
+
+    def _row_lines(self) -> List[ha.HostLine]:
+        """Current table as HostLines whose `index` is the TABLE row."""
+        return [ha.HostLine("", True, r["enabled"], r["ip"], r["hosts"], r["comment"], r["row"])
+                for r in self._rows()]
 
     def _on_item_changed(self, _item) -> None:
         self._on_edited()
@@ -214,9 +284,12 @@ class HostsEditorModule(BaseModule):
         self._update_findings()
 
     def _update_findings(self) -> None:
-        lines = [ha.HostLine("", True, r["enabled"], r["ip"], r["hosts"], r["comment"], r["row"])
-                 for r in self._rows()]
-        self._current_findings = ha.analyse(lines)
+        lines = self._row_lines()
+        loc = self._location
+        self._current_findings = (
+            hf.location_findings(loc.relocated, loc.configured, loc.path, loc.error)
+            + ha.analyse(lines) + dc.dns_findings(self._dns_checks, lines))
+        self._current_findings.sort(key=lambda f: _SEV_RANK[f.severity])
         self._findings.clear()
         for f in self._current_findings:
             item = QListWidgetItem("[%s] %s" % (f.severity.upper(), f.title))
@@ -236,54 +309,94 @@ class HostsEditorModule(BaseModule):
             if 0 <= r < self._table.rowCount():
                 self._table.selectRow(r)
                 self._table.item(r, 1).setForeground(self._colour(f.severity))
-        self._status.setText("%s — %s" % (f.title, f.detail))
+        self._status.setText("%s — %s" % (f.title, f.detail.replace("\n", "; ")))
 
     @staticmethod
     def _colour(sev: str):
         from PyQt6.QtGui import QColor
         return QColor(semantic("error" if sev == ha.SEV_HIGH else "warning"))
 
+    # ── DNS cross-check ─────────────────────────────────────────────────────
+
+    def _check_dns(self) -> None:
+        lines = self._row_lines()
+        if not dc.checkable(lines):
+            self._status.setText(dc.summary([]))
+            return
+        btn = self._buttons["Check against DNS"]
+        btn.setEnabled(False)
+        self._status.setText("Asking DNS about %d override(s)..." % len(dc.checkable(lines)))
+        w = Worker(lambda worker: dc.check_entries(lines, is_cancelled=lambda: worker.is_cancelled))
+        w.signals.result.connect(self._on_dns_checked)
+        w.signals.error.connect(self._on_dns_error)
+        w.signals.finished.connect(lambda: btn.setEnabled(True) if _alive(btn) else None)
+        self._workers.append(w)
+        self.app.thread_pool.start(w)
+
+    def _on_dns_checked(self, checks: List[dc.DnsCheck]) -> None:
+        if not _alive(self._table):
+            return
+        self._dns_checks = list(checks)
+        self._update_findings()
+        self._status.setText(dc.summary(checks) + " Select a finding for the per-name detail.")
+
+    def _on_dns_error(self, err) -> None:
+        logger.warning("Hosts DNS check failed: %s", err)
+        if _alive(self._status):
+            self._status.setText("DNS check failed: %s" % (err,))
+
     # ── actions ─────────────────────────────────────────────────────────────
 
     def _save(self) -> None:
+        if self._read_only_reason():
+            QMessageBox.warning(self._widget, "Read-only", self._read_only_reason())
+            return
         rows = self._rows()
         blocking = [f for f in self._current_findings if f.key in ("bad_ip", "bad_host")]
         if blocking:
             QMessageBox.warning(self._widget, "Cannot save",
                                 "Fix these first:\n" + "\n".join(f.title for f in blocking))
             return
-        text = ha.serialize(self._orig_lines, rows)
-        warn = [f.title for f in self._current_findings
-                if f.severity in (ha.SEV_HIGH, ha.SEV_MEDIUM)]
+        warn = [f.title for f in self._current_findings if f.severity in (ha.SEV_HIGH, ha.SEV_MEDIUM)]
+        what = ("A backup is taken first." if self._read.exists
+                else "There is no hosts file yet; this creates one.")
         if not confirm_destructive(
                 self._widget, "Save hosts file",
-                "Write %d entries to the hosts file? A backup is taken first." % len(rows),
+                "Write %d entries to %s? %s" % (len(rows), self.hosts_path, what),
                 detail=("Warnings:\n" + "\n".join(warn[:10])) if warn else "",
                 irreversible=False):
             return
-        try:
-            bak = ha.backup_hosts(HOSTS_PATH, backup_dir())
-        except OSError as exc:
-            logger.warning("Hosts backup failed: %s", exc)
-            QMessageBox.critical(self._widget, "Backup failed",
-                                 "Nothing was written, because the backup failed:\n%s" % exc)
-            return
-        err = ha.write_and_verify(HOSTS_PATH, text)
-        if err:
-            with open(bak, encoding="utf-8", errors="replace") as fh:
-                rolled = ha.write_and_verify(HOSTS_PATH, fh.read())
-            QMessageBox.critical(
-                self._widget, "Save failed",
-                "The hosts file was not saved: %s\n%s" % (
-                    err, "It was restored from the backup." if not rolled
-                    else "Restoring the backup ALSO failed (%s); copy it back by hand:\n%s" % (rolled, bak)))
-            return
-        self._load()
-        self._status.setText("Saved and verified. Backup: %s" % bak)
+        out = hf.save_hosts(self.hosts_path, ha.serialize(self._orig_lines, rows), self._read, backup_dir())
+        if not self._report_failure("Save failed", out):
+            self._load()
+            self._status.setText(self._saved_text(out, "Saved and verified."))
+
+    @staticmethod
+    def _saved_text(out: hf.SaveOutcome, head: str) -> str:
+        if out.created:
+            return head + " The hosts file did not exist and was created."
+        return head + " Backup: %s" % out.backup
+
+    def _report_failure(self, title: str, out: hf.SaveOutcome) -> bool:
+        """Show a failed SaveOutcome. Returns True when it failed."""
+        if out.ok:
+            return False
+        if out.rollback_error:
+            undo = "Undoing it ALSO failed (%s)%s" % (
+                out.rollback_error, "; copy it back by hand:\n%s" % out.backup if out.backup else ".")
+        elif out.backup or out.created:
+            undo = "The file was put back as it was."
+        else:
+            undo = ""
+        QMessageBox.critical(self._widget, title, "The hosts file was not changed: %s\n%s" % (out.error, undo))
+        return True
 
     def _backup(self) -> None:
+        if not os.path.exists(self.hosts_path):
+            self._status.setText("Nothing to back up: there is no hosts file at %s." % self.hosts_path)
+            return
         try:
-            bak = ha.backup_hosts(HOSTS_PATH, backup_dir())
+            bak = hf.backup_file(self.hosts_path, backup_dir())
         except OSError as exc:
             logger.warning("Hosts backup failed: %s", exc)
             QMessageBox.warning(self._widget, "Backup Failed", str(exc))
@@ -298,23 +411,13 @@ class HostsEditorModule(BaseModule):
             return
         if not confirm_destructive(
                 self._widget, "Restore hosts file",
-                "Replace the current hosts file with:\n%s\n\nThe current file is backed up first." % path,
-                irreversible=False):
+                "Replace %s with:\n%s\n\nThe current file (if any) is backed up first."
+                % (self.hosts_path, path), irreversible=False):
             return
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                text = fh.read()
-            ha.backup_hosts(HOSTS_PATH, backup_dir())
-        except OSError as exc:
-            logger.warning("Hosts restore failed before write: %s", exc)
-            QMessageBox.critical(self._widget, "Restore failed", str(exc))
-            return
-        err = ha.write_and_verify(HOSTS_PATH, text)
-        if err:
-            QMessageBox.critical(self._widget, "Restore failed", err)
-            return
-        self._load()
-        self._status.setText("Restored from %s (read back and verified)." % path)
+        out, _data = hf.restore_from(path, self.hosts_path, backup_dir())
+        if not self._report_failure("Restore failed", out):
+            self._load()
+            self._status.setText(self._saved_text(out, "Restored byte-for-byte from %s and verified." % path))
 
     def _add_entry(self) -> None:
         self._filling = True
@@ -355,3 +458,5 @@ class HostsEditorModule(BaseModule):
         self._on_edited()
         self._status.setText("Added %d entries (%d already present). Save to apply."
                              % (added, len(TELEMETRY_BLOCKLIST) - added))
+
+

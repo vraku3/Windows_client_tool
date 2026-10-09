@@ -92,10 +92,12 @@ class CurveEditor(QWidget):
         if self._drag is None:
             self.setCursor(Qt.CursorShape.PointingHandCursor if self._hit(event.position()) is not None
                            else Qt.CursorShape.ArrowCursor)
+            super().mouseMoveEvent(event)
             return
         t, d = self._from_px(event.position().x(), event.position().y())
         self._points[self._drag] = self._clamped(self._drag, t, d)
         self.update()
+        event.accept()
 
     def mouseReleaseEvent(self, event) -> None:
         if self._drag is not None:
@@ -105,6 +107,7 @@ class CurveEditor(QWidget):
 
     def mouseDoubleClickEvent(self, event) -> None:
         t, d = self._from_px(event.position().x(), event.position().y())
+        event.accept()
         if any(abs(t - pt) < 2 for pt, _ in self._points):
             return
         self._points.append((t, d))

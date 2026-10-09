@@ -10,6 +10,7 @@ cleanly -- and hands those headers back BEFORE anything else happens.
 import json
 import logging
 import os
+import threading
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import curves as cv
@@ -28,6 +29,11 @@ class FanController:
         self._states: Dict[str, cv.CurveState] = {}
         self._defaults: Dict[str, Optional[dict]] = {}     # control id -> BIOS mode/PWM
         self.last_errors: List[str] = []
+        # tick() runs on a worker; shutdown() on the UI thread at exit. Without
+        # this, a tick in flight could set a duty AFTER shutdown handed every
+        # header back, leaving a fan under software control with no app.
+        self._apply_lock = threading.Lock()
+        self.closed = False
 
     # ---- crash recovery -----------------------------------------------------------------
 
@@ -119,24 +125,30 @@ class FanController:
             self.last_errors.append(f"sensor read failed: {e}")
             sensors = []
         temps = {s.id: s.value for s in sensors if s.kind == TEMPERATURE}
-        decisions = cv.step(self.curves, temps, self._states)
-        for d in decisions:
-            try:
-                self.bridge.set_percent(d.control_id, d.percent)
-            except Exception as e:  # KeyError for a header that vanished, or a driver error
-                logger.error("could not set %s to %.0f%%: %s", d.control_id, d.percent, e)
-                self.last_errors.append(f"{d.control_id}: {e}")
-        self._write_marker(self.bridge.touched)
+        with self._apply_lock:
+            if self.closed:
+                return sensors, []
+            decisions = cv.step(self.curves, temps, self._states)
+            for d in decisions:
+                try:
+                    self.bridge.set_percent(d.control_id, d.percent)
+                except Exception as e:  # KeyError for a header that vanished, or a driver error
+                    logger.error("could not set %s to %.0f%%: %s", d.control_id, d.percent, e)
+                    self.last_errors.append(f"{d.control_id}: {e}")
+            self._write_marker(self.bridge.touched)
         return sensors, decisions
 
     def release(self, control_id: str) -> None:
         """Hand one header back to the BIOS (a curve was disabled or removed)."""
-        self._states.pop(control_id, None)
-        self.bridge.release(control_id)
-        self._write_marker(self.bridge.touched)
+        with self._apply_lock:
+            self._states.pop(control_id, None)
+            self.bridge.release(control_id)
+            self._write_marker(self.bridge.touched)
 
     def shutdown(self) -> List[Tuple[str, str]]:
         """Hand every header back. The marker is removed only if all of them went."""
-        failed = self.bridge.release_all()
-        self._write_marker([cid for cid, _err in failed])
+        with self._apply_lock:
+            self.closed = True
+            failed = self.bridge.release_all()
+            self._write_marker([cid for cid, _err in failed])
         return failed

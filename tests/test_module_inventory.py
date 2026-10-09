@@ -249,8 +249,11 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_29_entries(registered):
-    """29, up from 28: the full history of the Management + Network
+def test_the_sidebar_is_30_entries(registered):
+    """30: Thermal Control (2026-10-09) is a genuinely new SYSTEM entry --
+    sensors and fan curves have no existing hub to fold into: 29 + 1.
+
+    29, up from 28: the full history of the Management + Network
     consolidation (see
     docs/superpowers/specs/2026-09-16-management-network-consolidation-design.md).
     Task 1 folded three previously-independent ModuleGroup.MANAGE entries --
@@ -263,7 +266,7 @@ def test_the_sidebar_is_29_entries(registered):
     new Scripts hub (docs/superpowers/specs/
     2026-09-18-scripts-file-forensics-design.md) is a genuinely new sidebar
     entry, not a fold of existing ones: 28 + 1 = 29."""
-    assert len(registered) == 29
+    assert len(registered) == 30
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

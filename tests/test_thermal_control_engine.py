@@ -219,3 +219,13 @@ def test_an_old_style_marker_without_values_is_released_and_flagged(tmp_path):
     ctl = FanController(FakeBridge(), str(marker))
     assert ctl.recover() == [FAN1]
     assert "may still be fixed" in ctl.last_errors[0]
+
+
+def test_a_tick_after_shutdown_never_takes_a_fan_back(tmp_path):
+    bridge = FakeBridge()
+    ctl = FanController(bridge, str(tmp_path / "active.json"))
+    ctl.curves.upsert(_curve())
+    ctl.tick()
+    ctl.shutdown()
+    _s, decisions = ctl.tick()                       # a worker tick landing late
+    assert decisions == [] and bridge.duty == {}

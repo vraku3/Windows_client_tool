@@ -22,6 +22,7 @@ class LiveSources:
         self._gpu = self._open("GPU counters", self._open_gpu)
         self._meter = self._open("energy meter", self._open_meter)
         self._eff, self._nominal = self._open_clock()
+        self._cpu_temp = self._open("CPU temperature", self._open_cpu_temp)
 
     # ---- opening -------------------------------------------------------------------
 
@@ -47,6 +48,18 @@ class LiveSources:
     def _open_meter():
         from .energy import EnergyMeter
         return EnergyMeter()
+
+    @staticmethod
+    def _open_cpu_temp():
+        """CPU Tctl through LibreHardwareMonitor, CPU only -- elevated with
+        PawnIO; otherwise the panel records a gap, never a guess."""
+        from modules.thermal_control.engine import lhm_bridge
+        reason = lhm_bridge.unavailable_reason()
+        if reason:
+            raise OSError(reason)
+        bridge = lhm_bridge.LhmBridge()
+        bridge.open(cpu_only=True)
+        return bridge
 
     def _open_clock(self):
         from . import power
@@ -96,15 +109,39 @@ class LiveSources:
         values = self._eff.read(self._nominal)
         return sum(values) / len(values) if values else None
 
+    def cpu_temp(self) -> Optional[float]:
+        if self._cpu_temp is None:
+            return None
+        try:
+            readings = self._cpu_temp.read()
+        except Exception as e:  # a .NET exception from the driver path
+            logger.warning("flight recorder: CPU temperature read failed: %s", e)
+            return None
+        tctl = next((s.value for s in readings if "tctl" in s.name.lower()), None)
+        return tctl
+
+    @staticmethod
+    def gpu_temp() -> Optional[float]:
+        """The hottest GPU that also reports a fan (the discrete card); the
+        integrated GPU only if it is the only one."""
+        from modules.thermal_control.engine import gpu_kmt
+        from modules.thermal_control.engine.model import FAN, TEMPERATURE
+        sensors = gpu_kmt.read_gpus()
+        with_fan = {s.hardware for s in sensors if s.kind == FAN}
+        temps = [s for s in sensors if s.kind == TEMPERATURE and s.value is not None]
+        pick = [s for s in temps if s.hardware in with_fan] or temps
+        return max(s.value for s in pick) if pick else None
+
     def sampler(self) -> Sampler:
         return Sampler(clock=self.clock, processes=self.processes, gpu=self.gpu,
-                       gpu_by_pid=self.gpu_by_pid, power=self.power)
+                       gpu_by_pid=self.gpu_by_pid, power=self.power,
+                       extra={"cpu_temp": self.cpu_temp, "gpu_temp": self.gpu_temp})
 
     def close(self) -> None:
-        for reader in (self._gpu, self._meter, self._eff):
+        for reader in (self._gpu, self._meter, self._eff, self._cpu_temp):
             if reader is not None:
                 try:
                     reader.close()
                 except Exception as e:  # closing a counter handle that already went away
                     logger.info("flight recorder: closing a reader failed: %s", e)
-        self._gpu = self._meter = self._eff = None
+        self._gpu = self._meter = self._eff = self._cpu_temp = None

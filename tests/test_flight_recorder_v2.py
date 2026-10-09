@@ -238,3 +238,25 @@ def test_the_checkbox_turns_the_history_on_and_remembers_it(qapp, tmp_path):
         assert not module.history.running and stored["modules.dashboard.flight.history"] is False
     finally:
         module.on_stop()
+
+
+# ---- temperatures -------------------------------------------------------------------------
+
+def test_temperature_panels_are_recorded_and_a_missing_one_is_a_gap():
+    sampler = fr.Sampler(extra={"cpu_temp": lambda: None, "gpu_temp": lambda: 52.0})
+    sampler.sample()
+    time.sleep(0.2)
+    s = sampler.sample()
+    assert s["cpu_temp"] is None and s["gpu_temp"] == 52.0
+    assert {"cpu_temp", "gpu_temp"} <= {key for key, _t, _u in fr.PANELS}
+
+
+def test_the_gpu_temperature_prefers_the_card_with_a_fan(monkeypatch):
+    from modules.dashboard.flight_sources import LiveSources
+    from modules.thermal_control.engine import gpu_kmt
+    from modules.thermal_control.engine.model import FAN, TEMPERATURE, Sensor
+    monkeypatch.setattr(gpu_kmt, "read_gpus", lambda: [
+        Sensor("/d3dkmt/igpu/temperature", "AMD Radeon(TM) Graphics", "GPU", TEMPERATURE, 61.0, "d3dkmt"),
+        Sensor("/d3dkmt/dgpu/temperature", "AMD Radeon RX 7900 XTX", "GPU", TEMPERATURE, 52.0, "d3dkmt"),
+        Sensor("/d3dkmt/dgpu/fan", "AMD Radeon RX 7900 XTX", "GPU fan", FAN, 1300.0, "d3dkmt")])
+    assert LiveSources.gpu_temp() == 52.0          # the card, not the hotter integrated GPU

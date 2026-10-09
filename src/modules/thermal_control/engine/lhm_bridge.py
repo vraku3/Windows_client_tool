@@ -94,14 +94,16 @@ class LhmBridge:
         self._controls: Dict[str, object] = {}
         self._touched: set = set()
 
-    def open(self) -> None:
+    def open(self, cpu_only: bool = False) -> None:
+        """`cpu_only` opens just the CPU: what the Flight Recorder needs, and
+        it never touches the SuperIO chips the fan curves are driving."""
         Computer = _load_runtime()
         computer = Computer()
         computer.IsCpuEnabled = True
-        computer.IsGpuEnabled = True
-        computer.IsMotherboardEnabled = True
-        computer.IsControllerEnabled = True
-        computer.IsStorageEnabled = True
+        computer.IsGpuEnabled = not cpu_only
+        computer.IsMotherboardEnabled = not cpu_only
+        computer.IsControllerEnabled = not cpu_only
+        computer.IsStorageEnabled = not cpu_only
         computer.Open()
         self._computer = computer
 

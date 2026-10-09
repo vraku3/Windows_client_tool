@@ -381,3 +381,24 @@ def test_the_exit_net_still_hands_fans_back_after_qt_is_gone(qapp, tmp_path):
     sip.delete(svc._timer)
     svc._atexit()
     assert bridge.released == [FAN1]
+
+
+def test_identify_spins_up_then_hands_a_bare_header_back(tmp_path):
+    bridge = FakeBridge()
+    ctl = FanController(bridge, str(tmp_path / "active.json"))
+    ctl.boost(FAN1)
+    assert bridge.duty[FAN1] == 100.0 and (tmp_path / "active.json").exists()     # crash-safe
+    ctl.end_boost(FAN1)
+    assert bridge.released == [FAN1] and not (tmp_path / "active.json").exists()
+
+
+def test_identify_on_a_curved_header_returns_to_the_curve_not_the_bios(tmp_path):
+    bridge = FakeBridge(temp=50.0)
+    ctl = FanController(bridge, str(tmp_path / "active.json"))
+    ctl.curves.upsert(_curve())
+    ctl.tick()
+    ctl.boost(FAN1)
+    ctl.end_boost(FAN1)
+    assert bridge.released == []
+    ctl.tick()
+    assert bridge.duty[FAN1] == 40.0                     # the curve at 50 C, straight away

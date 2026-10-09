@@ -13,7 +13,7 @@ hook repeats it in case the normal path never runs.
 import atexit
 import logging
 import os
-from typing import Callable, Dict, List, Optional
+from typing import Callable, List, Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -163,6 +163,8 @@ class ThermalService(QObject):
     def save_curve(self, curve: cv.FanCurve) -> List[str]:
         """Store and (if enabled) start a curve; returns why it was refused."""
         problems = cv.validate(curve)
+        if curve.control_id.startswith("/gpu"):
+            problems.append("GPU fans are set through the GPU's own curve (the GPU entry), not as a header")
         if problems and curve.enabled:
             return problems
         if self.controller is None:
@@ -188,6 +190,29 @@ class ThermalService(QObject):
             logger.error("could not hand %s back to the BIOS: %s", control_id, e)
             self.errors.append(f"{control_id}: {e}")
         self._reschedule()
+
+    def identify(self, control_id: str, seconds: int = 5) -> str:
+        """Spin one header to 100% for a few seconds, then put it back."""
+        if self.controller is None:
+            return self.reason or "the hardware is not open yet"
+        controller = self.controller
+        try:
+            controller.boost(control_id)
+        except Exception as e:  # KeyError for a vanished header, or a driver error
+            logger.error("could not spin up %s: %s", control_id, e)
+            return str(e)
+        QTimer.singleShot(seconds * 1000, lambda: self._end_identify(controller, control_id))
+        return ""
+
+    def _end_identify(self, controller, control_id: str) -> None:
+        if controller is not self.controller or self._stopped:
+            return                              # shut down meanwhile: everything was handed back
+        try:
+            controller.end_boost(control_id)
+        except Exception as e:  # a .NET exception from the driver path
+            logger.error("could not end the spin-up of %s: %s", control_id, e)
+            self.errors = [f"{control_id}: {e}"]
+        self.tick()
 
     # ---- GPU fans (AMD ADLX; needs no elevation) ---------------------------------------
     #

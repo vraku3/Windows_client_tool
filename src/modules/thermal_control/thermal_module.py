@@ -1,23 +1,23 @@
 """Thermal Control: every temperature and fan, and fan curves on the headers."""
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
-                             QHeaderView, QLabel, QListWidget, QListWidgetItem, QMessageBox,
-                             QPushButton, QSplitter, QTabWidget, QTreeWidget, QTreeWidgetItem,
-                             QVBoxLayout, QWidget)
+                             QLabel, QListWidget, QListWidgetItem, QMessageBox,
+                             QPushButton, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.semantic_colors import semantic
 from core.table_ui import set_role
+from ui.chips import make_chips, set_chip_counts
 from ui.error_banner import ErrorBanner
 
 from .curve_editor import CurveEditor
 from .engine import curves as cv
 from .engine import view
 from .engine.model import CONTROL, FAN, TEMPERATURE, Sensor, is_pump
+from .sensors_panel import SensorsPanel
 from .thermal_service import ThermalService, marker_path_for
 
 logger = logging.getLogger(__name__)
@@ -41,8 +41,9 @@ class ThermalWidget(QWidget):
         super().__init__(parent)
         self._service = service
         self._sensors: List[Sensor] = []
-        self._range: Dict[str, Tuple[float, float]] = {}
         self._selected: Optional[str] = None
+        self._fan_filter = "all"
+        self._fan_sort = "name"
         self._confirmed = False
         self._gpu_confirmed = False
         self._build()
@@ -72,18 +73,24 @@ class ThermalWidget(QWidget):
         return "Opening the hardware…"
 
     def _build_sensors(self) -> QWidget:
-        tree = QTreeWidget(self)
-        tree.setHeaderLabels(["Sensor", "Now", "Min", "Max", "Limits"])
-        tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        tree.setRootIsDecorated(True)
-        self._tree = tree
-        return tree
+        self._sensors_panel = SensorsPanel(self)
+        return self._sensors_panel
 
     def _build_curves(self) -> QWidget:
         page = QSplitter(Qt.Orientation.Horizontal, self)
         left = QWidget(page)
         left_col = QVBoxLayout(left)
         left_col.setContentsMargins(0, 0, 0, 0)
+        chips_row, self._fan_chips = make_chips(left, view.HEADER_FILTERS, self._pick_fans)
+        left_col.addLayout(chips_row)
+        sort_row = QHBoxLayout()
+        sort_row.addWidget(QLabel("Sort:", left))
+        self._fan_sort_box = QComboBox(left)
+        for key, label in view.HEADER_SORTS:
+            self._fan_sort_box.addItem(label, key)
+        self._fan_sort_box.currentIndexChanged.connect(self._sort_fans)
+        sort_row.addWidget(self._fan_sort_box, 1)
+        left_col.addLayout(sort_row)
         self._headers = QListWidget(left)
         self._headers.currentItemChanged.connect(self._header_picked)
         left_col.addWidget(self._headers, 1)
@@ -100,6 +107,7 @@ class ThermalWidget(QWidget):
         self._editor = CurveEditor(right)
         col.addWidget(self._editor, 1)
         col.addLayout(self._build_form(right))
+        col.addLayout(self._build_presets(right))
         col.addLayout(self._build_buttons(right))
         page.setStretchFactor(1, 1)
         page.setSizes([420, 800])
@@ -134,6 +142,17 @@ class ThermalWidget(QWidget):
         self._form = form
         return form
 
+    def _build_presets(self, parent) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Preset:", parent))
+        for key, label in cv.PRESET_LABELS:
+            button = QPushButton(label, parent)
+            button.setToolTip("Loads the preset into the editor; nothing is written until Apply")
+            button.clicked.connect(lambda _=False, k=key: self._apply_preset(k))
+            row.addWidget(button)
+        row.addStretch(1)
+        return row
+
     def _build_buttons(self, parent) -> QHBoxLayout:
         row = QHBoxLayout()
         apply_btn = QPushButton("Apply", parent)
@@ -143,7 +162,11 @@ class ThermalWidget(QWidget):
         bios_btn = QPushButton("Hand back to BIOS", parent)
         bios_btn.clicked.connect(self._hand_back)
         self._bios_btn = bios_btn
-        for b in (apply_btn, default_btn, bios_btn):
+        identify = QPushButton("Identify (5 s at 100%)", parent)
+        identify.setToolTip("Spin this header to full speed for 5 seconds to see which fan it is")
+        identify.clicked.connect(self._identify)
+        self._identify_btn = identify
+        for b in (apply_btn, default_btn, bios_btn, identify):
             row.addWidget(b)
         row.addStretch(1)
         return row
@@ -161,11 +184,7 @@ class ThermalWidget(QWidget):
 
     def _on_sensors(self, sensors: List[Sensor]) -> None:
         self._sensors = sensors
-        for s in sensors:
-            if s.value is not None:
-                lo, hi = self._range.get(s.id, (s.value, s.value))
-                self._range[s.id] = (min(lo, s.value), max(hi, s.value))
-        self._fill_tree()
+        self._sensors_panel.update_sensors(sensors)
         self._fill_headers()
         self._refresh_live()
         errors = self._service.errors
@@ -174,65 +193,50 @@ class ThermalWidget(QWidget):
         else:
             self._banner.clear()
 
-    def _fill_tree(self) -> None:
-        limits = view.limits_by_hardware(self._sensors)
-        expanded = {self._tree.topLevelItem(i).text(0): self._tree.topLevelItem(i).isExpanded()
-                    for i in range(self._tree.topLevelItemCount())}
-        self._tree.clear()
-        for hw, rows in view.groups(self._sensors):
-            lim = limits.get(hw, {})
-            text = ", ".join(f"{k} {v:.0f} °C" for k, v in lim.items())
-            top = QTreeWidgetItem([hw, "", "", "", text])
-            for s in rows:
-                lo, hi = self._range.get(s.id, (None, None))
-                fmt = (lambda v: "" if v is None else (f"{v:,.0f}" if s.kind != TEMPERATURE else f"{v:.1f}"))
-                label = f"{s.name} (duty)" if s.kind == CONTROL else s.name
-                item = QTreeWidgetItem(top, [label, s.display(), fmt(lo), fmt(hi), ""])
-                self._colour(item, s, lim)
-            self._tree.addTopLevelItem(top)
-            top.setExpanded(expanded.get(hw, True))
-
-    @staticmethod
-    def _colour(item: QTreeWidgetItem, s: Sensor, lim: Dict[str, float]) -> None:
-        from PyQt6.QtGui import QColor
-        if s.kind != TEMPERATURE or s.value is None:
-            return
-        if "crit" in lim and s.value >= lim["crit"]:
-            item.setForeground(1, QColor(semantic("error")))
-        elif "warn" in lim and s.value >= lim["warn"]:
-            item.setForeground(1, QColor(semantic("warning")))
-
-    def _fill_headers(self) -> None:
+    def _fan_rows(self) -> List[view.FanRow]:
         curves = self._service.curves()
-        controls = [s for s in self._sensors if s.kind == CONTROL and s.controllable]
-        self._headers.blockSignals(True)
-        current = self._selected
-        self._headers.clear()
-        for c in controls:
+        rows = []
+        for c in (s for s in self._sensors if view.is_header_control(s)):
             curve = curves.for_control(c.id)
-            text = view.header_line(c, self._sensors, bool(curve and curve.enabled))
-            item = QListWidgetItem(text)
-            item.setToolTip(text)
-            item.setData(Qt.ItemDataRole.UserRole, c.id)
-            self._headers.addItem(item)
-            if c.id == current:
-                self._headers.setCurrentItem(item)
+            on = bool(curve and curve.enabled)
+            fan = view.fan_for_control(c.id, self._sensors)
+            rows.append(view.FanRow(c.id, c.name, fan.value if fan else None, c.value, on,
+                                    pump=is_pump(c.name), detail=view.header_line(c, self._sensors, on)))
         for st in self._service.gpu_fans:
-            if not st.controllable:
+            if not st.controllable or st.gpu is None:
                 continue
-            gid = GPU_PREFIX + st.name
             fan = next((s for s in self._sensors if s.kind == FAN and s.hardware == st.name), None)
             rpm = f" · {fan.display()}" if fan else ""
-            item = QListWidgetItem(f"GPU · {st.name}  —  {st.reason.replace('fan curve available ', '')}{rpm}")
-            item.setToolTip(item.text())
-            item.setData(Qt.ItemDataRole.UserRole, gid)
+            detail = f"GPU · {st.name}  —  {st.reason.replace('fan curve available ', '')}{rpm}"
+            rows.append(view.FanRow(GPU_PREFIX + st.name, st.name, fan.value if fan else None, None,
+                                    not st.gpu.at_factory, gpu=True, detail=detail))
+        return rows
+
+    def _fill_headers(self) -> None:
+        rows = self._fan_rows()
+        set_chip_counts(self._fan_chips, view.header_counts(rows))
+        current = self._selected
+        self._headers.blockSignals(True)
+        self._headers.clear()
+        for row in view.filter_and_sort(rows, self._fan_filter, self._fan_sort):
+            item = QListWidgetItem(row.detail)
+            item.setToolTip(row.detail)
+            item.setData(Qt.ItemDataRole.UserRole, row.key)
             self._headers.addItem(item)
-            if gid == current:
+            if row.key == current:
                 self._headers.setCurrentItem(item)
         self._headers.blockSignals(False)
         if current is None and self._headers.count():
             self._headers.setCurrentRow(0)
         self._fill_sources()
+
+    def _pick_fans(self, key: str) -> None:
+        self._fan_filter = key
+        self._fill_headers()
+
+    def _sort_fans(self) -> None:
+        self._fan_sort = self._fan_sort_box.currentData()
+        self._fill_headers()
 
     def _fill_sources(self) -> None:
         keep = self._source.currentData()
@@ -271,6 +275,7 @@ class ThermalWidget(QWidget):
             self._form.setRowVisible(w, not is_gpu)      # header-only settings
         self._form.setRowVisible(self._zero, is_gpu)
         self._bios_btn.setText("Back to factory" if is_gpu else "Hand back to BIOS")
+        self._identify_btn.setVisible(not is_gpu)
         if is_gpu:
             self._gpu_picked(self._selected[len(GPU_PREFIX):])
             return
@@ -301,6 +306,21 @@ class ThermalWidget(QWidget):
         self._zero.setEnabled(st.gpu.zero_rpm is not None)
         self._zero.setChecked(bool(st.gpu.zero_rpm))
         self._refresh_live()
+
+    def _apply_preset(self, key: str) -> None:
+        """Into the editor only; Apply writes it, with the usual checks."""
+        if self._selected is None:
+            return
+        if self._selected.startswith(GPU_PREFIX):
+            st = self._service.gpu_status(self._selected[len(GPU_PREFIX):])
+            if st is None or st.gpu is None:
+                return
+            floor = st.gpu.speed_range[0] if st.gpu.speed_range else 0
+            self._editor.set_curve(cv.preset_points(key, floor, st.gpu.temp_range), floor, None, fixed=True)
+            return
+        name = next((s.name for s in self._sensors if s.id == self._selected), "")
+        floor = cv.MIN_PUMP_PERCENT if is_pump(name) else cv.MIN_FAN_PERCENT
+        self._editor.set_curve(cv.preset_points(key, floor), floor, self._critical.value())
 
     def _default_source(self) -> str:
         sources = view.temperature_sources(self._sensors)
@@ -368,6 +388,16 @@ class ThermalWidget(QWidget):
         else:
             self._banner.clear()
             self._status.setText(f"{name}: writing the curve…")
+
+    def _identify(self) -> None:
+        if self._selected is None or self._selected.startswith(GPU_PREFIX):
+            return
+        problem = self._service.identify(self._selected)
+        name = next((s.name for s in self._sensors if s.id == self._selected), "")
+        if problem:
+            self._banner.set_error(f"Could not spin up {name}: {problem}")
+        else:
+            self._status.setText(f"{name}: full speed for 5 seconds -- listen or look for the fan that speeds up.")
 
     def _zero_clicked(self, on: bool) -> None:
         if self._selected and self._selected.startswith(GPU_PREFIX):

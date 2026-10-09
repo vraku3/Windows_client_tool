@@ -56,3 +56,117 @@ def header_line(control: Sensor, sensors: List[Sensor], on_curve: bool) -> str:
         "0 RPM: nothing connected, or stopped" if fan.value == 0 else fan.display())
     duty = "n/a" if control.value is None else f"{control.value:.0f}%"
     return f"{control.name}  —  {duty} · {rpm} · {'curve' if on_curve else 'BIOS'}"
+
+
+# ---- filtering and sorting ----------------------------------------------------------------
+
+#: A temperature with no published limit counts as hot from here up.
+HOT_C = 80.0
+
+
+def _limits_for(sensor: Sensor, limits: Dict[str, Dict[str, float]]) -> Dict[str, float]:
+    return limits.get(sensor.hardware, {})
+
+
+def is_hot(sensor: Sensor, limits: Dict[str, Dict[str, float]]) -> bool:
+    if sensor.kind != TEMPERATURE or sensor.value is None or is_limit(sensor):
+        return False
+    return sensor.value >= _limits_for(sensor, limits).get("warn", HOT_C)
+
+
+def is_problem(sensor: Sensor, limits: Dict[str, Dict[str, float]]) -> bool:
+    """Could not be read, or at/over a critical limit. An empty fan header
+    (0 RPM) is NOT a problem: five of eight are empty on this board."""
+    if is_limit(sensor):
+        return False
+    if sensor.value is None:
+        return True
+    crit = _limits_for(sensor, limits).get("crit")
+    return sensor.kind == TEMPERATURE and crit is not None and sensor.value >= crit
+
+
+SENSOR_FILTERS = (
+    ("all", "All", lambda s, lim: True),
+    ("temp", "Temperatures", lambda s, lim: s.kind == TEMPERATURE),
+    ("fan", "Fans", lambda s, lim: s.kind == FAN),
+    ("duty", "Duty", lambda s, lim: s.kind == CONTROL),
+    ("hot", "Hot", is_hot),
+    ("problem", "Problems", is_problem),
+)
+
+
+def sensor_counts(sensors: List[Sensor]) -> Dict[str, int]:
+    limits = limits_by_hardware(sensors)
+    shown = [s for s in sensors if not is_limit(s)]
+    return {key: sum(1 for s in shown if fn(s, limits)) for key, _l, fn in SENSOR_FILTERS}
+
+
+def sensor_visible(sensor: Sensor, key: str, text: str, limits: Dict[str, Dict[str, float]]) -> bool:
+    if is_limit(sensor):
+        return False
+    fn = next((f for k, _l, f in SENSOR_FILTERS if k == key), SENSOR_FILTERS[0][2])
+    needle = (text or "").strip().lower()
+    return fn(sensor, limits) and (not needle or needle in f"{sensor.hardware} {sensor.name}".lower())
+
+
+# ---- the fan list ---------------------------------------------------------------------------
+
+#: (key, label, predicate(row)) over FanRow.
+HEADER_FILTERS = (
+    ("all", "All", lambda r: True),
+    ("connected", "Connected", lambda r: r.connected),
+    ("curve", "On a curve", lambda r: r.on_curve),
+    ("bios", "BIOS / driver", lambda r: not r.on_curve),
+    ("pump", "Pumps", lambda r: r.pump),
+    ("gpu", "GPU", lambda r: r.gpu),
+)
+
+HEADER_SORTS = (
+    ("name", "Name"),
+    ("rpm", "Speed (RPM)"),
+    ("duty", "Duty (%)"),
+    ("status", "Curve first"),
+)
+
+
+class FanRow:
+    """One entry in the fan list, header or GPU, with what the filters and sorts need."""
+
+    def __init__(self, key: str, name: str, rpm: Optional[float], duty: Optional[float],
+                 on_curve: bool, pump: bool = False, gpu: bool = False, detail: str = "") -> None:
+        self.key, self.name, self.rpm, self.duty = key, name, rpm, duty
+        self.on_curve, self.pump, self.gpu, self.detail = on_curve, pump, gpu, detail
+
+    @property
+    def connected(self) -> bool:
+        """Spinning, or a GPU (its fan may be parked by zero-RPM and still be there)."""
+        return self.gpu or bool(self.rpm)
+
+
+def header_counts(rows: List[FanRow]) -> Dict[str, int]:
+    return {key: sum(1 for r in rows if fn(r)) for key, _l, fn in HEADER_FILTERS}
+
+
+def filter_and_sort(rows: List[FanRow], key: str, sort: str) -> List[FanRow]:
+    fn = next((f for k, _l, f in HEADER_FILTERS if k == key), HEADER_FILTERS[0][2])
+    kept = [r for r in rows if fn(r)]
+    if sort == "rpm":
+        kept.sort(key=lambda r: (-(r.rpm or 0), r.name.lower()))
+    elif sort == "duty":
+        kept.sort(key=lambda r: (-(r.duty or 0), r.name.lower()))
+    elif sort == "status":
+        kept.sort(key=lambda r: (not r.on_curve, not r.connected, r.name.lower()))
+    else:
+        kept.sort(key=lambda r: (r.gpu, r.name.lower()))
+    return kept
+
+
+def is_header_control(sensor: Sensor) -> bool:
+    """A motherboard fan header a curve may drive.
+
+    Measured 2026-10-09: once the GPU's matching ADL is loaded in the
+    process (for the ADLX fan curve), LibreHardwareMonitor ALSO sees the
+    RX 7900 XTX and offers its own 'GPU Fan' control (/gpu-amd/.../control).
+    Two controls for one fan fight each other, so GPU fans go only through
+    ADLX (the GPU firmware's own curve) and never through a header curve."""
+    return sensor.kind == CONTROL and sensor.controllable and not sensor.id.startswith("/gpu")

@@ -901,6 +901,22 @@ lhm_bridge, curves, controller, view) is tested with no hardware; only
 - **LHM has no sensors for the RX 7900 XTX.** GPU temperature/fan come from
   `D3DKMTQueryAdapterInfo(ADAPTERPERFDATA)` -- Task Manager's source, no
   admin. Sensor ids are name-based: adapter LUIDs change every boot.
+- **GPU fan curves use the ADLX copy that matches the CARD'S driver**
+  (`engine/adlx.py`). System32's `amdadlx64.dll` (from the iGPU's current
+  32.0.21036.18 driver) cannot see the 7900 XTX, which the user keeps on the
+  2022 driver 31.0.14000.58004 on purpose (newer ones crash games here). That
+  driver's own package (`DriverStore\FileRepositoryΆ350.inf_*\B386336`)
+  carries ADLX 1.0.4.19, which can: 5 points, 23-100 %, 25-100 C. Chosen by
+  matching the package `.inf` `DriverVer`; its own `atiadlxx.dll` is loaded
+  first and only ONE copy is ever loaded per process. Writes need NO
+  elevation and are verified by read-back; the curve lives in GPU firmware
+  (no tick, survives the app closing). "Back to factory" uses AMD's
+  `ResetToFactory` only if the GPU was at factory before the first write
+  (that resets ALL tuning); otherwise it restores the curve it found.
+  NEVER tell the user to update the AMD driver to get this.
+- **The atexit net must not depend on Qt**: Qt has destroyed the service's
+  timer by then, and an unguarded `timer.stop()` raised before the fans were
+  handed back.
 - **NVMe "Warning/Critical Temperature" are limits, not readings** --
   `view.is_limit`; never a row, never a curve source.
 - **A crash leaves a header stuck at its last duty, and a new process's

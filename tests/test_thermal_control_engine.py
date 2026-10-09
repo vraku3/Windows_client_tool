@@ -244,7 +244,7 @@ def test_a_card_adlx_cannot_see_is_explained_with_its_stale_driver():
     found = adlx.diagnose([adlx.AdlxGpu("AMD Radeon(TM) Graphics", False, False)], "", _WIN)
     xtx = next(s for s in found if "7900" in s.name)
     assert not xtx.controllable
-    assert "31.0.14000.58004 (2022-12-02)" in xtx.reason and "older than 32.0.21036.18" in xtx.reason
+    assert "driver 31.0.14000.58004, 2022-12-02" in xtx.reason and "no copy" in xtx.reason
     igpu = next(s for s in found if "(TM)" in s.name)
     assert "no adjustable fan" in igpu.reason
 
@@ -267,3 +267,117 @@ def test_non_amd_adapters_are_ignored():
 def test_real_adlx_reads_without_crashing():
     gpus, reason = adlx.read_gpus()
     assert gpus is not None or reason
+
+
+# ---- GPU fan curves (ADLX), no real GPU touched ------------------------------------------------
+
+_XTX = "AMD Radeon RX 7900 XTX"
+_FACTORY = [(30, 23), (50, 38), (63, 53), (76, 68), (85, 100)]
+
+
+def _xtx(curve=None, factory=True):
+    return adlx.AdlxGpu(_XTX, True, factory, list(curve or _FACTORY), (23, 100), (25, 100), True)
+
+
+def test_the_copy_matching_the_discrete_cards_driver_is_chosen():
+    """Measured: System32's ADLX (iGPU driver) cannot see the 7900 XTX; the
+    copy in the card's own 2022 driver package can."""
+    copies = [(r"C:\DS\u0199522\B025498", "32.0.21036.18"), (r"C:\DS\u0386350\B386336", "31.0.14000.58004")]
+    assert adlx.choose_copy(_WIN, copies) == r"C:\DS\u0386350\B386336"
+    assert adlx.choose_copy(_WIN, []) == adlx.SYSTEM_COPY
+
+
+@pytest.mark.parametrize("points,fragment", [
+    ([(30, 23), (50, 40), (63, 53), (76, 68)], "exactly 5"),
+    ([(30, 50), (50, 40), (63, 53), (76, 68), (85, 100)], "never slow down"),
+    ([(30, 10), (50, 40), (63, 53), (76, 68), (85, 100)], "between 23% and 100%"),
+    ([(20, 23), (50, 40), (63, 53), (76, 68), (85, 100)], "between 25 and 100"),
+])
+def test_gpu_curves_outside_the_cards_limits_are_refused(points, fragment):
+    assert any(fragment in e for e in adlx.validate_gpu_curve(points, _xtx()))
+
+
+def test_the_real_factory_curve_is_valid():
+    assert adlx.validate_gpu_curve(_FACTORY, _xtx()) == []
+
+
+class _FakeAdlx:
+    """Stands in for the real calls; the GPU state lives here."""
+    def __init__(self, curve=None, factory=True):
+        self.gpu = _xtx(curve, factory)
+        self.calls = []
+
+    def install(self, monkeypatch):
+        monkeypatch.setattr(adlx, "windows_gpus", lambda: _WIN)
+        monkeypatch.setattr(adlx, "adlx_copies", lambda: [])
+        monkeypatch.setattr(adlx, "read_gpus", lambda d: ([self.gpu], ""))
+        monkeypatch.setattr(adlx, "set_curve", self.set_curve)
+        monkeypatch.setattr(adlx, "reset_to_factory", self.reset)
+
+    def set_curve(self, name, points, d):
+        self.calls.append(("set", [tuple(p) for p in points]))
+        self.gpu.curve, self.gpu.at_factory = [tuple(map(int, p)) for p in points], False
+        return self.gpu.curve
+
+    def reset(self, name, d):
+        self.calls.append(("reset",))
+        self.gpu.curve, self.gpu.at_factory = list(_FACTORY), True
+        return True
+
+
+def _service(tmp_path, store):
+    from types import SimpleNamespace
+    from modules.thermal_control.thermal_service import ThermalService
+    cfg = SimpleNamespace(get=lambda k, d=None: store.get(k, d), set=lambda k, v: store.__setitem__(k, v))
+    svc = ThermalService(SimpleNamespace(config=cfg, app_data_dir=str(tmp_path), thread_pool=None),
+                         str(tmp_path / "m.json"))
+    svc._check_gpu_fans()
+    return svc
+
+
+def test_applying_remembers_the_factory_state_and_back_to_factory_resets(qapp, tmp_path, monkeypatch):
+    fake = _FakeAdlx()
+    fake.install(monkeypatch)
+    store = {}
+    svc = _service(tmp_path, store)
+    mine = [(30, 23), (50, 45), (63, 60), (76, 80), (85, 100)]
+    assert svc.apply_gpu_curve(_XTX, mine) == []
+    assert store["modules.thermal_control.gpu_before"][_XTX]["factory"] is True
+    svc.gpu_back_to_factory(_XTX)
+    assert fake.calls[-1] == ("reset",) and store["modules.thermal_control.gpu_curves"] == {}
+
+
+def test_a_gpu_that_had_other_tuning_gets_its_own_curve_back_not_a_full_reset(qapp, tmp_path, monkeypatch):
+    theirs = [(30, 25), (50, 40), (63, 55), (76, 70), (85, 100)]
+    fake = _FakeAdlx(curve=theirs, factory=False)
+    fake.install(monkeypatch)
+    svc = _service(tmp_path, {})
+    svc.apply_gpu_curve(_XTX, [(30, 30), (50, 45), (63, 60), (76, 80), (85, 100)])
+    svc.gpu_back_to_factory(_XTX)
+    assert ("reset",) not in fake.calls and fake.calls[-1] == ("set", theirs)
+
+
+def test_a_saved_curve_the_driver_dropped_is_reapplied_at_start(qapp, tmp_path, monkeypatch):
+    fake = _FakeAdlx()                                   # the driver is back at factory
+    fake.install(monkeypatch)
+    mine = [[30, 23], [50, 45], [63, 60], [76, 80], [85, 100]]
+    svc = _service(tmp_path, {"modules.thermal_control.gpu_curves": {_XTX: mine}})
+    assert fake.calls == [("set", [tuple(p) for p in mine])]
+    assert "re-applied" in svc.gpu_status(_XTX).reason
+
+
+def test_the_exit_net_still_hands_fans_back_after_qt_is_gone(qapp, tmp_path):
+    """atexit runs after Qt deleted the service's timer; shutdown() raised on
+    the timer and never reached the fans."""
+    from types import SimpleNamespace
+    from PyQt6 import sip
+    from modules.thermal_control.thermal_service import ThermalService
+    svc = ThermalService(SimpleNamespace(config=None, app_data_dir=str(tmp_path), thread_pool=None),
+                         str(tmp_path / "m.json"))
+    bridge = FakeBridge()
+    svc.controller = FanController(bridge, str(tmp_path / "m.json"))
+    svc.controller.curves.upsert(_curve())
+    svc.controller.tick()
+    sip.delete(svc._timer)
+    svc._atexit()
+    assert bridge.released == [FAN1]

@@ -17,10 +17,17 @@ from ui.error_banner import ErrorBanner
 from .curve_editor import CurveEditor
 from .engine import curves as cv
 from .engine import view
-from .engine.model import CONTROL, TEMPERATURE, Sensor, is_pump
+from .engine.model import CONTROL, FAN, TEMPERATURE, Sensor, is_pump
 from .thermal_service import ThermalService, marker_path_for
 
 logger = logging.getLogger(__name__)
+
+GPU_PREFIX = "gpu:"
+
+_CONFIRM_GPU = ("This writes a fan curve into the GPU itself. The GPU's firmware runs it, so it keeps "
+                "working when this app is closed, and the GPU's own overheat protection stays in "
+                "charge. AMD checks the curve before it is accepted.\n\n'Back to factory' returns "
+                "the card to the driver's automatic fan control.\n\nWrite it?")
 
 _CONFIRM = ("Fan curves take the selected fan header away from the BIOS and drive it from this "
             "app.\n\nSafety rules always apply: the fan never goes below {floor:.0f}%, goes to 100% "
@@ -37,6 +44,7 @@ class ThermalWidget(QWidget):
         self._range: Dict[str, Tuple[float, float]] = {}
         self._selected: Optional[str] = None
         self._confirmed = False
+        self._gpu_confirmed = False
         self._build()
         service.updated.connect(self._on_sensors)
         service.state_changed.connect(self._status.setText)
@@ -95,9 +103,12 @@ class ThermalWidget(QWidget):
         col.addLayout(self._build_buttons(right))
         page.setStretchFactor(1, 1)
         page.setSizes([420, 800])
-        if not self._service.full and self._service.reason:
-            right.setEnabled(False)
-            self._pump_note.setText(f"Fan control is unavailable: {self._service.reason}.")
+        self._right = right
+        right.setEnabled(False)
+        self._form.setRowVisible(self._zero, False)
+        self._pump_note.setText("Pick a fan on the left." if self._service.full or not self._service.reason
+                                else f"Fan headers need administrator rights ({self._service.reason}); "
+                                     "GPU fans, listed when found, do not.")
         return page
 
     def _build_form(self, parent) -> QFormLayout:
@@ -113,10 +124,14 @@ class ThermalWidget(QWidget):
         self._hyst.setDecimals(0)
         self._hyst.setSuffix(" °C")
         self._enabled = QCheckBox("Drive this header with the curve", parent)
+        self._zero = QCheckBox("Zero RPM: let the fan stop when the GPU is cool", parent)
+        self._zero.clicked.connect(self._zero_clicked)
         form.addRow("Follow temperature:", self._source)
         form.addRow("Full speed at or above:", self._critical)
         form.addRow("Hysteresis:", self._hyst)
         form.addRow("", self._enabled)
+        form.addRow("", self._zero)
+        self._form = form
         return form
 
     def _build_buttons(self, parent) -> QHBoxLayout:
@@ -127,6 +142,7 @@ class ThermalWidget(QWidget):
         default_btn.clicked.connect(self._reset_points)
         bios_btn = QPushButton("Hand back to BIOS", parent)
         bios_btn.clicked.connect(self._hand_back)
+        self._bios_btn = bios_btn
         for b in (apply_btn, default_btn, bios_btn):
             row.addWidget(b)
         row.addStretch(1)
@@ -135,8 +151,11 @@ class ThermalWidget(QWidget):
     def _on_gpu_fans(self, statuses) -> None:
         if not statuses:
             return
-        lines = [f"{s.name}: " + ("fan curve available" if s.controllable else s.reason) for s in statuses]
+        lines = [f"{s.name}: {s.reason}" for s in statuses]
         self._gpu_note.setText("GPU fans\n" + "\n".join(lines))
+        self._fill_headers()
+        if self._selected and self._selected.startswith(GPU_PREFIX):
+            self._header_picked(self._headers.currentItem())
 
     # ---- live data ---------------------------------------------------------------------
 
@@ -198,8 +217,20 @@ class ThermalWidget(QWidget):
             self._headers.addItem(item)
             if c.id == current:
                 self._headers.setCurrentItem(item)
+        for st in self._service.gpu_fans:
+            if not st.controllable:
+                continue
+            gid = GPU_PREFIX + st.name
+            fan = next((s for s in self._sensors if s.kind == FAN and s.hardware == st.name), None)
+            rpm = f" · {fan.display()}" if fan else ""
+            item = QListWidgetItem(f"GPU · {st.name}  —  {st.reason.replace('fan curve available ', '')}{rpm}")
+            item.setToolTip(item.text())
+            item.setData(Qt.ItemDataRole.UserRole, gid)
+            self._headers.addItem(item)
+            if gid == current:
+                self._headers.setCurrentItem(item)
         self._headers.blockSignals(False)
-        if current is None and controls:
+        if current is None and self._headers.count():
             self._headers.setCurrentRow(0)
         self._fill_sources()
 
@@ -218,6 +249,12 @@ class ThermalWidget(QWidget):
     def _refresh_live(self) -> None:
         if self._selected is None:
             return
+        if self._selected.startswith(GPU_PREFIX):
+            name = self._selected[len(GPU_PREFIX):]
+            temp = next((s.value for s in self._sensors
+                         if s.kind == TEMPERATURE and s.hardware == name), None)
+            self._editor.set_live(temp, None)
+            return
         temps = {s.id: s.value for s in self._sensors if s.kind == TEMPERATURE}
         duty = next((s.value for s in self._sensors if s.id == self._selected), None)
         self._editor.set_live(temps.get(self._source.currentData()), duty)
@@ -228,6 +265,15 @@ class ThermalWidget(QWidget):
         if item is None:
             return
         self._selected = item.data(Qt.ItemDataRole.UserRole)
+        self._right.setEnabled(True)
+        is_gpu = self._selected.startswith(GPU_PREFIX)
+        for w in (self._source, self._critical, self._hyst, self._enabled):
+            self._form.setRowVisible(w, not is_gpu)      # header-only settings
+        self._form.setRowVisible(self._zero, is_gpu)
+        self._bios_btn.setText("Back to factory" if is_gpu else "Hand back to BIOS")
+        if is_gpu:
+            self._gpu_picked(self._selected[len(GPU_PREFIX):])
+            return
         name = next((s.name for s in self._sensors if s.id == self._selected), "")
         pump = is_pump(name)
         curve = self._service.curves().for_control(self._selected) or cv.FanCurve(
@@ -244,6 +290,18 @@ class ThermalWidget(QWidget):
         self._editor.set_curve(curve.points, curve.floor, curve.critical_c)
         self._refresh_live()
 
+    def _gpu_picked(self, name: str) -> None:
+        st = self._service.gpu_status(name)
+        if st is None or st.gpu is None:
+            return
+        lo = st.gpu.speed_range[0] if st.gpu.speed_range else 0
+        self._pump_note.setText(f"{name}: {len(st.gpu.curve)} points, fan {lo}-100%, run by the GPU's "
+                                "own firmware from its own temperature sensor.")
+        self._editor.set_curve(st.gpu.curve, lo, None, fixed=True)
+        self._zero.setEnabled(st.gpu.zero_rpm is not None)
+        self._zero.setChecked(bool(st.gpu.zero_rpm))
+        self._refresh_live()
+
     def _default_source(self) -> str:
         sources = view.temperature_sources(self._sensors)
         return sources[0].id if sources else ""
@@ -256,6 +314,9 @@ class ThermalWidget(QWidget):
 
     def _reset_points(self) -> None:
         if self._selected is None:
+            return
+        if self._selected.startswith(GPU_PREFIX):
+            self._gpu_picked(self._selected[len(GPU_PREFIX):])     # back to what the GPU holds
             return
         name = next((s.name for s in self._sensors if s.id == self._selected), "")
         pump = is_pump(name)
@@ -271,6 +332,9 @@ class ThermalWidget(QWidget):
                            critical_c=self._critical.value(), hysteresis_c=self._hyst.value(), label=name)
 
     def _apply(self) -> None:
+        if self._selected and self._selected.startswith(GPU_PREFIX):
+            self._apply_gpu(self._selected[len(GPU_PREFIX):])
+            return
         curve = self._current_curve()
         if curve is None:
             return
@@ -290,8 +354,31 @@ class ThermalWidget(QWidget):
         self._status.setText(f"{curve.label}: " + ("following the curve." if curve.enabled
                                                     else "curve saved, header left with the BIOS."))
 
+    def _apply_gpu(self, name: str) -> None:
+        if not self._gpu_confirmed:
+            answer = QMessageBox.question(self, "Write this curve to the GPU?", _CONFIRM_GPU,
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                          QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            self._gpu_confirmed = True
+        problems = self._service.apply_gpu_curve(name, self._editor.points())
+        if problems:
+            self._banner.set_error("Not written: " + "; ".join(problems))
+        else:
+            self._banner.clear()
+            self._status.setText(f"{name}: writing the curve…")
+
+    def _zero_clicked(self, on: bool) -> None:
+        if self._selected and self._selected.startswith(GPU_PREFIX):
+            self._service.set_gpu_zero_rpm(self._selected[len(GPU_PREFIX):], on)
+
     def _hand_back(self) -> None:
         if self._selected is None:
+            return
+        if self._selected.startswith(GPU_PREFIX):
+            self._service.gpu_back_to_factory(self._selected[len(GPU_PREFIX):])
+            self._status.setText("Returning the GPU to factory fan control…")
             return
         self._service.release(self._selected)
         self._enabled.setChecked(False)

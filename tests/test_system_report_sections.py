@@ -94,3 +94,53 @@ def test_real_machine_sections_all_have_a_title_and_a_state():
         assert s.error or s.rows or s.title in {"Monitors", "Volumes", "System Restore"}
     for f in findings:
         assert f.severity in ("error", "warning", "info")
+
+
+# ---- stability and health sections ------------------------------------------
+
+def _incident(cause, summary, when="2026-10-04 13:49"):
+    from datetime import datetime
+    from core.stability import Incident
+    return Incident(datetime.strptime(when, "%Y-%m-%d %H:%M"), cause, summary, event_ids=[41, 6008])
+
+
+def test_stability_lists_incidents_and_summarises_them_in_one_finding():
+    from core import stability as st
+    incidents = [_incident(st.POWER_LOSS, "Lost power"),
+                 _incident(st.POWER_BUTTON, "Forced off", "2026-09-13 17:23"),
+                 _incident(st.POWER_LOSS, "Lost power", "2026-09-23 11:34")]
+    sections, findings = rs.stability_sections(reader=lambda days: (incidents, ""))
+    assert len(sections[0].rows) == 3
+    (finding,) = findings
+    assert finding.severity == "warning"
+    assert finding.title == "3 unexpected shutdown(s) in 30 days"
+    assert finding.detail.startswith("2 power loss/hard reset, 1 power button held")
+
+
+def test_a_blue_screen_makes_the_stability_finding_an_error():
+    from core import stability as st
+    _s, (finding,) = rs.stability_sections(
+        reader=lambda days: ([_incident(st.BUGCHECK, "Blue screen")], ""))
+    assert finding.severity == "error"
+
+
+def test_no_incidents_says_so_once_and_flags_nothing():
+    sections, findings = rs.stability_sections(reader=lambda days: ([], ""))
+    assert findings == []
+    md = rs.sections_markdown(sections)
+    assert "No unexpected shutdowns" in md and "None." not in md
+
+
+def test_an_unreadable_crash_history_is_not_reported_as_stable():
+    sections, findings = rs.stability_sections(reader=lambda days: (None, "Access is denied."))
+    assert sections[0].error == "Access is denied."
+    assert findings[0].title == "Crash history could not be read"
+
+
+def test_health_section_carries_the_system_health_findings_verbatim():
+    from modules.system_health.findings import Finding
+    found = [Finding("reboot", "A restart is pending", "Windows Update", "warning"),
+             Finding("disk", "1342 GB free on C:", "", "info")]
+    sections, findings = rs.health_sections(reader=lambda: found)
+    assert [r[1] for r in sections[0].rows] == ["A restart is pending", "1342 GB free on C:"]
+    assert [f.severity for f in rs._attention(findings)] == ["warning"]

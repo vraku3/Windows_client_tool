@@ -144,8 +144,111 @@ def software_sections() -> Tuple[List[Section], List[ReportFinding]]:
     return [summary, table], _findings("Software", sa.software_findings(rows))
 
 
+def stability_sections(days: int = 30, reader: Optional[Callable] = None
+                       ) -> Tuple[List[Section], List[ReportFinding]]:
+    """Unexpected shutdowns and blue screens, one row per INCIDENT.
+
+    The first thing asked about a machine on a ticket is "does it crash", and
+    the report had no answer. Measured here: 7 raw events in 30 days were 4
+    incidents -- two power losses, one held power button, one with no detail.
+    """
+    from core import stability
+    incidents, reason = (reader or stability.read_incidents)(days)
+    title = f"Stability (last {days} days)"
+    if incidents is None:
+        return [Section(title, error=reason)], [
+            ReportFinding("Stability", "info", "Crash history could not be read", reason)]
+    rows = [[f"{i.when:%Y-%m-%d %H:%M}", i.summary, ", ".join(str(e) for e in i.event_ids)]
+            for i in incidents]
+    section = Section(title, ["When", "What happened", "Events"], rows,
+                      note="" if rows else "No unexpected shutdowns or blue screens.")
+    if not incidents:
+        return [section], []
+    counts: Dict[str, int] = {}
+    for i in incidents:
+        counts[i.cause] = counts.get(i.cause, 0) + 1
+    labels = {stability.BUGCHECK: "blue screen", stability.POWER_LOSS: "power loss/hard reset",
+              stability.POWER_BUTTON: "power button held", stability.SLEEP: "died in sleep",
+              stability.UNKNOWN: "no detail recorded"}
+    breakdown = ", ".join(f"{n} {labels.get(c, c)}" for c, n in sorted(counts.items(), key=lambda kv: -kv[1]))
+    severity = "error" if counts.get(stability.BUGCHECK) else "warning"
+    return [section], [ReportFinding(
+        "Stability", severity, f"{len(incidents)} unexpected shutdown(s) in {days} days",
+        f"{breakdown}; most recent {incidents[0].when:%Y-%m-%d %H:%M}")]
+
+
+def health_sections(reader: Optional[Callable] = None) -> Tuple[List[Section], List[ReportFinding]]:
+    """The System Health pane's own checks: pending restart and why, time sync,
+    WMI repository, commit, CBS corruption, stopped auto-start services,
+    WHEA hardware errors. Reused as-is so the report and the pane never disagree."""
+    from modules.system_health import findings as health
+    found = (reader or health.full_findings)()
+    rows = [[f.severity, f.title, f.detail] for f in found]
+    return ([Section("System health checks", ["Severity", "Finding", "Detail"], rows,
+                     note="" if rows else "Every check passed.")],
+            [ReportFinding("Health", f.severity, f.title, f.detail) for f in found])
+
+
+def _os_build() -> str:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
+            version = winreg.QueryValueEx(key, "DisplayVersion")[0]
+            build = winreg.QueryValueEx(key, "CurrentBuild")[0]
+            ubr = winreg.QueryValueEx(key, "UBR")[0]
+        return f"{version}, build {build}.{ubr}"
+    except OSError as e:
+        logger.warning("could not read the OS build: %s", e)
+        return f"could not be read ({e})"
+
+
+def patch_sections(reader: Optional[Callable] = None, now=None
+                   ) -> Tuple[List[Section], List[ReportFinding]]:
+    """When Windows itself was last patched -- not when Windows Update last
+    installed something, which Defender definitions make 'today' every day."""
+    from datetime import datetime, timezone
+    from core.wu_error_codes import decode_wu_error
+    from modules.updates import patch_status as ps
+    status, reason = (reader or ps.read_patch_status)()
+    if status is None:
+        return [Section("Windows Update", error=reason)], [
+            ReportFinding("Updates", "info", "Update history could not be read", reason)]
+    now = now or datetime.now(timezone.utc)
+
+    def _when(e) -> str:
+        if e is None:
+            return "none in history"
+        return f"{e.when.astimezone():%Y-%m-%d} ({(now - e.when).days} d ago): {e.title}"
+
+    rows = [("OS version", _os_build()),
+            ("Last security update", _when(status.last_security)),
+            ("Last OS update (incl. preview)", _when(status.last_os_update)),
+            ("Last feature update", _when(status.last_feature)),
+            ("History entries read", str(status.entries_read))]
+    sections = [_kv("Windows Update", rows)]
+    findings: List[ReportFinding] = []
+    if status.last_security is None:
+        findings.append(ReportFinding(
+            "Updates", "info", "No monthly security update in Windows Update history",
+            "Updates may come from WSUS/Intune, or the history was cleared."))
+    elif (now - status.last_security.when).days > ps.STALE_SECURITY_DAYS:
+        findings.append(ReportFinding(
+            "Updates", "warning",
+            f"No security update for {(now - status.last_security.when).days} days",
+            f"Last was {status.last_security.title}; monthly updates ship on the second Tuesday."))
+    if status.unresolved_failures:
+        sections.append(Section("Failed updates (not since installed)", ["When", "Update", "Error"],
+                                [[f"{e.when.astimezone():%Y-%m-%d}", e.title, decode_wu_error(e.hresult)]
+                                 for e in status.unresolved_failures]))
+        findings += [ReportFinding("Updates", "warning", f"Update failed: {e.title}",
+                                   decode_wu_error(e.hresult)) for e in status.unresolved_failures]
+    return sections, findings
+
+
 BUILDERS: List[Callable[[], Tuple[List[Section], List[ReportFinding]]]] = [
-    hardware_sections, disk_sections, restore_sections, software_sections,
+    hardware_sections, stability_sections, patch_sections, health_sections, disk_sections,
+    restore_sections, software_sections,
 ]
 
 
@@ -196,7 +299,8 @@ def sections_html(sections: Sequence[Section]) -> str:
         if s.note:
             out.append(f"<p>{html.escape(s.note)}</p>")
         if not s.rows:
-            out.append("<p>None.</p>")
+            if not s.note:
+                out.append("<p>None.</p>")
             continue
         head = "".join(f"<th>{html.escape(h)}</th>" for h in s.headers)
         body = "".join("<tr>" + "".join(f"<td>{html.escape(str(c))}</td>" for c in row) + "</tr>"
@@ -219,7 +323,8 @@ def sections_markdown(sections: Sequence[Section]) -> str:
         if s.note:
             out += [f"_{s.note}_", ""]
         if not s.rows:
-            out += ["None.", ""]
+            if not s.note:
+                out += ["None.", ""]
             continue
         out.append("| " + " | ".join(s.headers) + " |")
         out.append("|" + "---|" * len(s.headers))

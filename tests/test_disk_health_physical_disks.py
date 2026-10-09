@@ -157,3 +157,29 @@ def test_real_machine_get_physicaldisk_runs_unelevated():
     assert len(scan.disks) >= 1
     for d in scan.disks:
         assert d.device_id != ""
+
+
+def test_a_trailing_dot_or_case_difference_is_still_the_same_disk():
+    """Re-measured 2026-10-09: the drives table holds '0025_384C_41C2_4DBF'
+    while Get-PhysicalDisk says '0025_384C_41C2_4DBF.'. Compared raw, all
+    four disks here were reported 'Not shown above' while shown above."""
+    physical = [_pdisk(serial="0025_384C_41C2_4DBF."),
+                _pdisk(device_id="2", serial="0000_0000_707c_1800_2522_1E66.")]
+    hidden = pd.hidden_from_smart(physical, smart_serials=["0025_384C_41C2_4DBF",
+                                                           "0000_0000_707C_1800_2522_1E66"])
+    assert hidden == []
+
+
+def test_a_disk_with_no_serial_is_never_called_hidden():
+    """The Msft Virtual Disk has no serial on either side; it cannot be
+    matched, so claiming it is missing from the table is a guess."""
+    assert pd.hidden_from_smart([_pdisk(serial="")], smart_serials=["AAA"]) == []
+
+
+def test_real_machine_no_disk_in_the_drives_table_is_called_hidden():
+    from modules.disk_health import disk_reader
+    rep = disk_reader.read_disk_report()
+    in_table = {pd._serial_key(d.serial) for d in rep.disks}
+    wrongly_hidden = [h.friendly_name for h in rep.hidden_pool_disks
+                      if pd._serial_key(h.serial) in in_table]
+    assert wrongly_hidden == []

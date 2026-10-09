@@ -242,7 +242,8 @@ class SystemReportModule(BaseModule):
         layout.setContentsMargins(12, 12, 12, 12)
 
         info_label = QLabel(
-            "Collects CPU, memory, disks and volumes (health, TRIM, BitLocker), restore points and "
+            "Collects CPU, memory, crash and unexpected-shutdown history, Windows patch level, the System Health checks, "
+            "disks and volumes (health, TRIM, BitLocker), restore points and "
             "shadow storage, memory slots, monitors, firmware and security state, installed software "
             "(runtimes, duplicates, end-of-life) and top processes, with a computed \"needs attention\" list. "
             "Each section is read independently; one that cannot be read says so."

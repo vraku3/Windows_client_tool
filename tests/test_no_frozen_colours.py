@@ -41,8 +41,9 @@ EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette so
 #: added, which had briefly pushed the true count to 354 before this
 #: collapse (the tuples were never a status colour or theme-able chrome,
 #: just a decorative pie-chart accent per category, so semantic() and the
-#: .qss role system both apply to nothing here).
-BUDGET = 266
+#: .qss role system both apply to nothing here). 262 once the Wi-Fi
+#: channel map's gradient bars became themed QProgressBars (4 literals).
+BUDGET = 262
 
 
 def frozen_colour_literals():

@@ -23,7 +23,7 @@ from core.table_ui import set_role
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
 #: 204 when the ratchet went in. Only ever lower it.
-BUDGET = 176
+BUDGET = 172
 
 #: The roles both stylesheets define.
 KNOWN_ROLES = {

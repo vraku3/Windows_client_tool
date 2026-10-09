@@ -272,6 +272,8 @@ HIDDEN_IMPORTS = [
     "modules.shared_resources.share_audit",
     "modules.remote_tools.remote_audit",
     "modules.hosts_editor.hosts_analysis",
+    "modules.hosts_editor.hosts_file",
+    "modules.hosts_editor.hosts_dns_check",
     "modules.startup_manager.persistence",
     "modules.startup_manager.trust",
     "modules.startup_manager.unified_tab",

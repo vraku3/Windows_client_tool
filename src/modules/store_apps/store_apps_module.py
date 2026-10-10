@@ -14,14 +14,14 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QFileDialog, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMenu, QMessageBox,
     QProgressBar, QPushButton, QStackedWidget, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from core.formatting import human_size
-from core.appx_service import (
+from core.appx_service import (  # noqa: F401  (fetch_packages: tests patch it here)
     _version_key, dedupe_by_name, dir_size_detailed, fetch_packages,
-    fetch_packages_or_none, provisioned_package_name_map_or_none,
-    remove_provisioned_package,
+    fetch_packages_or_none, fetch_packages_with_scope_or_none,
+    provisioned_package_name_map_or_none, remove_provisioned_package,
 )
 from core.backup_service import StepRecord
 from core.base_module import BaseModule
@@ -31,9 +31,16 @@ from core.search_provider import SearchProvider
 from core.semantic_colors import semantic
 from core.table_ui import (
     fit_columns_once, NumericSortItem, restore_column_widths, save_column_widths,
+    set_role,
 )
 from core.worker import Worker
 from core.windows_utils import ps_quote, system_root
+from modules.store_apps.appx_errors import PACKAGES_IN_USE, describe, first_hresult
+from modules.store_apps.deployment_failures import FailureReport, read_failures
+from modules.store_apps.failures_panel import DeploymentFailuresPanel
+from modules.store_apps.package_info import (
+    NON_REMOVABLE_REASON, SOURCE_SIDELOADED, package_source,
+)
 from modules.store_apps.store_apps_search_provider import StoreAppsSearchProvider
 from ui.empty_state import EmptyState
 from ui.error_banner import ErrorBanner
@@ -52,10 +59,14 @@ _GUID_RE = re.compile(
 )
 _SID_RE = re.compile(r"^S-\d+(-\d+)+$")
 _LOCATION_SUFFIX_RE = re.compile(r"_\w{13}$")
+_DN_ORG_RE = re.compile(r'(?:^|,)\s*O\s*=\s*(?:"((?:[^"]|"")*)"|([^,]*))', re.IGNORECASE)
+
+#: Column of the Source (SignatureKind) cell -- appended after New Users.
+_COL_SOURCE = 8
 
 _IN_USE_MARKERS = (
-    "0x80073cfb", "in use", "being used", "is running", "is open",
-    "currently running", "is still running",
+    "0x80073d02", "need to be closed", "in use", "being used", "is running",
+    "is open", "currently running", "is still running",
 )
 
 
@@ -77,6 +88,11 @@ def friendly_name_from_location(location: str) -> str:
         return ""
     base = os.path.basename(location.rstrip("\\/"))
     base = _LOCATION_SUFFIX_RE.sub("", base)
+    # A WindowsApps folder is the package FULL name, `Name_Ver_Arch_Res_Pub`.
+    # Without this a GUID-named Gigabyte package showed as "1.23.0_x64_" --
+    # the tail of `<guid>_25.1.23.0_x64_` after the vendor-prefix trim.
+    # Package names cannot contain `_`, so the first field is the name.
+    base = base.split("_", 1)[0]
     if not base or is_opaque_identifier(base):
         return ""
     return base
@@ -138,20 +154,29 @@ def short_publisher(publisher: str) -> str:
     """Trim a DN like 'CN=X, O=Microsoft Corporation, L=Redmond, ...' to its org."""
     if not publisher:
         return ""
-    for part in publisher.split(","):
-        key, _, value = part.partition("=")
-        if key.strip().upper() == "O" and value.strip():
+    # Quote-aware: a DN value may be quoted and contain commas. Measured
+    # 2026-10-09: `O="GIGA-BYTE TECHNOLOGY CO., LTD."` came out as
+    # `"GIGA-BYTE TECHNOLOGY CO.` with a naive comma split, and
+    # `O="NOTEPAD++"` kept its quotes.
+    match = _DN_ORG_RE.search(publisher)
+    if match:
+        value = match.group(1) if match.group(1) is not None else match.group(2)
+        if value and value.strip():
             return value.strip()
     return publisher
 
 
-def is_system_package(name: str, location: str) -> bool:
+def is_system_package(name: str, location: str, non_removable: bool = False) -> bool:
     """True for core Windows packages that must not be uninstalled.
 
-    Exact-name matches plus anything installed under C:\\Windows\\SystemApps.
-    Regular Store apps (Calculator, Notepad, ...) live under Program Files and
-    are removable, so a name prefix alone is too broad.
+    Windows' own `NonRemovable` flag, OR an exact-name match, OR anything
+    installed under C:\\Windows\\SystemApps. Regular Store apps (Calculator,
+    Notepad, ...) live under Program Files and are removable, so a name
+    prefix alone is too broad. The flag is what catches the Settings app and
+    Windows Security, which neither older rule did (see package_info.py).
     """
+    if non_removable:
+        return True
     if name in SYSTEM_PACKAGES:
         return True
     loc = (location or "").replace("/", "\\").lower()
@@ -159,7 +184,21 @@ def is_system_package(name: str, location: str) -> bool:
 
 
 def failure_hint(output: str) -> str:
-    """Return a hint when an uninstall failed because the app is running."""
+    """A hint for a failed Remove-AppxPackage, from its HRESULT when it has one.
+
+    The in-use code is 0x80073D02 ("...the following apps need to be
+    closed"); the old marker list keyed on 0x80073CFB, which is
+    ERROR_PACKAGE_ALREADY_EXISTS, and matched none of D02's wording -- so the
+    commonest real failure (8 of 24 deployment failures logged here in a
+    week) never got the hint.
+    """
+    code = first_hresult(output)
+    if code == PACKAGES_IN_USE:
+        return "The app is running. Close it and try again."
+    if code is not None:
+        symbol, meaning = describe(code)
+        if symbol:
+            return f"0x{code:08X}: {meaning}"
     low = output.lower()
     if any(marker in low for marker in _IN_USE_MARKERS):
         return "The app may be running. Close it and try again."
@@ -231,7 +270,8 @@ class StoreAppsModule(BaseModule):
     read_only_unelevated = True
 
     _CONFIG_PREFIX = "modules.store_apps"
-    _FILTERS = ["All Apps", "Removable", "System"]
+    _FILTERS = ["All Apps", "Removable", "System", "Sideloaded"]
+    _FAILURES_TAB_TITLE = "Install / update failures"
 
     def __init__(self):
         super().__init__()
@@ -242,6 +282,8 @@ class StoreAppsModule(BaseModule):
         self._size_pool: Optional[ThreadPoolExecutor] = None
         self._busy = False
         self._load_error = ""
+        #: The last deployment-failure read (None until the first load).
+        self._failures: Optional[FailureReport] = None
         self._show_pfn = False
         self._show_arch = False
         self._show_provisioned = False
@@ -283,8 +325,23 @@ class StoreAppsModule(BaseModule):
             self.app.config.get(f"{self._CONFIG_PREFIX}.show_provisioned", False))
 
         layout.addLayout(self._build_toolbar())
-        layout.addWidget(self._build_table_stack())
-        layout.addLayout(self._build_bottom_bar())
+        # Unelevated, -AllUsers is refused and the list is this user's only.
+        self._scope_label = QLabel("")
+        self._scope_label.setWordWrap(True)
+        set_role(self._scope_label, "muted")
+        self._scope_label.setVisible(False)
+        layout.addWidget(self._scope_label)
+
+        apps_page = QWidget()
+        apps_layout = QVBoxLayout(apps_page)
+        apps_layout.setContentsMargins(0, 4, 0, 0)
+        apps_layout.addWidget(self._build_table_stack())
+        apps_layout.addLayout(self._build_bottom_bar())
+        self._tabs = QTabWidget()
+        self._tabs.addTab(apps_page, "Installed apps")
+        self._failures_panel = DeploymentFailuresPanel()
+        self._tabs.addTab(self._failures_panel, self._FAILURES_TAB_TITLE)
+        layout.addWidget(self._tabs)
 
         self._install_shortcuts()
         return self._widget
@@ -331,10 +388,10 @@ class StoreAppsModule(BaseModule):
         # Table stacked with empty/error state
         self._table_stack = QStackedWidget()
         self._table = QTableWidget()
-        self._table.setColumnCount(8)
+        self._table.setColumnCount(9)
         self._table.setHorizontalHeaderLabels([
             "Name", "Publisher", "Version", "Size", "User-Removable",
-            "Package Family", "Architecture", "New Users",
+            "Package Family", "Architecture", "New Users", "Source",
         ])
         header = self._table.horizontalHeader()
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -354,6 +411,7 @@ class StoreAppsModule(BaseModule):
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(_COL_SOURCE, QHeaderView.ResizeMode.Interactive)
         self._table.setSortingEnabled(True)
         saved_col = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0)
         saved_order = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_order",
@@ -507,21 +565,86 @@ class StoreAppsModule(BaseModule):
         def do_load(worker):
             del worker
             # Shared AppX service: one query + -AllUsers fallback for
-            # unelevated runs, cached briefly. Forced fresh on load so a
-            # scan always reflects what is installed right now.
-            apps = dedupe_by_name(fetch_packages(use_cache=False))
+            # unelevated runs. Forced fresh so a scan reflects what is
+            # installed right now. A query that could not be read at all
+            # RAISES here -- it is a failed scan, never "No Store apps found".
+            scoped = fetch_packages_with_scope_or_none()
+            if scoped is None:
+                raise RuntimeError(
+                    "Get-AppxPackage could not be read (every attempt was "
+                    "refused, timed out or returned unusable output) -- the "
+                    "installed-app list is unknown, not empty.")
+            packages, all_users = scoped
+            apps = dedupe_by_name(packages)
             # Elevated-only, and short-circuits to None unelevated without
             # spawning a process -- see appx_service.
             # fetch_provisioned_packages_or_none's docstring.
             provisioned = provisioned_package_name_map_or_none(use_cache=False)
-            return apps, provisioned
+            # ~0.15s: event 404s plus the 400s that say whether a retry landed.
+            installed = {a.get("Name", ""): a.get("Version", "") for a in apps}
+            return apps, provisioned, all_users, read_failures(installed)
 
         self._worker = Worker(do_load)
         self._worker.signals.result.connect(
-            lambda result: self._on_apps_loaded(result[0], state, result[1]))
+            lambda result: self._on_load_result(result, state))
         self._worker.signals.error.connect(self._on_load_error)
         self._workers.append(self._worker)
         self.app.thread_pool.start(self._worker)
+
+    def _on_load_result(self, result, state) -> None:
+        if not self._widget_valid(self._table_stack):
+            return
+        apps, provisioned, all_users, failures = result
+        self._show_scope(all_users)
+        self._show_failures(failures)
+        self._on_apps_loaded(apps, state, provisioned)
+
+    def _show_scope(self, all_users: bool) -> None:
+        self._scope_label.setText(
+            "" if all_users else
+            "Showing your own packages only: listing every user's "
+            "(Get-AppxPackage -AllUsers) was refused without elevation. "
+            "Apps installed only for other accounts are not in this list.")
+        self._scope_label.setVisible(not all_users)
+
+    def _show_failures(self, report: Optional[FailureReport]) -> None:
+        if report is None:
+            return
+        self._failures = report
+        self._failures_panel.show_report(report)
+        title = self._FAILURES_TAB_TITLE
+        if report.read_error:
+            title += " (unreadable)"
+        elif report.pending:
+            title += f" ({len(report.pending)} pending)"
+        self._tabs.setTabText(1, title)
+
+    def _pending_update(self, name: str):
+        """The still-pending failed update for `name`, if the log has one."""
+        if self._failures is None:
+            return None
+        return next((g for g in self._failures.pending if g.package_name == name), None)
+
+    def _version_tooltip(self, item: QTableWidgetItem, name: str) -> None:
+        pending = self._pending_update(name)
+        if pending is None:
+            return
+        item.setText(f"{item.text()} ⚠")
+        item.setForeground(QColor(semantic("warning")))
+        item.setToolTip(
+            f"An update to {pending.attempted_version} failed {pending.count} "
+            f"time(s) ({pending.code_text}) and has not installed since.\n"
+            f"{pending.meaning}\nSee the {self._FAILURES_TAB_TITLE} tab.")
+
+    @staticmethod
+    def _source_cell(app: dict) -> QTableWidgetItem:
+        label, why = package_source(app.get("SignatureKind"))
+        item = QTableWidgetItem(label)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item.setToolTip(why)
+        if label == SOURCE_SIDELOADED:
+            item.setForeground(QColor(semantic("info")))
+        return item
 
     def _on_apps_loaded(self, apps, state, provisioned_map=None) -> None:
         if not self._widget_valid(self._table_stack):
@@ -561,7 +684,8 @@ class StoreAppsModule(BaseModule):
             publisher = app.get("Publisher", "")
             version = app.get("Version", "")
 
-            is_system = is_system_package(name, location)
+            non_removable = bool(app.get("NonRemovable"))
+            is_system = is_system_package(name, location, non_removable)
 
             full_resolved = resolve_package_name(name, location)
             display_name = shorten_app_name(full_resolved)
@@ -593,6 +717,7 @@ class StoreAppsModule(BaseModule):
             ver_text = version[:20] if version else ""
             ver_item = NumericSortItem(ver_text, _version_key(version) or (0,))
             ver_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._version_tooltip(ver_item, name)
             self._table.setItem(row, 2, ver_item)
 
             size_item = NumericSortItem("…", 0)
@@ -607,12 +732,15 @@ class StoreAppsModule(BaseModule):
                 rem_item.setForeground(QColor(semantic("warning")))
             else:
                 rem_item.setForeground(QColor(semantic("success")))
-            reason = ("an exact-match core Windows package"
-                     if name in SYSTEM_PACKAGES else
-                     f"installed under {system_root()}\\SystemApps")
-            rem_item.setToolTip(
-                f"System packages cannot be uninstalled without breaking "
-                f"Windows ({reason}). Removes for every user on this machine.")
+            if non_removable:
+                rem_item.setToolTip(NON_REMOVABLE_REASON)
+            else:
+                reason = ("an exact-match core Windows package"
+                          if name in SYSTEM_PACKAGES else
+                          f"installed under {system_root()}\\SystemApps")
+                rem_item.setToolTip(
+                    f"System packages cannot be uninstalled without breaking "
+                    f"Windows ({reason}). Removes for every user on this machine.")
             self._table.setItem(row, 4, rem_item)
 
             pfn_item = QTableWidgetItem(app.get("PackageFamilyName", ""))
@@ -625,6 +753,7 @@ class StoreAppsModule(BaseModule):
 
             self._table.setItem(row, 7, self._provisioned_cell(
                 None if provisioned_map is None else name in provisioned_map))
+            self._table.setItem(row, _COL_SOURCE, self._source_cell(app))
 
         for name in provisioned_only:
             self._add_provisioned_only_row(name)
@@ -744,6 +873,7 @@ class StoreAppsModule(BaseModule):
             "add it back for every NEW user account created on this "
             "machine. Right-click to stop that.")
         self._table.setItem(row, 7, prov_item)
+        self._table.setItem(row, _COL_SOURCE, QTableWidgetItem(""))
 
     # ------------------------------------------------------------------
     # Filtering / selection
@@ -765,11 +895,15 @@ class StoreAppsModule(BaseModule):
             publisher = pub_item.text() if pub_item else ""
             removable = self._table.item(row, 4).text()
             is_system = "System" in removable
+            src_item = self._table.item(row, _COL_SOURCE)
+            sideloaded = src_item is not None and src_item.text() == SOURCE_SIDELOADED
 
             visible = True
             if mode == 1 and is_system:
                 visible = False
             elif mode == 2 and not is_system:
+                visible = False
+            elif mode == 3 and not sideloaded:
                 visible = False
             if query:
                 if scoped and field.lower() == "publisher":

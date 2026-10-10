@@ -635,12 +635,30 @@ def update_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
     if row is None:
         return Outcome(rec, SKIPPED, "Could not read the installed version back, so the update is unconfirmed.")
     installed, available = row
-    known = installed.casefold() != "unknown"
-    matches = bool(rec.update) and installed.casefold().removeprefix("v") == rec.update.casefold().removeprefix("v")
-    if known and (matches or not available):
+    if installed.casefold() == "unknown" or installed[:1] in "<>":
+        # Windows records no exact version for it, and an update does not add one.
+        return Outcome(rec, SKIPPED, "Windows records no exact version for it, so the update is unconfirmed.")
+    if rec.update and _same_version(installed, rec.update):
         return Outcome(rec, UPDATED, f"Now {installed}")
+    if not available:
+        # No newer version listed is not proof: the source may simply not have answered.
+        return Outcome(rec, SKIPPED, f"{installed} is installed, not {rec.update or 'the new version'}; "
+                       "the update is unconfirmed.")
     return Outcome(rec, FAILED, f"winget finished (exit {rc}), but {installed} is still installed "
                    f"({available} available).")
+
+
+def _same_version(a: str, b: str) -> bool:
+    """"v2.0", "2.0" and "2.0.0" are one version; anything non-numeric compares as text."""
+    def parts(v):
+        v = v.strip().casefold().removeprefix("v")
+        if not re.fullmatch(r"\d+(\.\d+)*", v):
+            return v
+        nums = [int(p) for p in v.split(".")]
+        while len(nums) > 1 and nums[-1] == 0:
+            nums.pop()
+        return tuple(nums)
+    return parts(a) == parts(b)
 
 
 def modify_app(rec: m.AppRecord, runner: Runner, log: Log, cancelled: Cancelled) -> Outcome:

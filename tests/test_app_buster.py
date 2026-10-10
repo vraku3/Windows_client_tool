@@ -682,7 +682,6 @@ def test_review_resolved_unc_prefix_is_stripped(monkeypatch):
 
 UPDATE_LISTS = [
     ("OCBase.OCCT.Personal", "17.1.7.0", "17.1.3.0", "Name Id                   Version  Available Source\n---------------------------------------------------\nOCCT OCBase.OCCT.Personal 17.1.3.0 17.1.7.0  winget"),
-    ("Blizzard.BattleNet", "1.19.3.3219", "Unknown", "Name       Id                 Version Available   Source\n--------------------------------------------------------\nBattle.net Blizzard.BattleNet Unknown 1.19.3.3219 winget"),
     ("Sidekick-Poe.Sidekick", "v2026.8.7", "26.08.04.01", "Name                 Id                    Version     Available Source\n-----------------------------------------------------------------------\nSidekick 26.08.04.01 Sidekick-Poe.Sidekick 26.08.04.01 v2026.8.7 winget"),
 ]
 
@@ -699,9 +698,13 @@ def test_update_available_version_is_not_installed(winget_id, target, installed,
 
 
 @pytest.mark.parametrize("version,available,target,state", [
-    ("2.0", "", "3.0", act.UPDATED),
+    ("2.0", "", "3.0", act.SKIPPED),        # nothing newer listed is not proof
     ("V2.0", "3.0", "v2.0", act.UPDATED),
-    ("Unknown", "", "2.0", act.FAILED),
+    ("26.02", "", "26.02.0", act.UPDATED),
+    ("Unknown", "", "2.0", act.SKIPPED),
+    ("Unknown", "1.19.3.3219", "1.19.3.3219", act.SKIPPED),   # Battle.net: no version ever recorded
+    ("< 1.0", "", "2.0", act.SKIPPED),
+    ("1.0", "2.0", "2.0", act.FAILED),
 ])
 def test_update_verifies_installed_columns(version, available, target, state):
     runner = FakeRunner(None, None)

@@ -27,6 +27,7 @@ import os
 
 import pytest
 
+from _sparse import make_sparse
 from modules.cleanup.cleanup_scanner import known_folders as kf
 
 
@@ -78,9 +79,7 @@ def redirected_folder(tmp_path_factory):
     target = tmp_path_factory.mktemp("Redirected")
 
     big = target / "big.iso"                       # large files, iso/vhd,
-    with open(big, "wb") as handle:                # downloads-folder-old
-        handle.seek(105 * 1024 * 1024 - 1)
-        handle.write(b"\0")
+    make_sparse(big, 105 * 1024 * 1024)            # downloads-folder-old
 
     payload = b"d" * (200 * 1024)                  # duplicates: same size,
     (target / "copy-one.bin").write_bytes(payload)  # same content

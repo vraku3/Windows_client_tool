@@ -3,6 +3,9 @@ import sys
 
 # Add src/ to path so tests can import `core.*` directly
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# ...and tests/ itself, for shared helpers such as `_sparse`. APPENDED, never
+# first: tests/ has its own `modules` package, which would shadow src/modules.
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 import pytest
 from PyQt6.QtWidgets import QApplication

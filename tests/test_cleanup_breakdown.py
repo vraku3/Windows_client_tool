@@ -18,6 +18,7 @@ import time
 import pytest
 from PyQt6.QtCore import QThreadPool
 
+from _sparse import make_sparse
 from modules.cleanup.cleanup_scanner import ScanItem, breakdown
 
 
@@ -92,9 +93,7 @@ def big_dir(tmp_path_factory):
     for name, size in (("alpha", 700_000_000), ("beta", 400_000_000)):
         child = root / name
         child.mkdir()
-        with open(child / "payload.bin", "wb") as handle:
-            handle.seek(size - 1)
-            handle.write(b"\0")
+        make_sparse(child / "payload.bin", size)
     return root
 
 

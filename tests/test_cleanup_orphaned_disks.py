@@ -27,14 +27,13 @@ import os
 
 import pytest
 
+from _sparse import make_sparse
 from modules.cleanup.cleanup_scanner import virtual_disks
 
 
 def _make_disk(directory, name, gigabytes=2):
     path = directory / name
-    with open(path, "wb") as handle:
-        handle.seek(int(gigabytes * 1024 ** 3) - 1)
-        handle.write(b"\0")
+    make_sparse(path, int(gigabytes * 1024 ** 3))      # the size, without the 2 GB of zeros
     return path
 
 

@@ -199,13 +199,16 @@ def test_the_package_still_exports_the_scan_names(catalog):
 #: was a strict SUBSET of ubisoft_cache with the same description,
 #: so removing it was provably lossless. The remaining ten each
 #: need a decision about which row the user should see.
-KNOWN_IDENTICAL_PAIRS = 10
+KNOWN_IDENTICAL_PAIRS = 0      # 2026-10-10: the duplicates left by the audit were disabled
 
 
 def _identical_path_pairs(catalog):
     import itertools
+    # Enabled specs only: a disabled one measures nothing, so it cannot
+    # double-count (175+ were disabled by the 2026-10-10 audit, keeping their
+    # paths as the record of what they used to target).
     keyed = {spec_id: frozenset(p.lower() for p in spec.paths)
-             for spec_id, spec in catalog.items()}
+             for spec_id, spec in catalog.items() if not spec.disabled_reason}
     return sorted(
         (a, b) for a, b in itertools.combinations(sorted(keyed), 2)
         if keyed[a] and keyed[a] == keyed[b]
@@ -368,7 +371,10 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: "caution", which Thorough and Aggressive sweep, but Burn bundles RUN
 #: their uninstaller from that folder -- 16 uninstall entries were broken
 #: on the real machine once it was gone. delete_items now refuses it too.
-REACHABLE_SCANNERS = 521
+#: 536 after 15 caches found on the real machine were added (2026-10-10,
+#: tools/cleanup_catalog_add_2026_10_10.py). The same day's audit disabled
+#: 224 entries rather than deleting them, so they still count here.
+REACHABLE_SCANNERS = 536
 
 
 def _scanners_the_tabs_offer():

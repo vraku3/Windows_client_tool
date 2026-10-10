@@ -18,14 +18,14 @@
         "%APPDATA%\\AWStoolkit"
       ],
       "safety": "safe",
-      "description": "AWS Toolkit for VS Code cache and SAM CLI build cache."
+      "description": "AWS Toolkit for VS Code cache and SAM CLI build cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "box_cache",
       "label": "Box Drive cache and sync staging data",
       "paths": [
         "%LOCALAPPDATA%\\Box\\Box\\cache",
-        "%LOCALAPPDATA%\\Box\\Box\\data",
         "%LOCALAPPDATA%\\Box\\Box\\logs"
       ],
       "safety": "safe",
@@ -38,15 +38,14 @@
         "%APPDATA%\\Cloudflare"
       ],
       "safety": "safe",
-      "description": "Cloudflare WARP client logs and WireGuard config cache."
+      "description": "Cloudflare WARP client logs and WireGuard config cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "dropbox_cache",
       "label": "Dropbox cache, cache.db, and blob metadata — keeps account data intact",
       "paths": [
         "%LOCALAPPDATA%\\Dropbox\\cache",
-        "%LOCALAPPDATA%\\Dropbox\\blob_store",
-        "%LOCALAPPDATA%\\Dropbox\\instance1",
         "%APPDATA%\\Dropbox\\cache",
         "%APPDATA%\\Dropbox\\logs"
       ],
@@ -57,7 +56,6 @@
       "id": "expressvpn_cache",
       "label": "ExpressVPN diagnostic logs and split-tunneling config cache",
       "paths": [
-        "%APPDATA%\\ExpressVPN",
         "%APPDATA%\\ExpressVPN Logs"
       ],
       "safety": "safe",
@@ -70,17 +68,15 @@
         "%APPDATA%\\firebase"
       ],
       "safety": "safe",
-      "description": "Firebase CLI token cache and emulator local data staging."
+      "description": "Firebase CLI token cache and emulator local data staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "google_drive_cache",
       "label": "Google Drive File Stream and Backup and Sync cache",
       "paths": [
-        "%LOCALAPPDATA%\\Google\\DriveFS",
-        "%LOCALAPPDATA%\\Google\\Backup and Sync",
         "%LOCALAPPDATA%\\Google\\DriveFS\\Cache",
-        "%LOCALAPPDATA%\\Google\\DriveFS\\Logs",
-        "%APPDATA%\\Google\\DriveFS"
+        "%LOCALAPPDATA%\\Google\\DriveFS\\Logs"
       ],
       "safety": "safe",
       "description": "Google Drive File Stream and Backup and Sync cache."
@@ -92,7 +88,8 @@
         "%APPDATA%\\Heroku"
       ],
       "safety": "safe",
-      "description": "Heroku CLI config, plugins, and run dyno logs."
+      "description": "Heroku CLI config, plugins, and run dyno logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "icloud_cache",
@@ -110,7 +107,8 @@
         "%APPDATA%\\IPVanish"
       ],
       "safety": "safe",
-      "description": "IPVanish VPN client logs and connection profile cache."
+      "description": "IPVanish VPN client logs and connection profile cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mega_cache",
@@ -130,7 +128,8 @@
         "%APPDATA%\\Mullvad VPN"
       ],
       "safety": "safe",
-      "description": "Mullvad VPN tunnel logs and exit node config cache."
+      "description": "Mullvad VPN tunnel logs and exit node config cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "netlify_cache",
@@ -139,7 +138,8 @@
         "%APPDATA%\\netlify"
       ],
       "safety": "safe",
-      "description": "Netlify CLI deploy cache and functions build output."
+      "description": "Netlify CLI deploy cache and functions build output.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "ngrok_cache",
@@ -148,7 +148,8 @@
         "%APPDATA%\\ngrok"
       ],
       "safety": "safe",
-      "description": "ngrok tunnel session logs and authtoken cache."
+      "description": "ngrok tunnel session logs and authtoken cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "nordvpn_cache",
@@ -158,7 +159,8 @@
         "%APPDATA%\\Roaming\\ClientConfig"
       ],
       "safety": "safe",
-      "description": "NordVPN connection logs and settings cache."
+      "description": "NordVPN connection logs and settings cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "onedrive_cache",
@@ -175,22 +177,22 @@
       "label": "OneDrive for Business (MSOnline) sync conflict logs and local cache",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\OneDrive\\logs",
-        "%LOCALAPPDATA%\\Microsoft\\OneDrive\\cache",
-        "%LOCALAPPDATA%\\Microsoft\\OneDrive\\ACSBackup"
+        "%LOCALAPPDATA%\\Microsoft\\OneDrive\\cache"
       ],
       "safety": "safe",
-      "description": "OneDrive for Business (MSOnline) sync conflict logs and local cache."
+      "description": "OneDrive for Business (MSOnline) sync conflict logs and local cache.",
+      "disabled_reason": "Same paths as 'onedrive_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "onedrive_full_cache",
       "label": "OneDrive sync conflict files, redirected folder cache, and thumbnail staging",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\OneDrive\\logs",
-        "%LOCALAPPDATA%\\Microsoft\\OneDrive\\cache",
-        "%LOCALAPPDATA%\\Microsoft\\OneDrive\\ACSBackup"
+        "%LOCALAPPDATA%\\Microsoft\\OneDrive\\cache"
       ],
       "safety": "safe",
-      "description": "OneDrive sync conflict files, redirected folder cache, and thumbnail staging."
+      "description": "OneDrive sync conflict files, redirected folder cache, and thumbnail staging.",
+      "disabled_reason": "Same paths as 'onedrive_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "onedrive_logs",
@@ -209,7 +211,8 @@
         "%APPDATA%\\OpenVPN Connect"
       ],
       "safety": "safe",
-      "description": "OpenVPN client logs, script temp, and unifiedpushtoken cache."
+      "description": "OpenVPN client logs, script temp, and unifiedpushtoken cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "pcloud_cache",
@@ -229,7 +232,8 @@
         "%APPDATA%\\planetscale"
       ],
       "safety": "safe",
-      "description": "Planetscale CLI branch data and query result staging."
+      "description": "Planetscale CLI branch data and query result staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sharepoint_cache",
@@ -239,7 +243,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Office\\OfficeFileCache"
       ],
       "safety": "safe",
-      "description": "SharePoint/OneDrive sync client Known folder mask and local cache."
+      "description": "SharePoint/OneDrive sync client Known folder mask and local cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sharepoint_desktop_cache",
@@ -249,7 +254,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Office\\OfficeFileCache"
       ],
       "safety": "safe",
-      "description": "SharePoint Designer workflow cache and Office document cache."
+      "description": "SharePoint Designer workflow cache and Office document cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "stripe_cache",
@@ -258,7 +264,8 @@
         "%APPDATA%\\stripe"
       ],
       "safety": "safe",
-      "description": "Stripe CLI logs and webhook event staging."
+      "description": "Stripe CLI logs and webhook event staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "supabase_cache",
@@ -267,7 +274,8 @@
         "%APPDATA%\\Supabase"
       ],
       "safety": "safe",
-      "description": "Supabase CLI local dev data and migration staging."
+      "description": "Supabase CLI local dev data and migration staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "tailscale_cache",
@@ -276,7 +284,8 @@
         "%APPDATA%\\Tailscale"
       ],
       "safety": "safe",
-      "description": "Tailscale SSH session logs and subnet router cache."
+      "description": "Tailscale SSH session logs and subnet router cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "tresorit_cache",
@@ -295,7 +304,8 @@
         "%APPDATA%\\vercel"
       ],
       "safety": "safe",
-      "description": "Vercel CLI build output and now dev server cache."
+      "description": "Vercel CLI build output and now dev server cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "virtualbox_cache",
@@ -305,7 +315,8 @@
         "%USERPROFILE%\\VirtualBox VMs"
       ],
       "safety": "caution",
-      "description": "VirtualBox hard disk images (.vdi/.vhd), snapshots, and logs."
+      "description": "VirtualBox hard disk images (.vdi/.vhd), snapshots, and logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wg_easy_cache",
@@ -314,7 +325,8 @@
         "%APPDATA%\\wg-easy"
       ],
       "safety": "safe",
-      "description": "WireGuard Easy config backups and peer connection staging."
+      "description": "WireGuard Easy config backups and peer connection staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "windows_sandbox_cache",
@@ -323,7 +335,8 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.Windows.Sandbox_*\\LocalState"
       ],
       "safety": "caution",
-      "description": "Windows Sandbox base image staging and writable layer cache."
+      "description": "Windows Sandbox base image staging and writable layer cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wireguard_cache",
@@ -333,7 +346,8 @@
         "%LOCALAPPDATA%\\WireGuard"
       ],
       "safety": "safe",
-      "description": "WireGuard interface logs and adapter state cache."
+      "description": "WireGuard interface logs and adapter state cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "cyberghost_cache",

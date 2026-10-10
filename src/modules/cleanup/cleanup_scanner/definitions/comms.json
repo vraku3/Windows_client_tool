@@ -7,9 +7,7 @@
       "paths": [
         "%APPDATA%\\discord\\Cache",
         "%APPDATA%\\discord\\Code Cache",
-        "%APPDATA%\\discord\\GPUCache",
-        "%APPDATA%\\discord\\Video",
-        "%APPDATA%\\discord\\Voice"
+        "%APPDATA%\\discord\\GPUCache"
       ],
       "safety": "safe",
       "description": "Discord cache, code cache, GPU cache, video and voice cache — NOT databases/Local Storage."
@@ -20,8 +18,6 @@
       "paths": [
         "%LOCALAPPDATA%\\Zoom\\cache",
         "%LOCALAPPDATA%\\Zoom\\thumbnail",
-        "%LOCALAPPDATA%\\Zoom\\sticker",
-        "%LOCALAPPDATA%\\Zoom\\report",
         "%LOCALAPPDATA%\\Zoom\\logs"
       ],
       "safety": "safe",
@@ -43,7 +39,6 @@
       "label": "Telegram cache, video stamps, and session data (keeps messages/contacts)",
       "paths": [
         "%APPDATA%\\Telegram Desktop\\cache",
-        "%APPDATA%\\Telegram Desktop\\tdata",
         "%APPDATA%\\Telegram Desktop\\emoji",
         "%LOCALAPPDATA%\\Telegram Desktop\\cache"
       ],
@@ -55,8 +50,7 @@
       "label": "Signal cache, attachment temp, and sticker downloads",
       "paths": [
         "%APPDATA%\\Signal\\Cache",
-        "%APPDATA%\\Signal\\Logs",
-        "%LOCALAPPDATA%\\Signal"
+        "%APPDATA%\\Signal\\Logs"
       ],
       "safety": "safe",
       "description": "Signal cache, attachment temp, and sticker downloads."
@@ -65,8 +59,7 @@
       "id": "whatsapp_cache",
       "label": "WhatsApp media cache and attachment staging",
       "paths": [
-        "%LOCALAPPDATA%\\WhatsApp\\Cache",
-        "%LOCALAPPDATA%\\WhatsApp\\Media"
+        "%LOCALAPPDATA%\\WhatsApp\\Cache"
       ],
       "safety": "safe",
       "description": "WhatsApp media cache and attachment staging."
@@ -75,9 +68,7 @@
       "id": "skype_cache",
       "label": "Skype cache, shared files temp, and media cache",
       "paths": [
-        "%APPDATA%\\Skype\\Media\\content",
-        "%APPDATA%\\Skype\\Caches",
-        "%LOCALAPPDATA%\\Packages\\Microsoft.SkypeApp*\\LocalState"
+        "%APPDATA%\\Skype\\Caches"
       ],
       "safety": "safe",
       "description": "Skype cache, shared files temp, and media cache."
@@ -86,9 +77,7 @@
       "id": "viber_cache",
       "label": "Viber media cache, thumbnails, and download staging",
       "paths": [
-        "%APPDATA%\\ViberPC\\cache",
-        "%APPDATA%\\ViberPC\\media",
-        "%LOCALAPPDATA%\\Viber\\Media"
+        "%APPDATA%\\ViberPC\\cache"
       ],
       "safety": "safe",
       "description": "Viber media cache, thumbnails, and download staging."
@@ -103,7 +92,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Teams\\Cache"
       ],
       "safety": "safe",
-      "description": "Microsoft Teams cache, blob storage, GPU cache — NOT databases/IndexedDB/Local Storage."
+      "description": "Microsoft Teams cache, blob storage, GPU cache — NOT databases/IndexedDB/Local Storage.",
+      "disabled_reason": "Same paths as 'microsoft_teams_full_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "slack_cache_full",
@@ -124,9 +114,7 @@
         "%APPDATA%\\discord\\Cache",
         "%APPDATA%\\discord\\Code Cache",
         "%APPDATA%\\discord\\GPUCache",
-        "%APPDATA%\\discord\\blob_storage",
-        "%APPDATA%\\discord\\Video",
-        "%APPDATA%\\discord\\Voice"
+        "%APPDATA%\\discord\\blob_storage"
       ],
       "safety": "safe",
       "description": "Discord full cache: video, voice, GPU cache — keeps login/servers."
@@ -146,8 +134,7 @@
       "label": "TeamSpeak 3/5 cache, logs, and client query interface",
       "paths": [
         "%APPDATA%\\TS3Client\\logs",
-        "%APPDATA%\\TeamSpeak\\logs",
-        "%LOCALAPPDATA%\\TeamSpeak"
+        "%APPDATA%\\TeamSpeak\\logs"
       ],
       "safety": "safe",
       "description": "TeamSpeak 3/5 cache, logs, and client query interface."
@@ -172,7 +159,8 @@
         "%APPDATA%\\TeamViewer15"
       ],
       "safety": "safe",
-      "description": "TeamViewer remote session logs and RemoteFX data."
+      "description": "TeamViewer remote session logs and RemoteFX data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "anydesk_cache",
@@ -182,7 +170,8 @@
         "%LOCALAPPDATA%\\AnyDesk"
       ],
       "safety": "safe",
-      "description": "AnyDesk custom session recordings and address book logs."
+      "description": "AnyDesk custom session recordings and address book logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "parsec_cache",
@@ -198,8 +187,7 @@
       "id": "sunshine_cache",
       "label": "Sunshine GameStream logs and configuration cache",
       "paths": [
-        "%APPDATA%\\Sunshine\\logs",
-        "%APPDATA%\\Sunshine\\config"
+        "%APPDATA%\\Sunshine\\logs"
       ],
       "safety": "safe",
       "description": "Sunshine GameStream logs and configuration cache."
@@ -221,7 +209,8 @@
         "%APPDATA%\\Mattermost"
       ],
       "safety": "safe",
-      "description": "Mattermost client cache and team data."
+      "description": "Mattermost client cache and team data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "zulip_cache",
@@ -230,7 +219,8 @@
         "%APPDATA%\\Zulip"
       ],
       "safety": "safe",
-      "description": "Zulip client cache and realm data."
+      "description": "Zulip client cache and realm data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "element_cache",
@@ -240,7 +230,8 @@
         "%LOCALAPPDATA%\\Element"
       ],
       "safety": "safe",
-      "description": "Element (Matrix) client cache and session storage."
+      "description": "Element (Matrix) client cache and session storage.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "teamspeak5_cache",
@@ -250,7 +241,8 @@
         "%APPDATA%\\TeamSpeak5"
       ],
       "safety": "safe",
-      "description": "TeamSpeak 5 client cache and identity data."
+      "description": "TeamSpeak 5 client cache and identity data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mumble_full_cache",
@@ -260,7 +252,8 @@
         "%LOCALAPPDATA%\\Mumble"
       ],
       "safety": "safe",
-      "description": "Mumble full cache: overlay logs, identity, and certificate store."
+      "description": "Mumble full cache: overlay logs, identity, and certificate store.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "nomachine_cache",
@@ -269,7 +262,8 @@
         "%APPDATA%\\NoMachine"
       ],
       "safety": "safe",
-      "description": "NoMachine NX session logs and connection history."
+      "description": "NoMachine NX session logs and connection history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vnc_cache",
@@ -280,7 +274,8 @@
         "%APPDATA%\\UltraVNC"
       ],
       "safety": "safe",
-      "description": "VNC (RealVNC / TightVNC / UltraVNC) connection logs and settings."
+      "description": "VNC (RealVNC / TightVNC / UltraVNC) connection logs and settings.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "remote_desktop_cache",
@@ -289,7 +284,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Terminal Server Client"
       ],
       "safety": "safe",
-      "description": "Windows Remote Desktop redirected print and clipboard cache."
+      "description": "Windows Remote Desktop redirected print and clipboard cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "skype_for_business_cache",
@@ -299,13 +295,13 @@
         "%LOCALAPPDATA%\\Microsoft\\Office\\16.0\\Lync"
       ],
       "safety": "safe",
-      "description": "Skype for Business / Lync meeting recording and content cache."
+      "description": "Skype for Business / Lync meeting recording and content cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "zoom_recordings_cache",
       "label": "Zoom cloud recording staging and local recording temp",
       "paths": [
-        "%LOCALAPPDATA%\\Zoom\\recordings",
         "%LOCALAPPDATA%\\Zoom\\logs"
       ],
       "safety": "safe",
@@ -330,7 +326,8 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.MSTeamsNPC*\\LocalCache"
       ],
       "safety": "safe",
-      "description": "Microsoft Teams (New PRC) UWP local cache."
+      "description": "Microsoft Teams (New PRC) UWP local cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "whatsapp_uwp_cache",
@@ -339,7 +336,8 @@
         "%LOCALAPPDATA%\\Packages\\WhatsAppDesktop*\\LocalCache"
       ],
       "safety": "safe",
-      "description": "WhatsApp Desktop UWP local cache."
+      "description": "WhatsApp Desktop UWP local cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "anydesk_thumbnails",
@@ -358,6 +356,29 @@
       ],
       "safety": "safe",
       "description": "Discord logs folder — safe to clear."
+    },
+    {
+      "id": "whatsapp_store_webview_cache",
+      "label": "WhatsApp (Store app) web view cache",
+      "paths": [
+        "%LOCALAPPDATA%\\Packages\\5319275A.WhatsAppDesktop_*\\LocalCache\\EBWebView\\Default\\Cache",
+        "%LOCALAPPDATA%\\Packages\\5319275A.WhatsAppDesktop_*\\LocalCache\\EBWebView\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Packages\\5319275A.WhatsAppDesktop_*\\LocalCache\\EBWebView\\Default\\GPUCache"
+      ],
+      "safety": "safe",
+      "description": "Only the caches. The sign-in and messages live in the same profile's IndexedDB/Local Storage, which this never touches."
+    },
+    {
+      "id": "teams_new_webview_cache",
+      "label": "Microsoft Teams (new) web view cache and logs",
+      "paths": [
+        "%LOCALAPPDATA%\\Packages\\MSTeams_*\\LocalCache\\Microsoft\\MSTeams\\EBWebView\\*\\Cache",
+        "%LOCALAPPDATA%\\Packages\\MSTeams_*\\LocalCache\\Microsoft\\MSTeams\\EBWebView\\*\\Code Cache",
+        "%LOCALAPPDATA%\\Packages\\MSTeams_*\\LocalCache\\Microsoft\\MSTeams\\EBWebView\\*\\GPUCache",
+        "%LOCALAPPDATA%\\Packages\\MSTeams_*\\LocalCache\\Microsoft\\MSTeams\\Logs"
+      ],
+      "safety": "safe",
+      "description": "Caches and logs only; Teams stays signed in."
     }
   ]
 }

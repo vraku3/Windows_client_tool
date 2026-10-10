@@ -8,14 +8,14 @@
         "%APPDATA%\\7-Zip"
       ],
       "safety": "safe",
-      "description": "7-Zip recent archive history and temporary extraction output."
+      "description": "7-Zip recent archive history and temporary extraction output.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "acronis_cache",
       "label": "Acronis True Image backup catalog and log files",
       "paths": [
-        "%APPDATA%\\Acronis\\Logs",
-        "%ProgramData%\\Acronis\\Catalog"
+        "%APPDATA%\\Acronis\\Logs"
       ],
       "safety": "caution",
       "description": "Acronis True Image backup catalog and log files."
@@ -27,7 +27,8 @@
         "%APPDATA%\\AIDA64"
       ],
       "safety": "safe",
-      "description": "AIDA64 sensor log and report export cache."
+      "description": "AIDA64 sensor log and report export cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "aomei_cache",
@@ -36,7 +37,8 @@
         "%APPDATA%\\AOMEI"
       ],
       "safety": "safe",
-      "description": "AOMEI Backupper backup image catalog and sync log."
+      "description": "AOMEI Backupper backup image catalog and sync log.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "auslogics_cache",
@@ -45,7 +47,8 @@
         "%APPDATA%\\Auslogics"
       ],
       "safety": "safe",
-      "description": "Auslogics BoostSpeed registry backup and disk defrag log."
+      "description": "Auslogics BoostSpeed registry backup and disk defrag log.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "bandizip_cache",
@@ -54,7 +57,8 @@
         "%APPDATA%\\Bandizip"
       ],
       "safety": "safe",
-      "description": "Bandizip recent archive history and preview cache."
+      "description": "Bandizip recent archive history and preview cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "bitwarden_desktop_cache",
@@ -73,7 +77,8 @@
         "%APPDATA%\\BleachBit"
       ],
       "safety": "safe",
-      "description": "BleachBit cache and cleaner definition update cache."
+      "description": "BleachBit cache and cleaner definition update cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "bluetooth_cache",
@@ -83,7 +88,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Windows\\INF"
       ],
       "safety": "safe",
-      "description": "Bluetooth radio firmware cache and paired device pairing records."
+      "description": "Bluetooth radio firmware cache and paired device pairing records.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "ccleaner_cache",
@@ -92,7 +98,8 @@
         "%APPDATA%\\CCleaner"
       ],
       "safety": "safe",
-      "description": "CCleaner scan history and custom cleaner rule cache."
+      "description": "CCleaner scan history and custom cleaner rule cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "clevo_ControlCenter_cache",
@@ -101,15 +108,15 @@
         "%APPDATA%\\Clevo"
       ],
       "safety": "safe",
-      "description": "Clevo ControlCenter fan profile logs and thermal sensor cache."
+      "description": "Clevo ControlCenter fan profile logs and thermal sensor cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "clipboard",
       "label": "Windows clipboard pending/in-progress temp files",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Clipboard\\pending*.tmp",
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\Clipboard\\inProgress*.tmp",
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\Clipboard"
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\Clipboard\\inProgress*.tmp"
       ],
       "safety": "safe",
       "description": "Windows clipboard pending/in-progress temp files."
@@ -121,7 +128,8 @@
         "%windir%\\Registration"
       ],
       "safety": "caution",
-      "description": "COM+ application metadata and registration cache."
+      "description": "COM+ application metadata and registration cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "coretemp_logs",
@@ -130,7 +138,8 @@
         "%APPDATA%\\Realtech\\OpenHardwareMonitor"
       ],
       "safety": "safe",
-      "description": "Core Temp history log and calibration cache."
+      "description": "Core Temp history log and calibration cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "corsair_logs",
@@ -148,7 +157,8 @@
         "%APPDATA%\\CrystalDiskInfo"
       ],
       "safety": "safe",
-      "description": "CrystalDiskInfo health log and S.M.A.R.T. data cache."
+      "description": "CrystalDiskInfo health log and S.M.A.R.T. data cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "defraggler_logs",
@@ -157,7 +167,8 @@
         "%APPDATA%\\Defraggler"
       ],
       "safety": "safe",
-      "description": "Defraggler disk analysis history and exclude list cache."
+      "description": "Defraggler disk analysis history and exclude list cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "disk_nuker_cache",
@@ -166,7 +177,8 @@
         "%APPDATA%\\Disk Pulse"
       ],
       "safety": "safe",
-      "description": "Disk Ninja / Disk Pulse disk change log and alert history."
+      "description": "Disk Ninja / Disk Pulse disk change log and alert history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "duplicate_cleaner_cache",
@@ -175,7 +187,8 @@
         "%APPDATA%\\Duplicate Cleaner"
       ],
       "safety": "safe",
-      "description": "Duplicate Cleaner Pro scan database and thumbnail cache."
+      "description": "Duplicate Cleaner Pro scan database and thumbnail cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "easeus_cache",
@@ -184,7 +197,8 @@
         "%APPDATA%\\EaseUS"
       ],
       "safety": "safe",
-      "description": "EaseUS Todo Backup image catalog and clone log."
+      "description": "EaseUS Todo Backup image catalog and clone log.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "em_client_cache",
@@ -224,7 +238,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Fax"
       ],
       "safety": "safe",
-      "description": "Windows Fax Service cover page cache and received fax staging."
+      "description": "Windows Fax Service cover page cache and received fax staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "filezilla_cache",
@@ -234,7 +249,8 @@
         "%LOCALAPPDATA%\\FileZilla"
       ],
       "safety": "safe",
-      "description": "FileZilla sitemanager.xml, queue, and temp transfer data."
+      "description": "FileZilla sitemanager.xml, queue, and temp transfer data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "glary_utilities_cache",
@@ -243,7 +259,8 @@
         "%APPDATA%\\GlarySoft"
       ],
       "safety": "safe",
-      "description": "Glary Utilities registry backup and disk cleaning history."
+      "description": "Glary Utilities registry backup and disk cleaning history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "hdtune_logs",
@@ -252,7 +269,8 @@
         "%APPDATA%\\HD Tune"
       ],
       "safety": "safe",
-      "description": "HD Tune health scan log and benchmark result cache."
+      "description": "HD Tune health scan log and benchmark result cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "hwinfo64_cache",
@@ -261,7 +279,8 @@
         "%APPDATA%\\HWiNFO64"
       ],
       "safety": "safe",
-      "description": "HWiNFO64 sensor log history and sensor data cache."
+      "description": "HWiNFO64 sensor log history and sensor data cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "logseq_cache",
@@ -277,8 +296,7 @@
       "id": "macrium_cache",
       "label": "Macrium Reflect backup logs and differential chain metadata",
       "paths": [
-        "%APPDATA%\\Macrium\\Reflect\\logs",
-        "%APPDATA%\\Macrium\\Reflect\\catalog"
+        "%APPDATA%\\Macrium\\Reflect\\logs"
       ],
       "safety": "caution",
       "description": "Macrium Reflect backup logs and differential chain metadata."
@@ -290,7 +308,8 @@
         "%APPDATA%\\Macrium"
       ],
       "safety": "safe",
-      "description": "Macrium Reflect imaging log and differential backup catalog."
+      "description": "Macrium Reflect imaging log and differential backup catalog.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mendeley_cache",
@@ -299,7 +318,8 @@
         "%APPDATA%\\Mendeley Ltd"
       ],
       "safety": "safe",
-      "description": "Mendeley Desktop PDF index and citation cache."
+      "description": "Mendeley Desktop PDF index and citation cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "minitool_cache",
@@ -308,7 +328,8 @@
         "%APPDATA%\\Minitool"
       ],
       "safety": "safe",
-      "description": "Minitool partition wizard logs and data recovery scan history."
+      "description": "Minitool partition wizard logs and data recovery scan history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "msi_afterburner_cache",
@@ -317,7 +338,8 @@
         "%APPDATA%\\MSI Afterburner"
       ],
       "safety": "safe",
-      "description": "MSI Afterburner overlay logs and hardware monitoring cache."
+      "description": "MSI Afterburner overlay logs and hardware monitoring cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "notezilla_cache",
@@ -337,7 +359,8 @@
         "%LOCALAPPDATA%\\Notion"
       ],
       "safety": "safe",
-      "description": "Notion cache, IndexedDB, and render cache."
+      "description": "Notion cache, IndexedDB, and render cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "nzxt_cam_cache",
@@ -346,7 +369,8 @@
         "%APPDATA%\\NZXT CAM"
       ],
       "safety": "safe",
-      "description": "NZXT CAM hardware monitor logs and RGB profile cache."
+      "description": "NZXT CAM hardware monitor logs and RGB profile cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "obsidian_cache",
@@ -364,10 +388,7 @@
       "paths": [
         "%APPDATA%\\Microsoft\\Teams\\Cache",
         "%APPDATA%\\Microsoft\\Teams\\blob_storage",
-        "%APPDATA%\\Microsoft\\Teams\\GPUCache",
-        "%LOCALAPPDATA%\\Microsoft\\OneNote\\*",
-        "%LOCALAPPDATA%\\Microsoft\\OneNoteCache",
-        "%APPDATA%\\Microsoft\\UUS"
+        "%APPDATA%\\Microsoft\\Teams\\GPUCache"
       ],
       "safety": "safe",
       "description": "Extended Office caches: Teams, OneNote, Publisher, Visio caches."
@@ -380,15 +401,13 @@
         "%LOCALAPPDATA%\\Microsoft\\Office\\Updates"
       ],
       "safety": "caution",
-      "description": "Office Click-to-Run setup pipeline staging and update download cache."
+      "description": "Office Click-to-Run setup pipeline staging and update download cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "office_temp",
       "label": "Microsoft Office temp, unsaved files, and OfficeFileCache",
       "paths": [
-        "%LOCALAPPDATA%\\Microsoft\\Office\\*\\OfficeFileCache",
-        "%APPDATA%\\Microsoft\\Office\\*\\UnsavedFiles",
-        "%APPDATA%\\Microsoft\\Office\\*\\OfficeFileCache",
         "%TEMP%\\Excel*.tmp",
         "%TEMP%\\Word*.tmp"
       ],
@@ -403,7 +422,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Outlook"
       ],
       "safety": "safe",
-      "description": "Outlook send/receive offline folder, .ost compact temp, and sync logs."
+      "description": "Outlook send/receive offline folder, .ost compact temp, and sync logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "papers_cache",
@@ -412,7 +432,8 @@
         "%APPDATA%\\Papers"
       ],
       "safety": "safe",
-      "description": "Papers 3/4 PDF library index and sync cache."
+      "description": "Papers 3/4 PDF library index and sync cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "paragon_cache",
@@ -421,7 +442,8 @@
         "%APPDATA%\\Paragon"
       ],
       "safety": "safe",
-      "description": "Paragon Hard Disk Manager backup catalog and imaging log."
+      "description": "Paragon Hard Disk Manager backup catalog and imaging log.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "peazip_cache",
@@ -430,7 +452,8 @@
         "%APPDATA%\\PeaZip"
       ],
       "safety": "safe",
-      "description": "PeaZip temp extraction and bookmark history."
+      "description": "PeaZip temp extraction and bookmark history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "privacy_guardian_cache",
@@ -439,7 +462,8 @@
         "%APPDATA%\\Privacy Guardian"
       ],
       "safety": "safe",
-      "description": "Privacy Guardian browser monitoring log and telemetry history."
+      "description": "Privacy Guardian browser monitoring log and telemetry history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "putty_cache",
@@ -448,7 +472,8 @@
         "%APPDATA%\\SimonTatham\\PuTTY"
       ],
       "safety": "safe",
-      "description": "PuTTY session data, host keys, and scrollback logs."
+      "description": "PuTTY session data, host keys, and scrollback logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "quickbooks_cache",
@@ -457,7 +482,8 @@
         "%APPDATA%\\Intuit"
       ],
       "safety": "safe",
-      "description": "QuickBooks log files and transaction audit trail cache."
+      "description": "QuickBooks log files and transaction audit trail cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "readcube_cache",
@@ -466,7 +492,8 @@
         "%APPDATA%\\ReadCube"
       ],
       "safety": "safe",
-      "description": "ReadCube paper viewer cache and annotation data."
+      "description": "ReadCube paper viewer cache and annotation data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "rufus_logs",
@@ -475,7 +502,8 @@
         "%LOCALAPPDATA%\\Rufus"
       ],
       "safety": "safe",
-      "description": "Rufus ISO download cache and log files."
+      "description": "Rufus ISO download cache and log files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "simplenote_cache",
@@ -484,7 +512,8 @@
         "%APPDATA%\\Simplenote"
       ],
       "safety": "safe",
-      "description": "Simplenote sync cache and local database."
+      "description": "Simplenote sync cache and local database.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sparkle_logs",
@@ -511,7 +540,8 @@
         "%APPDATA%\\Microsoft\\Sticky Notes\\StickyNotes.sqm"
       ],
       "safety": "safe",
-      "description": "Sticky Notes' own .sqm usage-telemetry file only. NOT %LOCALAPPDATA%\\Packages\\Microsoft.MicrosoftStickyNotes_*\\LocalState, which holds plum.sqlite -- the real database of every note's actual text. The old label called that 'UWP sticky notes state', which is exactly what it is: state, not disposable cache."
+      "description": "Sticky Notes' own .sqm usage-telemetry file only. NOT %LOCALAPPDATA%\\Packages\\Microsoft.MicrosoftStickyNotes_*\\LocalState, which holds plum.sqlite -- the real database of every note's actual text. The old label called that 'UWP sticky notes state', which is exactly what it is: state, not disposable cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "thrustmaster_cache",
@@ -520,7 +550,8 @@
         "%APPDATA%\\Thrustmaster"
       ],
       "safety": "safe",
-      "description": "Thrustmaster T.A.R.G.E.T. profile logs and firmware update staging."
+      "description": "Thrustmaster T.A.R.G.E.T. profile logs and firmware update staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "thunderbird_cache",
@@ -536,7 +567,6 @@
       "id": "veeam_cache",
       "label": "Veeam Backup metadata cache and catalog staging",
       "paths": [
-        "%APPDATA%\\Veeam\\BackupCatalog",
         "%APPDATA%\\Veeam\\Logs"
       ],
       "safety": "caution",
@@ -549,7 +579,8 @@
         "%LOCALAPPDATA%\\Ventoy"
       ],
       "safety": "safe",
-      "description": "Ventoy plugin data and ISO collection config staging."
+      "description": "Ventoy plugin data and ISO collection config staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "voice_recorder_cache",
@@ -558,7 +589,8 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.WindowsSoundRecorder*\\LocalState"
       ],
       "safety": "safe",
-      "description": "Windows Voice Recorder recordings and audio processing temp."
+      "description": "Windows Voice Recorder recordings and audio processing temp.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wifi_profiles_cache",
@@ -567,7 +599,8 @@
         "%APPDATA%\\Microsoft\\Windows\\WLAN"
       ],
       "safety": "safe",
-      "description": "Saved Wi-Fi network profiles (XML) and WLAN autoconfig service cache."
+      "description": "Saved Wi-Fi network profiles (XML) and WLAN autoconfig service cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "windows_camera_cache",
@@ -576,7 +609,8 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.WindowsCamera*\\LocalState"
       ],
       "safety": "safe",
-      "description": "Windows Camera app cache, HDR photos staging, and video trim temp."
+      "description": "Windows Camera app cache, HDR photos staging, and video trim temp.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "windows_photo_viewer_cache",
@@ -585,7 +619,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Windows Photo Viewer"
       ],
       "safety": "safe",
-      "description": "Windows Photo Viewer thumbnail and temporary decode cache."
+      "description": "Windows Photo Viewer thumbnail and temporary decode cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "windows_photos_cache",
@@ -594,7 +629,8 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.Windows.Photos*\\LocalCache"
       ],
       "safety": "safe",
-      "description": "Windows Photos UWP cache and temp files."
+      "description": "Windows Photos UWP cache and temp files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "winrar_cache",
@@ -603,7 +639,8 @@
         "%APPDATA%\\WinRAR"
       ],
       "safety": "safe",
-      "description": "WinRAR recent archive list and temp extraction folder."
+      "description": "WinRAR recent archive list and temp extraction folder.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "winscp_cache",
@@ -622,7 +659,8 @@
         "%APPDATA%\\WinZip"
       ],
       "safety": "safe",
-      "description": "WinZip history database and secure temp files."
+      "description": "WinZip history database and secure temp files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wise_cache360_cache",
@@ -631,7 +669,8 @@
         "%APPDATA%\\WiseFolderHider"
       ],
       "safety": "safe",
-      "description": "Wise Care 365 registry backup and system optimization history."
+      "description": "Wise Care 365 registry backup and system optimization history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "zotero_cache",
@@ -641,7 +680,58 @@
         "%LOCALAPPDATA%\\Zotero"
       ],
       "safety": "safe",
-      "description": "Zotero PDF index cache, translator data, and connector browser cache."
+      "description": "Zotero PDF index cache, translator data, and connector browser cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
+    },
+    {
+      "id": "outlook_new_webview_cache",
+      "label": "Outlook (new) web view cache",
+      "paths": [
+        "%LOCALAPPDATA%\\Microsoft\\Olk\\EBWebView\\Default\\Cache",
+        "%LOCALAPPDATA%\\Microsoft\\Olk\\EBWebView\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Microsoft\\Olk\\EBWebView\\Default\\GPUCache"
+      ],
+      "safety": "safe",
+      "description": "The new Outlook's page cache only. Mail, .ost and .pst files are never touched (Cleanup refuses them outright)."
+    },
+    {
+      "id": "m365_app_webview_cache",
+      "label": "Microsoft 365 app web view cache",
+      "paths": [
+        "%LOCALAPPDATA%\\Packages\\Microsoft.MicrosoftOfficeHub_*\\LocalState\\EBWebView\\Default\\Cache",
+        "%LOCALAPPDATA%\\Packages\\Microsoft.MicrosoftOfficeHub_*\\LocalState\\EBWebView\\Default\\Code Cache"
+      ],
+      "safety": "safe",
+      "description": "Page cache of the Microsoft 365 (Office hub) app; no sign-in."
+    },
+    {
+      "id": "stremio_webview_cache",
+      "label": "Stremio web view cache",
+      "paths": [
+        "%LOCALAPPDATA%\\Programs\\Stremio\\stremio-shell-ng.exe.WebView2\\EBWebView\\Default\\Cache",
+        "%LOCALAPPDATA%\\Programs\\Stremio\\stremio-shell-ng.exe.WebView2\\EBWebView\\Default\\Code Cache"
+      ],
+      "safety": "safe",
+      "description": "Stremio's page cache only; add-ons and sign-in untouched."
+    },
+    {
+      "id": "vscode_crashpad",
+      "label": "VS Code crash reports",
+      "paths": [
+        "%APPDATA%\\Code\\Crashpad"
+      ],
+      "safety": "safe",
+      "description": "Crash dumps VS Code keeps after a crash."
+    },
+    {
+      "id": "electron_updater_leftovers",
+      "label": "Downloaded app-update installers (Electron apps)",
+      "paths": [
+        "%LOCALAPPDATA%\\*-updater\\pending",
+        "%LOCALAPPDATA%\\*-updater\\installer.exe"
+      ],
+      "safety": "safe",
+      "description": "Installers an app's updater already ran (CurseForge, OpenCode, ArdenWoW launcher here). The updater downloads a fresh one when there is an update."
     }
   ]
 }

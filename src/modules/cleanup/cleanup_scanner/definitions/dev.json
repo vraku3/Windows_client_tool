@@ -9,15 +9,15 @@
         "%LOCALAPPDATA%\\Autodesk\\3dsMax"
       ],
       "safety": "safe",
-      "description": "3ds Max scene explorer cache, Arnold render cache, and scene backup."
+      "description": "3ds Max scene explorer cache, Arnold render cache, and scene backup.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "android_studio_cache",
       "label": "Android Studio build cache, emulator HAXM logs, and SDK manager temp",
       "paths": [
         "%APPDATA%\\Google\\AndroidStudio*\\logs",
-        "%APPDATA%\\Google\\AndroidStudio*\\caches",
-        "%LOCALAPPDATA%\\Google\\AndroidStudio*"
+        "%APPDATA%\\Google\\AndroidStudio*\\caches"
       ],
       "safety": "safe",
       "description": "Android Studio build cache, emulator HAXM logs, and SDK manager temp."
@@ -26,7 +26,6 @@
       "id": "ansible_cache",
       "label": "Ansible Galaxy collections cache and tmp files",
       "paths": [
-        "%USERPROFILE%\\.ansible\\collections",
         "%USERPROFILE%\\.ansible\\tmp"
       ],
       "safety": "safe",
@@ -41,7 +40,8 @@
         "%USERPROFILE%\\var\\lib\\apt\\lists"
       ],
       "safety": "safe",
-      "description": "APT package cache (WSL Ubuntu/Debian) and apt lists."
+      "description": "APT package cache (WSL Ubuntu/Debian) and apt lists.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "arcgis_cache",
@@ -50,7 +50,8 @@
         "%APPDATA%\\ESRI"
       ],
       "safety": "safe",
-      "description": "ArcGIS Pro tile cache, geodatabase temp, and geoanalytics staging."
+      "description": "ArcGIS Pro tile cache, geodatabase temp, and geoanalytics staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "atom_cache",
@@ -79,7 +80,8 @@
         "%USERPROFILE%\\.bazaar"
       ],
       "safety": "safe",
-      "description": "Bazaar version control shared repository and branch cache."
+      "description": "Bazaar version control shared repository and branch cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "bundler_cache",
@@ -88,7 +90,8 @@
         "%USERPROFILE%\\.bundle\\specifications"
       ],
       "safety": "safe",
-      "description": "Bundler gem cache for Ruby projects."
+      "description": "Bundler gem cache for Ruby projects.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "chocolatey_cache",
@@ -125,8 +128,7 @@
       "label": "CLion CMake, compilation database, and debugger symbol cache",
       "paths": [
         "%APPDATA%\\JetBrains\\CLion*\\logs",
-        "%APPDATA%\\JetBrains\\CLion*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\CLion*"
+        "%APPDATA%\\JetBrains\\CLion*\\caches"
       ],
       "safety": "safe",
       "description": "CLion CMake, compilation database, and debugger symbol cache."
@@ -138,7 +140,8 @@
         "%USERPROFILE%\\.cmake"
       ],
       "safety": "safe",
-      "description": "CMake generated Ninja/Makefiles and compiler output cache."
+      "description": "CMake generated Ninja/Makefiles and compiler output cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "cocoapods_cache",
@@ -148,7 +151,8 @@
         "%USERPROFILE%\\Library\\Caches\\CocoaPods"
       ],
       "safety": "safe",
-      "description": "CocoaPods trunk specs repo and pod cache."
+      "description": "CocoaPods trunk specs repo and pod cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "codeblocks_cache",
@@ -157,13 +161,13 @@
         "%APPDATA%\\CodeBlocks\\default"
       ],
       "safety": "safe",
-      "description": "Code::Blocks default and global variable paths cache."
+      "description": "Code::Blocks default and global variable paths cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "composer_cache",
       "label": "PHP Composer vendor cache and global packages",
       "paths": [
-        "%USERPROFILE%\\.composer\\vendor",
         "%USERPROFILE%\\.composer\\cache"
       ],
       "safety": "safe",
@@ -176,7 +180,8 @@
         "%USERPROFILE%\\.conan"
       ],
       "safety": "safe",
-      "description": "Conan C++ package manager downloads and recipe cache."
+      "description": "Conan C++ package manager downloads and recipe cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "curl_cfgs_cache",
@@ -185,7 +190,8 @@
         "%USERPROFILE%\\.curlrc"
       ],
       "safety": "safe",
-      "description": "curl config (~/.curlrc) and cookie jar cache."
+      "description": "curl config (~/.curlrc) and cookie jar cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "darcs_cache",
@@ -194,7 +200,8 @@
         "%USERPROFILE%\\.darcs"
       ],
       "safety": "safe",
-      "description": "Darcs version control pristine and patches cache."
+      "description": "Darcs version control pristine and patches cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "datagrip_cache",
@@ -216,7 +223,8 @@
         "%LOCALAPPDATA%\\Kubernetes"
       ],
       "safety": "caution",
-      "description": "Docker Desktop VM disk image, build cache, and container logs."
+      "description": "Docker Desktop VM disk image, build cache, and container logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "dotnet_native_cache",
@@ -225,17 +233,16 @@
         "%windir%\\SystemRuntime\\Files"
       ],
       "safety": "caution",
-      "description": ".NET Native AOT compilation cache and NGEN image service blob."
+      "description": ".NET Native AOT compilation cache and NGEN image service blob.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "eclipse_cache",
       "label": "Eclipse IDE logs, workspace metadata, and Maven local repo",
       "paths": [
-        "%APPDATA%\\Eclipse",
-        "%USERPROFILE%\\.eclipse",
         "%USERPROFILE%\\.m2\\repository"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Eclipse IDE logs, workspace metadata, and Maven local repo."
     },
     {
@@ -247,7 +254,8 @@
         "%USERPROFILE%\\.emacs.d\\var"
       ],
       "safety": "safe",
-      "description": "Emacs auto-save, backup, and elpa package cache."
+      "description": "Emacs auto-save, backup, and elpa package cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "flatpak_cache",
@@ -256,13 +264,13 @@
         "%USERPROFILE%\\.local\\share\\flatpak"
       ],
       "safety": "caution",
-      "description": "Flatpak remote repo metadata and downloaded bundle staging."
+      "description": "Flatpak remote repo metadata and downloaded bundle staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "fork_cache",
       "label": "Fork git client logs and diff cache",
       "paths": [
-        "%APPDATA%\\Fork",
         "%APPDATA%\\ForkLogs"
       ],
       "safety": "safe",
@@ -276,7 +284,8 @@
         "%LOCALAPPDATA%\\Autodesk\\Fusion 360"
       ],
       "safety": "safe",
-      "description": "Autodesk Fusion 360 cloud sync cache and simulation result cache."
+      "description": "Autodesk Fusion 360 cloud sync cache and simulation result cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "git_lfs_cache",
@@ -285,7 +294,8 @@
         "%USERPROFILE%\\.git-lfs\\objects"
       ],
       "safety": "danger",
-      "description": "Git LFS local cache and objects store â€” DANGER: deleting removes actual repo files."
+      "description": "Git LFS local cache and objects store â€” DANGER: deleting removes actual repo files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "gitkraken_cache",
@@ -295,15 +305,15 @@
         "%LOCALAPPDATA%\\GitKraken"
       ],
       "safety": "safe",
-      "description": "GitKraken logs, keychain cache, and Git analytics data."
+      "description": "GitKraken logs, keychain cache, and Git analytics data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "goland_cache",
       "label": "GoLand caches, Go modules proxy cache, and test runner cache",
       "paths": [
         "%APPDATA%\\JetBrains\\GoLand*\\logs",
-        "%APPDATA%\\JetBrains\\GoLand*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\GoLand*"
+        "%APPDATA%\\JetBrains\\GoLand*\\caches"
       ],
       "safety": "safe",
       "description": "GoLand caches, Go modules proxy cache, and test runner cache."
@@ -313,7 +323,6 @@
       "label": "Go module proxy cache and build cache",
       "paths": [
         "%USERPROFILE%\\go\\pkg\\mod\\cache",
-        "%USERPROFILE%\\go\\build",
         "%LOCALAPPDATA%\\go-build"
       ],
       "safety": "safe",
@@ -327,7 +336,7 @@
         "%USERPROFILE%\\.gradle\\daemon",
         "%USERPROFILE%\\.gradle\\wrapper"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Gradle daemon logs, wrapper distributions, and build cache."
     },
     {
@@ -337,7 +346,8 @@
         "%APPDATA%\\HeidiSQL"
       ],
       "safety": "safe",
-      "description": "HeidiSQL session logs and query history cache."
+      "description": "HeidiSQL session logs and query history cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "hyperv_cache",
@@ -347,7 +357,8 @@
         "%USERPROFILE%\\Documents\\Hyper-V\\Virtual Hard Disks"
       ],
       "safety": "caution",
-      "description": "Hyper-V virtual machines, checkpoints (snapshots), and VM configuration files."
+      "description": "Hyper-V virtual machines, checkpoints (snapshots), and VM configuration files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "hyperv_vmstate_cache",
@@ -356,15 +367,15 @@
         "%ProgramData%\\Microsoft\\Windows\\Hyper-V"
       ],
       "safety": "caution",
-      "description": "Hyper-V saved VM state (.vsv) files and checkpoint differencing disks."
+      "description": "Hyper-V saved VM state (.vsv) files and checkpoint differencing disks.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "intellij_cache",
       "label": "IntelliJ IDEA caches, workspace layout cache, and task result cache",
       "paths": [
         "%APPDATA%\\JetBrains\\IntelliJIdea*\\logs",
-        "%APPDATA%\\JetBrains\\IntelliJIdea*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\IntelliJIdea*"
+        "%APPDATA%\\JetBrains\\IntelliJIdea*\\caches"
       ],
       "safety": "safe",
       "description": "IntelliJ IDEA caches, workspace layout cache, and task result cache."
@@ -380,7 +391,7 @@
         "%USERPROFILE%\\.ivy2\\cache",
         "%LOCALAPPDATA%\\Sun\\Java\\Deployment\\cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Java WebStart, Maven local repo, and Gradle caches."
     },
     {
@@ -404,10 +415,7 @@
         "%APPDATA%\\JetBrains\\DataGrip*\\logs",
         "%APPDATA%\\JetBrains\\DataGrip*\\caches",
         "%APPDATA%\\JetBrains\\AndroidStudio*\\logs",
-        "%APPDATA%\\JetBrains\\AndroidStudio*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\IntelliJIdea*",
-        "%LOCALAPPDATA%\\JetBrains\\PyCharm*",
-        "%LOCALAPPDATA%\\JetBrains\\WebStorm*"
+        "%APPDATA%\\JetBrains\\AndroidStudio*\\caches"
       ],
       "safety": "safe",
       "description": "JetBrains IDE caches, logs, and index data â€” all products."
@@ -419,15 +427,14 @@
         "%USERPROFILE%\\.kind"
       ],
       "safety": "caution",
-      "description": "kind (Kubernetes in Docker) cluster config and image tar cache."
+      "description": "kind (Kubernetes in Docker) cluster config and image tar cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "kubernetes_cache",
       "label": "kubectl config, Helm cache, and K9s database",
       "paths": [
-        "%USERPROFILE%\\.kube\\cache",
-        "%USERPROFILE%\\.helm",
-        "%USERPROFILE%\\.config\\k9s"
+        "%USERPROFILE%\\.kube\\cache"
       ],
       "safety": "safe",
       "description": "kubectl config, Helm cache, and K9s database."
@@ -439,7 +446,8 @@
         "%APPDATA%\\Lazarus"
       ],
       "safety": "safe",
-      "description": "Lazarus IDE compiler temp and objectPAL cache."
+      "description": "Lazarus IDE compiler temp and objectPAL cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "lm_studio_cache",
@@ -459,7 +467,8 @@
         "%LOCALAPPDATA%\\LGHUB"
       ],
       "safety": "safe",
-      "description": "Logitech G HUB profiles, LED sync cache, and game detection logs."
+      "description": "Logitech G HUB profiles, LED sync cache, and game detection logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "maple_cache",
@@ -468,7 +477,8 @@
         "%APPDATA%\\Maplesoft"
       ],
       "safety": "safe",
-      "description": "Maple session logs and library update cache."
+      "description": "Maple session logs and library update cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "matlab_cache",
@@ -478,7 +488,8 @@
         "%LOCALAPPDATA%\\MathWorks"
       ],
       "safety": "safe",
-      "description": "MATLAB preferences, editor temp, and toolbox cache."
+      "description": "MATLAB preferences, editor temp, and toolbox cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "matlab_full_cache",
@@ -488,7 +499,8 @@
         "%LOCALAPPDATA%\\MathWorks\\MATLAB"
       ],
       "safety": "safe",
-      "description": "MATLAB preferences, live script temp, and toolbox cache."
+      "description": "MATLAB preferences, live script temp, and toolbox cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "maven_repo_cache",
@@ -496,8 +508,9 @@
       "paths": [
         "%USERPROFILE%\\.m2\\repository"
       ],
-      "safety": "safe",
-      "description": "Apache Maven local repository (~/.m2/repository)."
+      "safety": "caution",
+      "description": "Apache Maven local repository (~/.m2/repository).",
+      "disabled_reason": "Same paths as 'eclipse_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "maya_cache",
@@ -507,7 +520,8 @@
         "%LOCALAPPDATA%\\Autodesk\\Maya*"
       ],
       "safety": "safe",
-      "description": "Maya scene temp, Bifrost cache, and render output staging."
+      "description": "Maya scene temp, Bifrost cache, and render output staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mercurial_cache",
@@ -516,7 +530,8 @@
         "%USERPROFILE%\\.hg"
       ],
       "safety": "safe",
-      "description": "Mercurial revlog cache and bundle staging area."
+      "description": "Mercurial revlog cache and bundle staging area.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "meson_cache",
@@ -534,7 +549,8 @@
         "%USERPROFILE%\\.minikube"
       ],
       "safety": "caution",
-      "description": "minikube cluster data, addons config, and cache."
+      "description": "minikube cluster data, addons config, and cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "msix_cache",
@@ -544,13 +560,13 @@
         "%LOCALAPPDATA%\\Packages\\_staging"
       ],
       "safety": "safe",
-      "description": "MSIX package staging and expansion cache."
+      "description": "MSIX package staging and expansion cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mysql_logs",
       "label": "MySQL general query log, slow query log, and error log files",
       "paths": [
-        "%ProgramFiles%\\MySQL\\MySQL Server*\\Data",
         "%ProgramFiles%\\MySQL\\MySQL Server*\\logs"
       ],
       "safety": "caution",
@@ -563,7 +579,8 @@
         "%APPDATA%\\Navicat"
       ],
       "safety": "safe",
-      "description": "Navicat Premium connection settings backup and query result cache."
+      "description": "Navicat Premium connection settings backup and query result cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "net_framework_cache",
@@ -573,7 +590,8 @@
         "%windir%\\Microsoft.NET\\Framework64\\*\\NGEN"
       ],
       "safety": "caution",
-      "description": ".NET Framework download cache and NGEN assembly binary cache."
+      "description": ".NET Framework download cache and NGEN assembly binary cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "netbeans_cache",
@@ -592,13 +610,11 @@
         "%APPDATA%\\npm-cache",
         "%LOCALAPPDATA%\\npm-cache",
         "%APPDATA%\\pnpm-store",
-        "%APPDATA%\\pnpm",
         "%LOCALAPPDATA%\\Yarn\\Cache",
         "%APPDATA%\\yarn\\cache",
-        "%APPDATA%\\yarn\\Data",
         "%LOCALAPPDATA%\\pnpm-store"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "npm cache in all locations â€” npm, pnpm, yarn global."
     },
     {
@@ -609,7 +625,8 @@
         "%APPDATA%\\Notepad++\\plugins\\config"
       ],
       "safety": "safe",
-      "description": "Notepad++ backup, session, and plugin config cache."
+      "description": "Notepad++ backup, session, and plugin config cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "nuget_cache",
@@ -619,7 +636,7 @@
         "%LOCALAPPDATA%\\nuget\\cache",
         "%LOCALAPPDATA%\\nuget\\v3-cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "NuGet global packages folder and HTTP cache."
     },
     {
@@ -628,7 +645,7 @@
       "paths": [
         "%USERPROFILE%\\.nuget\\packages"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "NuGet global packages folder with all cached .nupkg files."
     },
     {
@@ -638,7 +655,8 @@
         "%APPDATA%\\nvm"
       ],
       "safety": "caution",
-      "description": "nvm (Node Version Manager) downloaded node versions and cache."
+      "description": "nvm (Node Version Manager) downloaded node versions and cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "packer_cache",
@@ -646,7 +664,7 @@
       "paths": [
         "%USERPROFILE%\\.packer.d\\plugin-cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Packer plugin cache and output artifact staging."
     },
     {
@@ -657,7 +675,8 @@
         "%USERPROFILE%\\Parallels"
       ],
       "safety": "caution",
-      "description": "Parallels virtual machines and shared applications cache."
+      "description": "Parallels virtual machines and shared applications cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "perforce_cache",
@@ -667,7 +686,8 @@
         "%APPDATA%\\P4"
       ],
       "safety": "safe",
-      "description": "Perforce Helix Core p4cache and workspace metadata."
+      "description": "Perforce Helix Core p4cache and workspace metadata.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "phpstorm_cache",
@@ -689,7 +709,7 @@
         "%APPDATA%\\pip\\wheels",
         "%LOCALAPPDATA%\\pip\\logs"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "pip download cache and wheel cache in all locations."
     },
     {
@@ -699,15 +719,14 @@
         "%USERPROFILE%\\.pnpm-store",
         "%USERPROFILE%\\.local\\share\\npm\\cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "pnpm package manager cache."
     },
     {
       "id": "postgres_logs",
       "label": "PostgreSQL pg_log and pg_xlog archive files",
       "paths": [
-        "%USERPROFILE%\\AppData\\Local\\PostgreSQL\\logs",
-        "%USERPROFILE%\\AppData\\Roaming\\PostgreSQL\\pg_log"
+        "%USERPROFILE%\\AppData\\Local\\PostgreSQL\\logs"
       ],
       "safety": "caution",
       "description": "PostgreSQL pg_log and pg_xlog archive files."
@@ -719,15 +738,15 @@
         "%APPDATA%\\Pulumi"
       ],
       "safety": "safe",
-      "description": "Pulumi stack logs and resource escape hatch cache."
+      "description": "Pulumi stack logs and resource escape hatch cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "pycharm_cache",
       "label": "PyCharm caches, Python bytecode cache, and pytest result cache",
       "paths": [
         "%APPDATA%\\JetBrains\\PyCharm*\\logs",
-        "%APPDATA%\\JetBrains\\PyCharm*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\PyCharm*"
+        "%APPDATA%\\JetBrains\\PyCharm*\\caches"
       ],
       "safety": "safe",
       "description": "PyCharm caches, Python bytecode cache, and pytest result cache."
@@ -736,8 +755,7 @@
       "id": "pyenv_cache",
       "label": "pyenv Python builds and cache of downloaded Python versions",
       "paths": [
-        "%USERPROFILE%\\.pyenv\\cache",
-        "%USERPROFILE%\\.pyenv\\versions"
+        "%USERPROFILE%\\.pyenv\\cache"
       ],
       "safety": "caution",
       "description": "pyenv Python builds and cache of downloaded Python versions."
@@ -750,7 +768,8 @@
         "%APPDATA%\\QtProject\\QtCreator"
       ],
       "safety": "safe",
-      "description": "Qt Creator analysis cache, autocomplete data, and build logs."
+      "description": "Qt Creator analysis cache, autocomplete data, and build logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "resharper_cache",
@@ -759,7 +778,8 @@
         "%APPDATA%\\JetBrains\\Unoble\\ReSharperHost"
       ],
       "safety": "safe",
-      "description": "ReSharper cache, symbol server data, and extension host cache."
+      "description": "ReSharper cache, symbol server data, and extension host cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "revitable_cache",
@@ -769,7 +789,7 @@
         "%APPDATA%\\Autodesk\\Revit\\Autodesk Revit*\\Logs",
         "%LOCALAPPDATA%\\Autodesk\\Revit\\Autodesk Revit*\\UI\\Cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Revit family cache, Dynamo cache, and BIM 360 sync logs."
     },
     {
@@ -777,8 +797,7 @@
       "label": "JetBrains Rider logs, caches, andresharper data",
       "paths": [
         "%APPDATA%\\JetBrains\\Rider*\\logs",
-        "%APPDATA%\\JetBrains\\Rider*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\Rider*"
+        "%APPDATA%\\JetBrains\\Rider*\\caches"
       ],
       "safety": "safe",
       "description": "JetBrains Rider logs, caches, andresharper data."
@@ -792,7 +811,8 @@
         "%USERPROFILE%\\.gem\\specifications"
       ],
       "safety": "safe",
-      "description": "RubyGems cache, bundler gems, and Gemfile.lock backups."
+      "description": "RubyGems cache, bundler gems, and Gemfile.lock backups.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "rubymine_cache",
@@ -809,17 +829,15 @@
       "label": "Rust cargo registry and target build cache",
       "paths": [
         "%USERPROFILE%\\.cargo\\registry\\cache",
-        "%USERPROFILE%\\.cargo\\registry\\src",
-        "%USERPROFILE%\\.cargo\\target"
+        "%USERPROFILE%\\.cargo\\registry\\src"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Rust cargo registry and target build cache."
     },
     {
       "id": "scoop_bucket_cache",
       "label": "Scoop bucket cache and downloaded app staging",
       "paths": [
-        "%USERPROFILE%\\scoop\\buckets",
         "%USERPROFILE%\\scoop\\cache"
       ],
       "safety": "safe",
@@ -829,11 +847,11 @@
       "id": "scoop_cache",
       "label": "Scoop bucket cache, downloads, and app versions",
       "paths": [
-        "%USERPROFILE%\\scoop\\cache",
-        "%USERPROFILE%\\scoop\\buckets"
+        "%USERPROFILE%\\scoop\\cache"
       ],
       "safety": "safe",
-      "description": "Scoop bucket cache, downloads, and app versions."
+      "description": "Scoop bucket cache, downloads, and app versions.",
+      "disabled_reason": "Same paths as 'scoop_bucket_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "sdkman_cache",
@@ -842,14 +860,14 @@
         "%USERPROFILE%\\.sdkman\\candidates"
       ],
       "safety": "caution",
-      "description": "SDKMAN! SDK candidate downloads and version staging."
+      "description": "SDKMAN! SDK candidate downloads and version staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sketchup_cache",
       "label": "SketchUp shadow cache, style caches, and import logs",
       "paths": [
-        "%APPDATA%\\SketchUp\\SketchUp*\\Logs",
-        "%LOCALAPPDATA%\\SketchUp\\SketchUp*\\SketchUp"
+        "%APPDATA%\\SketchUp\\SketchUp*\\Logs"
       ],
       "safety": "safe",
       "description": "SketchUp shadow cache, style caches, and import logs."
@@ -861,7 +879,8 @@
         "%APPDATA%\\SmartGit"
       ],
       "safety": "safe",
-      "description": "SmartGit logs and repository metadata cache."
+      "description": "SmartGit logs and repository metadata cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sourcetree_cache",
@@ -871,7 +890,8 @@
         "%APPDATA%\\Atlassian\\SourceTree"
       ],
       "safety": "safe",
-      "description": "Atlassian SourceTree logs, SSH keys, and Mercurial cache."
+      "description": "Atlassian SourceTree logs, SSH keys, and Mercurial cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "spss_cache",
@@ -880,15 +900,14 @@
         "%APPDATA%\\IBM\\SPSS"
       ],
       "safety": "safe",
-      "description": "IBM SPSS Statistics output cache and custom dialog cache."
+      "description": "IBM SPSS Statistics output cache and custom dialog cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sql_server_logs",
       "label": "SQL Server error logs, agent logs, and FTData catalog files",
       "paths": [
-        "%ProgramFiles%\\Microsoft SQL Server\\MSSQL*\\LOG",
-        "%ProgramFiles%\\Microsoft SQL Server\\MSSQL*\\MSSQL\\DATA",
-        "%ProgramFiles(x86)%\\Microsoft SQL Server"
+        "%ProgramFiles%\\Microsoft SQL Server\\MSSQL*\\LOG"
       ],
       "safety": "caution",
       "description": "SQL Server error logs, agent logs, and FTData catalog files."
@@ -900,7 +919,8 @@
         "%APPDATA%\\SQLiteBrowser"
       ],
       "safety": "safe",
-      "description": "SQLiteBrowser recent database history and export cache."
+      "description": "SQLiteBrowser recent database history and export cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "stata_cache",
@@ -909,7 +929,8 @@
         "%APPDATA%\\Stata"
       ],
       "safety": "safe",
-      "description": "Stata ado-file download cache and temporary dataset staging."
+      "description": "Stata ado-file download cache and temporary dataset staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sublime_cache",
@@ -929,16 +950,16 @@
         "%USERPROFILE%\\.subversion"
       ],
       "safety": "safe",
-      "description": "Subversion (SVN) working copy pristine text and property cache."
+      "description": "Subversion (SVN) working copy pristine text and property cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "terraform_cache",
       "label": "Terraform provider plugin cache, .terraform directory, and plan cache",
       "paths": [
-        "%USERPROFILE%\\.terraform.d\\plugin-cache",
-        "%USERPROFILE%\\.terraform\\providers"
+        "%USERPROFILE%\\.terraform.d\\plugin-cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Terraform provider plugin cache, .terraform directory, and plan cache."
     },
     {
@@ -948,7 +969,8 @@
         "%APPDATA%\\Tesseract"
       ],
       "safety": "safe",
-      "description": "Tesseract OCR trained data and tessdata cache."
+      "description": "Tesseract OCR trained data and tessdata cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vcpkg_cache",
@@ -957,7 +979,8 @@
         "%USERPROFILE%\\source\\repos\\vcpkg"
       ],
       "safety": "safe",
-      "description": "vcpkg downloaded archives and built triplet staging."
+      "description": "vcpkg downloaded archives and built triplet staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vcredist_cache",
@@ -966,7 +989,8 @@
         "%windir%\\Installer\\VC_redist"
       ],
       "safety": "caution",
-      "description": "Visual C++ Redistributable merge modules and manifest cache."
+      "description": "Visual C++ Redistributable merge modules and manifest cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "venv_cache",
@@ -975,7 +999,8 @@
         "%USERPROFILE%\\.venv"
       ],
       "safety": "safe",
-      "description": "Python virtualenv src and egg-link source cache."
+      "description": "Python virtualenv src and egg-link source cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vim_cache",
@@ -985,7 +1010,8 @@
         "%USERPROFILE%\\.vim\\swap"
       ],
       "safety": "safe",
-      "description": "Vim undo files, swap files, and viminfo (safe to clean)."
+      "description": "Vim undo files, swap files, and viminfo (safe to clean).",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vmware_cache",
@@ -996,7 +1022,8 @@
         "%USERPROFILE%\\Virtual Machines"
       ],
       "safety": "caution",
-      "description": "VMware player/workstation/fusion VM virtual disks, snapshots, and logs."
+      "description": "VMware player/workstation/fusion VM virtual disks, snapshots, and logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vscode_cache",
@@ -1047,8 +1074,7 @@
       "id": "vscode_settings_sync",
       "label": "VS Code settings sync log and workspace storage cache only â€” NOT user settings",
       "paths": [
-        "%APPDATA%\\Code\\User\\log",
-        "%APPDATA%\\Code\\User\\workspaceStorage"
+        "%APPDATA%\\Code\\User\\log"
       ],
       "safety": "caution",
       "description": "VS Code settings sync log and workspace storage cache only â€” NOT user settings."
@@ -1060,7 +1086,8 @@
         "%APPDATA%\\Code\\WebStorage"
       ],
       "safety": "safe",
-      "description": "VS Code WebStorage cache â€” extension web content."
+      "description": "VS Code WebStorage cache â€” extension web content.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vscodium_cache",
@@ -1070,15 +1097,15 @@
         "%LOCALAPPDATA%\\VSCodium"
       ],
       "safety": "safe",
-      "description": "VSCodium cache, extensions, and log files."
+      "description": "VSCodium cache, extensions, and log files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "webstorm_cache",
       "label": "WebStorm caches, npm resolution cache, and TypeScript project cache",
       "paths": [
         "%APPDATA%\\JetBrains\\WebStorm*\\logs",
-        "%APPDATA%\\JetBrains\\WebStorm*\\caches",
-        "%LOCALAPPDATA%\\JetBrains\\WebStorm*"
+        "%APPDATA%\\JetBrains\\WebStorm*\\caches"
       ],
       "safety": "safe",
       "description": "WebStorm caches, npm resolution cache, and TypeScript project cache."
@@ -1091,7 +1118,8 @@
         "%USERPROFILE%\\.wget-hsts"
       ],
       "safety": "safe",
-      "description": "wgetrc config file and HSTS database cache."
+      "description": "wgetrc config file and HSTS database cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "whisper_cache",
@@ -1101,7 +1129,8 @@
         "%LOCALAPPDATA%\\whisper"
       ],
       "safety": "safe",
-      "description": "Whisper.cpp model cache and transcription temp files."
+      "description": "Whisper.cpp model cache and transcription temp files.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "winget_cache",
@@ -1120,7 +1149,8 @@
         "%APPDATA%\\Wolfram"
       ],
       "safety": "safe",
-      "description": "Wolfram Mathematica temp evaluation and paclet download cache."
+      "description": "Wolfram Mathematica temp evaluation and paclet download cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "workbench_cache",
@@ -1130,7 +1160,8 @@
         "%LOCALAPPDATA%\\MySQL\\Workbench"
       ],
       "safety": "safe",
-      "description": "MySQL Workbench connection history and SQL editor cache."
+      "description": "MySQL Workbench connection history and SQL editor cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wsl2_cache",
@@ -1142,7 +1173,8 @@
         "%LOCALAPPDATA%\\Lxss"
       ],
       "safety": "caution",
-      "description": "WSL2 ext4.vhdx virtual disk and WSL config/logs."
+      "description": "WSL2 ext4.vhdx virtual disk and WSL config/logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wsl2_distro_cache",
@@ -1153,7 +1185,8 @@
         "%LOCALAPPDATA%\\Lxss"
       ],
       "safety": "caution",
-      "description": "WSL2 distribution ext4.vhdx and per-distro logs."
+      "description": "WSL2 distribution ext4.vhdx and per-distro logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "wsl_installer_cache",
@@ -1163,7 +1196,8 @@
         "%LOCALAPPDATA%\\Packages\\CanonicalGroupLimited.UbuntuonWindows_*\\LocalState"
       ],
       "safety": "caution",
-      "description": "WSL distro installer staging and downloaded package cache."
+      "description": "WSL distro installer staging and downloaded package cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "zbrush_cache",
@@ -1173,7 +1207,8 @@
         "%LOCALAPPDATA%\\Maxon"
       ],
       "safety": "safe",
-      "description": "ZBrush ztools, thumbnails, and autosave staging."
+      "description": "ZBrush ztools, thumbnails, and autosave staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "zed_cache",
@@ -1183,7 +1218,8 @@
         "%APPDATA%\\Zed\\rustup"
       ],
       "safety": "safe",
-      "description": "Zed editor logs, LSP cache, and extension data."
+      "description": "Zed editor logs, LSP cache, and extension data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "opencode_desktop_cache",
@@ -1192,7 +1228,6 @@
         "%APPDATA%\\ai.opencode.desktop\\blob_storage",
         "%APPDATA%\\ai.opencode.desktop\\DawnGraphiteCache",
         "%APPDATA%\\ai.opencode.desktop\\DawnWebGPUCache",
-        "%APPDATA%\\ai.opencode.desktop\\Network",
         "%APPDATA%\\ai.opencode.desktop\\Shared Dictionary"
       ],
       "safety": "safe",
@@ -1215,6 +1250,15 @@
       ],
       "safety": "safe",
       "description": "AMD Software's own installer download cache -- confirmed real (876 KB). Driver packages already installed do not need their installer payload kept around."
+    },
+    {
+      "id": "uv_cache",
+      "label": "uv (Python) package cache",
+      "paths": [
+        "%LOCALAPPDATA%\\uv\\cache"
+      ],
+      "safety": "caution",
+      "description": "Downloaded Python packages. Environments keep working: uv hard-links their files, so about half of this (5.8 of 10.8 GB here) stays in use by them and is not freed. The next install re-downloads what it needs."
     }
   ]
 }

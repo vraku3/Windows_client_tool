@@ -8,7 +8,8 @@
         "%windir%\\WinSxS\\Manifests"
       ],
       "safety": "danger",
-      "description": "Side-by-side (WinSxS) assembly manifest and policy XML cache — DANGER, system-critical."
+      "description": "Side-by-side (WinSxS) assembly manifest and policy XML cache — DANGER, system-critical.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "browser_caches",
@@ -43,7 +44,8 @@
         "%ProgramData%\\Microsoft\\Windows Defender\\Scans\\History\\Results\\System"
       ],
       "safety": "safe",
-      "description": "Windows Defender detection history and scan results — safe to delete."
+      "description": "Windows Defender detection history and scan results — safe to delete.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "dev_tool_caches",
@@ -61,7 +63,7 @@
         "%LOCALAPPDATA%\\Yarn\\Cache",
         "%APPDATA%\\yarn\\cache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Developer tool caches: npm, pip, NuGet, Cargo, Gradle, Maven."
     },
     {
@@ -76,8 +78,7 @@
         "%windir%\\System32\\WDI\\*.etl",
         "%windir%\\System32\\diagerr.log",
         "%windir%\\System32\\diagwrn.log",
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\WDI\\LogFiles",
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\DeviceMetadataStore"
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\WDI\\LogFiles"
       ],
       "safety": "caution",
       "description": "Windows Diagnostic logs: ETW trace logs, MSI install logs, DeviceMetaData."
@@ -117,11 +118,11 @@
         "%LOCALAPPDATA%\\AMD\\DXCache",
         "%LOCALAPPDATA%\\AMD\\VulkanCache",
         "%LOCALAPPDATA%\\Intel\\GraphicsCache",
-        "%LOCALAPPDATA%\\Intel\\GLCache",
-        "%LOCALAPPDATA%\\Microsoft\\DirectX"
+        "%LOCALAPPDATA%\\Intel\\GLCache"
       ],
       "safety": "safe",
-      "description": "DirectX Graphics Infrastructure cache — GPU-related temp data from games."
+      "description": "DirectX Graphics Infrastructure cache — GPU-related temp data from games.",
+      "disabled_reason": "Same paths as 'directx_shader_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "event_logs",
@@ -130,15 +131,14 @@
         "%windir%\\System32\\winevt\\Logs\\*.evtx"
       ],
       "safety": "caution",
-      "description": "Windows event log .evtx files — may be needed for troubleshooting."
+      "description": "Windows event log .evtx files — may be needed for troubleshooting.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "font_cache",
       "label": "Windows Font Cache service (FNTCACHE.DAT) and font link temporary files",
       "paths": [
-        "%windir%\\System32\\FNTCACHE.DAT",
-        "%windir%\\ServiceProfiles\\LocalService\\AppData\\Local\\FontDrivers",
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\Fonts"
+        "%windir%\\System32\\FNTCACHE.DAT"
       ],
       "safety": "caution",
       "description": "Windows Font Cache service (FNTCACHE.DAT) and font link temporary files."
@@ -148,9 +148,7 @@
       "label": "IIS HTTP logs, Failed Request logs, and IIS Express logs",
       "paths": [
         "%windir%\\System32\\LogFiles\\HTTPERR",
-        "%windir%\\System32\\inetsrv\\LogFiles",
-        "%USERPROFILE%\\Documents\\IISExpress",
-        "%USERPROFILE%\\Documents\\My Web Sites"
+        "%windir%\\System32\\inetsrv\\LogFiles"
       ],
       "safety": "safe",
       "description": "IIS HTTP logs, Failed Request logs, and IIS Express logs."
@@ -162,7 +160,8 @@
         "%windir%\\Installer\\$PatchCache$"
       ],
       "safety": "danger",
-      "description": "Windows Installer patch cache ($PatchCache$) — deleting can break MSI uninstalls."
+      "description": "Windows Installer patch cache ($PatchCache$) — deleting can break MSI uninstalls.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "language_packs",
@@ -172,7 +171,8 @@
         "%windir%\\System32\\en-US"
       ],
       "safety": "caution",
-      "description": "Windows language pack cab files and MUI temp cache."
+      "description": "Windows language pack cab files and MUI temp cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "memory_dumps",
@@ -198,8 +198,7 @@
       "id": "ms_store_cache",
       "label": "Microsoft Store cache and downloaded packages",
       "paths": [
-        "%LOCALAPPDATA%\\Microsoft\\Windows Store\\Cache",
-        "%LOCALAPPDATA%\\Packages\\Microsoft.WindowsStore*\\LocalCache"
+        "%LOCALAPPDATA%\\Microsoft\\Windows Store\\Cache"
       ],
       "safety": "safe",
       "description": "Microsoft Store cache and downloaded packages."
@@ -211,7 +210,8 @@
         "%windir%\\System32\\drivers\\etc\\hosts"
       ],
       "safety": "safe",
-      "description": "Network-level DNS and NetBIOS cached entries."
+      "description": "Network-level DNS and NetBIOS cached entries.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "notifications_cache",
@@ -220,7 +220,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Notifications"
       ],
       "safety": "safe",
-      "description": "Windows notification history and toast cache."
+      "description": "Windows notification history and toast cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "panther_logs",
@@ -246,7 +247,7 @@
       "paths": [
         "%FIXED_DRIVES%\\$Recycle.Bin"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Deleted files still occupying space, per volume. Replaces the two hand-written scanners that did this - scan_recycle_bin and scan_recycle_bin_drive were byte-identical duplicates, so the same bytes were reported under two names."
     },
     {
@@ -266,7 +267,8 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.Windows.Photos*\\LocalState"
       ],
       "safety": "safe",
-      "description": "Microsoft Photos scan/3D objects cache and video editing temp."
+      "description": "Microsoft Photos scan/3D objects cache and video editing temp.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "project_ascension_logs",
@@ -307,7 +309,6 @@
       "label": "Windows telemetry, WER Temp, AutoLogger ETL, diagerr/diagwrn logs",
       "paths": [
         "%ProgramData%\\Microsoft\\Windows\\WER\\Temp",
-        "%windir%\\System32\\LogFiles\\ETLLogs\\AutoLogger",
         "%windir%\\System32\\WDI\\*.etl",
         "%windir%\\System32\\diagerr.log",
         "%windir%\\System32\\diagwrn.log"
@@ -343,7 +344,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\iconcache_*.db"
       ],
       "safety": "safe",
-      "description": "Windows Explorer centralized thumbnail cache (thumbcache_*.db files)."
+      "description": "Windows Explorer centralized thumbnail cache (thumbcache_*.db files).",
+      "disabled_reason": "Same paths as 'thumbnail_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "update_cleanup",
@@ -384,7 +386,6 @@
       "id": "windows_backup_catalog",
       "label": "Windows Backup catalog and shadow copy history logs",
       "paths": [
-        "%windir%\\System32\\Tasks\\Microsoft\\Windows\\SystemRestore",
         "%windir%\\Logs\\WindowsServerBackup"
       ],
       "safety": "caution",
@@ -395,8 +396,7 @@
       "label": "Windows Server Backup logs and System Protection shadow copy logs",
       "paths": [
         "%windir%\\Logs\\WindowsServerBackup",
-        "%windir%\\Logs\\SIH",
-        "%windir%\\System32\\Tasks\\Microsoft\\Windows\\SystemRestore"
+        "%windir%\\Logs\\SIH"
       ],
       "safety": "caution",
       "description": "Windows Server Backup logs and System Protection shadow copy logs."
@@ -414,7 +414,6 @@
       "id": "windows_panther_logs",
       "label": "Windows Panther (setup) logs — unattend and diagnostic",
       "paths": [
-        "%windir%\\Panther",
         "%windir%\\Panther\\Tmp"
       ],
       "safety": "safe",
@@ -477,7 +476,17 @@
         "%windir%\\SoftwareDistribution\\Backup"
       ],
       "safety": "caution",
-      "description": "Windows Update download history and temporary rollback files."
+      "description": "Windows Update download history and temporary rollback files.",
+      "disabled_reason": "Same paths as 'windowsupdate_orch_cache', which already covers them; kept once so the cleanup total is not counted twice."
+    },
+    {
+      "id": "update_orchestrator_logs",
+      "label": "Windows Update orchestrator logs (USOShared)",
+      "paths": [
+        "%ProgramData%\\USOShared\\Logs"
+      ],
+      "safety": "safe",
+      "description": "Diagnostic trace logs of the update orchestrator. Needs administrator."
     }
   ]
 }

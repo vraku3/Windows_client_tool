@@ -8,15 +8,15 @@
         "%APPDATA%\\Ableton"
       ],
       "safety": "safe",
-      "description": "Ableton Live audio engine temp and clip deformation cache."
+      "description": "Ableton Live audio engine temp and clip deformation cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "aftereffects_cache",
       "label": "Adobe After Effects disk cache and media cache",
       "paths": [
         "%APPDATA%\\Adobe\\Common\\Media Cache Files",
-        "%LOCALAPPDATA%\\Adobe\\Common\\Media Cache Files",
-        "%LOCALAPPDATA%\\Adobe\\After Effects*"
+        "%LOCALAPPDATA%\\Adobe\\Common\\Media Cache Files"
       ],
       "safety": "safe",
       "description": "Adobe After Effects disk cache and media cache."
@@ -26,8 +26,7 @@
       "label": "AMD Radeon Software logs, driver cache, and relodge temp files",
       "paths": [
         "%APPDATA%\\AMD\\AGESA\\logs",
-        "%LOCALAPPDATA%\\AMD\\ Radeon\\Logs",
-        "%LOCALAPPDATA%\\AMD\\CN"
+        "%LOCALAPPDATA%\\AMD\\ Radeon\\Logs"
       ],
       "safety": "safe",
       "description": "AMD Radeon Software logs, driver cache, and relodge temp files."
@@ -39,15 +38,14 @@
         "%LOCALAPPDATA%\\AMD\\DVR"
       ],
       "safety": "caution",
-      "description": "AMD Software's ReLive instant-replay ring buffer -- confirmed real on a live machine as hashed subfolders under %LOCALAPPDATA%\\AMD\\DVR. Caution, not safe: ReLive's own \"Save Recent\" action can leave a finished clip staged here briefly before the user moves it, so this is not unconditionally disposable the way a plain cache is."
+      "description": "AMD Software's ReLive instant-replay ring buffer -- confirmed real on a live machine as hashed subfolders under %LOCALAPPDATA%\\AMD\\DVR. Caution, not safe: ReLive's own \"Save Recent\" action can leave a finished clip staged here briefly before the user moves it, so this is not unconditionally disposable the way a plain cache is.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "audacity_cache",
       "label": "Audacity peak files, audacity temp dir, and waveform cache",
       "paths": [
-        "%LOCALAPPDATA%\\Audacity\\peak",
-        "%LOCALAPPDATA%\\Audacity\\Temp",
-        "%APPDATA%\\Audacity\\ audacity.cfg"
+        "%LOCALAPPDATA%\\Audacity\\Temp"
       ],
       "safety": "safe",
       "description": "Audacity peak files, audacity temp dir, and waveform cache."
@@ -56,8 +54,7 @@
       "id": "blender_cache",
       "label": "Blender render output temp and autosave files",
       "paths": [
-        "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\cache",
-        "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\render"
+        "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\cache"
       ],
       "safety": "safe",
       "description": "Blender render output temp and autosave files."
@@ -67,7 +64,6 @@
       "label": "Blender vertex cache, render stamp, and geometry nodes staging",
       "paths": [
         "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\cache",
-        "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\render",
         "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\tmp"
       ],
       "safety": "safe",
@@ -81,7 +77,8 @@
         "%APPDATA%\\Techsmith\\Camtasia"
       ],
       "safety": "safe",
-      "description": "Camtasia recording cache and editor temp."
+      "description": "Camtasia recording cache and editor temp.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "capture_one_cache",
@@ -102,7 +99,8 @@
         "%LOCALAPPDATA%\\Steinberg"
       ],
       "safety": "safe",
-      "description": "Steinberg Cubase VST3 plugin cache and project archive staging."
+      "description": "Steinberg Cubase VST3 plugin cache and project archive staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "davinci_cache",
@@ -114,7 +112,7 @@
         "%LOCALAPPDATA%\\DaVinci Resolve\\Render Cache",
         "%LOCALAPPDATA%\\DaVinci Resolve\\Logs"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "DaVinci Resolve render cache, media cache, and database temp."
     },
     {
@@ -124,7 +122,8 @@
         "%LOCALAPPDATA%\\Deezer"
       ],
       "safety": "safe",
-      "description": "Deezer music cache and waveform staging."
+      "description": "Deezer music cache and waveform staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "emby_cache",
@@ -154,7 +153,8 @@
         "%APPDATA%\\Wondershare\\Filmora*"
       ],
       "safety": "safe",
-      "description": "Filmora9/10 preview cache and export temp."
+      "description": "Filmora9/10 preview cache and export temp.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "flstudio_cache",
@@ -164,14 +164,14 @@
         "%APPDATA%\\Image-Line\\FL Studio"
       ],
       "safety": "safe",
-      "description": "FL Studio slicex, directwave, and autosave cache."
+      "description": "FL Studio slicex, directwave, and autosave cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "foobar_cache",
       "label": "foobar2000 cache, thumbs, and album art staging",
       "paths": [
-        "%APPDATA%\\foobar2000\\cache",
-        "%APPDATA%\\id3"
+        "%APPDATA%\\foobar2000\\cache"
       ],
       "safety": "safe",
       "description": "foobar2000 cache, thumbs, and album art staging."
@@ -183,7 +183,8 @@
         "%APPDATA%\\Greenshot"
       ],
       "safety": "safe",
-      "description": "Greenshot screenshot output and plugin cache."
+      "description": "Greenshot screenshot output and plugin cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "handbrake_cache",
@@ -212,7 +213,8 @@
         "%APPDATA%\\Firecore"
       ],
       "safety": "safe",
-      "description": "Infuse video player metadata cache and stream session data."
+      "description": "Infuse video player metadata cache and stream session data.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "intel_graphics_cache",
@@ -229,8 +231,7 @@
       "id": "jellyfin_cache",
       "label": "Jellyfin transcoding cache, metadata, and plugin data",
       "paths": [
-        "%LOCALAPPDATA%\\Jellyfin\\cache",
-        "%LOCALAPPDATA%\\Jellyfin\\metadata"
+        "%LOCALAPPDATA%\\Jellyfin\\cache"
       ],
       "safety": "safe",
       "description": "Jellyfin transcoding cache, metadata, and plugin data."
@@ -240,8 +241,7 @@
       "label": "Kodi texture cache, thumbnails, and log files",
       "paths": [
         "%APPDATA%\\Kodi\\cache",
-        "%APPDATA%\\Kodi\\thumbnails",
-        "%LOCALAPPDATA%\\Kodi"
+        "%APPDATA%\\Kodi\\thumbnails"
       ],
       "safety": "safe",
       "description": "Kodi texture cache, thumbnails, and log files."
@@ -253,7 +253,8 @@
         "%APPDATA%\\Lightshot"
       ],
       "safety": "safe",
-      "description": "Lightshot saved screenshots and upload history."
+      "description": "Lightshot saved screenshots and upload history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mpc_cache",
@@ -262,7 +263,8 @@
         "%APPDATA%\\MPC"
       ],
       "safety": "safe",
-      "description": "MPC-HC / MPC-BE cache and shader settings."
+      "description": "MPC-HC / MPC-BE cache and shader settings.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "mpv_cache",
@@ -272,13 +274,13 @@
         "%LOCALAPPDATA%\\mpv"
       ],
       "safety": "safe",
-      "description": "mpv player watch later, settings, and script opts cache."
+      "description": "mpv player watch later, settings, and script opts cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "nvidia_display_cache",
       "label": "NVIDIA Display Driver container, DRS database, and telemetry cache",
       "paths": [
-        "%ProgramData%\\NVIDIA\\Display.NvCate",
         "%LOCALAPPDATA%\\NVIDIA\\DXCache",
         "%LOCALAPPDATA%\\NVIDIA\\GLCache"
       ],
@@ -292,7 +294,8 @@
         "%LOCALAPPDATA%\\NVIDIA\\GeForceExperience"
       ],
       "safety": "safe",
-      "description": "NVIDIA GeForce Experience cache and logs."
+      "description": "NVIDIA GeForce Experience cache and logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "nvidia_geforce_cache",
@@ -312,7 +315,8 @@
         "%LOCALAPPDATA%\\NVIDIA\\GeForce Experience\\Capture"
       ],
       "safety": "safe",
-      "description": "NVIDIA ShadowPlay / GeForce Experience recorded gameplay cache."
+      "description": "NVIDIA ShadowPlay / GeForce Experience recorded gameplay cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "obs_cache",
@@ -332,7 +336,8 @@
         "%APPDATA%\\PeerTube"
       ],
       "safety": "safe",
-      "description": "PeerTube cache and download staging."
+      "description": "PeerTube cache and download staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "photoshop_cache",
@@ -352,7 +357,8 @@
         "%APPDATA%\\Plex"
       ],
       "safety": "safe",
-      "description": "Plex Media Server transcoding cache and thumbnail staging."
+      "description": "Plex Media Server transcoding cache and thumbnail staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "potplayer_cache",
@@ -361,7 +367,8 @@
         "%APPDATA%\\Daum"
       ],
       "safety": "safe",
-      "description": "PotPlayer cache, thumbnail previews, and broadcast cache."
+      "description": "PotPlayer cache, thumbnail previews, and broadcast cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "premiere_cache",
@@ -382,7 +389,8 @@
         "%LOCALAPPDATA%\\Qobuz"
       ],
       "safety": "safe",
-      "description": "Qobuz download cache and offline tracks."
+      "description": "Qobuz download cache and offline tracks.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "reaper_cache",
@@ -392,7 +400,8 @@
         "%LOCALAPPDATA%\\REAPER"
       ],
       "safety": "safe",
-      "description": "REAPER backup files, peak data, and waveform cache."
+      "description": "REAPER backup files, peak data, and waveform cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "sharex_cache",
@@ -402,7 +411,8 @@
         "%APPDATA%\\ShareX\\Screenshots"
       ],
       "safety": "safe",
-      "description": "ShareX screenshot history, image history, and upload logs."
+      "description": "ShareX screenshot history, image history, and upload logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "snagit_cache",
@@ -411,13 +421,13 @@
         "%APPDATA%\\TechSmith\\Snagit"
       ],
       "safety": "safe",
-      "description": "TechSmith Snagit editor cache and captured library thumbnails."
+      "description": "TechSmith Snagit editor cache and captured library thumbnails.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "spotify_app_cache",
       "label": "Spotify Desktop app cache and logs folders",
       "paths": [
-        "%LOCALAPPDATA%\\Spotify\\Data",
         "%APPDATA%\\Spotify\\Cache",
         "%APPDATA%\\Spotify\\logs"
       ],
@@ -428,9 +438,7 @@
       "id": "spotify_cache",
       "label": "Spotify local track cache and thumbnail cache — keeps login/settings",
       "paths": [
-        "%LOCALAPPDATA%\\Spotify\\Data",
-        "%LOCALAPPDATA%\\Spotify\\Cache",
-        "%LOCALAPPDATA%\\Spotify\\thumbs"
+        "%LOCALAPPDATA%\\Spotify\\Cache"
       ],
       "safety": "safe",
       "description": "Spotify local track cache and thumbnail cache — keeps login/settings."
@@ -439,13 +447,11 @@
       "id": "spotify_full_cache",
       "label": "Spotify full cache: data, thumbs, users — keeps login/settings",
       "paths": [
-        "%LOCALAPPDATA%\\Spotify\\Data",
-        "%LOCALAPPDATA%\\Spotify\\Cache",
-        "%LOCALAPPDATA%\\Spotify\\thumbs",
-        "%LOCALAPPDATA%\\Spotify\\Users"
+        "%LOCALAPPDATA%\\Spotify\\Cache"
       ],
       "safety": "safe",
-      "description": "Spotify full cache: data, thumbs, users — keeps login/settings."
+      "description": "Spotify full cache: data, thumbs, users — keeps login/settings.",
+      "disabled_reason": "Same paths as 'spotify_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "stremio_cache_full",
@@ -454,7 +460,8 @@
         "%APPDATA%\\Stremio"
       ],
       "safety": "safe",
-      "description": "Stremio torrent cache, player data, and add-on config cache."
+      "description": "Stremio torrent cache, player data, and add-on config cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "tidal_cache",
@@ -463,14 +470,14 @@
         "%LOCALAPPDATA%\\Tidal"
       ],
       "safety": "safe",
-      "description": "Tidal music cache and thumbnail staging."
+      "description": "Tidal music cache and thumbnail staging.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vegas_cache",
       "label": "Vegas Pro autosave, GPU render cache, and proxy files",
       "paths": [
-        "%LOCALAPPDATA%\\VEGASTemp",
-        "%APPDATA%\\VEGAS"
+        "%LOCALAPPDATA%\\VEGASTemp"
       ],
       "safety": "safe",
       "description": "Vegas Pro autosave, GPU render cache, and proxy files."
@@ -482,7 +489,8 @@
         "%APPDATA%\\vlc"
       ],
       "safety": "safe",
-      "description": "VLC media player cache, interface extensions, and recent media history."
+      "description": "VLC media player cache, interface extensions, and recent media history.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "vst_cache",
@@ -492,7 +500,8 @@
         "%LOCALAPPDATA%\\Common Files\\VST3"
       ],
       "safety": "safe",
-      "description": "VST plugin preset cache, VST3 cache, and CLAP cache."
+      "description": "VST plugin preset cache, VST3 cache, and CLAP cache.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     }
   ]
 }

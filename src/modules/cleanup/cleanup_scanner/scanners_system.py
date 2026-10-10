@@ -1742,6 +1742,33 @@ def protected_system_dirs() -> List[str]:
     return [os.path.join(program_data(), "Package Cache")]
 
 
+#: Outlook's mailbox files: .ost is the offline copy of an Exchange/M365
+#: mailbox (6.3 GB here), .pst a personal archive that may exist nowhere
+#: else. The person uses Outlook and keeps both (2026-10-10). A catalog
+#: entry once offered the whole Outlook folder as "safe".
+OUTLOOK_DATA_EXTENSIONS = (".pst", ".ost")
+
+
+def protected_user_data_dirs() -> List[str]:
+    """Folders Cleanup must never delete, or delete a parent of."""
+    out = [os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Outlook"),
+           os.path.expandvars(r"%APPDATA%\Microsoft\Outlook")]
+    documents = known_folders.known_folder("Documents")
+    if documents:
+        out.append(os.path.join(documents, "Outlook Files"))
+    return [p for p in out if "%" not in p]
+
+
+def holds_outlook_data(path: str, is_dir: bool) -> bool:
+    """A .pst/.ost file, or a folder with one anywhere inside it."""
+    if not is_dir:
+        return path.lower().endswith(OUTLOOK_DATA_EXTENSIONS)
+    for _root, _dirs, files in os.walk(path, onerror=lambda e: None):
+        if any(f.lower().endswith(OUTLOOK_DATA_EXTENSIONS) for f in files):
+            return True
+    return False
+
+
 def _is_inside(path: str, folder: str) -> bool:
     path = os.path.normcase(os.path.abspath(path))
     folder = os.path.normcase(os.path.abspath(folder))
@@ -1837,6 +1864,15 @@ def delete_items(items: List[ScanItem],
                        for guarded in protected_system_dirs()):
                     logger.warning("Refusing to delete %s: uninstall and repair "
                                    "of installed software depend on it", item.path)
+                    errors += 1
+                    refused.append(item.path)
+                    continue
+                if (any(_is_inside(item.path, guarded) or
+                        (item.is_dir and _is_inside(guarded, item.path))
+                        for guarded in protected_user_data_dirs())
+                        or holds_outlook_data(item.path, item.is_dir)):
+                    logger.warning("Refusing to delete %s: it is, or holds, Outlook "
+                                   "mailbox data (.ost/.pst)", item.path)
                     errors += 1
                     refused.append(item.path)
                     continue

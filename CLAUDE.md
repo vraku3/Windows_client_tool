@@ -464,6 +464,19 @@ bounded per-line timestamp window).
   and the report lists them apart — an unmeasurable size counted as 0 quietly
   understates the total. Worth knowing before chasing it again: the 7.13 GB
   store yields **2.2 MB** of superseded packages; the gigabytes are DISM's.
+- **A catalog path must be a CACHE folder, never the app's data folder
+  around it** (audit 2026-10-10, `tools/cleanup_catalog_audit.py`, pinned by
+  `tests/test_cleanup_catalog_audit.py`). 289 "safe" entries pointed at an
+  app's whole data folder or a sign-in store -- the hosts file, Telegram
+  `tdata`, Signal, Zoom recordings, Notepad++ unsaved tabs, saved Wi-Fi,
+  Outlook's `.ost`/`.pst`, VPN keys -- and caution/danger ones (which the
+  Thorough and Aggressive presets select) held VMs, databases, WSL distros
+  and `WinSxS\Manifests`. Removed paths, disabled entries (with the reason)
+  and the reviewed allowlist are all in `tools/cleanup_catalog_remediate.py`.
+  Chromium/Electron apps keep `Cache`, `Code Cache`, `GPUCache` beside
+  `Local Storage`, `IndexedDB`, `Network` (cookies): target the former by
+  name, never their parent. `delete_items` also REFUSES any `.pst`/`.ost`
+  and the Outlook data folders, whatever offers them -- the user keeps both.
 - **`tools/cleanup_reader_sweep.py`** is the cleanup sibling of
   `security_refusal_sweep.py`. "Found nothing" is the CORRECT answer for most of
   this catalog, so it only reports a scanner whose target exists AND has content

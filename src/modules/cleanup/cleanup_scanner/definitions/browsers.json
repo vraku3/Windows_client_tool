@@ -18,8 +18,7 @@
       "paths": [
         "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\Cache",
         "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\Code Cache",
-        "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\GPUCache",
-        "%APPDATA%\\Vivaldi\\BlobStorage"
+        "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\GPUCache"
       ],
       "safety": "safe",
       "description": "Vivaldi browser cache, code cache, and blob storage."
@@ -31,8 +30,7 @@
         "%LOCALAPPDATA%\\Opera Software\\Opera Stable\\Cache",
         "%LOCALAPPDATA%\\Opera Software\\Opera Stable\\Code Cache",
         "%LOCALAPPDATA%\\Opera Software\\Opera Stable\\GPUCache",
-        "%LOCALAPPDATA%\\Opera Software\\Opera Stable\\Media Cache",
-        "%APPDATA%\\Opera Software\\Opera Stable"
+        "%LOCALAPPDATA%\\Opera Software\\Opera Stable\\Media Cache"
       ],
       "safety": "safe",
       "description": "Opera browser cache, media cache, and code cache."
@@ -90,7 +88,8 @@
         "%APPDATA%\\Tor Browser"
       ],
       "safety": "safe",
-      "description": "Tor Browser session data, cache, and circuit display logs."
+      "description": "Tor Browser session data, cache, and circuit display logs.",
+      "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "chrome_cache_full",
@@ -129,11 +128,51 @@
       "id": "inetcache_ietlc",
       "label": "IE/Edge INetCache, Cookies, and DownloadHistory temp files",
       "paths": [
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache",
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\IEDownloadHistory"
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache"
       ],
       "safety": "safe",
       "description": "IE/Edge INetCache, Cookies, and DownloadHistory temp files."
+    },
+    {
+      "id": "chromium_service_worker_scripts",
+      "label": "Chrome / Edge / Brave service-worker script cache",
+      "paths": [
+        "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Service Worker\\ScriptCache",
+        "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Service Worker\\ScriptCache",
+        "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\*\\Service Worker\\ScriptCache"
+      ],
+      "safety": "safe",
+      "description": "Compiled service-worker scripts. Rebuilt on the next visit; no sign-in is kept here."
+    },
+    {
+      "id": "chromium_service_worker_storage",
+      "label": "Chrome / Edge / Brave offline site storage (Service Worker CacheStorage)",
+      "paths": [
+        "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Service Worker\\CacheStorage",
+        "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Service Worker\\CacheStorage",
+        "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\*\\Service Worker\\CacheStorage"
+      ],
+      "safety": "caution",
+      "description": "What sites saved for offline use (2 GB in Chrome here). Sign-ins are NOT here (those are cookies); a site works offline again after its next online visit."
+    },
+    {
+      "id": "chrome_installer_caches",
+      "label": "Chrome component and extension installer cache",
+      "paths": [
+        "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\component_crx_cache",
+        "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\extensions_crx_cache"
+      ],
+      "safety": "safe",
+      "description": "Downloaded copies of components and extensions Chrome already installed."
+    },
+    {
+      "id": "chrome_on_device_ai_model",
+      "label": "Chrome on-device AI model (Gemini Nano)",
+      "paths": [
+        "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\OptGuideOnDeviceModel"
+      ],
+      "safety": "caution",
+      "description": "~4 GB model behind Chrome's built-in AI features. Chrome downloads it again the next time a feature needs it; nothing is signed out."
     }
   ]
 }

@@ -94,9 +94,10 @@ class _DiscoverTab(QWidget):
         self._worker = worker
         self._pool.start(worker)
 
-    def _show_rows(self, rows, minimum):
+    def _show_rows(self, result, minimum):
         if not widget_is_valid(self):
             return
+        rows = result.candidates
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(rows))
         for index, candidate in enumerate(rows):
@@ -107,10 +108,13 @@ class _DiscoverTab(QWidget):
         self._table.sortItems(0, Qt.SortOrder.DescendingOrder)
         if rows:
             total = format_size(sum(row.size for row in rows))
-            self._status.setText(
-                f"Found {len(rows)} folders, {total}, not covered by the cleanup list.")
+            status = f"Found {len(rows)} folders, {total}, not covered by the cleanup list."
         else:
-            self._status.setText(f"Nothing uncovered above {minimum} MB.")
+            status = f"Nothing uncovered above {minimum} MB."
+        if result.unreadable:
+            status += (f" {result.unreadable} protected folders were skipped"
+                       " (normal: mostly Windows' own).")
+        self._status.setText(status)
 
     def _selected_path(self):
         if not widget_is_valid(self):

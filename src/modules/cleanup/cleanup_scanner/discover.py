@@ -31,20 +31,35 @@ class Candidate:
     name: str
 
 
-def _unreadable(error):
+@dataclass
+class DiscoverResult:
+    candidates: List[Candidate]
+    unreadable: int = 0
+
+
+def _unreadable(error, result=None):
+    if result is not None:
+        result.unreadable += 1
     logger.debug("Unreadable cache folder: %s", error)
+
+
+def _linked(path):
+    return os.path.isjunction(path) or os.path.islink(path)
 
 
 def _protected(path):
     return any(part.lower() in NEVER_UNDER for part in Path(path).parts)
 
 
-def size_of(path, cap=400_000, cancelled=lambda: False):
+def size_of(path, cap=400_000, cancelled=lambda: False, result=None):
+    if _linked(path):
+        return 0
     total = count = 0
-    for current, dirs, files in os.walk(path, onerror=_unreadable):
+    for current, dirs, files in os.walk(path, onerror=lambda error: _unreadable(error, result)):
         if cancelled():
             return total
-        dirs[:] = [d for d in dirs if d.lower() not in NEVER_UNDER]
+        dirs[:] = [d for d in dirs if d.lower() not in NEVER_UNDER
+                       and not _linked(os.path.join(current, d))]
         for name in files:
             count += 1
             if count > cap or cancelled():
@@ -52,7 +67,7 @@ def size_of(path, cap=400_000, cancelled=lambda: False):
             try:
                 total += os.lstat(os.path.join(current, name)).st_size
             except OSError as exc:
-                _unreadable(exc)
+                _unreadable(exc, result)
     return total
 
 
@@ -93,18 +108,19 @@ def _known_not_junk(path):
                for suffix in KNOWN_NOT_JUNK)
 
 
-def _cache_paths(roots, cancelled):
+def _cache_paths(roots, cancelled, result):
     seen = set()
     for raw in roots:
         if cancelled():
             return
         root = os.path.normpath(os.path.expandvars(os.fspath(raw)))
-        if _protected(root) or not os.path.isdir(root):
+        if _protected(root) or _linked(root) or not os.path.isdir(root):
             continue
-        for current, dirs, _files in os.walk(root, onerror=_unreadable):
+        for current, dirs, _files in os.walk(root, onerror=lambda error: _unreadable(error, result)):
             if cancelled():
                 return
-            dirs[:] = [d for d in dirs if d.lower() not in NEVER_UNDER]
+            dirs[:] = [d for d in dirs if d.lower() not in NEVER_UNDER
+                       and not _linked(os.path.join(current, d))]
             if len(Path(current).relative_to(root).parts) > 7:
                 dirs[:] = []
                 continue
@@ -119,20 +135,23 @@ def _cache_paths(roots, cancelled):
 
 
 def find_uncovered_caches(min_bytes=20 * 2**20, targets=None, roots=None,
-                          cancelled=lambda: False, excluded=None) -> List[Candidate]:
+                          cancelled=lambda: False, excluded=None) -> DiscoverResult:
+    result = DiscoverResult([])
     if cancelled():
-        return []
+        return result
     targets = catalog_targets() if targets is None else list(targets)
     excluded = reviewed_not_junk_targets() if excluded is None else list(excluded)
     rows = []
-    for path in _cache_paths(ROOTS if roots is None else roots, cancelled):
+    for path in _cache_paths(ROOTS if roots is None else roots, cancelled, result):
         if cancelled():
             break
-        if covered(path, targets) or _is_or_contains(path, excluded) or _known_not_junk(path):
+        if (_linked(path) or covered(path, targets) or _is_or_contains(path, excluded)
+                or _known_not_junk(path)):
             continue
-        size = size_of(path, cancelled=cancelled)
+        size = size_of(path, cancelled=cancelled, result=result)
         if cancelled():
             break
         if size >= min_bytes:
             rows.append(Candidate(path, size, os.path.basename(path)))
-    return sorted(rows, key=lambda row: row.size, reverse=True)
+    result.candidates = sorted(rows, key=lambda row: row.size, reverse=True)
+    return result

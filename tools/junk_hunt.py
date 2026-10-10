@@ -28,7 +28,7 @@ def main():
     targets = catalog_targets()
     candidates = find_uncovered_caches(args.min_mb * 2**20, targets=[])
     rows = [(row.size / 2**20, covered(row.path, targets), row.path)
-            for row in candidates]
+            for row in candidates.candidates]
     print(f"{len(rows)} cache folders >= {args.min_mb} MB; NOT covered by the catalog:")
     for mb, cov, path in rows:
         if not cov:
@@ -37,6 +37,8 @@ def main():
     for mb, cov, path in rows:
         if cov:
             print(f"  {mb:9.1f} MB  {path}")
+
+    print(f"{candidates.unreadable} folders could not be read.")
 
 
 if __name__ == "__main__":

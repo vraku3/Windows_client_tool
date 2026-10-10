@@ -1571,6 +1571,20 @@ keep, for the same reason: it lets the engine test headless.
   dropped — the same rule Security Dashboard and the Tweak System hold
   elsewhere in this app.
 
+## Pending restart (`src/core/pending_reboot.py`)
+
+One answer for the whole app; `windows_utils.is_reboot_pending`, the
+Overview, System Health and Windows Features all ask it. A restart is NEEDED
+only for CBS `RebootPending`, Windows Update `RebootRequired`, or a queued
+file REPLACEMENT. `PendingFileRenameOperations` DELETIONS are not one:
+OneDrive and Edge updaters queue their leftovers after every boot (measured
+2026-10-10: 9 deletions three hours after a reboot), which is how the
+Overview said "a restart is pending" every time the app started. Entries can
+carry a `*N` prefix before `\??\`; an EMPTY destination string is what marks
+a delete, so never filter empty strings out of the list (System Health did,
+and every later pair shifted). The Overview finding's "Restart now…" button
+confirms, then `shutdown /r /t 10` (cancellable with `shutdown /a`).
+
 ## UI Patterns
 
 **Dark theme** — all modules use `#2d2d2d` backgrounds, `#3c3c3c` cards, `#e0e0e0` text. QSS styles in `src/ui/styles/dark.qss`.

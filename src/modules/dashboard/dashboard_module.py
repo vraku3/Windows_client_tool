@@ -41,7 +41,7 @@ from core.composite_module import CompositeModule
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.worker import Worker
 from modules.dashboard.overview_health import (
-    QUICK_TOOLS, History, collect_findings, identity_lines, launch_tool,
+    QUICK_TOOLS, RESTART_ACTION, History, collect_findings, identity_lines, launch_tool,
     network_summary, self_usage, summary_text)
 from modules.dashboard.overview_widgets import CoreGrid, FindingRow, MetricTile
 
@@ -609,8 +609,30 @@ class _DashboardWidget(QWidget):
             f"{len(real)} item(s) need attention." if real else "")
 
     def _navigate(self, module_name: str) -> None:
+        if module_name == RESTART_ACTION:
+            self._restart_windows()
+            return
         if self.app is not None:
             self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name=module_name))
+
+    def _restart_windows(self) -> None:
+        """The "Restart now…" button on a pending-restart finding."""
+        from PyQt6.QtWidgets import QMessageBox
+        from core.pending_reboot import restart_now
+        answer = QMessageBox.question(
+            self, "Restart Windows",
+            "Restart now to finish the pending Windows changes?\n\n"
+            "Save your work first: open programs will be closed. Windows restarts in "
+            "10 seconds; run 'shutdown /a' to cancel within that time.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        ok, message = restart_now(10)
+        if ok:
+            self._attention_status.setText(message)
+        else:
+            QMessageBox.warning(self, "Restart Windows", f"Windows refused the restart: {message}")
 
     def _copy_summary(self) -> None:
         vm = psutil.virtual_memory()

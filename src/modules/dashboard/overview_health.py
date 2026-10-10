@@ -176,39 +176,21 @@ def format_size(n: float) -> str:
 
 # ---- readers ---------------------------------------------------------------
 
-_REBOOT_KEYS = (
-    (r"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending",
-     "servicing (CBS)"),
-    (r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired",
-     "Windows Update"),
-)
+#: The action a "restart pending" finding's button asks for -- not a module.
+RESTART_ACTION = "__restart_windows__"
 
 
 def pending_reboot_reasons() -> Optional[List[str]]:
-    """Why Windows wants a restart, or None if that could not be read."""
-    import winreg
-    reasons: List[str] = []
-    for path, label in _REBOOT_KEYS:
-        try:
-            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path))
-            reasons.append(label)
-        except FileNotFoundError:
-            logger.debug("no pending-reboot marker at %s", path)
-            continue
-        except OSError as e:
-            logger.warning("pending-reboot key %s unreadable: %s", path, e)
-            return None
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
-                            r"SYSTEM\CurrentControlSet\Control\Session Manager") as k:
-            if winreg.QueryValueEx(k, "PendingFileRenameOperations")[0]:
-                reasons.append("queued file replacements")
-    except FileNotFoundError:
-        logger.debug("no PendingFileRenameOperations value")
-    except OSError as e:
-        logger.warning("PendingFileRenameOperations unreadable: %s", e)
+    """What NEEDS a restart, or None if that could not be read.
+
+    Queued deletions of updater leftovers are not a reason: OneDrive and
+    Edge queue them after every boot, which is how this said "a restart is
+    pending" every time the app started (core/pending_reboot.py)."""
+    from core.pending_reboot import check
+    state = check()
+    if state.unreadable and not state.reasons:
         return None
-    return reasons
+    return state.reasons
 
 
 def judge_reboot(reasons: Optional[List[str]]) -> Optional[Finding]:
@@ -217,7 +199,8 @@ def judge_reboot(reasons: Optional[List[str]]) -> Optional[Finding]:
     if not reasons:
         return None
     return Finding(WARNING, "A restart is pending",
-                   "Waiting on: " + ", ".join(reasons))
+                   "Waiting on: " + ", ".join(reasons),
+                   action_module=RESTART_ACTION, action_label="Restart now…")
 
 
 def unexpected_shutdown_count(days: int = 7) -> Optional[int]:

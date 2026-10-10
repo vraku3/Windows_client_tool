@@ -82,7 +82,9 @@ def _pending_renames() -> Optional[List[str]]:
     except OSError as exc:
         logger.warning("PendingFileRenameOperations unreadable: %s", exc)
         return None
-    return [v for v in value if v]
+    # Raw, empty strings included: an empty destination is what marks a
+    # DELETE. Dropping them (as this used to) shifts every later pair.
+    return list(value) if not isinstance(value, str) else [value]
 
 
 def pending_reboot_reasons(key_exists: Callable = _key_exists,
@@ -95,12 +97,18 @@ def pending_reboot_reasons(key_exists: Callable = _key_exists,
             reasons.append(why)
         elif found is None:
             unreadable.append(path.rsplit("\\", 1)[-1])
-    ops = renames()
-    if ops:
-        reasons.append(f"{len(ops) // 2 or 1} file rename/delete operation(s) queued for the next boot "
-                       f"(first: {ops[0][:90]})")
-    elif ops is None:
+    raw = renames()
+    if raw is None:
         unreadable.append("PendingFileRenameOperations")
+        return reasons, unreadable
+    # Only REPLACEMENTS need the restart; deletions are updater leftovers
+    # (OneDrive, Edge) that are queued again after every boot.
+    from core.pending_reboot import REPLACE, parse_operations
+    replaced = [op for op in parse_operations(raw) if op.kind == REPLACE]
+    if replaced:
+        owners = sorted({op.owner for op in replaced})
+        reasons.append(f"{len(replaced)} file replacement(s) queued for the next boot by "
+                       f"{', '.join(owners)} (first: {replaced[0].path[:90]})")
     return reasons, unreadable
 
 

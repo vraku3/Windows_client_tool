@@ -18,27 +18,12 @@ def ps_quote(value: str) -> str:
 
 
 def is_reboot_pending() -> bool:
-    """Check all three Windows reboot-pending indicators."""
-    keys = [
-        (winreg.HKEY_LOCAL_MACHINE,
-         r"SYSTEM\CurrentControlSet\Control\Session Manager",
-         "PendingFileRenameOperations"),
-        (winreg.HKEY_LOCAL_MACHINE,
-         r"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing",
-         "RebootPending"),
-        (winreg.HKEY_LOCAL_MACHINE,
-         r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update",
-         "RebootRequired"),
-    ]
-    for hive, path, value in keys:
-        try:
-            with winreg.OpenKey(hive, path) as k:
-                winreg.QueryValueEx(k, value)
-                return True
-        except OSError:
-            logger.debug("is_reboot_pending: skipping an item that could not be read", exc_info=True)
-            continue
-    return False
+    """Whether Windows actually NEEDS a restart (servicing, Windows Update, or
+    a queued file replacement). Queued deletions of updater leftovers do not
+    count -- OneDrive and Edge add those after every boot; see
+    core/pending_reboot.py. An unreadable marker counts as not pending."""
+    from core.pending_reboot import check
+    return check().needed
 
 
 # ── Well-known directories ─────────────────────────────────────────────

@@ -130,6 +130,7 @@ HIDDEN_IMPORTS = [
     "modules.app_buster.app_buster_module",
     "modules.app_buster.app_list",
     "modules.app_buster.dialogs",
+    "modules.app_buster.search_provider",
     "modules.app_buster.engine.model",
     "modules.app_buster.engine.windows_apps",
     "modules.app_buster.engine.desktop_apps",

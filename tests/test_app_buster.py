@@ -476,3 +476,23 @@ def test_live_scan_reads_every_source():
     kinds = {r.type for r in result.rows}
     assert {m.WINDOWS, m.DESKTOP, m.FRAMEWORK} <= kinds
     assert all(r.key for r in result.rows) and len({r.key for r in result.rows}) == len(result.rows)
+
+
+def test_global_search_finds_apps_once_the_list_exists(qapp):
+    from modules.app_buster import app_buster_module as abm
+    from modules.app_buster.engine.scan import ScanResult
+    from core.search_provider import SearchQuery
+
+    mod = abm.AppBusterModule()
+    provider = mod.get_search_provider()
+    assert provider.search(SearchQuery(text="weather")) == []          # never opened: no scan in a keystroke
+    w = mod.create_widget()
+    result = ScanResult()
+    result.rows = sample_rows()
+    w._fill_extras = lambda: None
+    w._busy = True
+    w._scanned((result, None, (1,)))
+    hits = provider.search(SearchQuery(text="weather"))
+    assert len(hits) == 1 and "recommended for removal" in hits[0].summary
+    assert provider.search(SearchQuery(text="code editor"))[0].summary.startswith("Zed Editor")
+    mod.on_stop()

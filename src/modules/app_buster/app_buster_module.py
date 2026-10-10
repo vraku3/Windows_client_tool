@@ -779,6 +779,10 @@ class AppBusterModule(BaseModule):
             self._widget.cancel_all()
         self.cancel_all_workers()
 
+    def get_search_provider(self):
+        from .search_provider import AppBusterSearchProvider
+        return AppBusterSearchProvider(self)
+
     def get_refresh_interval(self) -> Optional[int]:
         return 60_000
 

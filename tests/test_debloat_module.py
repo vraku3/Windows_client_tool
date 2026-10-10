@@ -564,8 +564,14 @@ def test_context_menu_offers_the_registry_path_of_a_later_step_too(monkeypatch):
     actions = {a.text(): a for a in menu.actions()}
     assert "Copy registry path" in actions
     assert "Copy command" not in actions
+    # A stand-in clipboard: the real Windows one is shared with every other
+    # process, and during a long full-suite run another one can hold it, so
+    # setText silently does nothing and the read-back is '' (seen 2026-10-10).
+    copied = []
+    monkeypatch.setattr(QApplication, "clipboard",
+                        staticmethod(lambda: type("Clip", (), {"setText": lambda self, t: copied.append(t)})()))
     actions["Copy registry path"].trigger()
-    assert QApplication.clipboard().text() == r"HKLM\SOFTWARE\Policies\X\Y"
+    assert copied == [r"HKLM\SOFTWARE\Policies\X\Y"]
 
 
 def test_populate_uses_detect_many_not_one_call_per_tweak(monkeypatch):

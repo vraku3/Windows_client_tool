@@ -54,6 +54,8 @@ def main():
     FakeApp.config = ConfigManager(OUT, {"version": 1})
     FakeApp.config.load()
     FakeApp.thread_pool = QThreadPool.globalInstance()
+    # Never touch the real "seen apps" baseline: Newly discovered would be wrong next session.
+    abm._seen_path = lambda: os.path.join(OUT, "seen.json")
     mod = abm.AppBusterModule()
     mod.on_start(FakeApp())
     w = mod.create_widget()

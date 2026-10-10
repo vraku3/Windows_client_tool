@@ -224,3 +224,57 @@ def thermal_alerts(sensors: List[Sensor]) -> List[Tuple[str, str, float, float]]
         elif warn is not None and s.value >= warn:
             out.append(("warning", label, s.value, warn))
     return out
+
+
+# ---- fan groups: CPU / GPU / Case (the Identify cards) --------------------------------------
+
+#: (key, label). GPU fans are the GPU's own (ADLX), never a motherboard header.
+FAN_GROUPS = (("cpu", "CPU"), ("gpu", "GPU"), ("case", "Case"))
+HEADER_GROUPS = (("cpu", "CPU"), ("case", "Case"), ("none", "Not in a group"))
+
+#: How long Identify holds a fan at 100%. Measured 2026-10-10: the CPU fans
+#: here need ~5 s to climb from 62% to full (1,106 -> 1,751 RPM) and the
+#: RX 7900 XTX ~6 s (696 -> 3,600 RPM) -- a 5-second Identify ended just as
+#: the fan got there, which is why it sounded like nothing happened.
+IDENTIFY_SECONDS = 20
+
+
+def default_group(name: str) -> str:
+    """CPU fans and the cooler's pump are "cpu"; chassis/system fans "case"."""
+    low = name.lower()
+    if "cpu" in low or "pump" in low or "aio" in low:
+        return "cpu"
+    return "case"
+
+
+def header_group(sensor: Sensor, overrides: Dict[str, str]) -> str:
+    return overrides.get(sensor.id) or default_group(sensor.name)
+
+
+def group_headers(sensors: List[Sensor], overrides: Dict[str, str], group: str) -> List[Sensor]:
+    return [s for s in sensors if is_header_control(s) and header_group(s, overrides) == group]
+
+
+def group_line(control: Sensor, sensors: List[Sensor]) -> str:
+    """'CPU Fan #1 1,106 RPM', with the facts that explain what Identify will do."""
+    fan = fan_for_control(control.id, sensors)
+    if fan is None or fan.value is None:
+        rpm = "no RPM reading"
+    elif fan.value == 0:
+        rpm = "0 RPM (nothing reporting speed)"
+    else:
+        rpm = fan.display()
+    full = control.value is not None and control.value >= 98
+    return f"{control.name}: {rpm}" + ("  — already at 100%" if full else "")
+
+
+def group_note(group: str, members: List[Sensor], sensors: List[Sensor]) -> str:
+    """What a card says under its fan list -- above all, why it may be silent."""
+    if group == "case" and members and not any(
+            (fan_for_control(c.id, sensors) or Sensor("", "", "", FAN, None, "")).value for c in members):
+        return ("No case fan reports a speed on the motherboard (every Chassis header reads 0 RPM). "
+                "Identify still drives them -- a fan without a speed wire spins up too. If your case "
+                "fans run from a hub on another header, set that header's group to Case.")
+    if members and all(c.value is not None and c.value >= 98 for c in members):
+        return "Already at 100% under the BIOS, so Identify cannot make it louder."
+    return ""

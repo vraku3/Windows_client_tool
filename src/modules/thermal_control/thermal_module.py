@@ -17,6 +17,7 @@ from .curve_editor import CurveEditor
 from .engine import curves as cv
 from .engine import view
 from .engine.model import CONTROL, FAN, TEMPERATURE, Sensor, is_pump
+from .fan_groups_bar import FanGroupsBar
 from .sensors_panel import SensorsPanel
 from .thermal_service import ThermalService, marker_path_for
 
@@ -62,6 +63,9 @@ class ThermalWidget(QWidget):
         self._banner = ErrorBanner(parent=self)
         layout.addWidget(self._status)
         layout.addWidget(self._banner)
+        self._groups = FanGroupsBar(self._service, self)
+        layout.addWidget(self._groups)
+        layout.addWidget(self._groups.status)
         tabs = QTabWidget(self)
         tabs.addTab(self._build_sensors(), "Sensors")
         tabs.addTab(self._build_curves(), "Fan curves")
@@ -132,12 +136,19 @@ class ThermalWidget(QWidget):
         self._hyst.setDecimals(0)
         self._hyst.setSuffix(" °C")
         self._enabled = QCheckBox("Drive this header with the curve", parent)
+        self._group = QComboBox(parent)
+        for key, label in view.HEADER_GROUPS:
+            self._group.addItem(label, key)
+        self._group.setToolTip("Which Identify card at the top this fan belongs to -- e.g. move the "
+                               "header a case-fan hub is plugged into to Case")
+        self._group.activated.connect(self._group_changed)
         self._zero = QCheckBox("Zero RPM: let the fan stop when the GPU is cool", parent)
         self._zero.clicked.connect(self._zero_clicked)
         form.addRow("Follow temperature:", self._source)
         form.addRow("Full speed at or above:", self._critical)
         form.addRow("Hysteresis:", self._hyst)
         form.addRow("", self._enabled)
+        form.addRow("Group:", self._group)
         form.addRow("", self._zero)
         self._form = form
         return form
@@ -162,8 +173,9 @@ class ThermalWidget(QWidget):
         bios_btn = QPushButton("Hand back to BIOS", parent)
         bios_btn.clicked.connect(self._hand_back)
         self._bios_btn = bios_btn
-        identify = QPushButton("Identify (5 s at 100%)", parent)
-        identify.setToolTip("Spin this header to full speed for 5 seconds to see which fan it is")
+        identify = QPushButton(f"Identify ({view.IDENTIFY_SECONDS} s at 100%)", parent)
+        identify.setToolTip(f"Spin this fan to full speed for {view.IDENTIFY_SECONDS} seconds to hear "
+                            "which one it is (fans need about 5 s to get there)")
         identify.clicked.connect(self._identify)
         self._identify_btn = identify
         for b in (apply_btn, default_btn, bios_btn, identify):
@@ -185,6 +197,7 @@ class ThermalWidget(QWidget):
     def _on_sensors(self, sensors: List[Sensor]) -> None:
         self._sensors = sensors
         self._sensors_panel.update_sensors(sensors)
+        self._groups.refresh(sensors)
         self._fill_headers()
         self._refresh_live()
         errors = self._service.errors
@@ -271,15 +284,16 @@ class ThermalWidget(QWidget):
         self._selected = item.data(Qt.ItemDataRole.UserRole)
         self._right.setEnabled(True)
         is_gpu = self._selected.startswith(GPU_PREFIX)
-        for w in (self._source, self._critical, self._hyst, self._enabled):
+        for w in (self._source, self._critical, self._hyst, self._enabled, self._group):
             self._form.setRowVisible(w, not is_gpu)      # header-only settings
         self._form.setRowVisible(self._zero, is_gpu)
         self._bios_btn.setText("Back to factory" if is_gpu else "Hand back to BIOS")
-        self._identify_btn.setVisible(not is_gpu)
         if is_gpu:
             self._gpu_picked(self._selected[len(GPU_PREFIX):])
             return
         name = next((s.name for s in self._sensors if s.id == self._selected), "")
+        group = self._service.group_overrides().get(self._selected) or view.default_group(name)
+        self._group.setCurrentIndex(max(0, self._group.findData(group)))
         pump = is_pump(name)
         curve = self._service.curves().for_control(self._selected) or cv.FanCurve(
             self._selected, self._default_source(), cv.default_points(pump), pump=pump, label=name)
@@ -390,14 +404,24 @@ class ThermalWidget(QWidget):
             self._status.setText(f"{name}: writing the curve…")
 
     def _identify(self) -> None:
-        if self._selected is None or self._selected.startswith(GPU_PREFIX):
+        if self._selected is None:
             return
-        problem = self._service.identify(self._selected)
-        name = next((s.name for s in self._sensors if s.id == self._selected), "")
+        if self._selected.startswith(GPU_PREFIX):
+            name = self._selected[len(GPU_PREFIX):]
+            problem = self._service.identify_gpu(name)
+        else:
+            problem = self._service.identify(self._selected)
+            name = next((s.name for s in self._sensors if s.id == self._selected), "")
         if problem:
             self._banner.set_error(f"Could not spin up {name}: {problem}")
         else:
-            self._status.setText(f"{name}: full speed for 5 seconds -- listen or look for the fan that speeds up.")
+            self._status.setText(f"{name}: full speed for {view.IDENTIFY_SECONDS} seconds. Fans need "
+                                 "about 5 s to get there; listen for the one that rises.")
+
+    def _group_changed(self, _index: int) -> None:
+        if self._selected and not self._selected.startswith(GPU_PREFIX):
+            self._service.set_group(self._selected, self._group.currentData())
+            self._groups.refresh(self._sensors)
 
     def _zero_clicked(self, on: bool) -> None:
         if self._selected and self._selected.startswith(GPU_PREFIX):

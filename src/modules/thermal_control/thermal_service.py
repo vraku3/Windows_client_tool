@@ -13,12 +13,13 @@ hook repeats it in case the normal path never runs.
 import atexit
 import logging
 import os
-from typing import Callable, List, Optional
+import time
+from typing import Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from .engine import curves as cv
-from .engine import gpu_kmt, lhm_bridge
+from .engine import gpu_kmt, lhm_bridge, view
 from .engine.controller import FanController
 from .engine.model import Sensor
 
@@ -27,6 +28,12 @@ logger = logging.getLogger(__name__)
 CURVES_KEY = "modules.thermal_control.curves"
 GPU_CURVES_KEY = "modules.thermal_control.gpu_curves"           # {gpu name: [[C, %], ...]}
 GPU_FACTORY_KEY = "modules.thermal_control.gpu_before"          # {gpu name: {factory, curve}}
+#: Written BEFORE a GPU Identify takes the fan to 100%, removed once it is put
+#: back. The curve lives in GPU firmware and survives the app, so a crash in
+#: those 20 s would otherwise leave the card at full speed until reboot.
+GPU_IDENTIFY_KEY = "modules.thermal_control.gpu_identify_restore"   # {gpu name: {factory, curve, zero}}
+GROUPS_KEY = "modules.thermal_control.fan_groups"                   # {control id: cpu|case|none}
+GPU_PREFIX_ID = "gpu:"
 CONTROL_MS = 2000          # curve tick: fans and temperatures do not move faster
 VIEW_MS = 1000             # while someone is looking at the sensor list
 
@@ -40,6 +47,7 @@ class ThermalService(QObject):
     updated = pyqtSignal(object)            # List[Sensor]
     state_changed = pyqtSignal(str)         # a human sentence about what is going on
     gpu_fans_changed = pyqtSignal(object)   # List[adlx.GpuFanStatus]
+    identify_changed = pyqtSignal()         # an Identify started or ended
 
     def __init__(self, app, marker_path: str) -> None:
         super().__init__()
@@ -56,6 +64,7 @@ class ThermalService(QObject):
         self._stopped = False
         self.gpu_fans: list = []
         self.adlx_dir = ""
+        self._identify: Dict[str, Tuple[float, QTimer]] = {}     # target -> (ends at, timer)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.tick)
         atexit.register(self._atexit)
@@ -113,6 +122,12 @@ class ThermalService(QObject):
             logger.info("thermal shutdown after Qt teardown: %s", e)
         for worker in self._workers:
             worker.cancel()
+        for name in self._identify_names():
+            try:
+                self._restore_gpu(name)          # synchronous: the app is going away
+            except Exception as e:  # AdlxError, or the library already unloaded at exit
+                logger.error("could not put %s back after Identify at shutdown: %s", name, e)
+        self._identify.clear()
         if self.controller is not None:
             failed = self.controller.shutdown()
             if failed:
@@ -209,8 +224,37 @@ class ThermalService(QObject):
             self.errors.append(f"{control_id}: {e}")
         self._reschedule()
 
-    def identify(self, control_id: str, seconds: int = 5) -> str:
-        """Spin one header to 100% for a few seconds, then put it back."""
+    # ---- Identify: full speed for a while, then back ------------------------------------
+    #
+    # A target is a header id or "gpu:<name>". Clicking again restarts the
+    # clock; Stop ends everything at once. Headers go back to their curve or
+    # the BIOS; a GPU goes back to exactly what it had (see GPU_IDENTIFY_KEY).
+
+    def identifying(self) -> Dict[str, int]:
+        """{target: whole seconds left} for everything spinning right now."""
+        now = time.monotonic()
+        return {t: max(0, int(round(end - now))) for t, (end, _tm) in self._identify.items()}
+
+    def _arm(self, target: str, seconds: int, finish: Callable[[], None]) -> None:
+        old = self._identify.pop(target, None)
+        if old is not None:
+            old[1].stop()
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._finish(target, finish))
+        timer.start(seconds * 1000)
+        self._identify[target] = (time.monotonic() + seconds, timer)
+        self.identify_changed.emit()
+
+    def _finish(self, target: str, finish: Callable[[], None]) -> None:
+        entry = self._identify.pop(target, None)
+        if entry is not None:
+            entry[1].stop()
+        finish()
+        self.identify_changed.emit()
+
+    def identify(self, control_id: str, seconds: int = view.IDENTIFY_SECONDS) -> str:
+        """Spin one header to 100% for `seconds`, then put it back. "" or why not."""
         if self.controller is None:
             return self.reason or "the hardware is not open yet"
         controller = self.controller
@@ -219,7 +263,7 @@ class ThermalService(QObject):
         except Exception as e:  # KeyError for a vanished header, or a driver error
             logger.error("could not spin up %s: %s", control_id, e)
             return str(e)
-        QTimer.singleShot(seconds * 1000, lambda: self._end_identify(controller, control_id))
+        self._arm(control_id, seconds, lambda: self._end_identify(controller, control_id))
         return ""
 
     def _end_identify(self, controller, control_id: str) -> None:
@@ -231,6 +275,90 @@ class ThermalService(QObject):
             logger.error("could not end the spin-up of %s: %s", control_id, e)
             self.errors = [f"{control_id}: {e}"]
         self.tick()
+
+    def group_overrides(self) -> Dict[str, str]:
+        return dict(self._config_get(GROUPS_KEY, {}) or {})
+
+    def set_group(self, control_id: str, group: str) -> None:
+        groups = self.group_overrides()
+        groups[control_id] = group
+        self._config_set(GROUPS_KEY, groups)
+
+    def identify_group(self, group: str, seconds: int = view.IDENTIFY_SECONDS) -> Tuple[List[str], List[str]]:
+        """Every fan in CPU / GPU / Case to 100%. (names started, problems)."""
+        started, problems = [], []
+        if group == "gpu":
+            # Only GPUs with fan control: the CPU's integrated Radeon has no fan,
+            # and naming it as a failure on every click would be noise.
+            controllable = [st for st in self.gpu_fans if st.controllable]
+            for st in controllable:
+                why = self.identify_gpu(st.name, seconds)
+                (problems.append(f"{st.name}: {why}") if why else started.append(st.name))
+            if not controllable:
+                problems.append("; ".join(st.reason for st in self.gpu_fans) or "no GPU fan control was found")
+            return started, problems
+        members = view.group_headers(self.sensors, self.group_overrides(), group)
+        if not members:
+            problems.append("no fan header is in this group" if self.full
+                            else (self.reason or "the hardware is not open yet"))
+        for control in members:
+            why = self.identify(control.id, seconds)
+            (problems.append(f"{control.name}: {why}") if why else started.append(control.name))
+        return started, problems
+
+    def stop_identify(self) -> None:
+        for target in list(self._identify):
+            entry = self._identify.get(target)
+            if entry is not None:
+                entry[1].timeout.emit()
+
+    def identify_gpu(self, name: str, seconds: int = view.IDENTIFY_SECONDS) -> str:
+        """The GPU fan to 100% (Zero RPM off, a flat curve at the top of its range)."""
+        from .engine import adlx
+        st = self.gpu_status(name)
+        if st is None or not st.controllable or st.gpu is None:
+            return st.reason if st else "this GPU is not available"
+        target = GPU_PREFIX_ID + name
+        fresh = target not in self._identify
+        # Armed FIRST: the write job's own read-back must already see this
+        # Identify, or it would take the marker for a crashed one and undo it.
+        self._arm(target, seconds, lambda: self._end_gpu_identify(name))
+        if fresh:
+            restore = dict(self._config_get(GPU_IDENTIFY_KEY, {}) or {})
+            restore[name] = {"factory": bool(st.gpu.at_factory), "curve": [list(p) for p in st.gpu.curve],
+                             "zero": st.gpu.zero_rpm}
+            self._config_set(GPU_IDENTIFY_KEY, restore)        # before the write, never after
+            top = (st.gpu.speed_range or (0, 100))[1]
+            flat = [(t, top) for t, _s in st.gpu.curve]
+
+            def work(_w):
+                if st.gpu.zero_rpm:
+                    adlx.set_zero_rpm(name, False, self.adlx_dir)
+                adlx.set_curve(name, flat, self.adlx_dir)
+                return self._read_gpu_fans()
+            self._gpu_job(work, self._gpu_fans_read)
+        return ""
+
+    def _end_gpu_identify(self, name: str) -> None:
+        self._gpu_job(lambda _w: self._restore_gpu(name) or self._read_gpu_fans(), self._gpu_fans_read)
+
+    def _restore_gpu(self, name: str) -> None:
+        """Put the GPU back to what it had before Identify; clears its marker."""
+        from .engine import adlx
+        restore = dict(self._config_get(GPU_IDENTIFY_KEY, {}) or {})
+        before = restore.get(name)
+        if before is None:
+            return
+        if before.get("factory"):
+            adlx.reset_to_factory(name, self.adlx_dir)       # it was at factory: nothing else to lose
+        else:
+            adlx.set_curve(name, [tuple(p) for p in before["curve"]], self.adlx_dir)
+            if before.get("zero") is not None:
+                adlx.set_zero_rpm(name, bool(before["zero"]), self.adlx_dir)
+        restore.pop(name, None)
+        self._config_set(GPU_IDENTIFY_KEY, restore)
+        logger.info("thermal: %s put back after Identify (%s)", name,
+                    "factory" if before.get("factory") else "its own curve")
 
     # ---- GPU fans (AMD ADLX; needs no elevation) ---------------------------------------
     #
@@ -248,6 +376,15 @@ class ThermalService(QObject):
         win = adlx.windows_gpus()
         self.adlx_dir = adlx.choose_copy(win, adlx.adlx_copies())
         gpus, why = adlx.read_gpus(self.adlx_dir)
+        for name in list((self._config_get(GPU_IDENTIFY_KEY, {}) or {})):
+            if name not in self._identify_names():
+                logger.warning("thermal: %s was left at 100%% by an Identify that never ended; "
+                               "putting it back", name)
+                try:
+                    self._restore_gpu(name)
+                except adlx.AdlxError as e:
+                    logger.error("could not put %s back after an interrupted Identify: %s", name, e)
+                gpus, why = adlx.read_gpus(self.adlx_dir)
         statuses = adlx.diagnose(gpus, why, win)
         self._reapply_saved(statuses)
         return statuses
@@ -255,7 +392,10 @@ class ThermalService(QObject):
     def _reapply_saved(self, statuses) -> None:
         from .engine import adlx
         saved = self._config_get(GPU_CURVES_KEY, {}) or {}
+        busy = self._identify_names()
         for st in statuses:
+            if st.name in busy:
+                continue                    # an Identify holds it at 100% on purpose
             points = saved.get(st.name)
             if not (st.controllable and points and st.gpu):
                 continue
@@ -267,6 +407,9 @@ class ThermalService(QObject):
                 except adlx.AdlxError as e:
                     logger.warning("could not re-apply the saved curve to %s: %s", st.name, e)
                     st.reason = f"your saved curve could not be re-applied: {e}"
+
+    def _identify_names(self) -> List[str]:
+        return [t[len(GPU_PREFIX_ID):] for t in list(self._identify) if t.startswith(GPU_PREFIX_ID)]
 
     def _gpu_fans_read(self, statuses) -> None:
         self.gpu_fans = list(statuses)

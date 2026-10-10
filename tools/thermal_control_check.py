@@ -24,6 +24,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--log")
     ap.add_argument("--roundtrip")
+    ap.add_argument("--spin", help="comma-separated header names: 100%% for --seconds, RPM logged")
+    ap.add_argument("--seconds", type=int, default=8)
     args = ap.parse_args()
     out = open(args.log, "w", encoding="utf-8") if args.log else sys.stdout
 
@@ -39,6 +41,8 @@ def main() -> int:
     rc = 0
     if args.roundtrip:
         rc = _roundtrip(bridge, sensors, args.roundtrip, p)
+    if args.spin:
+        rc = _spin(bridge, sensors, [n.strip() for n in args.spin.split(",")], args.seconds, p)
     failed = bridge.release_all()
     p("release_all failures:", failed)
     bridge.close()
@@ -65,6 +69,36 @@ def _roundtrip(bridge, sensors, name, p) -> int:
     ok = during is not None and abs(during - 60.0) < 2.0
     p("write verified" if ok else "WRITE NOT VERIFIED")
     return 0 if ok else 1
+
+
+def _rpms(bridge, ids):
+    by_id = {s.id: s for s in bridge.read()}
+    return {cid: (by_id[cid.replace("/control/", "/fan/")].value
+                  if cid.replace("/control/", "/fan/") in by_id else None,
+                  by_id[cid].value if cid in by_id else None) for cid in ids}
+
+
+def _spin(bridge, sensors, names, seconds, p) -> int:
+    """The physical test Identify depends on: does the FAN speed up?"""
+    rpm = {s.id: s.value for s in sensors}
+    targets = [s for s in sensors if s.kind == CONTROL and s.controllable and not s.id.startswith("/gpu")
+               and (s.name in names or ("connected" in names and rpm.get(s.id.replace("/control/", "/fan/"))))]
+    if not targets:
+        p(f"no controllable header among {names}")
+        return 2
+    ids = [t.id for t in targets]
+    p("SPIN before:", _rpms(bridge, ids))
+    for cid in ids:
+        bridge.set_percent(cid, 100.0)
+    for i in range(seconds):
+        time.sleep(1.0)
+        p(f"SPIN t+{i + 1}s (rpm, duty):", _rpms(bridge, ids))
+    for cid in ids:
+        bridge.release(cid)
+    for i in range(4):
+        time.sleep(1.0)
+        p(f"SPIN released t+{i + 1}s:", _rpms(bridge, ids))
+    return 0
 
 
 if __name__ == "__main__":

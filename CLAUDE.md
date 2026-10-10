@@ -932,8 +932,22 @@ lhm_bridge, curves, controller, view) is tested with no hardware; only
   down 3%/tick with hysteresis. `ThermalService` is owned by the module (curves
   run with the tab closed), recovers BEFORE loading curves, and hands every
   header back on exit plus an `atexit` net; tick and shutdown share a lock.
+- **Identify = CPU / GPU / Case cards (`fan_groups_bar.py`), 20 s at 100%**
+  (2026-10-10). 5 s sounded like nothing: measured, the CPU fans need ~5 s to
+  climb (1,106 -> 1,751 RPM) and the RX 7900 XTX ~6 s (696 -> 3,600). A
+  header's group defaults from its name (CPU/pump -> CPU, chassis -> Case) and
+  can be moved (`modules.thermal_control.fan_groups`). The AIO Pump header is
+  already 100% under the BIOS, and all four Chassis headers read 0 RPM here --
+  the cards say so rather than staying silent. GPU Identify = Zero RPM off +
+  a flat curve at the top of the range; `gpu_identify_restore` is written
+  BEFORE the write and the GPU put back (factory reset if it was at factory,
+  else its own curve + Zero RPM) at the end, at shutdown, or at the next
+  start after a crash. The Identify is armed before the write job starts, and
+  `_reapply_saved` skips a GPU under Identify -- otherwise the job's own
+  read-back undoes it. `tools/thermal_identify_check.py` drives it for real.
 - Test any write on a header with NOTHING connected (0 RPM) -- five of eight
-  here -- via `tools/thermal_control_check.py --roundtrip`. Elevated runs go
+  here -- via `tools/thermal_control_check.py --roundtrip`; `--spin connected`
+  is the physical check (RPM, not duty read-back). Elevated runs go
   through a `.ps1` wrapper that writes its own log.
 
 ### Driver Manager (`src/modules/driver_manager/`)

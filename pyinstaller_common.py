@@ -255,6 +255,7 @@ HIDDEN_IMPORTS = [
     "modules.thermal_control.thermal_module",
     "modules.thermal_control.thermal_service",
     "modules.thermal_control.curve_editor",
+    "modules.thermal_control.fan_groups_bar",
     "modules.thermal_control.engine.model",
     "modules.thermal_control.engine.gpu_kmt",
     "modules.thermal_control.engine.lhm_bridge",

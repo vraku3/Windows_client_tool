@@ -114,6 +114,7 @@ LOGS_EXTRA = {
 }
 
 LARGE_EXTRA = {
+    cs.scan_superseded_app_versions: ('Superseded App Versions', 'caution'),
     # No scan_old_restore_points: it claimed to measure System Restore
     # snapshots and shadow storage, and actually scanned the Win+X
     # shortcuts folder. Restore points are the Restore Manager module's.

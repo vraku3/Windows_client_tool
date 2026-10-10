@@ -374,7 +374,8 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: 536 after 15 caches found on the real machine were added (2026-10-10,
 #: tools/cleanup_catalog_add_2026_10_10.py). The same day's audit disabled
 #: 224 entries rather than deleting them, so they still count here.
-REACHABLE_SCANNERS = 536
+# Superseded App Versions adds one rule-based scanner beyond the path catalog.
+REACHABLE_SCANNERS = 537
 
 
 def _scanners_the_tabs_offer():

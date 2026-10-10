@@ -7,6 +7,7 @@ import glob
 import string
 import subprocess
 import time
+import psutil
 from typing import List, Callable, Optional, Tuple
 
 from modules.cleanup.cleanup_scanner._common import (
@@ -17,6 +18,129 @@ from modules.cleanup.cleanup_scanner import (
     drives, known_folders, virtual_disks)
 
 logger = logging.getLogger(__name__)
+
+
+def superseded_versions(root, current=None) -> list[str]:
+    """Return numeric sibling versions older than the newest, keeping current."""
+    versions = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                match = re.fullmatch(r"(?:v|app-)?(\d+(?:\.\d+)*)", entry.name)
+                if match and entry.is_dir(follow_symlinks=False):
+                    versions.append((tuple(map(int, match[1].split("."))), entry.path))
+    except OSError:
+        logger.warning("Could not enumerate app versions in %s", root, exc_info=True)
+    if not versions:
+        return []
+    newest = max(version for version, _ in versions)
+    current_name = os.path.normcase(os.path.basename(os.path.normpath(current))) if current else None
+    return [path for version, path in sorted(versions)
+            if version != newest and os.path.normcase(os.path.basename(path)) != current_name]
+
+
+def _servicehost_current(root) -> Optional[str]:
+    marker = os.path.join(root, "LatestInstall.info")
+    try:
+        with open(marker, encoding="utf-8-sig") as stream:
+            for line in stream:
+                parts = line.strip().split(maxsplit=1)
+                if len(parts) == 2 and parts[0] == "LatestDSInstallRoot":
+                    return parts[1].replace("\\\\", "\\")
+        logger.warning("No LatestDSInstallRoot in %s; keeping newest version", marker)
+    except (OSError, UnicodeError):
+        logger.warning("Could not read %s; keeping newest version", marker, exc_info=True)
+    return None
+
+
+def _running_app_executables() -> Optional[tuple[list[str], set[str]]]:
+    """Snapshot readable paths and names with unreadable executable paths."""
+    executables = []
+    unreadable_names = set()
+    try:
+        for process in psutil.process_iter(attrs=["exe", "name"]):
+            try:
+                executable = process.info.get("exe")
+                if executable:
+                    executables.append(os.path.normcase(os.path.normpath(executable)))
+                elif process.info.get("name"):
+                    unreadable_names.add(process.info["name"].lower())
+            except (psutil.Error, OSError):
+                logger.debug("Could not read process executable", exc_info=True)
+    except (psutil.Error, OSError):
+        logger.warning("Could not enumerate running executables", exc_info=True)
+        return None
+    return executables, unreadable_names
+
+
+def _candidate_has_running_app(path, executables, unreadable_names) -> bool:
+    """Keep candidates containing a running path or an unreadable process name."""
+    prefix = os.path.normcase(os.path.normpath(path)) + os.sep
+    for executable in executables:
+        if executable.startswith(prefix):
+            logger.info("Keeping app version %s: running executable %s", path, executable)
+            return True
+    if not unreadable_names:
+        return False
+
+    def log_walk_error(error):
+        logger.debug("Could not enumerate app subfolder %s: %s", error.filename, error)
+
+    for _, _, filenames in os.walk(path, onerror=log_walk_error):
+        for filename in filenames:
+            name = filename.lower()
+            if name.endswith(".exe") and name in unreadable_names:
+                logger.info("Keeping app version %s: process %s has an unreadable executable", path, name)
+                return True
+    return False
+
+
+def _squirrel_superseded(root) -> list[str]:
+    versions = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                match = re.fullmatch(r"app-(\d+(?:\.\d+)*)", entry.name)
+                if match and entry.is_dir(follow_symlinks=False):
+                    versions.append((tuple(map(int, match[1].split("."))), entry.path))
+    except OSError:
+        logger.warning("Could not enumerate Squirrel versions in %s", root, exc_info=True)
+    if not versions:
+        return []
+    newest = max(version for version, _ in versions)
+    return [path for version, path in sorted(versions) if version != newest]
+
+
+def scan_superseded_app_versions(min_age_days: int = 0) -> ScanResult:
+    """Old MathWorks ServiceHost and Squirrel versions, excluding running apps."""
+    result = ScanResult()
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return result
+    candidates = []
+    servicehost = os.path.join(local, "MathWorks", "ServiceHost")
+    if os.path.isdir(servicehost):
+        candidates.extend(superseded_versions(servicehost, _servicehost_current(servicehost)))
+    try:
+        with os.scandir(local) as entries:
+            for entry in entries:
+                if entry.is_dir(follow_symlinks=False) and os.path.isfile(os.path.join(entry.path, "Update.exe")):
+                    candidates.extend(_squirrel_superseded(entry.path))
+    except OSError:
+        logger.warning("Could not enumerate Squirrel app roots in %s", local, exc_info=True)
+    snapshot = _running_app_executables()
+    if snapshot is None:
+        return result
+    executables, unreadable_names = snapshot
+    for path in candidates:
+        if _candidate_has_running_app(path, executables, unreadable_names):
+            continue
+        item = _make_item(path, safety="caution", min_age_days=min_age_days)
+        if item:
+            item.selected = False
+            result.items.append(item)
+            result.total_size += item.size
+    return result
 
 def scan_prefetch(min_age_days: int = 0) -> ScanResult:
     """Windows Prefetch .pf files — safe to delete, will be re-created as needed."""
@@ -2106,6 +2230,7 @@ def scan_orphaned_virtual_disks(min_age_days: int = 0) -> ScanResult:
 
 __all__ = [
     'scan_orphaned_virtual_disks',
+    'scan_superseded_app_versions',
     'scan_orphaned_installer_packages',
     'scan_virtual_disk_images',
     '_find_empty_folders',

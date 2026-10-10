@@ -338,3 +338,75 @@ def summarize(report: MitigationReport) -> List[Tuple[str, str]]:
         ("ASLR", describe_aslr(report)),
         ("CFG", describe_cfg(report)),
     ]
+
+
+# ---- the process-tree columns -----------------------------------------------------------
+#
+# A process's mitigations are fixed when it starts (a few can only be turned
+# ON later, never off), so they are read once per process -- keyed on
+# (pid, start time), because Windows recycles pids -- and never re-read on a
+# tick. Measured 2026-10-10: 332 processes in 0.02 s unelevated, 192 of them
+# readable; the other 140 refuse, and their cells say so ("—"), never guess.
+
+#: (key, header) for the optional security columns of the process tree.
+TREE_COLUMNS = (("protection", "Protection"), ("dep", "DEP"), ("aslr", "ASLR"), ("cfg", "CFG"))
+
+REFUSED = "—"
+
+
+class MitigationCache:
+    """One MitigationReport per live process. Not thread-safe: the
+    collector's tick is the only writer."""
+
+    def __init__(self, reader=None) -> None:
+        self._read = reader or read_mitigations
+        self._cache: Dict[Tuple[int, float], MitigationReport] = {}
+
+    def get(self, pid: int, create_time: float, image_path: Optional[str]) -> MitigationReport:
+        key = (pid, create_time)
+        hit = self._cache.get(key)
+        if hit is None:
+            hit = self._read(pid, image_path or None)
+            self._cache[key] = hit
+        return hit
+
+    def prune(self, live: Dict[int, float]) -> None:
+        """Forget processes that are gone (or whose pid was reused)."""
+        for key in [k for k in self._cache if live.get(k[0]) != k[1]]:
+            del self._cache[key]
+
+
+def tree_cells(report: Optional[MitigationReport]) -> Dict[str, Tuple[str, str]]:
+    """{column key: (short cell text, full sentence for the tooltip)}.
+
+    Short so four columns fit beside the rest; the tooltip carries the full
+    wording the Security view uses. A read that was refused is "—" with the
+    reason, never an "Off" it was not."""
+    if report is None:
+        return {k: ("", "") for k, _h in TREE_COLUMNS}
+    if report.error:
+        why = f"Could not open the process: {report.error}"
+        return {k: (REFUSED, why) for k, _h in TREE_COLUMNS}
+    out: Dict[str, Tuple[str, str]] = {}
+    prot = report.protection
+    if prot is None:
+        out["protection"] = (REFUSED, "Protection level could not be read")
+    elif prot == "None":
+        out["protection"] = ("", "Not a protected process")
+    else:
+        out["protection"] = ("PPL " + prot.replace("PsProtectedSigner", "")
+                             if prot.endswith("-Light") else prot.replace("PsProtectedSigner", "PP "), prot)
+    dep = report.dep
+    out["dep"] = ((REFUSED, report.dep_reason or "DEP could not be read") if dep is None
+                  else ("On" if dep.startswith("Enabled") else "Off", dep))
+    aslr = describe_aslr(report)
+    out["aslr"] = (REFUSED if aslr == "—" else
+                   "High entropy" if "high entropy" in aslr else
+                   "On" if aslr.startswith("Enabled") else
+                   "Off" if aslr.startswith("Not supported") else aslr, aslr)
+    cfg = describe_cfg(report)
+    out["cfg"] = (REFUSED if cfg == "—" else
+                  "System DLLs only" if cfg.startswith("Enabled for system DLLs") else
+                  "On" if cfg.startswith("Enabled") else
+                  "Off" if cfg == "Disabled" else cfg, cfg)
+    return out

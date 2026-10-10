@@ -45,6 +45,10 @@ class ProcessNode:
     #: The image LOOKS compressed. A heuristic, hence the entropy beside
     #: it: see procengine/classify.py for what it gets wrong.
     is_packed: bool = False
+    #: `core.procengine.mitigations.MitigationReport`, read once per process
+    #: (pid + start time) for the optional Protection/DEP/ASLR/CFG columns.
+    #: None until it has been read.
+    mitigations: Optional[object] = None
     packed_entropy: Optional[float] = None
     #: Appeared, or vanished, within the highlight window. Transient --
     #: these are the only two fields here that are not stable for the

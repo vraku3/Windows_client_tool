@@ -118,7 +118,8 @@ def build_snapshot(service_names: Set[str],
                    source=None,
                    gpu: Optional[Dict[int, float]] = None,
                    cold_budget: Optional[int] = COLD_BUDGET_PER_TICK,
-                   kinds=None
+                   kinds=None,
+                   mitigations=None,
                    ) -> Dict[int, ProcessNode]:
     """Every process as a `{pid: ProcessNode}` map, children linked.
 
@@ -157,6 +158,11 @@ def build_snapshot(service_names: Set[str],
             kind = kinds.get(pid, info.raw.create_time,
                              info.details.path, kind_budget)
         result[pid] = node_from_info(info, service_names, gpu, kind)
+        if mitigations is not None:
+            result[pid].mitigations = mitigations.get(pid, info.raw.create_time or 0,
+                                                      info.details.path)
+    if mitigations is not None:
+        mitigations.prune({pid: n.create_time for pid, n in result.items()})
 
     # Parent -> children, over the pids that are actually present. This
     # used to link on the raw ppid alone while its comment claimed the
@@ -238,6 +244,7 @@ class ProcessCollector(QObject):
         self._source = None
         self._gpu = None
         self._kinds = None
+        self._mitigations = None
         #: pid -> when we first saw it, for the green highlight.
         self._first_seen: Dict[int, float] = {}
         #: pid -> (node, when it vanished), for the red one. A process that
@@ -294,6 +301,9 @@ class ProcessCollector(QObject):
                 from core.procengine.classify import \
                     ClassifyCache
                 self._kinds = ClassifyCache(want_packed=self._want_packed)
+            if self._mitigations is None:
+                from core.procengine.mitigations import MitigationCache
+                self._mitigations = MitigationCache()
             # Collect once, then read the per-pid slice of that same
             # collection: sampling twice would halve each interval and
             # report GPU figures for a window that does not line up with
@@ -301,7 +311,7 @@ class ProcessCollector(QObject):
             self._gpu.sample()
             gpu = self._gpu.process_usage()
             return build_snapshot(service_names, source=self._source,
-                                  gpu=gpu, kinds=self._kinds)
+                                  gpu=gpu, kinds=self._kinds, mitigations=self._mitigations)
 
         def _on_error(e: str) -> None:
             logger.error("ProcessCollector error: %s", e)

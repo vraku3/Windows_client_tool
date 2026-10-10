@@ -134,6 +134,7 @@ class ProcessExplorerModule(BaseModule):
         self._tree_view.customContextMenuRequested.connect(self._show_context_menu)
         self._tree_view.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self._tree_view.doubleClicked.connect(self._on_double_click)
+        self._setup_column_menu()
         splitter.addWidget(self._tree_view)
 
         # Lower pane
@@ -471,6 +472,50 @@ class ProcessExplorerModule(BaseModule):
         ok, err = set_priority(self._selected_node.pid, level)
         if not ok:
             self._error_banner.set_error(f"Priority change failed: {err}")
+
+    # ── Columns ───────────────────────────────────────────────────────
+
+    _HIDDEN_KEY = "modules.process_explorer.hidden_columns"
+
+    def _setup_column_menu(self) -> None:
+        """Right-click the header to choose columns. The security columns
+        (Protection, DEP, ASLR, CFG) start hidden; the choice is remembered."""
+        from modules.process_explorer.process_tree_model import COLUMNS, SECURITY_COLUMNS
+        header = self._tree_view.header()
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._column_menu)
+        default = [COLUMNS[c] for c in SECURITY_COLUMNS]
+        config = getattr(self.app, "config", None) if self.app else None
+        hidden = config.get(self._HIDDEN_KEY, default) if config is not None else default
+        for col, title in enumerate(COLUMNS):
+            self._tree_view.setColumnHidden(col, title in (hidden or []))
+
+    def _column_menu(self, pos) -> None:
+        from modules.process_explorer.process_tree_model import COLUMNS, SECURITY_COLUMNS
+        menu = QMenu(self._tree_view)
+        for col, title in enumerate(COLUMNS):
+            if col == 0:
+                continue                      # Name is the tree itself
+            if col == min(SECURITY_COLUMNS):
+                menu.addSeparator()
+            action = menu.addAction(title)
+            action.setCheckable(True)
+            action.setChecked(not self._tree_view.isColumnHidden(col))
+            if col in SECURITY_COLUMNS:
+                action.setToolTip("Read once per process; '—' means Windows refused the read "
+                                  "(run as administrator to see more)")
+            action.toggled.connect(lambda on, c=col: self._set_column(c, on))
+        menu.exec(self._tree_view.header().mapToGlobal(pos))
+
+    def _set_column(self, col: int, shown: bool) -> None:
+        from modules.process_explorer.process_tree_model import COLUMNS
+        self._tree_view.setColumnHidden(col, not shown)
+        if shown:
+            self._tree_view.resizeColumnToContents(col)
+        config = getattr(self.app, "config", None) if self.app else None
+        if config is not None:
+            config.set(self._HIDDEN_KEY, [t for c, t in enumerate(COLUMNS)
+                                          if self._tree_view.isColumnHidden(c)])
 
     def _show_context_menu(self, pos):
         if not self._selected_node:

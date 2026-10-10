@@ -4,6 +4,7 @@ from typing import Dict, List
 
 from PyQt6.QtCore import QAbstractItemModel, QModelIndex, Qt
 
+from core.procengine.mitigations import TREE_COLUMNS, tree_cells
 from modules.process_explorer.process_node import ProcessNode, link_children
 from modules.process_explorer.color_scheme import (describe, get_row_color,
                                                    get_row_text_color)
@@ -22,9 +23,22 @@ COL_NET_OUT = 7
 COL_GPU   = 8
 COL_USER  = 9
 COL_PATH  = 10
+# Security columns (hidden until chosen from the header's menu).
+COL_PROTECTION = 11
+COL_DEP   = 12
+COL_ASLR  = 13
+COL_CFG   = 14
 
 COLUMNS = ["Name", "PID", "CPU%", "RAM", "Disk R", "Disk W",
-           "Net In", "Net Out", "GPU%", "User", "Path"]
+           "Net In", "Net Out", "GPU%", "User", "Path"] + [h for _k, h in TREE_COLUMNS]
+
+#: Column index -> key into `tree_cells`.
+SECURITY_COLUMNS = {COL_PROTECTION: "protection", COL_DEP: "dep", COL_ASLR: "aslr", COL_CFG: "cfg"}
+
+#: Sorts a security column: refused last, then by the short text.
+def _security_key(node: ProcessNode, key: str) -> tuple:
+    text = tree_cells(node.mitigations)[key][0]
+    return (text in ("", "—"), text.lower())
 
 
 def _fmt_bytes(n: int) -> str:
@@ -265,6 +279,15 @@ class ProcessTreeModel(QAbstractItemModel):
         node: ProcessNode = index.internalPointer()
         col = index.column()
 
+        if col in SECURITY_COLUMNS:
+            cell = tree_cells(node.mitigations)[SECURITY_COLUMNS[col]]
+            if role == Qt.ItemDataRole.DisplayRole:
+                return cell[0]
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return cell[1] or None
+            if role == Qt.ItemDataRole.UserRole:
+                return _security_key(node, SECURITY_COLUMNS[col])
+
         if role == Qt.ItemDataRole.DisplayRole:
             return [
                 node.name, str(node.pid),
@@ -337,6 +360,8 @@ class ProcessTreeModel(QAbstractItemModel):
             COL_USER:    lambda n: (n.user or "").lower(),
             COL_PATH:    lambda n: (n.exe or "").lower(),
         }
+        for col, key in SECURITY_COLUMNS.items():
+            key_fns[col] = lambda n, k=key: _security_key(n, k)
         key_fn = key_fns.get(column, lambda n: n.name.lower())
 
         def _sort_recursive(nodes: list) -> None:

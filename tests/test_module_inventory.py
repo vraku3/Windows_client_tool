@@ -105,7 +105,7 @@ def test_store_apps_is_a_debloat_tab_not_a_sidebar_entry(registered):
     names = {m.name for m in registered}
     assert "Store Apps" not in names
     debloat = next(m for m in registered if m.name == "Debloat")
-    assert [c.name for c in debloat.children] == ["Debloat", "Store Apps"]
+    assert [c.name for c in debloat.children] == ["App Buster", "Debloat", "Store Apps"]
 
 
 def test_store_apps_is_still_reachable_by_name(registered):
@@ -115,7 +115,8 @@ def test_store_apps_is_still_reachable_by_name(registered):
     for module in registered:
         registry.register(module)
 
-    assert registry.route_map()["Store Apps"] == ("Debloat", 1)
+    assert registry.route_map()["Store Apps"] == ("Debloat", 2)
+    assert registry.route_map()["App Buster"] == ("Debloat", 0)
 
 
 def test_startup_and_boot_hosts_the_three_boot_modules(registered):

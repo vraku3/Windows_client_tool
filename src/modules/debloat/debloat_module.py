@@ -1545,14 +1545,17 @@ class DebloatModule(CompositeModule):
 
     name = "Debloat"
     icon = "⚡"
-    description = "Remove bloatware and manage installed Store apps"
+    description = "Remove bloatware, leftovers and unwanted apps; manage installed Store apps"
     group = ModuleGroup.OPTIMIZE
 
     def __init__(self):
         super().__init__()
+        from modules.app_buster.app_buster_module import AppBusterModule
         from modules.store_apps.store_apps_module import StoreAppsModule
 
-        self.children = [DebloatToolsModule(), StoreAppsModule()]
+        # App Buster first: the whole-PC app list (Windows + desktop apps,
+        # orphaned and defect entries) is where a debloat usually starts.
+        self.children = [AppBusterModule(), DebloatToolsModule(), StoreAppsModule()]
         self._removed_banner: Optional[QLabel] = None
 
     def on_start(self, app) -> None:

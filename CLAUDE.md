@@ -486,8 +486,8 @@ Single-page dashboard with pie chart and auto-refresh. Uses `QuickCleanupTab` fr
 
 ### DebloatModule (`src/modules/debloat/debloat_module.py`)
 
-`DebloatModule` is a `CompositeModule` with two children: `DebloatToolsModule`
-(the three tabs below, `requires_admin = True`) and Store Apps.
+`DebloatModule` is a `CompositeModule` with three children: App Buster (below),
+`DebloatToolsModule` (the three tabs below, `requires_admin = True`) and Store Apps.
 
 `DebloatToolsModule` is a 3-tab module in `ModuleGroup.OPTIMIZE`:
 - **Apps tab** — scans installed UWP apps via `Get-AppxPackage` (using `debloat_scanner.py`), shows table with checkboxes, Apply Selected / Apply All Safe. Protected apps (Store, Terminal, Get Help, Calculator, Notepad, Alarms) highlighted orange and require confirmation before removal.
@@ -1327,6 +1327,60 @@ MSI success ("...success or error status: 0"). Windows rolls `CBS.log` into
 rewrite dropped an earlier fix, it was restored (ErrorBanner in Restore,
 `format_install_date`/`format_estimated_size`, `format_password_age`) and the old
 regression tests were updated to the new interfaces rather than deleted.
+
+### App Buster (`src/modules/app_buster/`)
+
+The first tab of Debloat (2026-10-10): an O&O AppBuster-equivalent list of
+EVERY app on the PC -- Windows apps, desktop apps, hidden and installable
+ones, system and framework packages (shown, never removable), orphaned
+leftovers and defect entries. It has Smart View chips, Cards or Details,
+curated keep/optional/remove recommendations and removal by scope (Current
+user / All users / Entire PC incl. files). It also covers install for your
+account, winget updates, Modify, Properties, change tracking ("Newly
+discovered") and a restore point offered before the first change. The vocabulary
+(types, statuses, dialog wording) is the product manual's own. Qt-free
+`engine/` (model, windows_apps, desktop_apps, orphans, recommend, views,
+extras, scan, actions); only `app_buster_module.py`, `app_list.py` and
+`dialogs.py` import Qt. `tools/app_buster_render.py` renders it read-only
+against the real machine.
+
+- **Installable apps come from the REGISTRY, not PowerShell.** Unelevated,
+  `Get-AppxPackage -AllUsers` and `Get-AppxProvisionedPackage` are refused,
+  but `HKLM\...\Appx\AppxAllUserStore` (`Applications` = provisioned,
+  `Staged`, one `S-1-5-21-...` key per user) is readable. It lists BUNDLE
+  full names where Get-AppxPackage lists the main package, so compare by
+  PACKAGE FAMILY -- by full name 46 installed apps looked installable.
+  Install is `Add-AppxPackage -RegisterByFamilyName -MainPackage`.
+- **A family is not an identity for frameworks**: 15 x86/x64 pairs share
+  one family here. Framework keys carry the architecture.
+- **Not every folder under `%LocalAppData%\Packages` is a package**: all 9
+  without a package here were Chrome's sandbox profiles (`cr.sb.*`) and
+  IE's AppContainer. Only `Name_<13 base32>` names can be orphans.
+- **A WiX/Burn bundle (`BundleUpgradeCode`) whose Package Cache copy is
+  gone is DEFECT, never "its files are gone"**: a bundle has no install
+  folder; its MSIs keep their own entries (16 here, from the earlier
+  Package Cache purge). Orphaned = uninstaller AND files gone, or an MSI
+  registration with no Uninstall entry, no cached installer and no folder.
+  An MSI with no Uninstall entry but a cached installer is a suite's hidden
+  component (Bitdefender's three) and is left alone.
+- **Every result is read back** (`actions.Outcome`): the family list after
+  a removal, `-AllUsers` for the all-users scopes, `winget list` after an
+  update. An unreadable list is SKIPPED "unconfirmed", never removed.
+  0x80073D02 is LOCKED with the processes under the install folder; the
+  person chooses close-and-retry / at next restart (HKCU RunOnce for a
+  package, MoveFileEx for folders) / skip after the batch, never mid-batch.
+- **Deletion guards**: `key_allowed` permits only a single Uninstall entry
+  or an Installer Products/Features/UserData product key, and each is
+  `reg export`ed to `%APPDATA%\WindowsTweaker\app_buster\registry-backups`
+  first (no backup, no delete). `folder_allowed` refuses drive roots, the
+  Windows dir, Program Files / ProgramData / profile roots themselves and
+  whole profiles.
+- **A cancelled Worker emits `cancelled`, not `result`**, so the batch's
+  outcomes live in a list OUTSIDE the worker and the cancel handler reports
+  the apps already done.
+- Recommendations match package name AND publisher id (`recommend.CURATED`);
+  everything unlisted is **keep**. Storage `None` is "not measured" (shown
+  "…" while pending, "—" once there was nothing to measure), never 0.
 
 ### Debloat (`src/modules/debloat/`)
 

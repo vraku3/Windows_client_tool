@@ -124,6 +124,18 @@ HIDDEN_IMPORTS = [
     # for the same reason as the TreeSize block above: if PyInstaller misses
     # one, the frozen build still runs and the tab is simply not there.
     "modules.store_apps.store_apps_module",
+    "modules.app_buster.app_buster_module",
+    "modules.app_buster.app_list",
+    "modules.app_buster.dialogs",
+    "modules.app_buster.engine.model",
+    "modules.app_buster.engine.windows_apps",
+    "modules.app_buster.engine.desktop_apps",
+    "modules.app_buster.engine.orphans",
+    "modules.app_buster.engine.recommend",
+    "modules.app_buster.engine.views",
+    "modules.app_buster.engine.extras",
+    "modules.app_buster.engine.scan",
+    "modules.app_buster.engine.actions",
     # System Management's three children -- previously imported directly at
     # main.py's top level (so PyInstaller's static analysis found them for
     # free), now reachable only through SystemManagementModule.__init__'s

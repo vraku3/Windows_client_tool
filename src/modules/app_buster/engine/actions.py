@@ -230,19 +230,23 @@ def _resolved_path(path: str) -> str:
     return os.path.normcase(full)
 
 
-def _profile_roots() -> List[str]:
+def _profile_roots() -> Optional[List[str]]:
     roots = []
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
                             r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList") as profiles:
             for index in range(winreg.QueryInfoKey(profiles)[0]):
-                with winreg.OpenKey(profiles, winreg.EnumKey(profiles, index)) as profile:
-                    path, _kind = winreg.QueryValueEx(profile, "ProfileImagePath")
-                    if path:
-                        roots.append(_resolved_path(path))
+                subkey = winreg.EnumKey(profiles, index)
+                try:
+                    with winreg.OpenKey(profiles, subkey) as profile:
+                        path, _kind = winreg.QueryValueEx(profile, "ProfileImagePath")
+                        if path:
+                            roots.append(_resolved_path(path))
+                except OSError as e:
+                    logger.warning("cannot read profile root for subkey %s: %s", subkey, e)
     except OSError as e:
         logger.warning("cannot read profile roots: %s", e)
-        return []
+        return None
     return roots
 
 
@@ -270,7 +274,10 @@ def folder_allowed(path: str) -> Tuple[bool, str]:
         return False, "inside the Windows directory"
     if _has_link_ancestor(path) or _has_link_ancestor(full):
         return False, "a junction or symbolic link in the path"
-    if any(root == full or root.startswith(full.rstrip(os.sep) + os.sep) for root in _profile_roots()):
+    roots = _profile_roots()
+    if roots is None:
+        return False, "the list of user profiles could not be read, so no folder can be checked against it"
+    if any(root == full or root.startswith(full.rstrip(os.sep) + os.sep) for root in roots):
         return False, "a whole user profile or its parent"
     parent = os.path.basename(os.path.dirname(full))
     if parent == "packages" and is_family_name(os.path.basename(full)):

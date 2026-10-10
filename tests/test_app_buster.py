@@ -629,8 +629,46 @@ def test_review_profile_read_error_is_logged(monkeypatch, caplog):
     def denied(*a):
         raise PermissionError("denied")
     monkeypatch.setattr(act.winreg, "OpenKey", denied)
-    assert act._profile_roots() == []
+    assert act._profile_roots() is None
     assert "cannot read profile roots" in caplog.text
+
+
+@pytest.mark.parametrize("operation", ["OpenKey", "QueryInfoKey", "EnumKey"])
+def test_profile_list_read_failure_refuses_allowed_folder(tmp_path, monkeypatch, operation):
+    from contextlib import nullcontext
+    monkeypatch.setattr(act.winreg, "OpenKey", lambda *a: nullcontext(1))
+    monkeypatch.setattr(act.winreg, "QueryInfoKey", lambda *a: (1, 0, 0))
+    def denied(*a):
+        raise PermissionError("denied")
+    monkeypatch.setattr(act.winreg, operation, denied)
+    assert act.folder_allowed(str(tmp_path / "vendor" / "app")) == (
+        False, "the list of user profiles could not be read, so no folder can be checked against it")
+
+
+@pytest.mark.parametrize("operation", ["OpenKey", "QueryValueEx"])
+def test_bad_profile_entry_keeps_other_roots_and_package_allowance(tmp_path, monkeypatch, caplog, operation):
+    from contextlib import nullcontext
+    profiles = {"first": str(tmp_path / "relocated" / "first"),
+                "last": str(tmp_path / "relocated" / "last")}
+    def open_key(parent, name):
+        if name == "broken" and operation == "OpenKey":
+            raise PermissionError("denied")
+        return nullcontext(name)
+    def read_value(key, name):
+        if key == "broken":
+            raise FileNotFoundError("missing ProfileImagePath")
+        return profiles[key], 1
+    monkeypatch.setattr(act.winreg, "OpenKey", open_key)
+    monkeypatch.setattr(act.winreg, "QueryInfoKey", lambda *a: (3, 0, 0))
+    monkeypatch.setattr(act.winreg, "EnumKey", lambda key, index: ("first", "broken", "last")[index])
+    monkeypatch.setattr(act.winreg, "QueryValueEx", read_value)
+    for profile in profiles.values():
+        assert not act.folder_allowed(profile)[0]
+        assert not act.folder_allowed(os.path.dirname(profile))[0]
+        package = os.path.join(profile, "AppData", "Local", "Packages", "Acme.Gone_abcdefghjkmnp")
+        assert act.folder_allowed(package)[0]
+    assert act.folder_allowed(str(tmp_path / "vendor" / "app"))[0]
+    assert any(r.levelname == "WARNING" and "broken" in r.message for r in caplog.records)
 
 
 def test_review_resolved_unc_prefix_is_stripped(monkeypatch):

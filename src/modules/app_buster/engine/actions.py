@@ -593,21 +593,54 @@ def install_windows_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
                    else "Windows did not register it.")
 
 
+def parse_list_row(output: str, winget_id: str) -> Optional[Tuple[str, str]]:
+    """Read installed/available versions from an exact ID's table columns."""
+    columns = None
+    for line in output.splitlines():
+        labels = list(re.finditer(r"\S+", line))
+        names = [label.group() for label in labels]
+        if names[:3] == ["Name", "Id", "Version"]:
+            columns = {label.group(): label.start() for label in labels}
+            continue
+        if columns is None:
+            continue
+        version_start = columns["Version"]
+        if line[columns["Id"]:version_start].strip() != winget_id:
+            continue
+        available_start = columns.get("Available", columns.get("Source", len(line)))
+        installed = line[version_start:available_start].strip()
+        available = (line[available_start:columns.get("Source", len(line))].strip()
+                     if "Available" in columns else "")
+        return (installed, available) if installed else None
+    return None
+
+
 def update_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
     if not rec.winget_id:
         return Outcome(rec, SKIPPED, "winget offers no update for it.")
     rc, out = runner.run(["winget", "upgrade", "--id", rec.winget_id, "--exact",
                           "--accept-source-agreements", "--accept-package-agreements",
-                          "--disable-interactivity"], timeout=3600)
+                          "--disable-interactivity", "--include-unknown"], timeout=3600)
     for line in out.splitlines()[-15:]:
         if line.strip():
             log(line.rstrip())
+    if "cannot be uninstalled when running with administrator privileges" in out.lower():
+        return Outcome(rec, SKIPPED, "Installed for your account only, and winget will not update it "
+                       "from an app running as administrator. Start the app without admin to update it.")
+    if "no applicable upgrade found" in out.lower():
+        return Outcome(rec, SKIPPED, "winget found no update that applies to this PC.")
     rc2, listed = runner.run(["winget", "list", "--id", rec.winget_id, "--exact",
                               "--disable-interactivity", "--accept-source-agreements"], timeout=120)
-    if rec.update and rec.update in listed:
-        return Outcome(rec, UPDATED, f"Now {rec.update}")
-    return Outcome(rec, FAILED, f"winget finished (exit {rc}), but version {rec.update} is not what is "
-                                "installed now.")
+    row = parse_list_row(listed, rec.winget_id) if rc2 == 0 else None
+    if row is None:
+        return Outcome(rec, SKIPPED, "Could not read the installed version back, so the update is unconfirmed.")
+    installed, available = row
+    known = installed.casefold() != "unknown"
+    matches = bool(rec.update) and installed.casefold().removeprefix("v") == rec.update.casefold().removeprefix("v")
+    if known and (matches or not available):
+        return Outcome(rec, UPDATED, f"Now {installed}")
+    return Outcome(rec, FAILED, f"winget finished (exit {rc}), but {installed} is still installed "
+                   f"({available} available).")
 
 
 def modify_app(rec: m.AppRecord, runner: Runner, log: Log, cancelled: Cancelled) -> Outcome:

@@ -355,6 +355,10 @@ class FakeRunner(act.Runner):
         self.scripts.append(script)
         return 0, self.output, ""
 
+    def run(self, args, timeout=180):
+        self.scripts.append(args)
+        return 0, self.output if args[1] == "upgrade" else self.list_output
+
 
 def wapp(**kw):
     base = dict(key="appx:x", name="X", full_name="X_1.0.0.0_x64__8wekyb3d8bbwe",
@@ -674,3 +678,58 @@ def test_bad_profile_entry_keeps_other_roots_and_package_allowance(tmp_path, mon
 def test_review_resolved_unc_prefix_is_stripped(monkeypatch):
     monkeypatch.setattr(act.os.path, "realpath", lambda p: r"\\?\UNC\server\share\folder")
     assert act._resolved_path("alias") == os.path.normcase(r"\\server\share\folder")
+
+
+UPDATE_LISTS = [
+    ("OCBase.OCCT.Personal", "17.1.7.0", "17.1.3.0", "Name Id                   Version  Available Source\n---------------------------------------------------\nOCCT OCBase.OCCT.Personal 17.1.3.0 17.1.7.0  winget"),
+    ("Blizzard.BattleNet", "1.19.3.3219", "Unknown", "Name       Id                 Version Available   Source\n--------------------------------------------------------\nBattle.net Blizzard.BattleNet Unknown 1.19.3.3219 winget"),
+    ("Sidekick-Poe.Sidekick", "v2026.8.7", "26.08.04.01", "Name                 Id                    Version     Available Source\n-----------------------------------------------------------------------\nSidekick 26.08.04.01 Sidekick-Poe.Sidekick 26.08.04.01 v2026.8.7 winget"),
+]
+
+
+@pytest.mark.parametrize("winget_id,target,installed,listed", UPDATE_LISTS)
+def test_update_available_version_is_not_installed(winget_id, target, installed, listed):
+    runner = FakeRunner(None, None)
+    runner.list_output = listed
+    result = act.update_app(rec(winget_id=winget_id, update=target), runner, lambda line: None)
+    assert result.state == act.FAILED
+    assert result.reason == f"winget finished (exit 0), but {installed} is still installed ({target} available)."
+    assert act.parse_list_row("  -\n  /\n" + listed, winget_id) == (installed, target)
+    assert "--include-unknown" in runner.scripts[0]
+
+
+@pytest.mark.parametrize("version,available,target,state", [
+    ("2.0", "", "3.0", act.UPDATED),
+    ("V2.0", "3.0", "v2.0", act.UPDATED),
+    ("Unknown", "", "2.0", act.FAILED),
+])
+def test_update_verifies_installed_columns(version, available, target, state):
+    runner = FakeRunner(None, None)
+    runner.list_output = f"Name Id       Version Available Source\n--------------------------------------\nApp  Acme.App {version:<8}{available:<10}winget"
+    result = act.update_app(rec(winget_id="Acme.App", update=target), runner, lambda line: None)
+    assert result.state == state
+
+
+@pytest.mark.parametrize("output,reason", [
+    ("The package installed for user scope cannot be uninstalled when running with administrator privileges.",
+     "Installed for your account only, and winget will not update it from an app running as administrator. Start the app without admin to update it."),
+    ("No applicable upgrade found.", "winget found no update that applies to this PC."),
+    ("", "Could not read the installed version back, so the update is unconfirmed."),
+])
+def test_update_refusals_and_unconfirmed_list(output, reason):
+    runner = FakeRunner(None, None, output=output)
+    runner.list_output = "unreadable 2.0"
+    result = act.update_app(rec(winget_id="Acme.App", update="2.0"), runner, lambda line: None)
+    assert result.state == act.SKIPPED
+    assert result.reason == reason
+
+
+@pytest.mark.parametrize("listed,expected", [
+    ("Name Id       Version Source\n----------------------------\nApp  Acme.App 2.0     winget", ("2.0", "")),
+    ("Name Id       Version\n---------------------\nApp  Acme.App 2.0", ("2.0", "")),
+    ("Name Id       Version Available\n-------------------------------\nApp  Acme.App 1.0     2.0", ("1.0", "2.0")),
+    ("Name Id       Version\n---------------------\nApp  Acme.App.Other 2.0", None),
+    ("No installed package found", None),
+])
+def test_parse_list_optional_columns_and_exact_id(listed, expected):
+    assert act.parse_list_row(listed, "Acme.App") == expected

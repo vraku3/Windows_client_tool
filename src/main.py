@@ -49,8 +49,12 @@ def _global_exception_handler(exc_type, exc_value, exc_tb):
             msg.setText("An unexpected error occurred. The application may continue running.")
             msg.setDetailedText(tb_text)
             # Find the active modal window to use as parent
+            from PyQt6.QtCore import Qt
             for w in app.topLevelWidgets():
-                if w.isWindow() and w.isVisible() and w.windowType() == w.WindowType.Dialog:
+                # Qt.WindowType, not w.WindowType: the latter does not exist on a
+                # widget, and raised here for every visible window (2026-09-18 log),
+                # so the error dialog never appeared at all.
+                if w.isWindow() and w.isVisible() and w.windowType() == Qt.WindowType.Dialog:
                     msg.setParent(w)
                     break
             copy_btn = msg.addButton("Copy to Clipboard", QMessageBox.ButtonRole.ActionRole)

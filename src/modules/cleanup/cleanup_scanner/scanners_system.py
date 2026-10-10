@@ -1701,6 +1701,7 @@ _SERVICE_STOP_WAIT_SECS = 20
 
 #: Win32 ERROR_SERVICE_ALREADY_RUNNING. Not a failure — the desired end state.
 ERROR_SERVICE_ALREADY_RUNNING = 1056
+ERROR_SERVICE_NOT_ACTIVE = 1062
 
 
 def protected_app_dirs() -> List[str]:
@@ -1786,7 +1787,14 @@ def delete_items(items: List[ScanItem],
                         "cleaning anyway; files it still holds open will be skipped",
                         self.name, _SERVICE_STOP_WAIT_SECS, e)
             except Exception as e:
-                logger.warning("Failed to stop service %s: %s", self.name, e)
+                # wuauserv is trigger-started and is usually NOT running, so
+                # StopService answers 1062 (seen 2026-10-03). Already stopped
+                # is what this guard wants; and since we did not stop it, we
+                # must not start it again afterwards (_stopped stays False).
+                if getattr(e, "winerror", None) == ERROR_SERVICE_NOT_ACTIVE:
+                    logger.debug("Service %s was already stopped", self.name)
+                else:
+                    logger.warning("Failed to stop service %s: %s", self.name, e)
 
         def __exit__(self, exc_type, exc_val, exc_tb):
             if self._stopped:

@@ -90,6 +90,9 @@ HIDDEN_IMPORTS = [
     "pywin32", "pywin32_bootstrap",
     "win32api", "win32con", "win32gui", "win32process", "win32service", "win32evtlog",
     "win32com", "win32com.client",
+    # pywin32 imports this lazily to convert COM dates (a scheduled task's
+    # LastRunTime); without it the frozen Startup tab listed no tasks.
+    "win32timezone",
     # TreeSize. All of these are imported lazily, inside functions, and
     # win32com.shell is loaded dynamically by pywin32 -- PyInstaller finds
     # none of them by static analysis. Without them the frozen build still

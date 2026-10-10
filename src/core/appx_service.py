@@ -22,12 +22,18 @@ logger = logging.getLogger(__name__)
 # ConvertTo-Json writes as a NUMBER (9 = X64, 11 = Neutral, 0 = X86). The Store
 # Apps table then called QTableWidgetItem(9), which PyQt takes as the item TYPE
 # overload rather than text, so the Architecture column was blank on every row.
-# Emit the name instead.
+# Emit the name instead. SignatureKind is the same kind of enum (Store=3,
+# System=4, Developer=1 ...), so it goes through [string] too.
+# NonRemovable is Windows' own "cannot be uninstalled" flag -- the one
+# Settings > Apps greys Uninstall out on (52 of 154 packages here,
+# 2026-10-09); see modules/store_apps/package_info.py.
 _SELECT = ("Select-Object Name, Publisher, Version, InstallLocation, "
            "PackageFamilyName, "
            "@{Name='Architecture';Expression={[string]$_.Architecture}}, "
            "IsFramework, IsResourcePackage, "
-           "IsPartiallyStaged | ConvertTo-Json -Compress")
+           "IsPartiallyStaged, NonRemovable, "
+           "@{Name='SignatureKind';Expression={[string]$_.SignatureKind}} "
+           "| ConvertTo-Json -Compress")
 
 #: How long a fetched package list is reused before re-querying.
 CACHE_TTL_SECONDS = 60
@@ -155,6 +161,25 @@ def _enumerate() -> Optional[List[dict]]:
     reduce a real machine's packages to an empty list; a query that never
     got a usable answer must not look identical to that (see
     `fetch_packages_or_none`)."""
+    result = _enumerate_with_scope()
+    return None if result is None else result[0]
+
+
+def fetch_packages_with_scope_or_none() -> Optional[Tuple[List[dict], bool]]:
+    """A fresh (uncached) enumeration plus WHOSE packages it is:
+    `(packages, all_users)`, or `None` when it could not be read at all.
+
+    `all_users` False means `-AllUsers` was refused and the list is the
+    current user's registrations only. Measured unelevated 2026-10-09:
+    `Get-AppxPackage -AllUsers` exits 1 "Access is denied." in 0.4s, the
+    per-user query returns 154 packages in 0.9s -- so a pane that does not
+    say which one it is showing implies "every app on this machine" while
+    showing one account's.
+    """
+    return _enumerate_with_scope()
+
+
+def _enumerate_with_scope() -> Optional[Tuple[List[dict], bool]]:
     from core.admin_utils import is_admin
 
     # -AllUsers needs elevation on some machines; try the per-user query as
@@ -173,7 +198,7 @@ def _enumerate() -> Optional[List[dict]]:
         if any(marker in (stderr + stdout).lower() for marker in refused):
             continue
         try:
-            return _clean(json.loads(stdout))
+            return _clean(json.loads(stdout)), all_users
         except json.JSONDecodeError:
             logger.warning("Failed to parse AppxPackage output")
     logger.warning("AppxPackage enumeration failed -- every attempt was "

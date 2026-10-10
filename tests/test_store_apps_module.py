@@ -73,6 +73,34 @@ def test_short_publisher_extracts_organization():
     )
     assert short_publisher("SomeOther") == "SomeOther"
     assert short_publisher("") == ""
+    # Real DNs from this machine: quoted values, commas inside the quotes.
+    assert short_publisher(
+        'CN="GIGA-BYTE TECHNOLOGY CO., LTD.", O="GIGA-BYTE TECHNOLOGY CO., LTD.", '
+        'STREET="5 F., No. 6", L=New Taipei, C=TW') == "GIGA-BYTE TECHNOLOGY CO., LTD."
+    assert short_publisher(
+        'E=don.h@free.fr, CN="NOTEPAD++", O="NOTEPAD++", L=Paris, C=FR') == "NOTEPAD++"
+
+
+def test_friendly_name_from_a_windowsapps_full_name_folder():
+    # Real: a GUID-named Gigabyte package showed as "1.23.0_x64_".
+    loc = (r"C:\Program Files\WindowsApps"
+           r"\65d483df-b37e-4fcf-94de-8b795233db63_25.1.23.0_x64__1mmjbktjj1mkp")
+    assert friendly_name_from_location(loc) == ""
+    assert resolve_package_name("65d483df-b37e-4fcf-94de-8b795233db63", loc) == (
+        "65d483df-b37e-4fcf-94de-8b795233db63")
+    assert friendly_name_from_location(
+        r"C:\Program Files\WindowsApps\NotepadPlusPlus_1.0.0.0_neutral__2247w0b46hfww"
+    ) == "NotepadPlusPlus"
+
+
+def test_non_removable_flag_protects_settings_and_security():
+    # Both live outside SystemApps; only Windows' own flag catches them.
+    assert is_system_package("windows.immersivecontrolpanel",
+                             r"C:\Windows\ImmersiveControlPanel", True)
+    assert not is_system_package("windows.immersivecontrolpanel",
+                                 r"C:\Windows\ImmersiveControlPanel")
+    # The Store is not NonRemovable but stays protected by name.
+    assert is_system_package("Microsoft.WindowsStore", r"C:\Program Files\x", False)
 
 
 def test_is_system_package_by_location():
@@ -117,10 +145,15 @@ def test_human_size():
 
 
 def test_failure_hint():
-    assert (
-        failure_hint("0x80073CFB ... in use ...")
-        == "The app may be running. Close it and try again."
-    )
+    # 0x80073CFB is ERROR_PACKAGE_ALREADY_EXISTS, not "in use" -- this test
+    # used to pin it as the in-use code. The code now wins over loose wording.
+    assert failure_hint("0x80073CFB ... in use ...").startswith("0x80073CFB: ")
+    # The real in-use failure, verbatim from this machine's event 404.
+    assert failure_hint(
+        "error 0x80073D02: Unable to install because the following apps need "
+        "to be closed MicrosoftWindows.CrossDevice_1.26072.116.0_x64__cw5n1h2txyewy."
+    ) == "The app is running. Close it and try again."
+    assert "NonRemovable" in failure_hint("Remove-AppxPackage : 0x80073CFA, Removal failed")
     assert (
         failure_hint("The file is being used by another process")
         == "The app may be running. Close it and try again."

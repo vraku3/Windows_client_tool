@@ -221,20 +221,61 @@ def key_allowed(key: str) -> bool:
     return any(p.match(key) for p in _KEY_ALLOWED)
 
 
+def _resolved_path(path: str) -> str:
+    full = os.path.realpath(os.path.expandvars(path))
+    if full.lower().startswith("\\\\?\\unc\\"):
+        full = "\\\\" + full[8:]
+    elif full.startswith("\\\\?\\"):
+        full = full[4:]
+    return os.path.normcase(full)
+
+
+def _profile_roots() -> List[str]:
+    roots = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList") as profiles:
+            for index in range(winreg.QueryInfoKey(profiles)[0]):
+                with winreg.OpenKey(profiles, winreg.EnumKey(profiles, index)) as profile:
+                    path, _kind = winreg.QueryValueEx(profile, "ProfileImagePath")
+                    if path:
+                        roots.append(_resolved_path(path))
+    except OSError as e:
+        logger.warning("cannot read profile roots: %s", e)
+        return []
+    return roots
+
+
+def _has_link_ancestor(path: str) -> bool:
+    current = os.path.abspath(path)
+    while current:
+        if os.path.isjunction(current) or os.path.islink(current):
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return False
+
+
 def folder_allowed(path: str) -> Tuple[bool, str]:
     """Is this a folder a cleanup may delete? (allowed, why not)."""
     if not path:
         return False, "no folder"
-    full = os.path.normcase(os.path.abspath(path))
+    full = _resolved_path(path)
     drive, rest = os.path.splitdrive(full)
     parts = [p for p in rest.split(os.sep) if p]
-    windir = os.path.normcase(system_root())
+    windir = _resolved_path(system_root())
     if full == windir or full.startswith(windir + os.sep):
         return False, "inside the Windows directory"
+    if _has_link_ancestor(path) or _has_link_ancestor(full):
+        return False, "a junction or symbolic link in the path"
+    if any(root == full or root.startswith(full.rstrip(os.sep) + os.sep) for root in _profile_roots()):
+        return False, "a whole user profile or its parent"
     parent = os.path.basename(os.path.dirname(full))
     if parent == "packages" and is_family_name(os.path.basename(full)):
         return True, ""
-    protected = {os.path.normcase(os.environ.get(v, "") or "") for v in
+    protected = {_resolved_path(os.environ[v]) if os.environ.get(v) else "" for v in
                  ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData", "USERPROFILE",
                   "LOCALAPPDATA", "APPDATA", "PUBLIC", "SystemDrive")}
     protected.discard("")
@@ -251,13 +292,16 @@ def folder_allowed(path: str) -> Tuple[bool, str]:
 _HIVES = {"HKLM": winreg.HKEY_LOCAL_MACHINE, "HKCU": winreg.HKEY_CURRENT_USER}
 
 
-def key_exists(key: str) -> bool:
+def key_exists(key: str) -> Optional[bool]:
     hive, _, path = key.partition("\\")
     try:
         winreg.CloseKey(winreg.OpenKey(_HIVES[hive], path))
         return True
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError as e:
+        logger.warning("cannot read registry key %s: %s", key, e)
+        return None
 
 
 def backup_key(key: str, folder: str, runner: Runner) -> Tuple[bool, str]:
@@ -287,7 +331,8 @@ def delete_key(key: str) -> Tuple[bool, str]:
         return False, "needs administrator"
     if rc not in (0, 2):
         return False, f"RegDeleteTree failed ({rc})"
-    return (not key_exists(key)), ("" if not key_exists(key) else "the key is still there")
+    gone = key_exists(key) is False
+    return gone, "" if gone else "the key is still there or could not be read"
 
 
 # ---- folders ---------------------------------------------------------------------------------
@@ -315,16 +360,27 @@ def delete_folder(path: str) -> Tuple[bool, List[str]]:
 MOVEFILE_DELAY_UNTIL_REBOOT = 0x4
 
 
+def _restart_entries(path: str):
+    with os.scandir(path) as entries:
+        for entry in entries:
+            if not entry.is_junction() and not entry.is_symlink() and entry.is_dir(follow_symlinks=False):
+                yield from _restart_entries(entry.path)
+            else:
+                yield entry.path
+    yield path
+
+
 def delete_at_restart(path: str) -> Tuple[bool, str]:
     """Ask Windows to delete a folder's files, then the folders, at the next
     boot (PendingFileRenameOperations; needs administrator)."""
     ok, why = folder_allowed(path)
     if not ok:
         return False, f"refused: {path} is {why}"
-    entries = []
-    for root, dirs, files in os.walk(path, topdown=False):
-        entries += [os.path.join(root, f) for f in files] + [os.path.join(root, d) for d in dirs]
-    entries.append(path)
+    try:
+        entries = list(_restart_entries(path))
+    except OSError as e:
+        logger.warning("cannot list restart deletion target %s: %s", path, e)
+        return False, str(e)
     move = ctypes.windll.kernel32.MoveFileExW
     for p in entries:
         if not move(p, None, MOVEFILE_DELAY_UNTIL_REBOOT):
@@ -365,7 +421,7 @@ def remove_windows_app(rec: m.AppRecord, scope: str, runner: Runner, log: Log) -
     if scope in (SCOPE_ALL, SCOPE_PC):
         script += (f" -AllUsers; Get-AppxProvisionedPackage -Online | Where-Object DisplayName -eq "
                    f"'{ps_quote(rec.package_name)}' | Remove-AppxProvisionedPackage -Online -AllUsers")
-    if present is not False:
+    if scope in (SCOPE_ALL, SCOPE_PC) or present is not False:
         rc, out, err = runner.powershell(script)
         for line in (out + err).splitlines():
             if line.strip():
@@ -382,7 +438,10 @@ def remove_windows_app(rec: m.AppRecord, scope: str, runner: Runner, log: Log) -
         return Outcome(rec, SKIPPED, f"{REASON_PROTECTED}: it is still installed after the removal.")
     if scope in (SCOPE_ALL, SCOPE_PC):
         everyone = runner.all_user_families()
-        if everyone is not None and rec.family.lower() in everyone:
+        if everyone is None:
+            return Outcome(rec, SKIPPED, "Removed for you, but the all-users list could not be read, "
+                           "so removal for other accounts is unconfirmed")
+        if rec.family.lower() in everyone:
             return Outcome(rec, SKIPPED, "Removed for you, but still installed for another account.")
     if scope == SCOPE_PC:
         stuck = []
@@ -404,9 +463,12 @@ def remove_desktop_app(rec: m.AppRecord, runner: Runner, log: Log, cancelled: Ca
     log(f"running its uninstaller: {command}")
     runner.interactive(command, cancelled)
     for _ in range(20):                       # some uninstallers clean the key a moment later
-        if not key_exists(rec.registry_key):
+        registered = key_exists(rec.registry_key)
+        if registered is False:
             return Outcome(rec, REMOVED)
         time.sleep(0.5)
+    if registered is None:
+        return Outcome(rec, SKIPPED, "Could not read the registry back, so the uninstall is unconfirmed")
     location_gone = bool(rec.install_location) and not os.path.exists(rec.install_location)
     from modules.startup_manager.persistence import resolve_command
     exe, _a = resolve_command(rec.uninstall_string)
@@ -427,7 +489,7 @@ def backup_folder() -> str:
 
 def _clean_keys(keys: Sequence[str], runner: Runner, log: Log) -> Tuple[bool, str]:
     for key in keys:
-        if not key_exists(key):
+        if key_exists(key) is False:
             continue
         if not key_allowed(key):
             return False, f"refused to delete {key}"
@@ -483,15 +545,17 @@ def remove_at_restart(rec: m.AppRecord, scope: str) -> Outcome:
     """Windows apps: a RunOnce entry removes the package when you next sign in
     (before the app can start). Leftover folders: delete at the next boot."""
     if rec.type == m.WINDOWS and rec.full_name:
-        flag = " -AllUsers" if scope in (SCOPE_ALL, SCOPE_PC) else ""
         command = ("powershell -NoProfile -WindowStyle Hidden -Command \"Remove-AppxPackage -Package "
-                   f"'{ps_quote(rec.full_name)}'{flag}\"")
+                   f"'{ps_quote(rec.full_name)}'\"")
         try:
             with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUNONCE, 0, winreg.KEY_SET_VALUE) as k:
                 name = "AppBuster_" + re.sub(r"[^A-Za-z0-9]", "", rec.package_name)[:40]
                 winreg.SetValueEx(k, name, 0, winreg.REG_SZ, command)
         except OSError as e:
             return Outcome(rec, SKIPPED, f"Could not schedule the removal: {e}")
+        if scope in (SCOPE_ALL, SCOPE_PC):
+            return Outcome(rec, DEFERRED, "Will be removed for your account after restart; run the removal "
+                           "again with All users after restarting to finish it for other accounts")
         return Outcome(rec, DEFERRED, "Will be removed after restart")
     folders = [p for p in rec.leftover_paths if not p.upper().startswith(("HKLM\\", "HKCU\\"))]
     for folder in folders:

@@ -58,3 +58,18 @@ def test_the_outlook_folders_and_their_parents_are_refused(monkeypatch):
     from modules.cleanup.cleanup_scanner import scanners_system as ss
     guarded = ss.protected_user_data_dirs()
     assert any(p.lower().endswith(r"microsoft\outlook") for p in guarded)
+
+
+
+def test_review_unreadable_outlook_tree_is_refused(tmp_path, monkeypatch, caplog):
+    from modules.cleanup.cleanup_scanner import ScanItem, scanners_system as ss
+    folder = tmp_path / "cache"
+    folder.mkdir()
+    def unreadable(path, onerror):
+        onerror(PermissionError(13, "denied", str(folder)))
+        return iter(())
+    monkeypatch.setattr(ss.os, "walk", unreadable)
+    assert ss.holds_outlook_data(str(folder), True)
+    assert str(folder) in caplog.text and caplog.records[-1].levelname == "WARNING"
+    assert ss.delete_items([ScanItem(str(folder), 1, True, True, "safe")]) == (0, 1)
+    assert folder.exists()

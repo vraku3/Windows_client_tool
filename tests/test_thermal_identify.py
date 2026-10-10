@@ -193,3 +193,86 @@ def test_the_bar_counts_down_and_offers_stop(qapp, tmp_path, monkeypatch):
     bar._clicked("gpu")
     assert button.text().startswith("Identify (") and svc.identifying() == {}
     assert not bar._cards["cpu"][2].isEnabled()             # no hardware open in this test
+
+
+
+def test_review_gpu_marker_saved_before_writes(qapp, tmp_path, monkeypatch):
+    store = {}
+    fake, svc = _gpu(monkeypatch, tmp_path, store)
+    saved = []
+    svc._app.config.save = lambda: saved.append(dict(store))
+    original = adlx.set_zero_rpm
+    def checked(*args):
+        assert saved and _XTX in saved[0]["modules.thermal_control.gpu_identify_restore"]
+        return original(*args)
+    monkeypatch.setattr(adlx, "set_zero_rpm", checked)
+    svc.identify_gpu(_XTX)
+    assert len(saved) == 1 and ("zero", False) in fake.calls
+    svc.shutdown()
+
+
+def test_review_gpu_queued_identify_cannot_write_after_shutdown(qapp, tmp_path, monkeypatch):
+    fake, svc = _gpu(monkeypatch, tmp_path, {})
+    jobs = []
+    monkeypatch.setattr(svc, "_gpu_job", lambda fn, done: jobs.append(fn))
+    svc.identify_gpu(_XTX)
+    svc.shutdown()
+    before = list(fake.calls)
+    jobs[0](None)
+    assert fake.calls == before and fake.gpu.curve == _FACTORY
+
+
+def test_review_gpu_stop_between_writes_skips_curve(qapp, tmp_path, monkeypatch):
+    fake, svc = _gpu(monkeypatch, tmp_path, {})
+    original = adlx.set_zero_rpm
+    def stopped(*args):
+        original(*args)
+        svc._stopped = True
+    monkeypatch.setattr(adlx, "set_zero_rpm", stopped)
+    svc.identify_gpu(_XTX)
+    assert fake.gpu.curve == _FACTORY
+    svc.shutdown()
+
+
+
+def test_review_shutdown_waits_for_identify_write_lock(qapp, tmp_path, monkeypatch):
+    import threading
+    fake, svc = _gpu(monkeypatch, tmp_path, {})
+    jobs, errors = [], []
+    entered, release, restored = threading.Event(), threading.Event(), threading.Event()
+    monkeypatch.setattr(svc, "_gpu_job", lambda fn, done: jobs.append(fn))
+    monkeypatch.setattr(svc, "_read_gpu_fans", lambda: [])
+    original_zero, original_restore = adlx.set_zero_rpm, svc._restore_gpu
+    def blocked_zero(*args):
+        entered.set()
+        if not release.wait(5):
+            raise RuntimeError("test did not release write")
+        original_zero(*args)
+    def restore(name):
+        original_restore(name)
+        restored.set()
+    monkeypatch.setattr(adlx, "set_zero_rpm", blocked_zero)
+    monkeypatch.setattr(svc, "_restore_gpu", restore)
+    # Shutdown runs off-thread here: use a Qt-free timer stand-in.
+    svc._timer = SimpleNamespace(stop=lambda: None)
+    svc.identify_gpu(_XTX)
+    def run(fn):
+        try:
+            fn()
+        except Exception as e:
+            errors.append(e)
+    writer = threading.Thread(target=lambda: run(lambda: jobs[0](None)))
+    shutdown = threading.Thread(target=lambda: run(svc.shutdown))
+    writer.start()
+    try:
+        assert entered.wait(5)
+        shutdown.start()
+        assert not restored.wait(0.1)
+    finally:
+        release.set()
+        writer.join(5)
+        if shutdown.ident is not None:
+            shutdown.join(5)
+    assert not writer.is_alive() and not shutdown.is_alive() and not errors
+    assert restored.is_set() and fake.gpu.curve == _FACTORY
+    assert fake.calls[-1] == ("reset",)

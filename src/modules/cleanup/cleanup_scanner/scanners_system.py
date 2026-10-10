@@ -1887,10 +1887,17 @@ def holds_outlook_data(path: str, is_dir: bool) -> bool:
     """A .pst/.ost file, or a folder with one anywhere inside it."""
     if not is_dir:
         return path.lower().endswith(OUTLOOK_DATA_EXTENSIONS)
-    for _root, _dirs, files in os.walk(path, onerror=lambda e: None):
+    unreadable = False
+
+    def onerror(error):
+        nonlocal unreadable
+        unreadable = True
+        logger.warning("cannot check Outlook data in %s: %s", error.filename or path, error)
+
+    for _root, _dirs, files in os.walk(path, onerror=onerror):
         if any(f.lower().endswith(OUTLOOK_DATA_EXTENSIONS) for f in files):
             return True
-    return False
+    return unreadable
 
 
 def _is_inside(path: str, folder: str) -> bool:

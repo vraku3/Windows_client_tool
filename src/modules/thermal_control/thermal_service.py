@@ -14,6 +14,7 @@ import atexit
 import logging
 import os
 import time
+import threading
 from typing import Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
@@ -62,6 +63,7 @@ class ThermalService(QObject):
         self._busy = False
         self._workers: list = []
         self._stopped = False
+        self._gpu_identify_lock = threading.Lock()
         self.gpu_fans: list = []
         self.adlx_dir = ""
         self._identify: Dict[str, Tuple[float, QTimer]] = {}     # target -> (ends at, timer)
@@ -122,11 +124,12 @@ class ThermalService(QObject):
             logger.info("thermal shutdown after Qt teardown: %s", e)
         for worker in self._workers:
             worker.cancel()
-        for name in self._identify_names():
-            try:
-                self._restore_gpu(name)          # synchronous: the app is going away
-            except Exception as e:  # AdlxError, or the library already unloaded at exit
-                logger.error("could not put %s back after Identify at shutdown: %s", name, e)
+        with self._gpu_identify_lock:
+            for name in self._identify_names():
+                try:
+                    self._restore_gpu(name)          # synchronous: the app is going away
+                except Exception as e:  # AdlxError, or the library already unloaded at exit
+                    logger.error("could not put %s back after Identify at shutdown: %s", name, e)
         self._identify.clear()
         if self.controller is not None:
             failed = self.controller.shutdown()
@@ -328,13 +331,19 @@ class ThermalService(QObject):
             restore[name] = {"factory": bool(st.gpu.at_factory), "curve": [list(p) for p in st.gpu.curve],
                              "zero": st.gpu.zero_rpm}
             self._config_set(GPU_IDENTIFY_KEY, restore)        # before the write, never after
+            self._config_save()
             top = (st.gpu.speed_range or (0, 100))[1]
             flat = [(t, top) for t, _s in st.gpu.curve]
 
             def work(_w):
-                if st.gpu.zero_rpm:
-                    adlx.set_zero_rpm(name, False, self.adlx_dir)
-                adlx.set_curve(name, flat, self.adlx_dir)
+                with self._gpu_identify_lock:
+                    if self._stopped:
+                        return
+                    if st.gpu.zero_rpm:
+                        adlx.set_zero_rpm(name, False, self.adlx_dir)
+                    if self._stopped:
+                        return
+                    adlx.set_curve(name, flat, self.adlx_dir)
                 return self._read_gpu_fans()
             self._gpu_job(work, self._gpu_fans_read)
         return ""
@@ -520,6 +529,12 @@ class ThermalService(QObject):
         config = getattr(self._app, "config", None)
         if config is not None:
             config.set(key, value)
+
+    def _config_save(self) -> None:
+        config = getattr(self._app, "config", None)
+        save = getattr(config, "save", None)
+        if save is not None:
+            save()
 
 
 def marker_path_for(app) -> str:

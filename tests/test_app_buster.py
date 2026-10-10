@@ -472,6 +472,8 @@ def test_dialogs_build(qapp):
 def test_live_scan_reads_every_source():
     from modules.app_buster.engine import scan
     result = scan.scan()
+    if result.problems == ["Windows apps could not be read: Get-AppxPackage returned nothing"]:
+        pytest.skip("Get-AppxPackage is unavailable in this test session")
     assert result.problems == []
     kinds = {r.type for r in result.rows}
     assert {m.WINDOWS, m.DESKTOP, m.FRAMEWORK} <= kinds
@@ -496,3 +498,141 @@ def test_global_search_finds_apps_once_the_list_exists(qapp):
     assert len(hits) == 1 and "recommended for removal" in hits[0].summary
     assert provider.search(SearchQuery(text="code editor"))[0].summary.startswith("Zed Editor")
     mod.on_stop()
+
+
+@pytest.mark.parametrize("scope", [act.SCOPE_ALL, act.SCOPE_PC])
+def test_review_unreadable_all_users_never_deletes_profiles(monkeypatch, scope):
+    monkeypatch.setattr(act, "profile_data_folders", lambda f: pytest.fail("profile cleanup attempted"))
+    out = act.remove_windows_app(wapp(), scope, FakeRunner(set(), set()), lambda l: None)
+    assert out.state == act.SKIPPED and "other accounts is unconfirmed" in out.reason
+
+
+@pytest.mark.parametrize("scope", [act.SCOPE_ALL, act.SCOPE_PC, act.SCOPE_USER])
+def test_review_absent_current_user_still_removes_all_users(monkeypatch, scope):
+    runner = FakeRunner(set(), set(), all_users=set())
+    monkeypatch.setattr(act, "profile_data_folders", lambda f: [])
+    act.remove_windows_app(wapp(), scope, runner, lambda l: None)
+    assert bool(runner.scripts) is (scope != act.SCOPE_USER)
+
+
+@pytest.mark.parametrize("error, expected", [(FileNotFoundError(), False), (PermissionError(), None),
+                                             (OSError("refused"), None)])
+def test_review_registry_reads_are_tristate(monkeypatch, caplog, error, expected):
+    def refused(*args):
+        raise error
+    monkeypatch.setattr(act.winreg, "OpenKey", refused)
+    assert act.key_exists(r"HKLM\fake") is expected
+    if expected is None:
+        assert caplog.records and caplog.records[-1].levelname == "WARNING"
+
+
+def test_review_uninstall_unknown_registry_keeps_polling(monkeypatch):
+    reads = []
+    monkeypatch.setattr(act, "key_exists", lambda k: reads.append(k))
+    monkeypatch.setattr(act.time, "sleep", lambda s: None)
+    runner = FakeRunner(None, None)
+    runner.interactive = lambda *a: 0
+    out = act.remove_desktop_app(rec(type=m.DESKTOP, uninstall_string="fake", registry_key="fake"),
+                                 runner, lambda l: None, lambda: False)
+    assert len(reads) == 20
+    assert out.state == act.SKIPPED and "registry back" in out.reason
+
+
+def test_review_clean_keys_unknown_requires_backup(monkeypatch):
+    key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Fake"
+    monkeypatch.setattr(act, "key_exists", lambda k: None)
+    monkeypatch.setattr(act, "backup_key", lambda *a: (False, "refused"))
+    assert act._clean_keys([key], FakeRunner(None, None), lambda l: None)[0] is False
+
+
+def test_review_delete_key_unknown_is_unconfirmed(monkeypatch):
+    from types import SimpleNamespace
+    from contextlib import nullcontext
+    key = r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Fake"
+    monkeypatch.setattr(act.winreg, "OpenKey", lambda *a: nullcontext(SimpleNamespace(handle=1)))
+    monkeypatch.setattr(act.ctypes.windll.advapi32, "RegDeleteTreeW", lambda *a: 0)
+    monkeypatch.setattr(act, "key_exists", lambda k: None)
+    assert act.delete_key(key)[0] is False
+
+
+@pytest.mark.parametrize("scope", [act.SCOPE_ALL, act.SCOPE_PC, act.SCOPE_USER])
+def test_review_deferred_removal_is_current_user_only(monkeypatch, scope):
+    from contextlib import nullcontext
+    commands = []
+    monkeypatch.setattr(act.winreg, "CreateKeyEx", lambda *a: nullcontext(1))
+    monkeypatch.setattr(act.winreg, "SetValueEx", lambda *a: commands.append(a[-1]))
+    out = act.remove_at_restart(wapp(), scope)
+    assert out.state == act.DEFERRED and "-AllUsers" not in commands[0]
+    assert ("other accounts" in out.reason) is (scope != act.SCOPE_USER)
+
+
+
+def test_review_folder_guard_resolves_extended_paths(tmp_path, monkeypatch):
+    windows = tmp_path / "Windows"
+    monkeypatch.setattr(act, "system_root", lambda: str(windows))
+    monkeypatch.setattr(act.os.path, "realpath", lambda p: "\\\\?\\" + str(windows / "SystemApps"))
+    assert act.folder_allowed(str(tmp_path / "alias"))[0] is False
+
+
+@pytest.mark.parametrize("link_kind", ["isjunction", "islink"])
+def test_review_folder_guard_refuses_link_ancestors(tmp_path, monkeypatch, link_kind):
+    ancestor = tmp_path / "alias"
+    monkeypatch.setattr(act.os.path, link_kind, lambda p: os.path.normcase(p) == os.path.normcase(str(ancestor)))
+    assert act.folder_allowed(str(ancestor / "Vendor" / "App"))[0] is False
+
+
+def test_review_profile_registry_roots_and_parents_are_protected(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    profile = tmp_path / "relocated" / "person"
+    monkeypatch.setattr(act.winreg, "OpenKey", lambda *a: nullcontext(1))
+    monkeypatch.setattr(act.winreg, "QueryInfoKey", lambda k: (1, 0, 0))
+    monkeypatch.setattr(act.winreg, "EnumKey", lambda *a: "sid")
+    monkeypatch.setenv("REVIEW_PROFILE", str(profile))
+    monkeypatch.setattr(act.winreg, "QueryValueEx", lambda *a: ("%REVIEW_PROFILE%", 2))
+    assert not act.folder_allowed(str(profile))[0]
+    assert not act.folder_allowed(str(profile.parent))[0]
+    assert act.folder_allowed(str(profile / "AppData" / "Local" / "Packages" / "Acme.Gone_abcdefghjkmnp"))[0]
+
+
+@pytest.mark.parametrize("kind", ["junction", "symlink"])
+def test_review_restart_walk_schedules_links_without_contents(tmp_path, monkeypatch, kind):
+    from types import SimpleNamespace
+    from contextlib import nullcontext
+    folder = tmp_path / "vendor" / "app"
+    link = str(folder / "link")
+    scans, scheduled = [], []
+    entry = SimpleNamespace(path=link, is_junction=lambda: kind == "junction",
+                            is_symlink=lambda: kind == "symlink", is_dir=lambda **k: True)
+    def scan(path):
+        scans.append(str(path))
+        return nullcontext(iter([entry] if str(path) == str(folder) else []))
+    monkeypatch.setattr(act, "folder_allowed", lambda p: (True, ""))
+    monkeypatch.setattr(act.os, "scandir", scan)
+    monkeypatch.setattr(act.ctypes.windll.kernel32, "MoveFileExW", lambda p, *a: scheduled.append(p) or 1)
+    assert act.delete_at_restart(str(folder)) == (True, "")
+    assert scans == [str(folder)] and scheduled == [link, str(folder)]
+
+
+
+def test_review_registry_poll_recovers_from_unknown(monkeypatch):
+    values = iter([None, True, False])
+    monkeypatch.setattr(act, "key_exists", lambda k: next(values))
+    monkeypatch.setattr(act.time, "sleep", lambda s: None)
+    runner = FakeRunner(None, None)
+    runner.interactive = lambda *a: 0
+    out = act.remove_desktop_app(rec(type=m.DESKTOP, uninstall_string="fake", registry_key="fake"),
+                                 runner, lambda l: None, lambda: False)
+    assert out.state == act.REMOVED
+
+
+def test_review_profile_read_error_is_logged(monkeypatch, caplog):
+    def denied(*a):
+        raise PermissionError("denied")
+    monkeypatch.setattr(act.winreg, "OpenKey", denied)
+    assert act._profile_roots() == []
+    assert "cannot read profile roots" in caplog.text
+
+
+def test_review_resolved_unc_prefix_is_stripped(monkeypatch):
+    monkeypatch.setattr(act.os.path, "realpath", lambda p: r"\\?\UNC\server\share\folder")
+    assert act._resolved_path("alias") == os.path.normcase(r"\\server\share\folder")

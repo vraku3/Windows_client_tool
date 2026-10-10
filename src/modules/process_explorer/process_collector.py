@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
 from core.worker import Worker
-from modules.process_explorer.process_node import ProcessNode
+from modules.process_explorer.process_node import ProcessNode, link_children
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,7 @@ def node_from_info(info, service_names: Set[str],
         if kind is not None and kind.packed is not None else False,
         packed_entropy=kind.packed.entropy
         if kind is not None and kind.packed is not None else None,
+        create_time=raw.create_time or 0,
     )
 
 
@@ -157,14 +158,12 @@ def build_snapshot(service_names: Set[str],
                              info.details.path, kind_budget)
         result[pid] = node_from_info(info, service_names, gpu, kind)
 
-    # Parent -> children, over the pids that are actually present. The
-    # engine's own tree has already broken any ppid cycle (pid reuse makes
-    # them, and a cycle wearing the shape of a tree never stops being
-    # walked), so this only has to re-hang the same links on these nodes.
-    for node in result.values():
-        parent = result.get(node.parent_pid)
-        if parent is not None and parent.pid != node.pid:
-            parent.children.append(node)
+    # Parent -> children, over the pids that are actually present. This
+    # used to link on the raw ppid alone while its comment claimed the
+    # engine had already broken cycles -- but these nodes never came from
+    # the engine's tree. `link_children` applies the same create-time and
+    # cycle rules the engine's `build_tree` does.
+    link_children(result)
 
     return result
 

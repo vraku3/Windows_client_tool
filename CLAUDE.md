@@ -477,6 +477,15 @@ bounded per-line timestamp window).
   `Local Storage`, `IndexedDB`, `Network` (cookies): target the former by
   name, never their parent. `delete_items` also REFUSES any `.pst`/`.ost`
   and the Outlook data folders, whatever offers them -- the user keeps both.
+- **The Discover tab (`cleanup_scanner/discover.py`, `tabs/_discover_tab.py`)
+  lists cache-named folders the ENABLED catalog does not cover; it never
+  deletes.** A candidate is skipped when it IS, or CONTAINS, a path a disabled
+  catalog entry targeted -- never merely for lying BENEATH one: most disabled
+  entries are whole-app roots (`%LOCALAPPDATA%\MathWorks`), rejected because
+  the whole folder holds settings and sign-ins, and the caches inside them are
+  exactly what Discover is for. OneNote's cache (unsynced pages) and
+  `Microsoft\Windows\WebCache` (WinINet's live cookie/history database) are
+  excluded by name. `tools/junk_hunt.py` is a thin CLI over the same engine.
 - **`tools/cleanup_reader_sweep.py`** is the cleanup sibling of
   `security_refusal_sweep.py`. "Found nothing" is the CORRECT answer for most of
   this catalog, so it only reports a scanner whose target exists AND has content

@@ -1,8 +1,8 @@
 """
-Cleanup module — 8-tab overhaul.
+Cleanup module — 9 tabs, including read-only cache discovery.
 
 Tabs: Quick Cleanup · System Junk · Browser Caches · App & Game Caches ·
-      Windows Update · Logs & Reports · Large Items · Dev Tools
+      Windows Update · Logs & Reports · Large Items · Dev Tools · Discover
 
 Cross-cutting: auto-scan on first tab switch, safety colour-coding,
 age filter per tab, running-process guard, >500 MB confirmation,
@@ -29,6 +29,7 @@ from modules.cleanup.tabs import (
     _BrowserCleanupTab,
     _LargeItemsTab,
 )
+from modules.cleanup.tabs._discover_tab import _DiscoverTab
 from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab, ADVANCED_CATEGORIES
 
 logger = logging.getLogger(__name__)
@@ -441,10 +442,14 @@ class CleanupModule(BaseModule):
         self._dev_tab = _ScanTab(_with_catalog(dev_scanners, "dev"))
         self._tabs.addTab(self._dev_tab, "Dev Tools")
 
+        # 9. Read-only cache discovery
+        self._discover = _DiscoverTab()
+        self._tabs.addTab(self._discover, "Discover")
+
         # ── Wire signals ──
         for tab in (
             self._quick, self._sys_tab, self._browser, self._app_tab,
-            self._wu_tab, self._logs_tab, self._large, self._dev_tab,
+            self._wu_tab, self._logs_tab, self._large, self._dev_tab, self._discover,
         ):
             tab.freed_bytes.connect(self._on_freed)
 
@@ -535,7 +540,7 @@ class CleanupModule(BaseModule):
         # even for a module whose widget was never built.
         for name in (
             "_quick", "_sys_tab", "_browser", "_app_tab",
-            "_wu_tab", "_logs_tab", "_large", "_dev_tab",
+            "_wu_tab", "_logs_tab", "_large", "_dev_tab", "_discover",
         ):
             tab = getattr(self, name, None)
             if hasattr(tab, "_cancel_all"):

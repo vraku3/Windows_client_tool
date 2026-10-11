@@ -446,6 +446,11 @@ class CleanupModule(BaseModule):
         self._discover = _DiscoverTab()
         self._tabs.addTab(self._discover, "Discover")
 
+        # 10. What every clean really did
+        from modules.cleanup.tabs._history_tab import _HistoryTab
+        self._history = _HistoryTab()
+        self._tabs.addTab(self._history, "History")
+
         # ── Wire signals ──
         for tab in (
             self._quick, self._sys_tab, self._browser, self._app_tab,
@@ -465,6 +470,7 @@ class CleanupModule(BaseModule):
         cleanup_history.record(nbytes)
         self._all_time_lbl.setText(
             f"All-time freed: {cs.format_size(cleanup_history.total_freed_all_time())}")
+        self._history.refresh()
 
     def _clean_now(self) -> None:
         """Switch to Quick Cleanup and run its Clean All Safe action --
@@ -491,6 +497,8 @@ class CleanupModule(BaseModule):
 
     def _on_tab_changed(self, index: int):
         tab = self._tabs.widget(index)
+        if tab is self._history:
+            self._history.refresh()
         if hasattr(tab, "auto_scan"):
             tab.auto_scan()
 

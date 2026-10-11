@@ -88,6 +88,9 @@ def write_version_info(project_root: str) -> str:
 HIDDEN_IMPORTS = [
     "modules.cleanup.cleanup_scanner.discover",
     "modules.cleanup.tabs._discover_tab",
+    "modules.cleanup.tabs._history_tab",
+    "modules.cleanup.cleanup_scanner.deleter",
+    "modules.cleanup.cleanup_scanner.lock_owners",
     "PyQt6", "PyQt6.QtCore", "PyQt6.QtWidgets", "PyQt6.QtGui",
     "pywin32", "pywin32_bootstrap",
     "win32api", "win32con", "win32gui", "win32process", "win32service", "win32evtlog",

@@ -1,0 +1,43 @@
+from modules.cleanup import cleanup_history as ch
+
+
+def test_history_tab_lists_entries_newest_first_with_the_measured_summary(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    from modules.cleanup.cleanup_scanner.deleter import DeleteReport
+    ch.record_report(DeleteReport(freed=1024 ** 3, files=10), [])
+    ch.record_report(DeleteReport(freed=5, files=1, locked=[r"C:\T\a.log"]),
+                     [(r"C:\P\LocalCache", "holds an app's sign-in")], owners={"Teams.exe": 1})
+    from modules.cleanup.tabs._history_tab import _HistoryTab
+    tab = _HistoryTab()
+    tab.refresh()
+    assert tab.table.rowCount() == 2
+    assert tab.table.item(0, 3).text() == "1"            # newest first: 1 left in use
+    tab.table.selectRow(0)
+    detail = tab.detail.toPlainText()
+    assert r"C:\T\a.log" in detail and "Teams.exe" in detail
+    assert "holds an app's sign-in" in detail
+
+
+def test_an_empty_log_says_so(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "none.json"))
+    from modules.cleanup.tabs._history_tab import _HistoryTab
+    tab = _HistoryTab()
+    tab.refresh()
+    assert tab.table.rowCount() == 0 and "No cleans recorded yet" in tab.status.text()
+
+
+def test_detail_lists_largest_removed_and_cloud_only(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    import json
+    (tmp_path / "log.json").write_text(json.dumps([{
+        "at": "2026-10-11T10:00:00", "count": 2, "bytes": 3000, "locked_count": 0,
+        "largest": [[r"C:\Temp\big.tmp", 2048]], "cloud_only": 4}]), encoding="utf-8")
+    from modules.cleanup.tabs._history_tab import _HistoryTab, _path_of
+    tab = _HistoryTab()
+    tab.refresh()
+    tab.table.selectRow(0)
+    detail = tab.detail.toPlainText()
+    assert "Removed (largest):" in detail and r"C:\Temp\big.tmp" in detail
+    assert "Cloud-only files left: 4" in detail
+    line = [ln for ln in detail.splitlines() if "big.tmp" in ln][0]
+    assert _path_of(line) == r"C:\Temp\big.tmp"

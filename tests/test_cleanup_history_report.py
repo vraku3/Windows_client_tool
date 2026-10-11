@@ -45,3 +45,34 @@ def test_nothing_to_record_writes_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
     ch.record_report(DeleteReport(), [])
     assert not (tmp_path / "log.json").exists()
+
+
+import pytest
+
+
+@pytest.mark.parametrize("payload,starts_over", [(b"{}", True), (b"null", True), (b"\xff\xfe\x00bad", True)])
+def test_a_malformed_log_never_raises_and_is_started_over(tmp_path, monkeypatch, payload, starts_over):
+    log = tmp_path / "log.json"
+    log.write_bytes(payload)
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(log))
+    ch.record_report(DeleteReport(freed=1, files=1), [])
+    data = json.loads(log.read_text())
+    assert isinstance(data, list) and len(data) == 1
+
+
+def test_a_failing_path_resolution_does_not_raise(monkeypatch):
+    def boom():
+        raise OSError("no appdata")
+    monkeypatch.setattr(ch, "_deleted_path", boom)
+    ch.record_report(DeleteReport(freed=1, files=1), [])
+
+
+def test_a_zero_byte_deleted_file_is_still_in_largest(tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    from modules.cleanup.cleanup_scanner import scanners_system as ss
+    from modules.cleanup.cleanup_scanner._common import ScanItem
+    empty = tmp_path / "empty.tmp"
+    empty.write_bytes(b"")
+    ss.delete_items([ScanItem(path=str(empty), size=0, is_dir=False, selected=True, safety="safe")])
+    entry = ch.recent_deleted()[0]
+    assert [str(empty), 0] in entry["largest"]

@@ -119,21 +119,25 @@ def record_deleted(deleted: Sequence[Tuple[str, int]],
 
 
 def _append_entry(entry: dict) -> None:
-    path = _deleted_path()
+    """Append to the log. Never raises: a log must not fail a clean."""
     try:
+        path = _deleted_path()
         entries = []
         if os.path.exists(path):
             try:
                 with open(path, encoding="utf-8") as f:
                     entries = json.load(f)
-            except (OSError, json.JSONDecodeError) as e:
+            except (OSError, ValueError) as e:  # JSONDecodeError and UnicodeDecodeError
                 logger.warning("cleanup deletion log unreadable, starting over: %s", e)
+                entries = []
+            if not isinstance(entries, list):
+                logger.warning("cleanup deletion log is not a list, starting over")
                 entries = []
         entries.append(entry)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(entries[-200:], f, indent=2)
-    except OSError as e:
-        logger.warning("could not write the cleanup deletion log %s: %s", path, e)
+    except Exception as e:
+        logger.warning("could not write the cleanup deletion log: %s", e)
 
 
 def recent_deleted(limit: int = 20) -> List[dict]:

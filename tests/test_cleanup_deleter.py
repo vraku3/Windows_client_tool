@@ -333,3 +333,15 @@ def test_a_file_root_named_cookies_is_kept(tmp_path, no_system_guards, monkeypat
     f = _file(tmp_path / "Cookies", 5)
     r = d.delete_path(str(f), False, skip=ss._protected_entry)
     assert f.exists() and r.denied == [str(f)]
+
+
+def test_a_junction_root_is_typed_by_lstat_not_by_the_callers_flag(tmp_path):
+    target = tmp_path / "elsewhere"
+    _file(target / "keep.txt", 5)
+    link = tmp_path / "IndexedDB"
+    out = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True)
+    assert out.returncode == 0, out.stderr
+    r = d.delete_path(str(link), False,
+                      skip=lambda p, is_dir: is_dir and os.path.basename(p).lower() == "indexeddb")
+    assert os.path.lexists(link) and r.denied == [str(link)]
+    assert (target / "keep.txt").exists()

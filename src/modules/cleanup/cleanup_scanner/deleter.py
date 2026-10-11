@@ -222,7 +222,8 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
         logger.warning("cannot read %s: %s", _short(target), exc)
         report.denied.append(_short(target))
         return report
-    if skip(_short(target), is_dir):
+    # The root's type is what lstat says, never the caller's flag.
+    if skip(_short(target), bool(getattr(st, "st_file_attributes", 0) & _ATTR_DIRECTORY) or stat.S_ISDIR(st.st_mode)):
         logger.warning("not deleting %s: protected", _short(target))
         report.denied.append(_short(target))
         return report

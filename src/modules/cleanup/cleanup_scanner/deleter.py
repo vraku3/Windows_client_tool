@@ -35,6 +35,10 @@ ERROR_LOCK_VIOLATION = 33
 ERROR_DIR_NOT_EMPTY = 145
 _ATTR_DIRECTORY = 0x10
 _ATTR_REPARSE_POINT = 0x400
+#: On-demand cloud files (RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE): they
+#: occupy nothing locally, and deleting one in a synced OneDrive folder deletes
+#: the cloud copy. Never deleted, never counted, never enumerated.
+CLOUD_ONLY = 0x400000 | 0x40000 | 0x1000
 _IN_USE = (ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION)
 
 
@@ -45,6 +49,7 @@ class DeleteReport:
     locked: List[str] = field(default_factory=list)
     denied: List[str] = field(default_factory=list)
     kept_recent: int = 0
+    cloud_only: int = 0
     cancelled: bool = False
 
     def merge(self, other: "DeleteReport") -> None:
@@ -53,6 +58,7 @@ class DeleteReport:
         self.locked.extend(other.locked)
         self.denied.extend(other.denied)
         self.kept_recent += other.kept_recent
+        self.cloud_only += other.cloud_only
         self.cancelled = self.cancelled or other.cancelled
 
 
@@ -100,6 +106,15 @@ def _remove_file(path: str, size: int, report: DeleteReport) -> None:
                 logger.warning("cannot delete %s: %s", _short(path), exc)
                 report.denied.append(_short(path))
             return
+
+
+def is_cloud_only(attrs: int) -> bool:
+    return bool(attrs & CLOUD_ONLY)
+
+
+def is_link_attrs(attrs: int) -> bool:
+    """A directory that is a reparse point (junction, mount point, dir symlink)."""
+    return bool(attrs & _ATTR_REPARSE_POINT) and bool(attrs & _ATTR_DIRECTORY)
 
 
 def _is_link(st: os.stat_result) -> bool:
@@ -155,6 +170,9 @@ def _descend(entry: os.DirEntry, floor: float, now: float, cancelled,
         logger.warning("cannot read %s: %s", _short(entry.path), exc)
         report.denied.append(_short(entry.path))
         return
+    if is_cloud_only(getattr(fresh, "st_file_attributes", 0)):
+        report.cloud_only += 1
+        return
     if _is_link(fresh):
         _unlink_link(entry.path, report)
         return
@@ -183,9 +201,13 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
             logger.warning("cannot read %s: %s", _short(entry.path), exc)
             report.denied.append(_short(entry.path))
             continue
-        link = entry.is_symlink() or entry.is_junction()
+        attrs = getattr(st, "st_file_attributes", 0)
+        if is_cloud_only(attrs):                       # before the link test: cloud files are reparse points
+            report.cloud_only += 1
+            continue
+        link = entry.is_symlink() or entry.is_junction() or is_link_attrs(attrs)
         if link:
-            is_dir = bool(getattr(st, "st_file_attributes", 0) & _ATTR_DIRECTORY)
+            is_dir = bool(attrs & _ATTR_DIRECTORY)
         else:
             is_dir = entry.is_dir(follow_symlinks=False)
         if _skipped(entry, skip, is_dir, report):      # links included, BEFORE any unlink
@@ -226,6 +248,9 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
     if skip(_short(target), bool(getattr(st, "st_file_attributes", 0) & _ATTR_DIRECTORY) or stat.S_ISDIR(st.st_mode)):
         logger.warning("not deleting %s: protected", _short(target))
         report.denied.append(_short(target))
+        return report
+    if is_cloud_only(getattr(st, "st_file_attributes", 0)):
+        report.cloud_only += 1
         return report
     if _is_link(st):
         _unlink_link(target, report)

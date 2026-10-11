@@ -1,10 +1,13 @@
 """Shared types and helpers for the cleanup scanner package."""
 import logging
 import os
+import stat
 import time
 from core.formatting import format_size
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+from modules.cleanup.cleanup_scanner.deleter import is_cloud_only, is_link_attrs
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +34,6 @@ class ScanResult:
     def selected_size(self) -> int:
         return sum(i.size for i in self.items if i.selected)
 
-#: On-demand cloud files: their size is the cloud's, not this disk's.
-_PLACEHOLDER = 0x400000 | 0x40000 | 0x1000  # RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE
-
-
 def _stat(entry):
     st = entry.stat(follow_symlinks=False)
     return st, getattr(st, "st_file_attributes", 0)
@@ -44,11 +43,23 @@ def _attrs(st_and_attr) -> int:
     return st_and_attr[1]
 
 
+def _root_counts(path: str) -> bool:
+    """A root that is a link or a cloud placeholder frees nothing (delete_path only
+    unlinks / skips it), so it measures 0."""
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        logger.debug("size walk cannot read root %s: %s", path, exc)
+        return False
+    attrs = getattr(st, "st_file_attributes", 0)
+    return not (stat.S_ISLNK(st.st_mode) or is_link_attrs(attrs) or is_cloud_only(attrs))
+
+
 def get_dir_size(path: str) -> int:
-    """Local bytes a full clean of `path` would free: one scandir walk (no extra
-    stat per file), never through a junction/symlink, never a cloud placeholder."""
+    """Local bytes a full clean of `path` would free -- the deleter's own link and
+    cloud-placeholder rules, over one scandir walk (no extra stat per file)."""
     total = 0
-    stack = [path]
+    stack = [path] if _root_counts(path) else []
     while stack:
         folder = stack.pop()
         try:
@@ -58,13 +69,14 @@ def get_dir_size(path: str) -> int:
             continue
         for entry in entries:
             try:
-                if entry.is_symlink() or entry.is_junction():
+                st_and_attr = _stat(entry)
+                attrs = _attrs(st_and_attr)
+                if is_cloud_only(attrs):
+                    continue
+                if entry.is_symlink() or entry.is_junction() or is_link_attrs(attrs):
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(entry.path)
-                    continue
-                st_and_attr = _stat(entry)
-                if _attrs(st_and_attr) & _PLACEHOLDER:
                     continue
                 total += st_and_attr[0].st_size
             except OSError as exc:

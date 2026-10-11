@@ -76,3 +76,8 @@ def test_a_zero_byte_deleted_file_is_still_in_largest(tmp_path, monkeypatch):
     ss.delete_items([ScanItem(path=str(empty), size=0, is_dir=False, selected=True, safety="safe")])
     entry = ch.recent_deleted()[0]
     assert [str(empty), 0] in entry["largest"]
+
+
+def test_summarise_mentions_cloud_only_files():
+    entry = {"bytes": 10, "count": 1, "locked_count": 0, "cloud_only": 3}
+    assert "3 cloud-only files left." in ch.summarise(entry)

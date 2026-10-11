@@ -169,7 +169,7 @@ def record_report(report, refused, owners=None, removed=()) -> None:
     `removed` is [(path, measured_freed_bytes)]; the PATHS_PER_ENTRY largest
     are kept as "largest" so the log still answers "did Cleanup delete X".
     """
-    if not (report.files or report.locked or report.denied or report.kept_recent or refused):
+    if not (report.files or report.locked or report.denied or report.kept_recent or report.cloud_only or refused):
         return
     _append_entry({
         "at": datetime.now().isoformat(timespec="seconds"),
@@ -182,6 +182,7 @@ def record_report(report, refused, owners=None, removed=()) -> None:
         "denied": report.denied[:LEFTOVER_PATHS],
         "denied_count": len(report.denied),
         "kept_recent": report.kept_recent,
+        "cloud_only": report.cloud_only,
         "refused": [[path, reason] for path, reason in refused][:PATHS_PER_ENTRY],
         "cancelled": bool(report.cancelled),
     })
@@ -200,6 +201,8 @@ def summarise(entry: dict) -> str:
         parts.append(f"{entry['denied_count']:,} access denied.")
     if entry.get("kept_recent"):
         parts.append(f"{entry['kept_recent']:,} newer than a day kept.")
+    if entry.get("cloud_only"):
+        parts.append(f"{entry['cloud_only']:,} cloud-only files left.")
     if entry.get("refused"):
         parts.append(f"{len(entry['refused'])} refused.")
     if entry.get("cancelled"):

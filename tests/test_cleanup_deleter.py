@@ -393,3 +393,97 @@ def test_size_skips_cloud_placeholders(tmp_path, monkeypatch):
     monkeypatch.setattr(_common, "_stat", lambda entry: entry.stat(follow_symlinks=False))
     monkeypatch.setattr(_common.os, "scandir", scandir)
     assert _common.get_dir_size(str(tmp_path)) == 10
+
+
+# ---- fix round 1: one link/placeholder rule for size and delete -------------
+
+class _FakeStat:
+    def __init__(self, st, attrs):
+        self._st, self.st_file_attributes = st, attrs
+
+    def __getattr__(self, name):
+        return getattr(self._st, name)
+
+
+def _flag_names(monkeypatch, flags):
+    """Entries with these names report a faked st_file_attributes word, through
+    the production extraction (no patching of the extractor)."""
+    real = os.scandir
+
+    class Entry:
+        def __init__(self, e):
+            self._e, self.name, self.path = e, e.name, e.path
+
+        def is_dir(self, follow_symlinks=True):
+            return self._e.is_dir(follow_symlinks=follow_symlinks)
+
+        def is_symlink(self):
+            return self._e.is_symlink()
+
+        def is_junction(self):
+            return self._e.is_junction()
+
+        def stat(self, follow_symlinks=True):
+            st = self._e.stat(follow_symlinks=follow_symlinks)
+            if self.name in flags:
+                return _FakeStat(st, st.st_file_attributes | flags[self.name])
+            return st
+
+    monkeypatch.setattr(os, "scandir", lambda p: [Entry(e) for e in real(p)])
+
+
+@pytest.mark.parametrize("flag", [0x400000, 0x40000, 0x1000])
+def test_each_placeholder_flag_is_cloud_only_for_size_and_delete(tmp_path, monkeypatch, flag):
+    _file(tmp_path / "local.bin", 10)
+    _file(tmp_path / "cloud.bin", 5000)
+    _flag_names(monkeypatch, {"cloud.bin": flag})
+    assert _common.get_dir_size(str(tmp_path)) == 10
+    report = d.delete_path(str(tmp_path), True)
+    assert (report.freed, report.files, report.cloud_only) == (10, 1, 1)
+    assert (tmp_path / "cloud.bin").exists()
+
+
+def test_a_junction_root_sizes_zero_and_frees_zero(tmp_path):
+    target = tmp_path / "target"
+    _file(target / "f.bin", 500)
+    root = tmp_path / "root"
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(root), str(target)],
+                   check=True, capture_output=True)
+    assert _common.get_dir_size(str(root)) == 0
+    assert d.delete_path(str(root), True).freed == 0
+    assert (target / "f.bin").exists()
+
+
+def test_a_flagged_directory_is_never_enumerated(tmp_path, monkeypatch):
+    _file(tmp_path / "online" / "x.bin", 99)
+    _file(tmp_path / "keep.bin", 4)
+    _flag_names(monkeypatch, {"online": 0x400000})
+    seen = []
+    inner = os.scandir
+    monkeypatch.setattr(os, "scandir", lambda p: (seen.append(os.path.basename(p)), inner(p))[1])
+    assert _common.get_dir_size(str(tmp_path)) == 4
+    d.delete_path(str(tmp_path), True)
+    assert "online" not in seen
+    assert (tmp_path / "online" / "x.bin").exists()
+
+
+def test_size_and_delete_agree_on_a_mixed_tree(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    _file(outside / "big.bin", 1000)
+    cache = tmp_path / "cache"
+    _file(cache / "normal.bin", 21)
+    _file(cache / "sub" / "n2.bin", 4)
+    _file(cache / "cloud.bin", 7000)
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(cache / "link"), str(outside)],
+                   check=True, capture_output=True)
+    _flag_names(monkeypatch, {"cloud.bin": 0x1000})
+    measured = _common.get_dir_size(str(cache))
+    report = d.delete_path(str(cache), True)
+    assert measured == 25 == report.freed
+    assert report.cloud_only == 1 and (outside / "big.bin").exists()
+
+
+def test_deletereport_merges_cloud_only():
+    a, b = d.DeleteReport(cloud_only=1), d.DeleteReport(cloud_only=2)
+    a.merge(b)
+    assert a.cloud_only == 3

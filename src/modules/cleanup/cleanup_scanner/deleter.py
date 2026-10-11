@@ -177,17 +177,21 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
         if cancelled():
             report.cancelled = True
             return
-        if entry.is_symlink() or entry.is_junction():
-            _unlink_link(entry.path, report)
-            continue
         try:
             st = entry.stat(follow_symlinks=False)
         except OSError as exc:
             logger.warning("cannot read %s: %s", _short(entry.path), exc)
             report.denied.append(_short(entry.path))
             continue
-        is_dir = entry.is_dir(follow_symlinks=False)
-        if _skipped(entry, skip, is_dir, report):
+        link = entry.is_symlink() or entry.is_junction()
+        if link:
+            is_dir = bool(getattr(st, "st_file_attributes", 0) & _ATTR_DIRECTORY)
+        else:
+            is_dir = entry.is_dir(follow_symlinks=False)
+        if _skipped(entry, skip, is_dir, report):      # links included, BEFORE any unlink
+            continue
+        if link:
+            _unlink_link(entry.path, report)
             continue
         if is_dir:
             _descend(entry, floor, now, cancelled, report, skip)
@@ -216,6 +220,10 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
         return report
     except OSError as exc:
         logger.warning("cannot read %s: %s", _short(target), exc)
+        report.denied.append(_short(target))
+        return report
+    if skip(_short(target), is_dir):
+        logger.warning("not deleting %s: protected", _short(target))
         report.denied.append(_short(target))
         return report
     if _is_link(st):

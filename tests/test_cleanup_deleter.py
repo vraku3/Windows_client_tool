@@ -309,3 +309,27 @@ def test_the_deleting_walk_enforces_what_the_checking_walk_could_not_see(tmp_pat
     assert refused == [] and not junk.exists()
     assert ldb.exists() and ost.exists()
     assert str(ost) in report.denied and str(tmp_path / "IndexedDB") in report.denied
+
+
+def test_a_protected_junction_is_kept_and_listed(tmp_path):
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    link = tree / "IndexedDB"
+    out = subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True)
+    assert out.returncode == 0, out.stderr
+    r = d.delete_path(str(tree), True, skip=lambda p, is_dir: os.path.basename(p) == "IndexedDB" and is_dir)
+    assert os.path.lexists(link) and r.denied == [str(link)]
+
+
+def test_a_skipped_root_directory_is_untouched_and_listed(tmp_path):
+    f = _file(tmp_path / "root" / "a.tmp", 5)
+    r = d.delete_path(str(tmp_path / "root"), True, skip=lambda p, is_dir: True)
+    assert f.exists() and r.denied == [str(tmp_path / "root")] and r.freed == 0
+
+
+def test_a_file_root_named_cookies_is_kept(tmp_path, no_system_guards, monkeypatch):
+    f = _file(tmp_path / "Cookies", 5)
+    r = d.delete_path(str(f), False, skip=ss._protected_entry)
+    assert f.exists() and r.denied == [str(f)]

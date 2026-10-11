@@ -64,6 +64,8 @@ class ScannerSpec:
     #: Explicitly not scanned on this machine, with the reason. Kept as data
     #: rather than deleted so the knowledge does not have to be rediscovered.
     disabled_reason: str = ""
+    #: Files modified more recently than this many hours are left alone.
+    keep_newer_than_hours: int = 0
 
     def __post_init__(self) -> None:
         if self.safety not in SAFETY_LEVELS:
@@ -151,6 +153,7 @@ def run_spec(spec: ScannerSpec, min_age_days: int = 0) -> ScanResult:
     for target in targets_of(spec):
         item = _make_item(target, safety=spec.safety, min_age_days=age)
         if item:
+            item.keep_newer_than_hours = spec.keep_newer_than_hours
             result.items.append(item)
             result.total_size += item.size
     return result

@@ -108,6 +108,7 @@ def scan_orphaned_user_profiles(min_age_days: int = 0) -> ScanResult:
             # takes no `selected` parameter, so it is set here explicitly
             # rather than relying on ScanItem's default (True).
             item.selected = False
+            item.keep_root = False
             result.items.append(item)
             result.total_size += item.size
     return result

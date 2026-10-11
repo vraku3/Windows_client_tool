@@ -146,3 +146,8 @@ def recent_deleted(limit: int = 20) -> List[dict]:
         logger.warning("cleanup deletion log unreadable: %s", e)
         return []
     return list(reversed(entries))[:limit]
+
+
+def record_report(report, refused) -> None:
+    record_deleted([(f"{report.files} files", report.freed)] if report.files else [],
+                   [path for path, _reason in refused])

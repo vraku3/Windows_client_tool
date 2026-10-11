@@ -15,6 +15,13 @@ class ScanItem:
     is_dir: bool
     selected: bool = True
     safety: str = "safe"   # "safe" | "caution" | "danger"
+    #: A directory item's CONTENTS are deleted and the folder itself kept
+    #: (Temp, cache roots). False only where the folder itself is the junk:
+    #: a superseded version folder, an empty folder, an orphaned profile.
+    keep_root: bool = True
+    #: Files modified more recently than this are left alone -- an installer
+    #: extracting into %TEMP% reads its files back minutes later.
+    keep_newer_than_hours: int = 0
 
 @dataclass
 class ScanResult:

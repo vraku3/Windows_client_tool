@@ -139,6 +139,7 @@ def scan_superseded_app_versions(min_age_days: int = 0) -> ScanResult:
         item = _make_item(path, safety="caution", min_age_days=min_age_days)
         if item:
             item.selected = False
+            item.keep_root = False
             result.items.append(item)
             result.total_size += item.size
     return result
@@ -1675,6 +1676,7 @@ def _find_empty_folders(result: ScanResult, dirs: list, min_depth: int, max_dept
                         is_dir=True,
                         selected=False,
                         safety="safe",
+                        keep_root=False,
                     ))
                     result.total_size += size
             for subdir in subdirs:
@@ -1926,7 +1928,7 @@ def sign_in_stores() -> List[str]:
 
 
 def held_user_data(path: str, is_dir: bool, first_only: bool = False) -> Tuple[bool, bool]:
-    """(holds Outlook data, holds sign-in data) -- one walk; unreadable counts as both.
+    """(holds Outlook data, holds sign-in data) -- what one walk SAW. An unreadable folder is logged; it cannot be deleted either (deleter.py lists it as denied).
 
     ``first_only`` stops at the first finding, for a caller that refuses either way.
     """
@@ -1936,11 +1938,9 @@ def held_user_data(path: str, is_dir: bool, first_only: bool = False) -> Tuple[b
         return name.endswith(OUTLOOK_DATA_EXTENSIONS), inside_sign_in or name in SIGN_IN_FILES
     if inside_sign_in and first_only:
         return False, True
-    outlook, sign_in, unreadable = False, inside_sign_in, False
+    outlook, sign_in = False, inside_sign_in
 
     def onerror(error):
-        nonlocal unreadable
-        unreadable = True
         logger.warning("cannot check for Outlook or sign-in data in %s: %s",
                        error.filename or path, error)
 
@@ -1949,9 +1949,9 @@ def held_user_data(path: str, is_dir: bool, first_only: bool = False) -> Tuple[b
         outlook = outlook or any(f.endswith(OUTLOOK_DATA_EXTENSIONS) for f in lowered)
         sign_in = (sign_in or any(d.lower() in SIGN_IN_DIRS for d in dirs)
                    or any(f in SIGN_IN_FILES for f in lowered))
-        if (outlook and sign_in) or (first_only and (outlook or sign_in or unreadable)):
+        if (outlook and sign_in) or (first_only and (outlook or sign_in)):
             break
-    return outlook or unreadable, sign_in or unreadable
+    return outlook, sign_in
 
 
 def holds_outlook_data(path: str, is_dir: bool) -> bool:
@@ -1993,106 +1993,107 @@ def _refusal_reason(item: ScanItem) -> Optional[str]:
     return None
 
 
-def delete_items(items: List[ScanItem],
-                 on_progress: Optional[Callable[[int, int], None]] = None,
-                 stop_wuauserv: bool = False) -> Tuple[int, int]:
-    """Delete selected items. Returns (deleted_count, error_count).
-    If stop_wuauserv=True, wraps deletions in _ServiceStopped("wuauserv")."""
-    # Every cached measurement is now about a disk that no longer looks
-    # like that. Serving one afterwards reports space as still reclaimable
-    # when it has already been freed.
-    from modules.cleanup.cleanup_scanner import scan_cache
-    scan_cache.invalidate()
+class _ServiceStopped:
+    def __init__(self, name):
+        self.name = name
+        self._stopped = False
 
-    class _ServiceStopped:
-        def __init__(self, name):
-            self.name = name
-            self._stopped = False
-
-        def __enter__(self):
+    def __enter__(self):
+        try:
+            import win32service
+            import win32serviceutil
+            win32serviceutil.StopService(self.name)
+            self._stopped = True
+            # StopService only ASKS: it fires
+            # ControlService(SERVICE_CONTROL_STOP) and returns the status
+            # it saw, which is normally STOP_PENDING. Deleting the
+            # download cache while the service is still letting go of
+            # those files is the exact race this guard exists to prevent,
+            # so wait for it to actually be STOPPED.
             try:
-                import win32service
-                import win32serviceutil
-                win32serviceutil.StopService(self.name)
-                self._stopped = True
-                # StopService only ASKS: it fires
-                # ControlService(SERVICE_CONTROL_STOP) and returns the status
-                # it saw, which is normally STOP_PENDING. Deleting the
-                # download cache while the service is still letting go of
-                # those files is the exact race this guard exists to prevent,
-                # so wait for it to actually be STOPPED.
-                try:
-                    win32serviceutil.WaitForServiceStatus(
-                        self.name, win32service.SERVICE_STOPPED, _SERVICE_STOP_WAIT_SECS)
-                except Exception as e:
-                    # Say so and clean anyway -- most of what is queued has
-                    # nothing to do with this service.
-                    logger.warning(
-                        "Service %s did not reach STOPPED within %ss (%s) — "
-                        "cleaning anyway; files it still holds open will be skipped",
-                        self.name, _SERVICE_STOP_WAIT_SECS, e)
+                win32serviceutil.WaitForServiceStatus(
+                    self.name, win32service.SERVICE_STOPPED, _SERVICE_STOP_WAIT_SECS)
             except Exception as e:
-                # wuauserv is trigger-started and is usually NOT running, so
-                # StopService answers 1062 (seen 2026-10-03). Already stopped
-                # is what this guard wants; and since we did not stop it, we
-                # must not start it again afterwards (_stopped stays False).
-                if getattr(e, "winerror", None) == ERROR_SERVICE_NOT_ACTIVE:
-                    logger.debug("Service %s was already stopped", self.name)
-                else:
-                    logger.warning("Failed to stop service %s: %s", self.name, e)
+                # Say so and clean anyway -- most of what is queued has
+                # nothing to do with this service.
+                logger.warning(
+                    "Service %s did not reach STOPPED within %ss (%s) — "
+                    "cleaning anyway; files it still holds open will be skipped",
+                    self.name, _SERVICE_STOP_WAIT_SECS, e)
+        except Exception as e:
+            # wuauserv is trigger-started and is usually NOT running, so
+            # StopService answers 1062 (seen 2026-10-03). Already stopped
+            # is what this guard wants; and since we did not stop it, we
+            # must not start it again afterwards (_stopped stays False).
+            if getattr(e, "winerror", None) == ERROR_SERVICE_NOT_ACTIVE:
+                logger.debug("Service %s was already stopped", self.name)
+            else:
+                logger.warning("Failed to stop service %s: %s", self.name, e)
 
-        def __exit__(self, exc_type, exc_val, exc_tb):
-            if self._stopped:
-                try:
-                    import win32serviceutil
-                    win32serviceutil.StartService(self.name)
-                except Exception as e:
-                    # wuauserv is trigger-started, so anything that touches
-                    # Windows Update brings it back on its own and
-                    # StartService answers 1056. That is the state we wanted;
-                    # it is not a failure worth a warning.
-                    if getattr(e, "winerror", None) == ERROR_SERVICE_ALREADY_RUNNING:
-                        logger.debug("Service %s was already running again", self.name)
-                    else:
-                        logger.warning("Failed to start service %s: %s", self.name, e)
-            return False  # do not suppress exceptions
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._stopped:
+            try:
+                import win32serviceutil
+                win32serviceutil.StartService(self.name)
+            except Exception as e:
+                # wuauserv is trigger-started, so anything that touches
+                # Windows Update brings it back on its own and
+                # StartService answers 1056. That is the state we wanted;
+                # it is not a failure worth a warning.
+                if getattr(e, "winerror", None) == ERROR_SERVICE_ALREADY_RUNNING:
+                    logger.debug("Service %s was already running again", self.name)
+                else:
+                    logger.warning("Failed to start service %s: %s", self.name, e)
+        return False  # do not suppress exceptions
+
+
+def delete_items_report(items: List[ScanItem],
+                        on_progress: Optional[Callable[[int, int], None]] = None,
+                        stop_wuauserv: bool = False,
+                        cancelled: Callable[[], bool] = lambda: False):
+    """Delete the selected items. Returns (DeleteReport, [(path, refusal reason)])."""
+    from modules.cleanup.cleanup_scanner.deleter import DeleteReport, delete_path
 
     def _do_delete():
-        deleted = 0
-        errors = 0
-        removed: List[Tuple[str, int]] = []
-        refused: List[str] = []
+        report, refused = DeleteReport(), []
         selected = [i for i in items if i.selected]
-        total = len(selected)
         for idx, item in enumerate(selected):
             if on_progress:
-                on_progress(idx + 1, total)
-            try:
-                if not os.path.exists(item.path):
-                    continue  # already gone — not an error
-                reason = _refusal_reason(item)
-                if reason:
-                    logger.warning("Refusing to delete %s: %s", item.path, reason)
-                    errors += 1
-                    refused.append(item.path)
-                    continue
-                if item.is_dir:
-                    shutil.rmtree(item.path, ignore_errors=True)
-                else:
-                    os.remove(item.path)
-                deleted += 1
-                removed.append((item.path, item.size))
-            except OSError:
-                errors += 1
+                on_progress(idx + 1, len(selected))
+            if cancelled():
+                report.cancelled = True
+                break
+            if not os.path.lexists(item.path):
+                continue
+            reason = _refusal_reason(item)
+            if reason:
+                logger.warning("Refusing to delete %s: %s", item.path, reason)
+                refused.append((item.path, reason))
+                continue
+            report.merge(delete_path(item.path, item.is_dir, keep_root=item.keep_root,
+                                     keep_newer_than_s=item.keep_newer_than_hours * 3600,
+                                     cancelled=cancelled))
         from modules.cleanup import cleanup_history
-        cleanup_history.record_deleted(removed, refused)
-        return deleted, errors
+        cleanup_history.record_report(report, refused)
+        # Every cached measurement is now about a disk that no longer looks like that.
+        from modules.cleanup.cleanup_scanner import scan_cache
+        scan_cache.invalidate()
+        return report, refused
 
     if stop_wuauserv:
         with _ServiceStopped("wuauserv"):
             return _do_delete()
-    else:
-        return _do_delete()
+    return _do_delete()
+
+
+def delete_items(items: List[ScanItem],
+                 on_progress: Optional[Callable[[int, int], None]] = None,
+                 stop_wuauserv: bool = False) -> Tuple[int, int]:
+    """Back-compatible: (items cleaned, items refused or left with errors)."""
+    report, refused = delete_items_report(items, on_progress, stop_wuauserv)
+    problems = len(refused) + (1 if report.locked or report.denied else 0)
+    cleaned = max(0, sum(1 for i in items if i.selected) - problems)
+    return cleaned, problems
 
 
 def _enum_subkeys(handle):

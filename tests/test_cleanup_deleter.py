@@ -194,3 +194,64 @@ def test_a_directory_symlink_is_removed_not_followed(tmp_path):
     report = d.delete_path(str(cache), True)
     assert keep.exists() and not os.path.lexists(cache / "sl")
     assert report.freed == 0 and report.denied == []
+
+
+from modules.cleanup.cleanup_scanner import ScanItem, scanners_system as ss
+
+
+@pytest.fixture
+def no_system_guards(monkeypatch):
+    monkeypatch.setattr(ss, "protected_system_dirs", lambda: [])
+    monkeypatch.setattr(ss, "protected_app_dirs", lambda: [])
+
+
+def test_delete_items_counts_only_what_went(tmp_path, no_system_guards):
+    _file(tmp_path / "a.tmp", 100, age_s=3 * 86400)
+    held = _file(tmp_path / "held.tmp", 50, age_s=3 * 86400)
+    fd = os.open(str(held), os.O_RDONLY)
+    try:
+        report, refused = ss.delete_items_report([ScanItem(str(tmp_path), 150, True)])
+    finally:
+        os.close(fd)
+    assert report.freed == 100 and report.locked == [str(held)] and refused == []
+    assert tmp_path.exists()
+
+
+def test_an_unreadable_subfolder_is_skipped_not_the_whole_item(tmp_path, no_system_guards, monkeypatch):
+    _file(tmp_path / "junk.tmp", 10, age_s=3 * 86400)
+    real_scandir = os.scandir
+    blocked = tmp_path / "other-account"
+    _file(blocked / "x.tmp", 99, age_s=3 * 86400)
+
+    def scandir(path):
+        if os.path.normcase(d._short(os.fspath(path))) == os.path.normcase(str(blocked)):
+            raise PermissionError(5, "Access is denied", str(blocked))
+        return real_scandir(path)
+    monkeypatch.setattr(d.os, "scandir", scandir)
+    monkeypatch.setattr(ss.os, "walk", lambda p, onerror=None: iter([(p, [], ["junk.tmp"])]))
+    report, refused = ss.delete_items_report([ScanItem(str(tmp_path), 109, True)])
+    assert report.freed == 10 and str(blocked) in report.denied and refused == []
+    assert (blocked / "x.tmp").exists()
+
+
+def test_temp_keeps_files_younger_than_its_floor(tmp_path, no_system_guards):
+    _file(tmp_path / "old.tmp", 10, age_s=3 * 86400)
+    fresh = _file(tmp_path / "{GUID}" / "setup.msi", 40)
+    item = ScanItem(str(tmp_path), 50, True, keep_newer_than_hours=24)
+    report, _ = ss.delete_items_report([item])
+    assert fresh.exists() and report.freed == 10 and report.kept_recent == 1
+
+
+def test_a_superseded_version_folder_goes_entirely(tmp_path, no_system_guards):
+    old = tmp_path / "app-1.0.0"
+    _file(old / "app.exe", 5)
+    report, _ = ss.delete_items_report([ScanItem(str(old), 5, True, keep_root=False)])
+    assert not old.exists() and report.freed == 5
+
+
+def test_the_catalog_temp_entry_carries_the_floor_and_crash_dumps_no_longer_target_temp():
+    from modules.cleanup.cleanup_scanner import catalog
+    specs = catalog.load_catalog()
+    assert specs["temp_files"].keep_newer_than_hours == 24
+    assert not any(p.lower().rstrip("\\").endswith(r"%localappdata%\temp")
+                   for p in specs["user_crash_dumps"].paths)

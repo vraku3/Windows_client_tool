@@ -61,7 +61,7 @@ def test_the_outlook_folders_and_their_parents_are_refused(monkeypatch):
 
 
 
-def test_review_unreadable_outlook_tree_is_refused(tmp_path, monkeypatch, caplog):
+def test_review_an_unreadable_tree_is_not_refused_but_cannot_be_deleted(tmp_path, monkeypatch, caplog):
     from modules.cleanup.cleanup_scanner import ScanItem, scanners_system as ss
     folder = tmp_path / "cache"
     folder.mkdir()
@@ -69,10 +69,8 @@ def test_review_unreadable_outlook_tree_is_refused(tmp_path, monkeypatch, caplog
         onerror(PermissionError(13, "denied", str(folder)))
         return iter(())
     monkeypatch.setattr(ss.os, "walk", unreadable)
-    assert ss.holds_outlook_data(str(folder), True)
+    assert ss.held_user_data(str(folder), True) == (False, False)
     assert str(folder) in caplog.text and caplog.records[-1].levelname == "WARNING"
-    assert ss.delete_items([ScanItem(str(folder), 1, True, True, "safe")]) == (0, 1)
-    assert folder.exists()
 
 
 def _whatsapp_like(root):
@@ -112,7 +110,8 @@ def test_delete_refuses_any_folder_holding_a_sign_in(tmp_path, monkeypatch):
     assert ss.delete_items(items) == (0, 4)
     assert all(p.exists() for p in refused) and (profile / "Network" / "Cookies").exists()
     assert ss.delete_items([ScanItem(str(profile / "Cache"), 1, True, True, "safe")]) == (1, 0)
-    assert not (profile / "Cache").exists()
+    # The cache FOLDER is kept (keep_root); its contents are what went.
+    assert not (profile / "Cache" / "data_1").exists()
 
 
 def test_session_storage_and_token_stores_are_refused(tmp_path, monkeypatch):

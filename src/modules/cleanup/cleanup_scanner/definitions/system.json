@@ -324,6 +324,7 @@
         "%windir%\\Temp"
       ],
       "safety": "safe",
+      "keep_newer_than_hours": 24,
       "description": "User temp files (TEMP env var and C:\\Windows\\Temp)."
     },
     {
@@ -364,7 +365,6 @@
       "label": "User-mode crash dump files written by Windows Error Reporting",
       "paths": [
         "%LOCALAPPDATA%\\CrashDumps",
-        "%LOCALAPPDATA%\\Temp",
         "%TEMP%\\*.dmp"
       ],
       "safety": "caution",

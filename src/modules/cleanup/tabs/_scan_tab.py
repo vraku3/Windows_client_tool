@@ -322,7 +322,7 @@ class _ScanTab(QWidget):
             for child_path, size in rows:
                 inner = cs.ScanItem(path=child_path, size=size,
                                     is_dir=os.path.isdir(child_path),
-                                    selected=False, safety=safety)
+                                    selected=False, safety=safety, keep_root=False)
                 row = QTreeWidgetItem(
                     [os.path.basename(child_path) or child_path,
                      cs.format_size(size)])

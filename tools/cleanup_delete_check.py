@@ -2,10 +2,11 @@
 cache. Exits 1 if any outcome differs from what the deleter promises."""
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
+
+import _winapi
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from modules.cleanup.cleanup_scanner import deleter as d
@@ -38,8 +39,7 @@ def main() -> int:
         cookies = put(os.path.join("sub", "Cookies"), 5)
         with open(os.path.join(outside, "precious.txt"), "w") as f:
             f.write("keep")
-        subprocess.run(["cmd", "/c", "mklink", "/J", os.path.join(root, "link"), outside],
-                       check=True, capture_output=True)
+        _winapi.CreateJunction(outside, os.path.join(root, "link"))
         fd = os.open(locked, os.O_RDONLY)
         try:
             report = d.delete_path(root, True, keep_newer_than_s=86400,
@@ -49,11 +49,19 @@ def main() -> int:
             os.close(fd)
         print(report, owners)
         checks = {
-            "freed 1017 bytes": report.freed == 1017,
-            "locked file listed": [os.path.normcase(p) for p in report.locked]
-                                  == [os.path.normcase(locked)],
+            # freed = a.tmp 1000 + ro.tmp 10 + deep.bin 7; files = those 3
+            # (locked, fresh and Cookies are not deleted, the junction is unlinked).
+            "freed == 1017": report.freed == 1017,
+            "files == 3": report.files == 3,
+            "locked == [locked path]": [os.path.normcase(p) for p in report.locked]
+                                       == [os.path.normcase(locked)],
+            "denied == [Cookies path]": [os.path.normcase(p) for p in report.denied]
+                                        == [os.path.normcase(cookies)],
+            "kept_recent == 1": report.kept_recent == 1,
+            "cloud_only == 0": report.cloud_only == 0,
+            "cancelled is False": report.cancelled is False,
             "locked file attributed to python": any(n.lower().startswith("python") for n in owners),
-            "fresh file kept": os.path.exists(fresh) and report.kept_recent == 1,
+            "fresh file kept": os.path.exists(fresh),
             "Cookies file survives skip": os.path.exists(cookies),
             "junction target untouched": os.path.exists(os.path.join(outside, "precious.txt")),
             "junction itself unlinked": not os.path.lexists(os.path.join(root, "link")),

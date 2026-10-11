@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QSizePolicy, QLabel, QMenu, QToolButton, QHeaderView,
 )
 
+from core.widget_life import widget_is_valid
 from core.worker import Worker
 
 try:
@@ -37,6 +38,8 @@ class CategoryGroup(QWidget):
 
     # Emitted when scan completes: (item_count, total_size)
     scan_done = pyqtSignal(int, int)
+    # Emitted when a clean completes: the bytes MEASURED as freed.
+    freed_bytes = pyqtSignal(int)
 
     def __init__(
         self,
@@ -89,6 +92,9 @@ class CategoryGroup(QWidget):
             w.cancel()
         self._workers.clear()
         self._scanning = False
+        # A cancelled Worker emits `cancelled`, never `result`: nothing else
+        # would ever clear this, and _do_clean_all would refuse forever.
+        self._cleaning = False
         self._scan_btn.setEnabled(True)
         self._scan_btn.setText("Scan")
 
@@ -298,12 +304,18 @@ class CategoryGroup(QWidget):
         self._scan_btn.setEnabled(False)
         self._status_label.setText("Cleaning...")
 
-        def _run(_worker):
+        def _run(worker):
             from modules.cleanup import cleanup_scanner as cs
-            return cs.delete_items(checked, stop_wuauserv=False)
+            report, refused, per_item = cs.delete_items_report(
+                checked, stop_wuauserv=False, cancelled=lambda: worker.is_cancelled)
+            return (*cs.item_counts(refused, per_item), report.freed)
 
+        # CLOSURES connected to worker signals: Qt cannot auto-disconnect
+        # them when this widget is destroyed, so each checks it is alive.
         def _done(result):
-            deleted, errors = result
+            if not widget_is_valid(self):
+                return
+            deleted, errors, freed = result
             self._cleaning = False
             self._scan_btn.setEnabled(True)
             msg = f"Cleaned {deleted} item(s)"
@@ -312,10 +324,13 @@ class CategoryGroup(QWidget):
                 self._err_lbl.setText(f"⚠ {errors} file(s) could not be deleted.")
                 self._err_lbl.show()
             self._status_label.setText(msg)
+            self.freed_bytes.emit(freed)
             # Rescan to refresh
             self._do_scan()
 
         def _err(err: str):
+            if not widget_is_valid(self):
+                return
             self._cleaning = False
             self._scan_btn.setEnabled(True)
             self._status_label.setText(f"Clean error: {err}")

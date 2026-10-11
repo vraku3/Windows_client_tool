@@ -97,7 +97,6 @@ class _ScanTab(QWidget):
         self._scanning = False
         self._cleaning = False
         self._scanned  = False
-        self._pending_freed = 0
         self._workers: list = []   # track ALL workers (scan + clean) for cancellation
         self._scan_fns: list = []  # the scanners of the run in flight, in order
         self._scan_worker = None
@@ -303,6 +302,10 @@ class _ScanTab(QWidget):
 
         path = scan_item.path
         safety = scan_item.safety
+        # A child of %TEMP% is still %TEMP%: it keeps the parent's age floor,
+        # or ticking one row of the breakdown deletes an installer's files
+        # out from under it (final review, 2026-10-11).
+        floor_hours = scan_item.keep_newer_than_hours
 
         def _run(_worker):
             return breakdown.children_by_size(path)
@@ -322,7 +325,8 @@ class _ScanTab(QWidget):
             for child_path, size in rows:
                 inner = cs.ScanItem(path=child_path, size=size,
                                     is_dir=os.path.isdir(child_path),
-                                    selected=False, safety=safety, keep_root=False)
+                                    selected=False, safety=safety, keep_root=False,
+                                    keep_newer_than_hours=floor_hours)
                 row = QTreeWidgetItem(
                     [os.path.basename(child_path) or child_path,
                      cs.format_size(size)])
@@ -493,10 +497,8 @@ class _ScanTab(QWidget):
         if not to_delete:
             return
 
-        total = sum(i.size for i in to_delete)
-
-        def _on_done(deleted, errors):
-            self._on_clean_done((deleted, errors))
+        def _on_done(deleted, errors, freed):
+            self._on_clean_done((deleted, errors, freed))
 
         worker = csr.run_clean_safe(
             self, selected, stop_wuauserv=self._wu_cache, confirm="size_gated",
@@ -505,7 +507,6 @@ class _ScanTab(QWidget):
             return  # user declined the confirm -- nothing was disabled yet
 
         self._cleaning = True
-        self._pending_freed = total
         self._clean_btn.setEnabled(False)
         self._quick_btn.setEnabled(False)
         self._scan_btn.setEnabled(False)
@@ -517,7 +518,7 @@ class _ScanTab(QWidget):
         self._workers.append(worker)
 
     def _on_clean_done(self, result: tuple):
-        deleted, errors = result
+        deleted, errors, freed = result     # freed is MEASURED, not the scanned size
         self._cleaning = False
         self._scan_btn.setEnabled(True)
         self._progress.hide()
@@ -528,13 +529,11 @@ class _ScanTab(QWidget):
                 f"⚠ {errors} file(s) could not be deleted (in use or access denied)."
             )
             self._err_lbl.show()
-        freed = self._pending_freed
         logger.info("Cleanup complete: deleted %d item(s), freed %s, %d error(s)", deleted, cs.format_size(freed), errors)
         self._status.setText(msg)
         self._clean_btn.setEnabled(False)
         self._quick_btn.setEnabled(False)
-        self.freed_bytes.emit(self._pending_freed)
-        self._pending_freed = 0
+        self.freed_bytes.emit(freed)
         self._do_scan()
 
     def _on_clean_error(self, err: str):
@@ -619,7 +618,6 @@ class _ScanTab(QWidget):
         # Nothing was measured, so the tab has NOT been scanned: let
         # auto_scan() run again the next time it is activated.
         self._scanned = False
-        self._pending_freed = 0
         self._scan_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         has_items = self._result is not None and len(self._result.items) > 0

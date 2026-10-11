@@ -803,6 +803,7 @@ class QuickCleanupTab(QWidget):
             scanner_fn, label, color = fn_info
             group = CategoryGroup(label, scanner_fn, auto_refresh=False)
             group.scan_done.connect(self._on_group_scan_done)
+            group.freed_bytes.connect(self.freed_bytes)
             self._groups_container.append(group)
             self._group_by_cid[cid] = group
             content_lay.addWidget(group)
@@ -1269,7 +1270,7 @@ class QuickCleanupTab(QWidget):
         if not all_safe and not browser_cats:
             return
 
-        def _on_done(deleted, errors):
+        def _on_done(deleted, errors, freed):
             self._scanning = False
             self._scan_all_btn.setEnabled(True)
             self._progress.hide()
@@ -1277,7 +1278,7 @@ class QuickCleanupTab(QWidget):
             if errors:
                 msg += f" — {errors} could not be deleted"
             self._status_lbl.setText(msg)
-            self.freed_bytes.emit(total)
+            self.freed_bytes.emit(freed)        # measured, never the scanned total
             self.scan()
 
         def _on_error(e: str):

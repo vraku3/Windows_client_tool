@@ -26,7 +26,7 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
                    stop_wuauserv: bool = False,
                    confirm: str = "always",
                    preset_label: Optional[str] = None,
-                   on_done: Callable[[int, int], None],
+                   on_done: Callable[[int, int, int], None],
                    on_error: Optional[Callable[[str], None]] = None) -> Optional[Worker]:
     """confirm="always": always asks, via a QMessageBox Ok/Cancel dialog.
     confirm="size_gated": only asks above _scan_tab.CONFIRM_BYTES.
@@ -46,6 +46,12 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
     "Light" (both mean "safe-only, in practice") keep the ORIGINAL
     wording byte-for-byte; anything else drops the word "safe" (which
     would be actively false) and adds an explicit warning.
+
+    on_done(cleaned, problems, freed) gets the item counts and the bytes
+    MEASURED as freed (deleter + browser caches) -- never the scanned size,
+    which counted every locked file as freed (final review, 2026-10-11).
+    Cancelling the returned Worker reaches the deleting walk; a cancelled
+    run emits no result, but its partial outcome is in the deletion log.
 
     Returns the Worker it started, or None if the user declined the
     confirm dialog -- neither on_done nor on_error fires in that case.
@@ -83,13 +89,19 @@ def run_clean_safe(widget: QWidget, items: List["cs.ScanItem"], *,
         if mb.exec() != QMessageBox.StandardButton.Ok:
             return None
 
-    def _run(_worker):
-        browser_freed = browser_errors = 0
+    def _run(worker):
+        browser_freed = browser_errors = browser_cleaned = 0
         if browser_cats:
             from modules.cleanup import browser_scanner as bs
             browser_freed, browser_errors = bs.delete_selected(browser_cats)
-        deleted, errors = cs.delete_items(items, stop_wuauserv=stop_wuauserv) if items else (0, 0)
-        return deleted + browser_freed, errors + browser_errors
+            browser_cleaned = max(0, len(browser_cats) - browser_errors)
+        deleted = errors = freed = 0
+        if items:
+            report, refused, per_item = cs.delete_items_report(
+                items, stop_wuauserv=stop_wuauserv, cancelled=lambda: worker.is_cancelled)
+            deleted, errors = cs.item_counts(refused, per_item)
+            freed = report.freed
+        return deleted + browser_cleaned, errors + browser_errors, freed + browser_freed
 
     # These are CLOSURES, not bound methods -- Qt auto-disconnects a bound
     # method when its receiving QObject is destroyed, but it cannot do that

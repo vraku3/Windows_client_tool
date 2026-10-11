@@ -10,6 +10,16 @@ from PyQt6.QtWidgets import QWidget
 
 from modules.cleanup import cleanup_scanner as cs
 from modules.cleanup import clean_safe_runner as csr
+from modules.cleanup.cleanup_scanner.deleter import DeleteReport
+
+
+def _reports(cleaned, problems, freed=0):
+    """A delete_items_report stand-in: `cleaned` clean items, `problems` left ones."""
+    def fake(items, stop_wuauserv=False, cancelled=None):
+        per_item = ([(f"ok{i}", DeleteReport()) for i in range(cleaned)]
+                    + [(f"bad{i}", DeleteReport(denied=[f"bad{i}"])) for i in range(problems)])
+        return DeleteReport(freed=freed), [], per_item
+    return fake
 
 
 def _settle(qapp, timeout_ms: int = 5_000) -> None:
@@ -28,11 +38,11 @@ def widget(qapp):
 
 def test_always_confirm_runs_the_delete_when_accepted(qapp, widget, monkeypatch):
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (2, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(2, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
-    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: done.append((d, e)))
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e, f: done.append((d, e)))
     _settle(qapp)
 
     assert done == [(2, 0)]
@@ -41,10 +51,10 @@ def test_always_confirm_runs_the_delete_when_accepted(qapp, widget, monkeypatch)
 def test_always_confirm_does_nothing_when_cancelled(qapp, widget, monkeypatch):
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Cancel)
     called = []
-    monkeypatch.setattr(cs, "delete_items", lambda *a, **k: called.append(1))
+    monkeypatch.setattr(cs, "delete_items_report", lambda *a, **k: called.append(1))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
-    result = csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None)
+    result = csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e, f: None)
 
     assert result is None
     assert called == []
@@ -56,11 +66,11 @@ def test_size_gated_confirm_skips_the_dialog_for_small_totals(qapp, widget, monk
     def _fail_if_called(self):
         raise AssertionError("confirm dialog should not have been shown")
     monkeypatch.setattr(csr.QMessageBox, "exec", _fail_if_called)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
-    csr.run_clean_safe(widget, [item], confirm="size_gated", on_done=lambda d, e: done.append((d, e)))
+    csr.run_clean_safe(widget, [item], confirm="size_gated", on_done=lambda d, e, f: done.append((d, e)))
     _settle(qapp)
 
     assert done == [(1, 0)]
@@ -70,7 +80,7 @@ def test_only_selected_items_count_toward_the_confirmed_total(qapp, widget, monk
     # _ScanTab passes its FULL item list (mixed selected/unselected) and
     # relies on filtering happening downstream, same as cs.delete_items
     # itself does -- an unselected item must not inflate the confirm total.
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
     seen_totals = []
 
     def _fake_exec(self):
@@ -82,7 +92,7 @@ def test_only_selected_items_count_toward_the_confirmed_total(qapp, widget, monk
     unselected_item = cs.ScanItem(path=r"C:\y", size=999_000_000, is_dir=False, safety="safe", selected=False)
     done = []
     csr.run_clean_safe(widget, [selected_item, unselected_item], confirm="always",
-                       on_done=lambda d, e: done.append((d, e)))
+                       on_done=lambda d, e, f: done.append((d, e)))
     _settle(qapp)
 
     assert len(seen_totals) == 1
@@ -92,16 +102,18 @@ def test_only_selected_items_count_toward_the_confirmed_total(qapp, widget, monk
 
 def test_browser_cats_are_combined_with_regular_items(qapp, widget, monkeypatch):
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
     monkeypatch.setattr("modules.cleanup.browser_scanner.delete_selected", lambda cats, progress_cb=None: (1, 1))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
     csr.run_clean_safe(widget, [item], browser_cats=["fake_cat"], confirm="always",
-                       on_done=lambda d, e: done.append((d, e)))
+                       on_done=lambda d, e, f: done.append((d, e)))
     _settle(qapp)
 
-    assert done == [(2, 1)]  # 1 (regular) + 1 (browser) deleted, 0 + 1 errors
+    # 1 regular item cleaned; the one browser category reported an error, so
+    # it is not counted as cleaned (its BYTES once were, as an item count).
+    assert done == [(1, 1)]
 
 
 def test_a_result_landing_after_the_widget_is_deleted_is_dropped(qapp, widget, monkeypatch):
@@ -118,20 +130,20 @@ def test_a_result_landing_after_the_widget_is_deleted_is_dropped(qapp, widget, m
     started = threading.Event()
     release = threading.Event()
 
-    def _blocking_delete(items, stop_wuauserv=False):
+    def _blocking_delete(items, stop_wuauserv=False, cancelled=None):
         started.set()
         release.wait(10)
-        return (1, 0)
+        return _reports(1, 0)(items)
 
-    monkeypatch.setattr(cs, "delete_items", _blocking_delete)
+    monkeypatch.setattr(cs, "delete_items_report", _blocking_delete)
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     done = []
     csr.run_clean_safe(widget, [item], confirm="always",
-                       on_done=lambda d, e: done.append((d, e)))
+                       on_done=lambda d, e, f: done.append((d, e)))
 
-    assert started.wait(5), "delete_items was never called"
+    assert started.wait(5), "delete_items_report was never called"
     sip.delete(widget)
     release.set()
     _settle(qapp)
@@ -147,20 +159,20 @@ def test_an_error_landing_after_the_widget_is_deleted_is_dropped(qapp, widget, m
     started = threading.Event()
     release = threading.Event()
 
-    def _blocking_raise(items, stop_wuauserv=False):
+    def _blocking_raise(items, stop_wuauserv=False, cancelled=None):
         started.set()
         release.wait(10)
         raise RuntimeError("disk went away")
 
-    monkeypatch.setattr(cs, "delete_items", _blocking_raise)
+    monkeypatch.setattr(cs, "delete_items_report", _blocking_raise)
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     errors = []
-    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None,
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e, f: None,
                        on_error=errors.append)
 
-    assert started.wait(5), "delete_items was never called"
+    assert started.wait(5), "delete_items_report was never called"
     sip.delete(widget)
     release.set()
     _settle(qapp)
@@ -179,10 +191,10 @@ def test_no_preset_label_produces_the_original_message_byte_for_byte(qapp, widge
         seen_texts.append(self.text())
         return csr.QMessageBox.StandardButton.Ok
     monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
-    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None)
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e, f: None)
     _settle(qapp)
 
     assert seen_texts == [
@@ -198,11 +210,11 @@ def test_light_preset_label_also_produces_the_original_message(qapp, widget, mon
         seen_texts.append(self.text())
         return csr.QMessageBox.StandardButton.Ok
     monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     csr.run_clean_safe(widget, [item], confirm="always", preset_label="Light",
-                        on_done=lambda d, e: None)
+                        on_done=lambda d, e, f: None)
     _settle(qapp)
 
     assert seen_texts == [
@@ -218,12 +230,12 @@ def test_aggressive_preset_label_drops_the_word_safe_and_names_the_preset(qapp, 
         seen_texts.append(self.text())
         return csr.QMessageBox.StandardButton.Ok
     monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="danger")
     item.selected = True
     csr.run_clean_safe(widget, [item], confirm="always", preset_label="Aggressive",
-                        on_done=lambda d, e: None)
+                        on_done=lambda d, e, f: None)
     _settle(qapp)
 
     assert len(seen_texts) == 1
@@ -241,12 +253,12 @@ def test_size_gated_confirm_is_unaffected_by_preset_label(qapp, widget, monkeypa
         seen_texts.append(self.text())
         return csr.QMessageBox.StandardButton.Ok
     monkeypatch.setattr(csr.QMessageBox, "exec", _fake_exec)
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0))
 
     big_item = cs.ScanItem(path=r"C:\x", size=600 * 1024 * 1024, is_dir=False,
                             safety="safe", selected=True)
     csr.run_clean_safe(widget, [big_item], confirm="size_gated",
-                        preset_label="Aggressive", on_done=lambda d, e: None)
+                        preset_label="Aggressive", on_done=lambda d, e, f: None)
     _settle(qapp)
 
     # _confirm_large's own dialog text, from _scan_tab.py -- unrelated to
@@ -257,16 +269,74 @@ def test_size_gated_confirm_is_unaffected_by_preset_label(qapp, widget, monkeypa
 
 
 def test_on_error_fires_when_the_worker_raises(qapp, widget, monkeypatch):
-    def _raise(items, stop_wuauserv=False):
+    def _raise(items, stop_wuauserv=False, cancelled=None):
         raise RuntimeError("disk went away")
-    monkeypatch.setattr(cs, "delete_items", _raise)
+    monkeypatch.setattr(cs, "delete_items_report", _raise)
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
 
     item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
     errors = []
-    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e: None,
+    csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e, f: None,
                        on_error=errors.append)
     _settle(qapp)
 
     assert len(errors) == 1
     assert "disk went away" in errors[0]
+
+
+# ── Final review, finding 1: the bytes reported are the bytes that went ──
+
+def test_a_clean_whose_only_file_is_locked_reports_zero_freed(qapp, widget, monkeypatch, tmp_path):
+    import os
+    from modules.cleanup.cleanup_scanner import scanners_system as ss
+    monkeypatch.setattr(ss, "protected_system_dirs", lambda: [])
+    monkeypatch.setattr(ss, "protected_app_dirs", lambda: [])
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
+    held = tmp_path / "held.tmp"
+    held.write_bytes(b"x" * 4096)
+    item = cs.ScanItem(path=str(held), size=4096, is_dir=False, safety="safe")
+    done = []
+    fd = os.open(str(held), os.O_RDONLY)
+    try:
+        csr.run_clean_safe(widget, [item], confirm="always",
+                           on_done=lambda d, e, f: done.append((d, e, f)))
+        _settle(qapp)
+    finally:
+        os.close(fd)
+    assert done == [(0, 1, 0)], "the scanned 4 KB was reported as freed"
+    assert held.exists()
+
+
+def test_measured_freed_includes_the_browser_bytes(qapp, widget, monkeypatch):
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
+    monkeypatch.setattr(cs, "delete_items_report", _reports(1, 0, freed=300))
+    monkeypatch.setattr("modules.cleanup.browser_scanner.delete_selected",
+                        lambda cats, progress_cb=None: (700, 0))
+    item = cs.ScanItem(path=r"C:\x", size=999_999, is_dir=False, safety="safe")
+    done = []
+    csr.run_clean_safe(widget, [item], browser_cats=["fake_cat"], confirm="always",
+                       on_done=lambda d, e, f: done.append(f))
+    _settle(qapp)
+    assert done == [1000]
+
+
+# ── Final review, finding 5: cancelling the worker reaches the engine ──
+
+def test_cancelling_the_worker_reaches_the_engine(qapp, widget, monkeypatch):
+    import threading
+    monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
+    started, release, seen = threading.Event(), threading.Event(), []
+
+    def fake(items, stop_wuauserv=False, cancelled=None):
+        started.set()
+        release.wait(10)
+        seen.append(cancelled())
+        return DeleteReport(cancelled=True), [], []
+    monkeypatch.setattr(cs, "delete_items_report", fake)
+    item = cs.ScanItem(path=r"C:\x", size=100, is_dir=False, safety="safe")
+    worker = csr.run_clean_safe(widget, [item], confirm="always", on_done=lambda d, e, f: None)
+    assert started.wait(5)
+    worker.cancel()
+    release.set()
+    _settle(qapp)
+    assert seen == [True]

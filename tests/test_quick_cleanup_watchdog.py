@@ -127,7 +127,12 @@ def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     result.items = [item]
     tab._results = {"temp": result}
 
-    monkeypatch.setattr(cs, "delete_items", lambda items, stop_wuauserv=False: (1, 0))
+    from modules.cleanup.cleanup_scanner.deleter import DeleteReport
+    # What is emitted is what the deleter MEASURED (here 300 of the 500
+    # scanned bytes), never the scanned size.
+    monkeypatch.setattr(cs, "delete_items_report",
+                        lambda items, stop_wuauserv=False, cancelled=None: (
+                            DeleteReport(freed=300, files=1), [], [(item.path, DeleteReport(freed=300, files=1))]))
     monkeypatch.setattr(csr.QMessageBox, "exec", lambda self: csr.QMessageBox.StandardButton.Ok)
 
     emitted = []
@@ -135,4 +140,4 @@ def test_freed_bytes_is_emitted_after_a_successful_clean(qapp, monkeypatch):
     tab._do_clean_all_safe()
     _settle(qapp)
 
-    assert emitted == [500]
+    assert emitted == [300]

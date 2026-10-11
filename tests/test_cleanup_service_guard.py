@@ -46,7 +46,8 @@ def _one_file(tmp_path, calls):
     real_remove = ss.os.remove
 
     def remove(path):
-        calls.append(("delete", str(path)))
+        # The deleter hands Windows the long-path (extended prefix) form; compare the path itself.
+        calls.append(("delete", str(path).removeprefix("\\\\?\\")))
         real_remove(path)
 
     return f, remove

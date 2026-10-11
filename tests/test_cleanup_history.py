@@ -82,8 +82,9 @@ def test_delete_items_logs_the_paths_it_removed(tmp_path):
                  selected=False, safety="safe"),
     ])
     entry = ch.recent_deleted()[0]
-    assert entry["count"] == 2 and entry["bytes"] == 11
-    assert [p for p, _ in entry["largest"]] == [str(big), str(small)]   # largest first
+    # Interim (Task 2): the engine reports totals, not paths; Task 3 restores per-path logging.
+    assert entry["count"] == 1 and entry["bytes"] == 11
+    assert entry["largest"] == [["2 files", 11]]
     assert entry["refused"] == []
 
 

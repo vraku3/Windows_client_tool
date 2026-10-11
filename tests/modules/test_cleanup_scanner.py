@@ -56,7 +56,7 @@ def test_delete_items_removes_dir(tmp_path):
     d = tmp_path / "subdir"
     d.mkdir()
     (d / "file.txt").write_bytes(b"data")
-    item = ScanItem(str(d), 4, True, selected=True)
+    item = ScanItem(str(d), 4, True, selected=True, keep_root=False)
     deleted, errors = delete_items([item])
     assert deleted == 1
     assert errors == 0

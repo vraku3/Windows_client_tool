@@ -124,7 +124,7 @@ def test_a_dir_swapped_for_a_reparse_point_after_scandir_is_not_entered(tmp_path
 
     class _Fake:
         st_mode = stat.S_IFDIR
-        st_file_attributes = 0x400
+        st_file_attributes = 0x410
         st_size = 0
         st_mtime = 0
 
@@ -487,3 +487,17 @@ def test_deletereport_merges_cloud_only():
     a, b = d.DeleteReport(cloud_only=1), d.DeleteReport(cloud_only=2)
     a.merge(b)
     assert a.cloud_only == 3
+
+
+def test_a_root_reparse_file_is_an_ordinary_file(tmp_path, monkeypatch):
+    f = _file(tmp_path / "hydrated.bin", 77, age_s=7200)
+    real = os.lstat
+
+    def lstat(p, *a, **k):
+        st = real(p, *a, **k)
+        return _FakeStat(st, st.st_file_attributes | 0x400) if str(p).endswith("hydrated.bin") else st
+    monkeypatch.setattr(os, "lstat", lstat)
+    kept = d.delete_path(str(f), False, keep_newer_than_s=86400)
+    assert (kept.kept_recent, kept.freed) == (1, 0) and f.exists()
+    gone = d.delete_path(str(f), False, keep_newer_than_s=3600)
+    assert (gone.freed, gone.files) == (77, 1) and not f.exists()

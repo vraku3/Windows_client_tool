@@ -118,9 +118,10 @@ def is_link_attrs(attrs: int) -> bool:
 
 
 def _is_link(st: os.stat_result) -> bool:
-    """A symlink or any reparse point (junction, mount point...)."""
+    """A symlink, or a reparse-point DIRECTORY (junction, mount point...). A reparse
+    FILE that is not a symlink (hydrated OneDrive, dedup) is a regular file."""
     return (stat.S_ISLNK(st.st_mode)
-            or bool(getattr(st, "st_file_attributes", 0) & _ATTR_REPARSE_POINT))
+            or is_link_attrs(getattr(st, "st_file_attributes", 0)))
 
 
 def _unlink_link(path: str, report: DeleteReport) -> None:

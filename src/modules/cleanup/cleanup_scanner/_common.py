@@ -31,18 +31,46 @@ class ScanResult:
     def selected_size(self) -> int:
         return sum(i.size for i in self.items if i.selected)
 
+#: On-demand cloud files: their size is the cloud's, not this disk's.
+_PLACEHOLDER = 0x400000 | 0x40000 | 0x1000  # RECALL_ON_DATA_ACCESS | RECALL_ON_OPEN | OFFLINE
+
+
+def _stat(entry):
+    st = entry.stat(follow_symlinks=False)
+    return st, getattr(st, "st_file_attributes", 0)
+
+
+def _attrs(st_and_attr) -> int:
+    return st_and_attr[1]
+
+
 def get_dir_size(path: str) -> int:
+    """Local bytes a full clean of `path` would free: one scandir walk (no extra
+    stat per file), never through a junction/symlink, never a cloud placeholder."""
     total = 0
-    try:
-        for dirpath, dirnames, filenames in os.walk(path):
-            for f in filenames:
-                try:
-                    total += os.path.getsize(os.path.join(dirpath, f))
-                except OSError:
-                    logger.debug("Ignored OSError", exc_info=True)
-    except OSError:
-        logger.debug("Ignored OSError", exc_info=True)
+    stack = [path]
+    while stack:
+        folder = stack.pop()
+        try:
+            entries = list(os.scandir(folder))
+        except OSError as exc:
+            logger.debug("size walk cannot list %s: %s", folder, exc)
+            continue
+        for entry in entries:
+            try:
+                if entry.is_symlink() or entry.is_junction():
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(entry.path)
+                    continue
+                st_and_attr = _stat(entry)
+                if _attrs(st_and_attr) & _PLACEHOLDER:
+                    continue
+                total += st_and_attr[0].st_size
+            except OSError as exc:
+                logger.debug("size walk cannot read %s: %s", entry.path, exc)
     return total
+
 
 def _make_item(path: str, safety: str = "safe", min_age_days: int = 0) -> Optional[ScanItem]:
     """Return ScanItem for path if it exists, else None. Respects min_age_days."""

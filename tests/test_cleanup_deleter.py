@@ -345,3 +345,51 @@ def test_a_junction_root_is_typed_by_lstat_not_by_the_callers_flag(tmp_path):
                       skip=lambda p, is_dir: is_dir and os.path.basename(p).lower() == "indexeddb")
     assert os.path.lexists(link) and r.denied == [str(link)]
     assert (target / "keep.txt").exists()
+
+
+from modules.cleanup.cleanup_scanner import _common
+
+
+def test_size_skips_links_and_matches_what_a_clean_frees(tmp_path):
+    outside = tmp_path / "outside"
+    _file(outside / "big.bin", 1000)
+    cache = tmp_path / "cache"
+    _file(cache / "a.bin", 30)
+    _file(cache / "sub" / "b.bin", 12)
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(cache / "link"), str(outside)],
+                   check=True, capture_output=True)
+    measured = _common.get_dir_size(str(cache))
+    assert measured == 42
+    assert d.delete_path(str(cache), True).freed == measured
+
+
+def test_size_skips_cloud_placeholders(tmp_path, monkeypatch):
+    _file(tmp_path / "local.bin", 10)
+    _file(tmp_path / "cloud.bin", 5000)
+    real = _common.os.scandir
+
+    class Entry:
+        def __init__(self, e):
+            self._e, self.name, self.path = e, e.name, e.path
+
+        def is_dir(self, follow_symlinks=True):
+            return self._e.is_dir(follow_symlinks=follow_symlinks)
+
+        def is_symlink(self):
+            return False
+
+        def is_junction(self):
+            return False
+
+        def stat(self, follow_symlinks=True):
+            st = self._e.stat(follow_symlinks=follow_symlinks)
+            if self.name == "cloud.bin":
+                return os.stat_result((st.st_mode, 0, 0, 0, 0, 0, st.st_size, 0, 0, 0)), 0x400000
+            return st, 0
+
+    def scandir(path):
+        return [Entry(e) for e in real(path)]
+    monkeypatch.setattr(_common, "_attrs", lambda st_and_attr: st_and_attr[1])
+    monkeypatch.setattr(_common, "_stat", lambda entry: entry.stat(follow_symlinks=False))
+    monkeypatch.setattr(_common.os, "scandir", scandir)
+    assert _common.get_dir_size(str(tmp_path)) == 10

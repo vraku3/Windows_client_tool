@@ -41,3 +41,38 @@ def test_detail_lists_largest_removed_and_cloud_only(qapp, tmp_path, monkeypatch
     assert "Cloud-only files left: 4" in detail
     line = [ln for ln in detail.splitlines() if "big.tmp" in ln][0]
     assert _path_of(line) == r"C:\Temp\big.tmp"
+
+
+def _tab_with_path(tmp_path, monkeypatch, path):
+    import json
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    (tmp_path / "log.json").write_text(json.dumps([{
+        "at": "2026-10-11T10:00:00", "count": 1, "bytes": 5, "locked_count": 1,
+        "locked": [path]}]), encoding="utf-8")
+    from modules.cleanup.tabs._history_tab import _HistoryTab
+    tab = _HistoryTab()
+    tab.refresh()
+    tab.table.selectRow(0)
+    lines = tab.detail.toPlainText().splitlines()
+    cur = tab.detail.textCursor()
+    cur.setPosition(tab.detail.toPlainText().index(path))
+    tab.detail.setTextCursor(cur)
+    return tab
+
+
+def test_open_folder_walks_up_to_the_nearest_existing_ancestor(qapp, tmp_path, monkeypatch):
+    import subprocess
+    launched = []
+    monkeypatch.setattr(subprocess, "Popen", lambda a, *k, **kw: launched.append(a))
+    tab = _tab_with_path(tmp_path, monkeypatch, str(tmp_path / "gone" / "deeper" / "x.log"))
+    tab._open_folder()
+    assert launched == [["explorer", str(tmp_path)]]
+
+
+def test_open_folder_with_no_existing_ancestor_launches_nothing(qapp, tmp_path, monkeypatch):
+    import subprocess
+    launched = []
+    monkeypatch.setattr(subprocess, "Popen", lambda a, *k, **kw: launched.append(a))
+    tab = _tab_with_path(tmp_path, monkeypatch, "Q:" + chr(92) + "nope" + chr(92) + "x")
+    tab._open_folder()
+    assert launched == [] and "no longer exists" in tab.status.text()

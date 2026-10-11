@@ -1,5 +1,6 @@
 """History: what each clean REALLY did -- measured bytes, files left in use and
 by whom, refusals with their reason. Reads cleanup_history; computes nothing."""
+import logging
 import os
 import subprocess
 
@@ -11,6 +12,8 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
 from core.formatting import format_size
 from modules.cleanup import cleanup_history
 
+logger = logging.getLogger(__name__)
+
 COLUMNS = ("When", "Freed", "Files", "Left in use", "Refused", "Summary")
 
 
@@ -20,6 +23,18 @@ def _path_of(line: str) -> str:
     if line[1:3] != ":\\":
         return ""
     return line.split("  --  ")[0].split("  (")[0]
+
+
+def _nearest_existing_dir(path: str) -> str:
+    """The path itself if a directory, else its nearest existing ancestor, else ""."""
+    cur = path
+    while True:
+        if os.path.isdir(cur):
+            return cur
+        parent = os.path.dirname(cur)
+        if not parent or parent == cur:
+            return ""
+        cur = parent
 
 
 def _detail_text(entry: dict) -> str:
@@ -102,9 +117,17 @@ class _HistoryTab(QWidget):
 
     def _open_folder(self) -> None:
         path = self._selected_path()
-        if path:
-            folder = path if os.path.isdir(path) else os.path.dirname(path)
+        if not path:
+            return
+        folder = _nearest_existing_dir(path)
+        if not folder:
+            self.status.setText("That folder no longer exists.")
+            return
+        try:
             subprocess.Popen(["explorer", folder])
+        except OSError as e:
+            logger.warning("could not open %s: %s", folder, e)
+            self.status.setText(f"Could not open the folder: {e}")
 
     def _copy_path(self) -> None:
         path = self._selected_path()

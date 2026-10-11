@@ -388,12 +388,19 @@ bounded per-line timestamp window).
 
 **Scanner** (`cleanup_scanner.py`): functions take `min_age_days: int = 0` and return `ScanResult`. `ScanItem` fields: `path`, `size`, `is_dir`, `selected`, `safety` ("safe"/"caution"/"danger") — **no `name` field** (passing `name=` raises `TypeError`).
 
-**8-tab structure** in `cleanup_module.py`:
-- `_ScanTab(QWidget)` — reusable tab wrapping a `{fn: label}` scanners dict; exposes `freed_bytes = pyqtSignal(int)` and `auto_scan()` (no-op if already scanned). Tracks **all** workers (scan + clean) in a single `self._workers: list`.
+**Ten tabs** in `cleanup_module.py`, in order: Quick Cleanup
+(`components/quick_cleanup_tab.py`'s `QuickCleanupTab`, with presets and one
+`CategoryGroup` per category), System Junk, Browser Caches
+(`_BrowserCleanupTab`), App & Game Caches, Windows Update, Logs & Reports,
+Large Items (`_LargeItemsTab`), Dev Tools, Discover (`_DiscoverTab`, read-only)
+and History (`_HistoryTab`). Above them sit the "Clean Now" button (runs Quick
+Cleanup's Clean All Safe), the session/all-time freed labels and
+`DriveSummaryBar`. There is no Overview tab any more.
+- `_ScanTab(QWidget)` — reusable tab wrapping a `{fn: (label, safety)}` scanners dict (System Junk, App & Game Caches, Windows Update, Logs & Reports, Dev Tools, and inside Large Items); exposes `freed_bytes = pyqtSignal(int)` and `auto_scan()` (no-op if already scanned). Tracks **all** workers (scan + clean) in a single `self._workers: list`.
 - `_BrowserCleanupTab(QWidget)` — uses `EnhancedBrowserScanner` from `browser_scanner.py`; same signal and worker pattern.
-- `_LargeItemsTab(QWidget)` — wraps `_ScanTab` + DISM "Component Cleanup" button in background. Its `_cancel_all()` calls `self._scan_tab._cancel_all()` then `self._dism_worker.cancel()`.
-- `_OverviewTab(QWidget)` — table of all groups; "Scan All" parallelises workers; "Clean All Safe" deletes safe items. `_cancel_all()` iterates `self._scan_workers` list calling `w.cancel()` on each.
-- `CleanupModule.on_activate()` triggers `_overview.auto_scan()`; `QTabWidget.currentChanged` wires each tab's `auto_scan()` for lazy first-load
+- `_LargeItemsTab(QWidget)` — a `_ScanTab` plus the DriverStore panel and the Disk Cleanup panel; its `_cancel_all()` cancels all three.
+- Every tab's `freed_bytes` feeds `CleanupModule._on_freed`, which adds to "Freed this session" and writes `cleanup_history.json` (all-time) — so what they emit must be the MEASURED bytes (`run_clean_safe`'s `on_done(cleaned, problems, freed)`), never the scanned size. `CategoryGroup.freed_bytes` is forwarded through `QuickCleanupTab.freed_bytes`.
+- `CleanupModule.on_activate()` refreshes `DriveSummaryBar` and calls `_quick.auto_scan()` (scans Quick Cleanup once); `QTabWidget.currentChanged` (`_on_tab_changed`) calls each tab's `auto_scan()` for lazy first-load and refreshes History. The 60 s auto-refresh rescans Quick Cleanup only, and only while it is the visible tab.
 
 **Rules here, every one of which cost a measured defect:**
 
@@ -511,9 +518,20 @@ bounded per-line timestamp window).
     `Cookies`/`Login Data`, `IndexedDB`/`Local Storage`/`Session Storage`) as
     `skip`, so the deleting walk enforces what the checking walk could not
     read. `delete_items` returns `(cleaned, problems)` counted per item.
-  - Files in use are listed in `locked` and named by Restart Manager
-    (`lock_owners.owners_of`); a `msedgewebview2.exe` holder is reported as its
-    hosting app, e.g. `ms-teams.exe (WebView2)`. Nothing is queued for reboot.
+  - Files in use are listed in `locked`, and naming who holds them is BEST
+    EFFORT: Restart Manager (`lock_owners.owners_of`) is asked about the first
+    64 locked files only (the counts in `locked_count` are always exact), a
+    holder it cannot name is simply absent, and a `msedgewebview2.exe` holder
+    is reported as the first non-WebView2 parent process, e.g.
+    `ms-teams.exe (WebView2)` -- falling back to plain `msedgewebview2.exe`
+    when the parent cannot be found. Nothing is queued for reboot.
+  - Refusal (`_refusal_reason`) checks the path as written AND as resolved
+    (`os.path.realpath`): a junction into a protected folder is refused. A
+    top-level item whose `lstat` is refused is `denied` and a problem, not
+    "absent". Cancellation (`cancelled=`) reaches the walk from every caller
+    (`run_clean_safe`, `CategoryGroup`, `run_cleanup_safe_stage`); a cancelled
+    run is still logged, flagged `cancelled`. An item removed at 0 bytes
+    (empty folder, unlinked link) is logged in `largest` with 0.
   - Temp keeps files younger than 24 h (`keep_newer_than_hours` on the
     `temp_files` entry), because installers read their extracted files back;
     `user_crash_dumps` no longer targets all of `%LOCALAPPDATA%\Temp`.

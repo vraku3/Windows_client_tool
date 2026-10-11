@@ -2084,8 +2084,10 @@ def delete_items_report(items: List[ScanItem],
             per_item.append((item.path, one))
             report.merge(one)
         from modules.cleanup import cleanup_history
+        from modules.cleanup.cleanup_scanner.lock_owners import owners_of
+        owners = owners_of(report.locked) if report.locked else {}
         cleanup_history.record_report(
-            report, refused,
+            report, refused, owners=owners,
             removed=[(path, r.freed) for path, r in per_item if r.files])
         # Every cached measurement is now about a disk that no longer looks like that.
         from modules.cleanup.cleanup_scanner import scan_cache

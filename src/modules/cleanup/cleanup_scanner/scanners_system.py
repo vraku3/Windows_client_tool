@@ -2047,15 +2047,23 @@ class _ServiceStopped:
         return False  # do not suppress exceptions
 
 
+def _protected_entry(path: str, is_dir: bool) -> bool:
+    """An entry the deleting walk must leave, whatever the checking walk saw."""
+    name = os.path.basename(path).lower()
+    if is_dir:
+        return name in SIGN_IN_DIRS
+    return name.endswith(OUTLOOK_DATA_EXTENSIONS) or name in SIGN_IN_FILES
+
+
 def delete_items_report(items: List[ScanItem],
                         on_progress: Optional[Callable[[int, int], None]] = None,
                         stop_wuauserv: bool = False,
                         cancelled: Callable[[], bool] = lambda: False):
-    """Delete the selected items. Returns (DeleteReport, [(path, refusal reason)])."""
+    """Delete the selected items. Returns (DeleteReport, [(path, refusal reason)], [(path, its own DeleteReport)])."""
     from modules.cleanup.cleanup_scanner.deleter import DeleteReport, delete_path
 
     def _do_delete():
-        report, refused = DeleteReport(), []
+        report, refused, per_item = DeleteReport(), [], []
         selected = [i for i in items if i.selected]
         for idx, item in enumerate(selected):
             if on_progress:
@@ -2070,15 +2078,17 @@ def delete_items_report(items: List[ScanItem],
                 logger.warning("Refusing to delete %s: %s", item.path, reason)
                 refused.append((item.path, reason))
                 continue
-            report.merge(delete_path(item.path, item.is_dir, keep_root=item.keep_root,
-                                     keep_newer_than_s=item.keep_newer_than_hours * 3600,
-                                     cancelled=cancelled))
+            one = delete_path(item.path, item.is_dir, keep_root=item.keep_root,
+                              keep_newer_than_s=item.keep_newer_than_hours * 3600,
+                              cancelled=cancelled, skip=_protected_entry)
+            per_item.append((item.path, one))
+            report.merge(one)
         from modules.cleanup import cleanup_history
         cleanup_history.record_report(report, refused)
         # Every cached measurement is now about a disk that no longer looks like that.
         from modules.cleanup.cleanup_scanner import scan_cache
         scan_cache.invalidate()
-        return report, refused
+        return report, refused, per_item
 
     if stop_wuauserv:
         with _ServiceStopped("wuauserv"):
@@ -2090,10 +2100,9 @@ def delete_items(items: List[ScanItem],
                  on_progress: Optional[Callable[[int, int], None]] = None,
                  stop_wuauserv: bool = False) -> Tuple[int, int]:
     """Back-compatible: (items cleaned, items refused or left with errors)."""
-    report, refused = delete_items_report(items, on_progress, stop_wuauserv)
-    problems = len(refused) + (1 if report.locked or report.denied else 0)
-    cleaned = max(0, sum(1 for i in items if i.selected) - problems)
-    return cleaned, problems
+    _report, refused, per_item = delete_items_report(items, on_progress, stop_wuauserv)
+    unclean = sum(1 for _path, one in per_item if one.locked or one.denied)
+    return len(per_item) - unclean, len(refused) + unclean
 
 
 def _enum_subkeys(handle):

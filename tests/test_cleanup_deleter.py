@@ -210,7 +210,7 @@ def test_delete_items_counts_only_what_went(tmp_path, no_system_guards):
     held = _file(tmp_path / "held.tmp", 50, age_s=3 * 86400)
     fd = os.open(str(held), os.O_RDONLY)
     try:
-        report, refused = ss.delete_items_report([ScanItem(str(tmp_path), 150, True)])
+        report, refused, _per = ss.delete_items_report([ScanItem(str(tmp_path), 150, True)])
     finally:
         os.close(fd)
     assert report.freed == 100 and report.locked == [str(held)] and refused == []
@@ -229,7 +229,7 @@ def test_an_unreadable_subfolder_is_skipped_not_the_whole_item(tmp_path, no_syst
         return real_scandir(path)
     monkeypatch.setattr(d.os, "scandir", scandir)
     monkeypatch.setattr(ss.os, "walk", lambda p, onerror=None: iter([(p, [], ["junk.tmp"])]))
-    report, refused = ss.delete_items_report([ScanItem(str(tmp_path), 109, True)])
+    report, refused, _per = ss.delete_items_report([ScanItem(str(tmp_path), 109, True)])
     assert report.freed == 10 and str(blocked) in report.denied and refused == []
     assert (blocked / "x.tmp").exists()
 
@@ -238,14 +238,14 @@ def test_temp_keeps_files_younger_than_its_floor(tmp_path, no_system_guards):
     _file(tmp_path / "old.tmp", 10, age_s=3 * 86400)
     fresh = _file(tmp_path / "{GUID}" / "setup.msi", 40)
     item = ScanItem(str(tmp_path), 50, True, keep_newer_than_hours=24)
-    report, _ = ss.delete_items_report([item])
+    report, _, _per = ss.delete_items_report([item])
     assert fresh.exists() and report.freed == 10 and report.kept_recent == 1
 
 
 def test_a_superseded_version_folder_goes_entirely(tmp_path, no_system_guards):
     old = tmp_path / "app-1.0.0"
     _file(old / "app.exe", 5)
-    report, _ = ss.delete_items_report([ScanItem(str(old), 5, True, keep_root=False)])
+    report, _, _per = ss.delete_items_report([ScanItem(str(old), 5, True, keep_root=False)])
     assert not old.exists() and report.freed == 5
 
 
@@ -255,3 +255,57 @@ def test_the_catalog_temp_entry_carries_the_floor_and_crash_dumps_no_longer_targ
     assert specs["temp_files"].keep_newer_than_hours == 24
     assert not any(p.lower().rstrip("\\").endswith(r"%localappdata%\temp")
                    for p in specs["user_crash_dumps"].paths)
+
+
+def _locked(path):
+    return os.open(str(path), os.O_RDONLY)
+
+
+def test_per_item_counts_two_locked_items(tmp_path, no_system_guards):
+    a = _file(tmp_path / "a" / "x.tmp", 5, age_s=3 * 86400)
+    b = _file(tmp_path / "b" / "y.tmp", 5, age_s=3 * 86400)
+    fds = [_locked(a), _locked(b)]
+    try:
+        got = ss.delete_items([ScanItem(str(tmp_path / "a"), 5, True), ScanItem(str(tmp_path / "b"), 5, True)])
+    finally:
+        for fd in fds:
+            os.close(fd)
+    assert got == (0, 2)
+
+
+def test_per_item_counts_one_clean_one_locked(tmp_path, no_system_guards):
+    _file(tmp_path / "a" / "x.tmp", 5, age_s=3 * 86400)
+    b = _file(tmp_path / "b" / "y.tmp", 5, age_s=3 * 86400)
+    fd = _locked(b)
+    try:
+        got = ss.delete_items([ScanItem(str(tmp_path / "a"), 5, True), ScanItem(str(tmp_path / "b"), 5, True)])
+    finally:
+        os.close(fd)
+    assert got == (1, 1)
+
+
+def test_an_item_with_only_fresh_files_is_cleaned_not_a_problem(tmp_path, no_system_guards):
+    _file(tmp_path / "new.tmp", 5)
+    item = ScanItem(str(tmp_path), 5, True, keep_newer_than_hours=24)
+    report, _, _per = ss.delete_items_report([item])
+    assert report.kept_recent == 1
+    assert ss.delete_items([item]) == (1, 0)
+
+
+def test_a_skip_predicate_keeps_the_named_file_and_lists_it(tmp_path):
+    keep = _file(tmp_path / "mail.ost", 5)
+    _file(tmp_path / "junk.tmp", 7)
+    r = d.delete_path(str(tmp_path), True, skip=lambda p, is_dir: p.endswith("mail.ost"))
+    assert keep.exists() and not (tmp_path / "junk.tmp").exists()
+    assert r.denied == [str(keep)] and r.freed == 7
+
+
+def test_the_deleting_walk_enforces_what_the_checking_walk_could_not_see(tmp_path, no_system_guards, monkeypatch):
+    monkeypatch.setattr(ss, "held_user_data", lambda *a, **k: (False, False))
+    ldb = _file(tmp_path / "IndexedDB" / "x.ldb", 5)
+    ost = _file(tmp_path / "mail.ost", 5)
+    junk = _file(tmp_path / "junk.tmp", 5)
+    report, refused, _per = ss.delete_items_report([ScanItem(str(tmp_path), 15, True)])
+    assert refused == [] and not junk.exists()
+    assert ldb.exists() and ost.exists()
+    assert str(ost) in report.denied and str(tmp_path / "IndexedDB") in report.denied

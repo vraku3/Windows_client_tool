@@ -136,8 +136,17 @@ def _rmdir(path: str, report: DeleteReport) -> None:
         report.denied.append(_short(path))
 
 
+def _skipped(entry: os.DirEntry, skip, is_dir: bool, report: DeleteReport) -> bool:
+    """True (and listed as denied) when the caller's guard protects this entry."""
+    if not skip(_short(entry.path), is_dir):
+        return False
+    logger.warning("not deleting %s: protected", _short(entry.path))
+    report.denied.append(_short(entry.path))
+    return True
+
+
 def _descend(entry: os.DirEntry, floor: float, now: float, cancelled,
-             report: DeleteReport) -> None:
+             report: DeleteReport, skip) -> None:
     try:
         fresh = os.lstat(entry.path)                 # may have been swapped since scandir
     except FileNotFoundError:
@@ -149,12 +158,13 @@ def _descend(entry: os.DirEntry, floor: float, now: float, cancelled,
     if _is_link(fresh):
         _unlink_link(entry.path, report)
         return
-    _clear(entry.path, floor, now, cancelled, report)
+    _clear(entry.path, floor, now, cancelled, report, skip)
     if not report.cancelled:
         _rmdir(entry.path, report)                   # only succeeds once empty
 
 
-def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteReport) -> None:
+def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteReport,
+           skip=lambda path, is_dir: False) -> None:
     try:
         entries = list(os.scandir(folder))
     except FileNotFoundError:
@@ -176,8 +186,11 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
             logger.warning("cannot read %s: %s", _short(entry.path), exc)
             report.denied.append(_short(entry.path))
             continue
-        if entry.is_dir(follow_symlinks=False):
-            _descend(entry, floor, now, cancelled, report)
+        is_dir = entry.is_dir(follow_symlinks=False)
+        if _skipped(entry, skip, is_dir, report):
+            continue
+        if is_dir:
+            _descend(entry, floor, now, cancelled, report, skip)
             if report.cancelled:
                 return
             continue
@@ -189,7 +202,8 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
 
 def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
                 keep_newer_than_s: float = 0,
-                cancelled: Callable[[], bool] = lambda: False) -> DeleteReport:
+                cancelled: Callable[[], bool] = lambda: False,
+                skip: Callable[[str, bool], bool] = lambda path, is_dir: False) -> DeleteReport:
     import time
     report = DeleteReport()
     if cancelled():
@@ -214,7 +228,7 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
         else:
             _remove_file(target, st.st_size, report)
         return report
-    _clear(target, keep_newer_than_s, now, cancelled, report)
+    _clear(target, keep_newer_than_s, now, cancelled, report, skip)
     if not keep_root and not report.cancelled:
         _rmdir(target, report)
     return report

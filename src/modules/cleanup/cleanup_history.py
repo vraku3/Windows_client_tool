@@ -39,18 +39,37 @@ def _history_path() -> str:
     return os.path.join(folder, "cleanup_history.json")
 
 
+def _read_entries(path: str, what: str) -> List[dict]:
+    """The log's dict entries, oldest first. [] when there is no log yet.
+
+    Never raises: invalid UTF-8, invalid JSON, a top level that is not a
+    list ({} or null) and entries that are not objects are all logged at
+    WARNING and read as nothing -- a damaged log must not take down the tab
+    that shows it (final review, 2026-10-11).
+    """
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            entries = json.load(f)
+    except (OSError, ValueError) as e:  # JSONDecodeError and UnicodeDecodeError
+        logger.warning("%s unreadable: %s", what, e)
+        return []
+    if not isinstance(entries, list):
+        logger.warning("%s is not a list (%s), ignoring it", what, type(entries).__name__)
+        return []
+    kept = [e for e in entries if isinstance(e, dict)]
+    if len(kept) != len(entries):
+        logger.warning("%s: ignored %d entries that are not objects", what, len(entries) - len(kept))
+    return kept
+
+
 def record(freed_bytes: int) -> None:
     """Append one completed-clean entry. No-op for freed_bytes <= 0."""
     if freed_bytes <= 0:
         return
     path = _history_path()
-    entries = []
-    if os.path.exists(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                entries = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            entries = []
+    entries = _read_entries(path, "cleanup run log")
     entries.append({
         "at": datetime.now().isoformat(timespec="seconds"),
         "freed_bytes": int(freed_bytes),
@@ -61,15 +80,7 @@ def record(freed_bytes: int) -> None:
 
 def recent(limit: int = 20) -> List[dict]:
     """Most-recent-first, capped at `limit`. [] if nothing has run yet."""
-    path = _history_path()
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8") as f:
-            entries = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return []
-    return list(reversed(entries))[:limit]
+    return list(reversed(_read_entries(_history_path(), "cleanup run log")))[:limit]
 
 
 def total_freed_all_time() -> int:
@@ -81,15 +92,13 @@ def total_freed_all_time() -> int:
     own log. That is still a strictly better answer than the 0 this
     module reported before every restart.
     """
-    path = _history_path()
-    if not os.path.exists(path):
-        return 0
-    try:
-        with open(path, encoding="utf-8") as f:
-            entries = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return 0
-    return sum(int(e.get("freed_bytes", 0)) for e in entries)
+    total = 0
+    for e in _read_entries(_history_path(), "cleanup run log"):
+        try:
+            total += int(e.get("freed_bytes", 0))
+        except (TypeError, ValueError):
+            logger.warning("cleanup run log: ignored a freed_bytes of %r", e.get("freed_bytes"))
+    return total
 
 
 def _deleted_path() -> str:
@@ -122,17 +131,7 @@ def _append_entry(entry: dict) -> None:
     """Append to the log. Never raises: a log must not fail a clean."""
     try:
         path = _deleted_path()
-        entries = []
-        if os.path.exists(path):
-            try:
-                with open(path, encoding="utf-8") as f:
-                    entries = json.load(f)
-            except (OSError, ValueError) as e:  # JSONDecodeError and UnicodeDecodeError
-                logger.warning("cleanup deletion log unreadable, starting over: %s", e)
-                entries = []
-            if not isinstance(entries, list):
-                logger.warning("cleanup deletion log is not a list, starting over")
-                entries = []
+        entries = _read_entries(path, "cleanup deletion log")
         entries.append(entry)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(entries[-200:], f, indent=2)
@@ -141,17 +140,9 @@ def _append_entry(entry: dict) -> None:
 
 
 def recent_deleted(limit: int = 20) -> List[dict]:
-    """Most-recent-first deletion entries. [] if none were ever recorded."""
-    path = _deleted_path()
-    if not os.path.exists(path):
-        return []
-    try:
-        with open(path, encoding="utf-8") as f:
-            entries = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("cleanup deletion log unreadable: %s", e)
-        return []
-    return list(reversed(entries))[:limit]
+    """Most-recent-first deletion entries. [] if none were ever recorded,
+    or if the log cannot be read (logged)."""
+    return list(reversed(_read_entries(_deleted_path(), "cleanup deletion log")))[:limit]
 
 
 #: How many locked / denied paths one entry keeps (the counts are always exact).
@@ -168,8 +159,11 @@ def record_report(report, refused, owners=None, removed=()) -> None:
 
     `removed` is [(path, measured_freed_bytes)]; the PATHS_PER_ENTRY largest
     are kept as "largest" so the log still answers "did Cleanup delete X".
+    An empty folder removed or a link unlinked is a removal at 0 bytes, and a
+    cancelled run is recorded even when it freed nothing.
     """
-    if not (report.files or report.locked or report.denied or report.kept_recent or report.cloud_only or refused):
+    if not (report.files or report.locked or report.denied or report.kept_recent
+            or report.cloud_only or refused or removed or report.cancelled):
         return
     _append_entry({
         "at": datetime.now().isoformat(timespec="seconds"),

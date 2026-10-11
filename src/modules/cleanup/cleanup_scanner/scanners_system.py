@@ -1970,14 +1970,38 @@ def _is_inside(path: str, folder: str) -> bool:
     return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
 
 
-def _refusal_reason(item: ScanItem) -> Optional[str]:
-    """Why ``item`` must never be deleted, or None. Cheapest checks first; one walk at most."""
-    def is_or_holds(guarded_dirs):
-        return any(_is_inside(item.path, guarded) or
-                   (item.is_dir and _is_inside(guarded, item.path))
-                   for guarded in guarded_dirs)
+def _resolved(path: str) -> str:
+    r"""Where ``path`` really leads once the junctions and symlinks on the way
+    are followed, without the long-path prefix. ``path`` itself when that
+    cannot be worked out (logged)."""
+    from modules.cleanup.cleanup_scanner.deleter import _short
+    try:
+        return _short(os.path.realpath(path))
+    except (OSError, ValueError) as e:
+        logger.warning("cannot resolve %s, checking it as written: %s", path, e)
+        return path
 
-    if any(_is_inside(item.path, guarded) for guarded in protected_app_dirs()):
+
+def _refusal_reason(item: ScanItem) -> Optional[str]:
+    """Why ``item`` must never be deleted, or None. Cheapest checks first; one walk at most.
+
+    Checked against the path as written AND as resolved: a junction named
+    like a cache that leads into Package Cache or a token store is that
+    folder, whatever it is called (final review, 2026-10-11).
+    """
+    resolved = _resolved(item.path)
+    paths = [item.path]
+    if os.path.normcase(resolved) != os.path.normcase(item.path):
+        paths.append(resolved)
+
+    def inside(guarded_dirs):
+        return any(_is_inside(path, guarded) for path in paths for guarded in guarded_dirs)
+
+    def is_or_holds(guarded_dirs):
+        return inside(guarded_dirs) or (item.is_dir and any(
+            _is_inside(guarded, path) for path in paths for guarded in guarded_dirs))
+
+    if inside(protected_app_dirs()):
         return "it is inside this application's own folder"
     if is_or_holds(protected_system_dirs()):
         return "uninstall and repair of installed software depend on it"
@@ -2055,11 +2079,34 @@ def _protected_entry(path: str, is_dir: bool) -> bool:
     return name.endswith(OUTLOOK_DATA_EXTENSIONS) or name in SIGN_IN_FILES
 
 
+def _unreadable(item: ScanItem):
+    """False when the item is absent (skip it quietly), None when it is there to
+    delete, else a DeleteReport listing it as denied -- an lstat that was
+    REFUSED is not "absent", and os.path.lexists cannot tell the two apart."""
+    from modules.cleanup.cleanup_scanner.deleter import DeleteReport
+    try:
+        os.lstat(item.path)
+        return None
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        logger.warning("cannot read %s, leaving it: %s", item.path, e)
+        return DeleteReport(denied=[item.path])
+
+
+def _gone(path: str) -> bool:
+    return not os.path.lexists(path)
+
+
 def delete_items_report(items: List[ScanItem],
                         on_progress: Optional[Callable[[int, int], None]] = None,
                         stop_wuauserv: bool = False,
                         cancelled: Callable[[], bool] = lambda: False):
-    """Delete the selected items. Returns (DeleteReport, [(path, refusal reason)], [(path, its own DeleteReport)])."""
+    """Delete the selected items. Returns (DeleteReport, [(path, refusal reason)], [(path, its own DeleteReport)]).
+
+    ``cancelled`` is polled between items and between files; a cancelled run
+    still records what it had measured so far, flagged ``cancelled``.
+    """
     from modules.cleanup.cleanup_scanner.deleter import DeleteReport, delete_path
 
     def _do_delete():
@@ -2071,7 +2118,12 @@ def delete_items_report(items: List[ScanItem],
             if cancelled():
                 report.cancelled = True
                 break
-            if not os.path.lexists(item.path):
+            unreadable = _unreadable(item)
+            if unreadable is False:
+                continue
+            if unreadable is not None:
+                per_item.append((item.path, unreadable))
+                report.merge(unreadable)
                 continue
             reason = _refusal_reason(item)
             if reason:
@@ -2086,9 +2138,11 @@ def delete_items_report(items: List[ScanItem],
         from modules.cleanup import cleanup_history
         from modules.cleanup.cleanup_scanner.lock_owners import owners_of
         owners = owners_of(report.locked) if report.locked else {}
+        # A removed empty folder or unlinked link frees 0 bytes and is still a removal.
         cleanup_history.record_report(
             report, refused, owners=owners,
-            removed=[(path, r.freed) for path, r in per_item if r.files])
+            removed=[(path, r.freed) for path, r in per_item
+                     if r.files or (not r.denied and _gone(path))])
         # Every cached measurement is now about a disk that no longer looks like that.
         from modules.cleanup.cleanup_scanner import scan_cache
         scan_cache.invalidate()
@@ -2100,13 +2154,18 @@ def delete_items_report(items: List[ScanItem],
     return _do_delete()
 
 
+def item_counts(refused, per_item) -> Tuple[int, int]:
+    """(items cleaned, items refused or left with errors) from delete_items_report's lists."""
+    unclean = sum(1 for _path, one in per_item if one.locked or one.denied)
+    return len(per_item) - unclean, len(refused) + unclean
+
+
 def delete_items(items: List[ScanItem],
                  on_progress: Optional[Callable[[int, int], None]] = None,
                  stop_wuauserv: bool = False) -> Tuple[int, int]:
     """Back-compatible: (items cleaned, items refused or left with errors)."""
     _report, refused, per_item = delete_items_report(items, on_progress, stop_wuauserv)
-    unclean = sum(1 for _path, one in per_item if one.locked or one.denied)
-    return len(per_item) - unclean, len(refused) + unclean
+    return item_counts(refused, per_item)
 
 
 def _enum_subkeys(handle):
@@ -2330,6 +2389,8 @@ __all__ = [
     '_scan_old_recursive',
     'cleanup_winsxs',
     'delete_items',
+    'delete_items_report',
+    'item_counts',
     'scan_app_caches',
     'scan_appdata_autodiscover',
     'scan_appx_logs',

@@ -146,14 +146,16 @@ def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         return {"freed": 0, "deleted": 0}
 
     log(f"Cleanup: deleting {len(all_items)} item(s), {_fmt_size(total)}...")
-    report, refused, _per_item = cs.delete_items_report(all_items, stop_wuauserv=needs_wu)
+    report, refused, _per_item = cs.delete_items_report(
+        all_items, stop_wuauserv=needs_wu, cancelled=is_cancelled)
     deleted, errors = report.files, len(refused) + len(report.locked) + len(report.denied)
     log(
         f"Cleanup: {deleted} file(s) deleted"
         + (f", {errors} left or refused" if errors else "")
         + f" — {_fmt_size(report.freed)} freed."
+        + (" Cancelled before it finished." if report.cancelled else "")
     )
-    return {"freed": report.freed, "deleted": deleted}
+    return {"freed": report.freed, "deleted": deleted, "cancelled": report.cancelled}
 
 
 def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:

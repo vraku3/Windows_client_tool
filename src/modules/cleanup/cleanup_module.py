@@ -30,6 +30,7 @@ from modules.cleanup.tabs import (
     _LargeItemsTab,
 )
 from modules.cleanup.tabs._discover_tab import _DiscoverTab
+from modules.cleanup.components.drive_summary_bar import DriveSummaryBar
 from modules.cleanup.components.quick_cleanup_tab import QuickCleanupTab, ADVANCED_CATEGORIES
 
 logger = logging.getLogger(__name__)
@@ -362,6 +363,9 @@ class CleanupModule(BaseModule):
         header.addWidget(exclusions_btn)
         main_lay.addLayout(header)
 
+        self._summary = DriveSummaryBar()
+        main_lay.addWidget(self._summary)
+
         # ── Tabs ──
         self._tabs = QTabWidget()
         main_lay.addWidget(self._tabs, 1)
@@ -471,6 +475,7 @@ class CleanupModule(BaseModule):
         self._all_time_lbl.setText(
             f"All-time freed: {cs.format_size(cleanup_history.total_freed_all_time())}")
         self._history.refresh()
+        self._summary.refresh()
 
     def _clean_now(self) -> None:
         """Switch to Quick Cleanup and run its Clean All Safe action --
@@ -522,6 +527,8 @@ class CleanupModule(BaseModule):
 
     def on_activate(self) -> None:
         """Auto-scan the Quick Cleanup tab when the module is first opened."""
+        if getattr(self, "_summary", None) is not None:
+            self._summary.refresh()
         if getattr(self, "_quick", None) is None:
             return
         self._quick.auto_scan()

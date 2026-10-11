@@ -76,3 +76,18 @@ def test_open_folder_with_no_existing_ancestor_launches_nothing(qapp, tmp_path, 
     tab = _tab_with_path(tmp_path, monkeypatch, "Q:" + chr(92) + "nope" + chr(92) + "x")
     tab._open_folder()
     assert launched == [] and "no longer exists" in tab.status.text()
+
+
+def test_summary_bar_shows_every_fixed_drive_and_the_last_clean(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    from modules.cleanup.cleanup_scanner.deleter import DeleteReport
+    ch.record_report(DeleteReport(freed=3 * 1024 ** 3, files=7), [])
+    from modules.cleanup.components import drive_summary_bar as dsb
+    monkeypatch.setattr(dsb, "drive_lines", lambda: [("C:\\", 400 * 1024 ** 3, 1000 * 1024 ** 3),
+                                                     ("E:\\", 10 * 1024 ** 3, 100 * 1024 ** 3)])
+    bar = dsb.DriveSummaryBar()
+    bar.refresh()
+    texts = [b.format() for b in bar.bars]
+    assert texts[0].startswith("C:") and "free of" in texts[0] and len(texts) == 2
+    assert bar.bars[1].value() == 90                       # E: is 90 % used
+    assert bar.last.text().startswith("Last clean: Freed 3.0 GB")

@@ -89,6 +89,7 @@ HIDDEN_IMPORTS = [
     "modules.cleanup.cleanup_scanner.discover",
     "modules.cleanup.tabs._discover_tab",
     "modules.cleanup.tabs._history_tab",
+    "modules.cleanup.components.drive_summary_bar",
     "modules.cleanup.cleanup_scanner.deleter",
     "modules.cleanup.cleanup_scanner.lock_owners",
     "PyQt6", "PyQt6.QtCore", "PyQt6.QtWidgets", "PyQt6.QtGui",

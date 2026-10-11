@@ -9,6 +9,7 @@ import subprocess
 import time
 import psutil
 from typing import List, Callable, Optional, Tuple
+from pathlib import Path
 
 from modules.cleanup.cleanup_scanner._common import (
     ScanItem, ScanResult, get_dir_size, _make_item, _make_item_with_age,
@@ -362,27 +363,53 @@ def cleanup_winsxs(progress_cb: Optional[Callable[[int, int], None]] = None) -> 
         logger.error("WinSxS cleanup failed: %s", e)
         return False
 
-def scan_store_app_caches(min_age_days: int = 0) -> ScanResult:
-    """UWP / Store app local caches under %LocalAppData%\\Packages\\*\\LocalCache. Skips items < 1 MB."""
-    result = ScanResult()
-    local = os.environ.get("LOCALAPPDATA", "")
-    packages_dir = os.path.join(local, "Packages")
-    if not os.path.isdir(packages_dir):
-        return result
+#: A Store app's LocalCache is NOT a cache folder: WhatsApp, new Teams and
+#: every other WebView2 app keep their browser profile there, sign-in included
+#: (LocalCache\EBWebView\Default\IndexedDB, Local Storage, Network\Cookies).
+#: Deleting the whole folder logged the person out of WhatsApp after every
+#: Clean All Safe (2026-10-11). Only these named caches inside it are offered.
+WEBVIEW_PROFILE_CACHES = ("Cache", "Code Cache", "GPUCache", "DawnCache",
+                          "DawnGraphiteCache", "DawnWebGPUCache")
+WEBVIEW_ROOT_CACHES = ("GrShaderCache", "ShaderCache", "GraphiteDawnCache")
+LOCALCACHE_CACHE_NAMES = {"cache", "caches", "temp", "tmp"}
+
+
+def _subdirs(path: str):
     try:
-        for pkg in os.scandir(packages_dir):
-            if not pkg.is_dir(follow_symlinks=False):
-                continue
-            cache_path = os.path.join(pkg.path, "LocalCache")
-            if not os.path.isdir(cache_path):
-                continue
+        return [e for e in os.scandir(path) if e.is_dir(follow_symlinks=False)]
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        logger.warning("cannot list %s: %s", path, exc)
+        return []
+
+
+def store_app_cache_dirs(package_dir: str) -> List[str]:
+    """The genuine cache folders inside one package's LocalCache -- never LocalCache itself."""
+    local_cache = os.path.join(package_dir, "LocalCache")
+    out = [e.path for e in _subdirs(local_cache) if e.name.lower() in LOCALCACHE_CACHE_NAMES]
+    webview = os.path.join(local_cache, "EBWebView")
+    out += [os.path.join(webview, name) for name in WEBVIEW_ROOT_CACHES]
+    for profile in _subdirs(webview):
+        out += [os.path.join(profile.path, name) for name in WEBVIEW_PROFILE_CACHES]
+    return [path for path in out if os.path.isdir(path) and not os.path.islink(path)]
+
+
+def _store_packages() -> List[str]:
+    packages_dir = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages")
+    return [e.path for e in _subdirs(packages_dir)]
+
+
+def scan_store_app_caches(min_age_days: int = 0) -> ScanResult:
+    """Caches inside Store apps' LocalCache (see WEBVIEW_PROFILE_CACHES). Skips items < 1 MB."""
+    result = ScanResult()
+    for package in _store_packages():
+        for cache_path in store_app_cache_dirs(package):
             size = get_dir_size(cache_path)
             if size < 1024 * 1024:
                 continue
             result.items.append(ScanItem(path=cache_path, size=size, is_dir=True, safety="safe"))
             result.total_size += size
-    except (PermissionError, OSError):
-        logger.debug("Ignored (PermissionError, OSError)", exc_info=True)
     result.items.sort(key=lambda x: x.size, reverse=True)
     return result
 
@@ -1738,18 +1765,14 @@ def scan_dbg_logs(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_uwp_all_apps_cache(min_age_days: int = 0) -> ScanResult:
-    """All UWP apps LocalCache folders (aggregate scanner)."""
+    """Every Store app's caches (aggregate scanner) -- the cache folders, never LocalCache."""
     result = ScanResult()
-    local = os.environ.get("LOCALAPPDATA", "")
-    packages = os.path.join(local, r"Packages")
-    if not os.path.isdir(packages):
-        return result
-    import glob as _glob
-    for cache_dir in _glob.glob(os.path.join(packages, "*", "LocalCache")):
-        item = _make_item(cache_dir, safety="safe", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
+    for package in _store_packages():
+        for cache_dir in store_app_cache_dirs(package):
+            item = _make_item(cache_dir, safety="safe", min_age_days=min_age_days)
+            if item and item.size > 0:
+                result.items.append(item)
+                result.total_size += item.size
     return result
 
 def scan_windows_installer_rollback(min_age_days: int = 0) -> ScanResult:
@@ -1883,27 +1906,91 @@ def protected_user_data_dirs() -> List[str]:
     return [p for p in out if "%" not in p]
 
 
-def holds_outlook_data(path: str, is_dir: bool) -> bool:
-    """A .pst/.ost file, or a folder with one anywhere inside it."""
+#: What a signed-in app keeps: a browser profile's IndexedDB / Local Storage
+#: (WhatsApp, Teams, Slack, Discord ...), its Cookies and saved logins. A
+#: folder holding any of these is never deleted, whichever scanner offered it.
+SIGN_IN_DIRS = {"indexeddb", "local storage", "session storage"}
+SIGN_IN_FILES = {"cookies", "login data"}
+#: Sign-ins kept as ordinary files, which no folder or file NAME gives away:
+#: cloud CLI tokens and Windows' own account token caches. Never deleted, nor
+#: any folder above them.
+SIGN_IN_STORES = (r"%USERPROFILE%\.aws", r"%USERPROFILE%\.azure", r"%APPDATA%\gcloud",
+                  r"%LOCALAPPDATA%\Microsoft\TokenBroker",
+                  r"%LOCALAPPDATA%\Microsoft\IdentityCache",
+                  r"%LOCALAPPDATA%\Microsoft\OneAuth")
+
+
+def sign_in_stores() -> List[str]:
+    expanded = (os.path.expandvars(raw) for raw in SIGN_IN_STORES)
+    return [path for path in expanded if "%" not in path]
+
+
+def held_user_data(path: str, is_dir: bool, first_only: bool = False) -> Tuple[bool, bool]:
+    """(holds Outlook data, holds sign-in data) -- one walk; unreadable counts as both.
+
+    ``first_only`` stops at the first finding, for a caller that refuses either way.
+    """
+    inside_sign_in = any(part.lower() in SIGN_IN_DIRS for part in Path(path).parts)
     if not is_dir:
-        return path.lower().endswith(OUTLOOK_DATA_EXTENSIONS)
-    unreadable = False
+        name = os.path.basename(path).lower()
+        return name.endswith(OUTLOOK_DATA_EXTENSIONS), inside_sign_in or name in SIGN_IN_FILES
+    if inside_sign_in and first_only:
+        return False, True
+    outlook, sign_in, unreadable = False, inside_sign_in, False
 
     def onerror(error):
         nonlocal unreadable
         unreadable = True
-        logger.warning("cannot check Outlook data in %s: %s", error.filename or path, error)
+        logger.warning("cannot check for Outlook or sign-in data in %s: %s",
+                       error.filename or path, error)
 
-    for _root, _dirs, files in os.walk(path, onerror=onerror):
-        if any(f.lower().endswith(OUTLOOK_DATA_EXTENSIONS) for f in files):
-            return True
-    return unreadable
+    for _root, dirs, files in os.walk(path, onerror=onerror):
+        lowered = [f.lower() for f in files]
+        outlook = outlook or any(f.endswith(OUTLOOK_DATA_EXTENSIONS) for f in lowered)
+        sign_in = (sign_in or any(d.lower() in SIGN_IN_DIRS for d in dirs)
+                   or any(f in SIGN_IN_FILES for f in lowered))
+        if (outlook and sign_in) or (first_only and (outlook or sign_in or unreadable)):
+            break
+    return outlook or unreadable, sign_in or unreadable
+
+
+def holds_outlook_data(path: str, is_dir: bool) -> bool:
+    """A .pst/.ost file, or a folder with one anywhere inside it."""
+    return held_user_data(path, is_dir)[0]
+
+
+def holds_sign_in_data(path: str, is_dir: bool) -> bool:
+    """A browser profile's login store, or a folder with one anywhere inside it."""
+    return held_user_data(path, is_dir)[1]
 
 
 def _is_inside(path: str, folder: str) -> bool:
     path = os.path.normcase(os.path.abspath(path))
     folder = os.path.normcase(os.path.abspath(folder))
     return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+def _refusal_reason(item: ScanItem) -> Optional[str]:
+    """Why ``item`` must never be deleted, or None. Cheapest checks first; one walk at most."""
+    def is_or_holds(guarded_dirs):
+        return any(_is_inside(item.path, guarded) or
+                   (item.is_dir and _is_inside(guarded, item.path))
+                   for guarded in guarded_dirs)
+
+    if any(_is_inside(item.path, guarded) for guarded in protected_app_dirs()):
+        return "it is inside this application's own folder"
+    if is_or_holds(protected_system_dirs()):
+        return "uninstall and repair of installed software depend on it"
+    if is_or_holds(sign_in_stores()):
+        return "it is, or holds, a sign-in token store"
+    if is_or_holds(protected_user_data_dirs()):
+        return "it is, or holds, Outlook mailbox data (.ost/.pst)"
+    outlook, sign_in = held_user_data(item.path, item.is_dir, first_only=True)
+    if outlook:
+        return "it is, or holds, Outlook mailbox data (.ost/.pst)"
+    if sign_in:
+        return "it is, or holds, an app's sign-in (IndexedDB / Local Storage / Cookies)"
+    return None
 
 
 def delete_items(items: List[ScanItem],
@@ -1983,27 +2070,9 @@ def delete_items(items: List[ScanItem],
             try:
                 if not os.path.exists(item.path):
                     continue  # already gone — not an error
-                if any(_is_inside(item.path, guarded)
-                       for guarded in protected_app_dirs()):
-                    logger.warning("Refusing to delete %s: it is inside this "
-                                   "application's own folder", item.path)
-                    errors += 1
-                    refused.append(item.path)
-                    continue
-                if any(_is_inside(item.path, guarded) or
-                       (item.is_dir and _is_inside(guarded, item.path))
-                       for guarded in protected_system_dirs()):
-                    logger.warning("Refusing to delete %s: uninstall and repair "
-                                   "of installed software depend on it", item.path)
-                    errors += 1
-                    refused.append(item.path)
-                    continue
-                if (any(_is_inside(item.path, guarded) or
-                        (item.is_dir and _is_inside(guarded, item.path))
-                        for guarded in protected_user_data_dirs())
-                        or holds_outlook_data(item.path, item.is_dir)):
-                    logger.warning("Refusing to delete %s: it is, or holds, Outlook "
-                                   "mailbox data (.ost/.pst)", item.path)
+                reason = _refusal_reason(item)
+                if reason:
+                    logger.warning("Refusing to delete %s: %s", item.path, reason)
                     errors += 1
                     refused.append(item.path)
                     continue
@@ -2294,6 +2363,9 @@ __all__ = [
     'scan_recycle_bin',
     'scan_search_index',
     'scan_store_app_caches',
+    'store_app_cache_dirs',
+    'holds_sign_in_data',
+    'held_user_data',
     'scan_sysinternals_logs',
     'scan_triumph_cache',
     'scan_usb_shadow_copies',

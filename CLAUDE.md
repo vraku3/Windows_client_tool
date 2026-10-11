@@ -477,6 +477,19 @@ bounded per-line timestamp window).
   `Local Storage`, `IndexedDB`, `Network` (cookies): target the former by
   name, never their parent. `delete_items` also REFUSES any `.pst`/`.ost`
   and the Outlook data folders, whatever offers them -- the user keeps both.
+- **`delete_items` refuses any path that IS, is INSIDE, or CONTAINS a sign-in
+  store** (`held_user_data`: an `IndexedDB`, `Local Storage` or `Session
+  Storage` folder, a `Cookies` or `Login Data` file; plus `SIGN_IN_STORES`
+  by path -- `.aws`, `.azure`, `gcloud`, `TokenBroker`, `IdentityCache`,
+  `OneAuth`, token files no name gives away), whichever scanner offered it. The
+  catalog audit only ever read the JSON; two hand-written scanners
+  (`scan_store_app_caches`, `scan_uwp_all_apps_cache`) offered every Store
+  app's WHOLE `Packages\*\LocalCache` as "safe", and WhatsApp keeps its
+  login in `LocalCache\EBWebView\Default\IndexedDB` -- it logged the user
+  out after every Clean All Safe for weeks (2026-10-11). They now offer
+  only `store_app_cache_dirs()`. A real-machine sweep with the guard found
+  one more: `CyberGhost\BrowserCache` is a whole WebView2 profile (Login
+  Data, Vpn Tokens), not a cache. A cache named "...Cache" is not proof.
 - **The Discover tab (`cleanup_scanner/discover.py`, `tabs/_discover_tab.py`)
   lists cache-named folders the ENABLED catalog does not cover; it never
   deletes.** A candidate is skipped when it IS, or CONTAINS, a path a disabled

@@ -9,7 +9,8 @@
         "%USERPROFILE%\\.aws\\sso\\cache"
       ],
       "safety": "caution",
-      "description": "AWS CLI cache, config, and SSM session cache. NOT credentials file."
+      "description": "AWS CLI cache, config, and SSM session cache. NOT credentials file.",
+      "disabled_reason": "Disabled 2026-10-11: .aws\\sso\\cache holds SSO login tokens and .aws\\cli\\cache the assumed-role credentials -- deleting either signs you out of the AWS CLI. delete_items refuses .aws anyway."
     },
     {
       "id": "aws_toolkit_cache",
@@ -354,11 +355,13 @@
       "label": "CyberGhost VPN API and browser cache",
       "paths": [
         "%LOCALAPPDATA%\\CyberGhost\\APICache",
-        "%LOCALAPPDATA%\\CyberGhost\\BrowserCache",
+        "%LOCALAPPDATA%\\CyberGhost\\BrowserCache\\EBWebView\\Default\\Cache",
+        "%LOCALAPPDATA%\\CyberGhost\\BrowserCache\\EBWebView\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\CyberGhost\\BrowserCache\\EBWebView\\Default\\GPUCache",
         "%APPDATA%\\CyberGhost\\API Cache"
       ],
       "safety": "safe",
-      "description": "CyberGhost VPN client's API response and browser (Chromium Embedded Framework UI) cache -- confirmed real, both under %LOCALAPPDATA% and %APPDATA%. Scoped to these named cache subfolders only, never the CyberGhost root, which also holds server-list .scf files and UI assets."
+      "description": "CyberGhost VPN client's API response and browser (Chromium Embedded Framework UI) cache -- confirmed real, both under %LOCALAPPDATA% and %APPDATA%. Scoped to these named cache subfolders only, never the CyberGhost root, which also holds server-list .scf files and UI assets. BrowserCache is NOT a cache despite its name: it is a whole WebView2 profile with Login Data, Cookies, Local Storage and Vpn Tokens (2026-10-11), so only its Cache / Code Cache / GPUCache are listed."
     }
   ]
 }

@@ -82,9 +82,8 @@ def test_delete_items_logs_the_paths_it_removed(tmp_path):
                  selected=False, safety="safe"),
     ])
     entry = ch.recent_deleted()[0]
-    # Interim (Task 2): the engine reports totals, not paths; Task 3 restores per-path logging.
-    assert entry["count"] == 1 and entry["bytes"] == 11
-    assert entry["largest"] == [["2 files", 11]]
+    assert entry["count"] == 2 and entry["bytes"] == 11
+    assert entry["largest"] == [[str(big), 10], [str(small), 1]]
     assert entry["refused"] == []
 
 
@@ -97,7 +96,8 @@ def test_a_refused_path_is_logged_as_refused_not_deleted(tmp_path, monkeypatch):
     ss.delete_items([ScanItem(path=str(cache), size=1, is_dir=True,
                               selected=True, safety="caution")])
     entry = ch.recent_deleted()[0]
-    assert entry["count"] == 0 and entry["refused"] == [str(cache)]
+    assert entry["count"] == 0 and [p for p, _why in entry["refused"]] == [str(cache)]
+    assert all(why for _p, why in entry["refused"])   # the reason is kept with the path
 
 
 def test_only_the_largest_paths_are_kept_but_the_count_is_whole():

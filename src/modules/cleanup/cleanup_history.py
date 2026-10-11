@@ -109,14 +109,16 @@ def record_deleted(deleted: Sequence[Tuple[str, int]],
     """
     if not deleted and not refused:
         return
-    largest = sorted(deleted, key=lambda d: d[1] or 0, reverse=True)[:PATHS_PER_ENTRY]
-    entry = {
+    _append_entry({
         "at": datetime.now().isoformat(timespec="seconds"),
         "count": len(deleted),
         "bytes": int(sum(size or 0 for _path, size in deleted)),
-        "largest": [[path, int(size or 0)] for path, size in largest],
+        "largest": _largest(deleted),
         "refused": list(refused)[:PATHS_PER_ENTRY],
-    }
+    })
+
+
+def _append_entry(entry: dict) -> None:
     path = _deleted_path()
     try:
         entries = []
@@ -148,6 +150,54 @@ def recent_deleted(limit: int = 20) -> List[dict]:
     return list(reversed(entries))[:limit]
 
 
-def record_report(report, refused) -> None:
-    record_deleted([(f"{report.files} files", report.freed)] if report.files else [],
-                   [path for path, _reason in refused])
+#: How many locked / denied paths one entry keeps (the counts are always exact).
+LEFTOVER_PATHS = 50
+
+
+def _largest(removed: Sequence[Tuple[str, int]]) -> List[list]:
+    top = sorted(removed, key=lambda d: d[1] or 0, reverse=True)[:PATHS_PER_ENTRY]
+    return [[path, int(size or 0)] for path, size in top]
+
+
+def record_report(report, refused, owners=None, removed=()) -> None:
+    """Append one clean's MEASURED outcome to the deletion log. Never raises.
+
+    `removed` is [(path, measured_freed_bytes)]; the PATHS_PER_ENTRY largest
+    are kept as "largest" so the log still answers "did Cleanup delete X".
+    """
+    if not (report.files or report.locked or report.denied or report.kept_recent or refused):
+        return
+    _append_entry({
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "count": report.files,
+        "bytes": int(report.freed),
+        "largest": _largest(removed),
+        "locked": report.locked[:LEFTOVER_PATHS],
+        "locked_count": len(report.locked),
+        "owners": dict(owners or {}),
+        "denied": report.denied[:LEFTOVER_PATHS],
+        "denied_count": len(report.denied),
+        "kept_recent": report.kept_recent,
+        "refused": [[path, reason] for path, reason in refused][:PATHS_PER_ENTRY],
+        "cancelled": bool(report.cancelled),
+    })
+
+
+def summarise(entry: dict) -> str:
+    """One line for the UI. Old-shape entries (no locked_count) say "items"."""
+    from core.formatting import format_size
+    noun = "files" if "locked_count" in entry else "items"
+    parts = [f"Freed {format_size(entry.get('bytes', 0))} ({entry.get('count', 0):,} {noun})."]
+    if entry.get("locked_count"):
+        owners = entry.get("owners") or {}
+        who = ", ".join(sorted(owners, key=lambda k: -owners[k]))
+        parts.append(f"{entry['locked_count']:,} in use" + (f" by {who}." if who else "."))
+    if entry.get("denied_count"):
+        parts.append(f"{entry['denied_count']:,} access denied.")
+    if entry.get("kept_recent"):
+        parts.append(f"{entry['kept_recent']:,} newer than a day kept.")
+    if entry.get("refused"):
+        parts.append(f"{len(entry['refused'])} refused.")
+    if entry.get("cancelled"):
+        parts.append("Cancelled.")
+    return " ".join(parts)

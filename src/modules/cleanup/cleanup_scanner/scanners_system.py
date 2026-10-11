@@ -2084,7 +2084,9 @@ def delete_items_report(items: List[ScanItem],
             per_item.append((item.path, one))
             report.merge(one)
         from modules.cleanup import cleanup_history
-        cleanup_history.record_report(report, refused)
+        cleanup_history.record_report(
+            report, refused,
+            removed=[(path, r.freed) for path, r in per_item if r.freed])
         # Every cached measurement is now about a disk that no longer looks like that.
         from modules.cleanup.cleanup_scanner import scan_cache
         scan_cache.invalidate()

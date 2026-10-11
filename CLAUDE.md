@@ -490,6 +490,41 @@ bounded per-line timestamp window).
   only `store_app_cache_dirs()`. A real-machine sweep with the guard found
   one more: `CyberGhost\BrowserCache` is a whole WebView2 profile (Login
   Data, Vpn Tokens), not a cache. A cache named "...Cache" is not proof.
+- **`delete_items` deletes through `cleanup_scanner/deleter.py`, never
+  `rmtree`** (2026-10-11). The old `rmtree(ignore_errors=True)` reported a
+  whole item freed while files in use stayed, deleted cache ROOTS, and the
+  sign-in guard's fail-closed walk refused all of `%TEMP%` over 25 unreadable
+  subfolders. `delete_path(path, is_dir, *, keep_root=True,
+  keep_newer_than_s=0, cancelled, skip)` returns a `DeleteReport(freed, files,
+  locked, denied, kept_recent, cloud_only, cancelled)`:
+  - A directory item's CONTENTS go and the root stays, unless the item sets
+    `keep_root=False` (superseded versions, empty folders, orphaned profiles).
+  - Links (symlinks, junctions, reparse-point DIRECTORIES) are unlinked, never
+    followed -- the root too. A non-directory reparse FILE (hydrated OneDrive,
+    dedup) is an ordinary file. A cloud placeholder (RECALL_ON_DATA_ACCESS |
+    RECALL_ON_OPEN | OFFLINE) is NEVER deleted and counted in `cloud_only`:
+    deleting it frees nothing locally and deletes the cloud copy. A directory
+    is re-lstat'ed before descending.
+  - `skip(path, is_dir)` is consulted for every entry and the root before any
+    destructive op. `delete_items_report` -> `(report, refused, per_item)`
+    runs `_refusal_reason` first and passes `_protected_entry` (`.pst`/`.ost`,
+    `Cookies`/`Login Data`, `IndexedDB`/`Local Storage`/`Session Storage`) as
+    `skip`, so the deleting walk enforces what the checking walk could not
+    read. `delete_items` returns `(cleaned, problems)` counted per item.
+  - Files in use are listed in `locked` and named by Restart Manager
+    (`lock_owners.owners_of`); a `msedgewebview2.exe` holder is reported as its
+    hosting app, e.g. `ms-teams.exe (WebView2)`. Nothing is queued for reboot.
+  - Temp keeps files younger than 24 h (`keep_newer_than_hours` on the
+    `temp_files` entry), because installers read their extracted files back;
+    `user_crash_dumps` no longer targets all of `%LOCALAPPDATA%\Temp`.
+  - Freed bytes are MEASURED. `cleanup_history.record_report(...)` writes
+    `cleanup_deleted.json` (per-path `largest`, never raises); the History tab
+    (`tabs/_history_tab.py`) and `DriveSummaryBar` (disk_usage on a Worker)
+    read it and compute nothing. `_common.get_dir_size` is one scandir walk
+    that skips links and placeholders (%TEMP% 2.48 GB: 0.92 s -> 0.55 s).
+  `tools/cleanup_delete_check.py` drives the deleter on a throwaway tree
+  (locked file, junction, read-only file, 300-char path, fresh file, a
+  `Cookies` file) and exits 1 on any mismatch.
 - **The Discover tab (`cleanup_scanner/discover.py`, `tabs/_discover_tab.py`)
   lists cache-named folders the ENABLED catalog does not cover; it never
   deletes.** A candidate is skipped when it IS, or CONTAINS, a path a disabled

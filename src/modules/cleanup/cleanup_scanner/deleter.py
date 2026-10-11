@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 ERROR_ACCESS_DENIED = 5
 ERROR_SHARING_VIOLATION = 32
 ERROR_LOCK_VIOLATION = 33
+ERROR_DIR_NOT_EMPTY = 145
+_ATTR_DIRECTORY = 0x10
+_ATTR_REPARSE_POINT = 0x400
 _IN_USE = (ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION)
 
 
@@ -99,15 +102,56 @@ def _remove_file(path: str, size: int, report: DeleteReport) -> None:
             return
 
 
-def _unlink_link(entry: os.DirEntry, report: DeleteReport) -> None:
+def _is_link(st: os.stat_result) -> bool:
+    """A symlink or any reparse point (junction, mount point...)."""
+    return (stat.S_ISLNK(st.st_mode)
+            or bool(getattr(st, "st_file_attributes", 0) & _ATTR_REPARSE_POINT))
+
+
+def _unlink_link(path: str, report: DeleteReport) -> None:
+    """Remove the link ITSELF. Never adds to `freed`: the target is not ours."""
     try:
-        if entry.is_junction() or entry.is_dir(follow_symlinks=False):
-            os.rmdir(entry.path)                     # removes the link, not the target
+        attrs = getattr(os.lstat(path), "st_file_attributes", 0)
+        if attrs & _ATTR_DIRECTORY:
+            os.rmdir(path)                           # dir symlink / junction, not the target
         else:
-            os.remove(entry.path)
+            os.remove(path)
+    except FileNotFoundError:
+        return
     except OSError as exc:
-        logger.warning("cannot remove link %s: %s", _short(entry.path), exc)
+        logger.warning("cannot remove link %s: %s", _short(path), exc)
+        report.denied.append(_short(path))
+
+
+def _rmdir(path: str, report: DeleteReport) -> None:
+    try:
+        os.rmdir(path)
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == ERROR_DIR_NOT_EMPTY:
+            logger.debug("left %s: not empty (contents already recorded)", _short(path))
+            return
+        logger.warning("cannot remove folder %s: %s", _short(path), exc)
+        report.denied.append(_short(path))
+
+
+def _descend(entry: os.DirEntry, floor: float, now: float, cancelled,
+             report: DeleteReport) -> None:
+    try:
+        fresh = os.lstat(entry.path)                 # may have been swapped since scandir
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logger.warning("cannot read %s: %s", _short(entry.path), exc)
         report.denied.append(_short(entry.path))
+        return
+    if _is_link(fresh):
+        _unlink_link(entry.path, report)
+        return
+    _clear(entry.path, floor, now, cancelled, report)
+    if not report.cancelled:
+        _rmdir(entry.path, report)                   # only succeeds once empty
 
 
 def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteReport) -> None:
@@ -124,7 +168,7 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
             report.cancelled = True
             return
         if entry.is_symlink() or entry.is_junction():
-            _unlink_link(entry, report)
+            _unlink_link(entry.path, report)
             continue
         try:
             st = entry.stat(follow_symlinks=False)
@@ -133,13 +177,9 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
             report.denied.append(_short(entry.path))
             continue
         if entry.is_dir(follow_symlinks=False):
-            _clear(entry.path, floor, now, cancelled, report)
+            _descend(entry, floor, now, cancelled, report)
             if report.cancelled:
                 return
-            try:
-                os.rmdir(entry.path)                 # only succeeds once empty
-            except OSError:
-                logger.debug("left %s: not empty (contents already recorded)", _short(entry.path))
             continue
         if floor and now - st.st_mtime < floor:
             report.kept_recent += 1
@@ -147,36 +187,34 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
         _remove_file(entry.path, st.st_size, report)
 
 
-def _unlink_root_junction(target: str, report: DeleteReport) -> None:
-    try:
-        os.rmdir(target)                             # removes the junction, not the target
-    except OSError as exc:
-        logger.warning("cannot remove junction %s: %s", _short(target), exc)
-        report.denied.append(_short(target))
-
-
 def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
                 keep_newer_than_s: float = 0,
                 cancelled: Callable[[], bool] = lambda: False) -> DeleteReport:
     import time
     report = DeleteReport()
+    if cancelled():
+        report.cancelled = True
+        return report
     target = long_path(path)
-    if not os.path.lexists(target):
+    try:
+        st = os.lstat(target)
+    except FileNotFoundError:
         return report
-    if os.path.isjunction(target):
-        _unlink_root_junction(target, report)
+    except OSError as exc:
+        logger.warning("cannot read %s: %s", _short(target), exc)
+        report.denied.append(_short(target))
         return report
-    if not is_dir or os.path.islink(target):
-        try:
-            size = os.lstat(target).st_size
-        except OSError:
-            size = 0
-        _remove_file(target, size, report)
+    if _is_link(st):
+        _unlink_link(target, report)
         return report
-    _clear(target, keep_newer_than_s, time.time(), cancelled, report)
+    now = time.time()
+    if not is_dir:
+        if keep_newer_than_s and now - st.st_mtime < keep_newer_than_s:
+            report.kept_recent += 1
+        else:
+            _remove_file(target, st.st_size, report)
+        return report
+    _clear(target, keep_newer_than_s, now, cancelled, report)
     if not keep_root and not report.cancelled:
-        try:
-            os.rmdir(target)
-        except OSError:
-            logger.debug("left %s: not empty (contents already recorded)", _short(target))
+        _rmdir(target, report)
     return report

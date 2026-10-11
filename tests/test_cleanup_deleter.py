@@ -113,4 +113,84 @@ def test_a_junction_root_is_unlinked_not_followed(tmp_path):
                    check=True, capture_output=True)
     report = d.delete_path(str(root_link), True)
     assert keep.exists()
+    assert not os.path.lexists(root_link)
     assert report.freed == 0
+
+
+def test_a_dir_swapped_for_a_reparse_point_after_scandir_is_not_entered(tmp_path, monkeypatch):
+    victim = tmp_path / "victim"
+    keep = _file(victim / "keep.txt", 5)
+    real = os.lstat
+
+    class _Fake:
+        st_mode = stat.S_IFDIR
+        st_file_attributes = 0x400
+        st_size = 0
+        st_mtime = 0
+
+    def fake(p, *a, **k):
+        return _Fake() if str(p).endswith("victim") else real(p, *a, **k)
+
+    monkeypatch.setattr(d.os, "lstat", fake)
+    report = d.delete_path(str(tmp_path), True)
+    assert keep.exists() and report.freed == 0
+
+
+def test_already_cancelled_deletes_nothing_for_any_item_kind(tmp_path):
+    f = _file(tmp_path / "a.tmp", 5)
+    r1 = d.delete_path(str(f), False, cancelled=lambda: True)
+    r2 = d.delete_path(str(tmp_path), True, cancelled=lambda: True)
+    assert f.exists() and r1.cancelled and r2.cancelled and r1.freed == r2.freed == 0
+
+
+def test_a_single_file_newer_than_the_floor_is_kept(tmp_path):
+    f = _file(tmp_path / "new.cab", 5)
+    r = d.delete_path(str(f), False, keep_newer_than_s=3600)
+    assert f.exists() and r.kept_recent == 1 and r.freed == 0
+
+
+def test_an_unreadable_root_is_denied_not_silent(tmp_path, monkeypatch):
+    def boom(p, *a, **k):
+        raise PermissionError(5, "denied")
+    monkeypatch.setattr(d.os, "lstat", boom)
+    r = d.delete_path(str(tmp_path), True)
+    assert r.denied and r.freed == 0
+
+
+def test_an_rmdir_refusal_other_than_not_empty_is_denied(tmp_path, monkeypatch):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+
+    def boom(p, *a, **k):
+        e = PermissionError(5, "denied")
+        e.winerror = 5
+        raise e
+    monkeypatch.setattr(d.os, "rmdir", boom)
+    r = d.delete_path(str(tmp_path), True)
+    assert r.denied == [str(sub)]
+
+
+def test_a_not_empty_rmdir_is_the_expected_outcome(tmp_path, monkeypatch):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+
+    def boom(p, *a, **k):
+        e = OSError(41, "not empty")
+        e.winerror = 145
+        raise e
+    monkeypatch.setattr(d.os, "rmdir", boom)
+    assert d.delete_path(str(tmp_path), True).denied == []
+
+
+def test_a_directory_symlink_is_removed_not_followed(tmp_path):
+    outside = tmp_path / "outside"
+    keep = _file(outside / "precious.txt", 9)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    res = subprocess.run(["cmd", "/c", "mklink", "/D", str(cache / "sl"), str(outside)],
+                         capture_output=True, text=True)
+    if res.returncode != 0:
+        pytest.skip("symlink privilege not held: " + (res.stderr or res.stdout).strip())
+    report = d.delete_path(str(cache), True)
+    assert keep.exists() and not os.path.lexists(cache / "sl")
+    assert report.freed == 0 and report.denied == []

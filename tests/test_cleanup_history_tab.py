@@ -78,6 +78,16 @@ def test_open_folder_with_no_existing_ancestor_launches_nothing(qapp, tmp_path, 
     assert launched == [] and "no longer exists" in tab.status.text()
 
 
+def _wait_for(cond, timeout=5.0):
+    import time
+    from PyQt6.QtWidgets import QApplication
+    end = time.time() + timeout
+    while not cond() and time.time() < end:
+        QApplication.processEvents()
+        time.sleep(0.01)
+    assert cond()
+
+
 def test_summary_bar_shows_every_fixed_drive_and_the_last_clean(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
     from modules.cleanup.cleanup_scanner.deleter import DeleteReport
@@ -87,7 +97,40 @@ def test_summary_bar_shows_every_fixed_drive_and_the_last_clean(qapp, tmp_path, 
                                                      ("E:\\", 10 * 1024 ** 3, 100 * 1024 ** 3)])
     bar = dsb.DriveSummaryBar()
     bar.refresh()
+    _wait_for(lambda: len(bar.bars) == 2)
     texts = [b.format() for b in bar.bars]
     assert texts[0].startswith("C:") and "free of" in texts[0] and len(texts) == 2
     assert bar.bars[1].value() == 90                       # E: is 90 % used
     assert bar.last.text().startswith("Last clean: Freed 3.0 GB")
+
+
+def test_summary_bar_ignores_a_stale_generation(qapp, tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    from modules.cleanup.components import drive_summary_bar as dsb
+    monkeypatch.setattr(dsb, "drive_lines", lambda: [])
+    bar = dsb.DriveSummaryBar()
+    bar.refresh()
+    old = bar._generation
+    bar.refresh()
+    bar._deliver(old, [("C:\\", 1, 2)])
+    assert bar.bars == []
+    bar._deliver(bar._generation, [("C:\\", 1, 2)])
+    assert len(bar.bars) == 1
+    bar.cancel()
+
+
+def test_summary_bar_refresh_reads_drives_off_the_calling_thread(qapp, tmp_path, monkeypatch):
+    import threading
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    from modules.cleanup.components import drive_summary_bar as dsb
+    seen = []
+
+    def fake():
+        seen.append(threading.get_ident())
+        return [("C:\\", 1, 2)]
+
+    monkeypatch.setattr(dsb, "drive_lines", fake)
+    bar = dsb.DriveSummaryBar()
+    bar.refresh()
+    _wait_for(lambda: len(bar.bars) == 1)
+    assert seen and seen[0] != threading.get_ident()

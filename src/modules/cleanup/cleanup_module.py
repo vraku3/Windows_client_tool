@@ -555,7 +555,7 @@ class CleanupModule(BaseModule):
         # even for a module whose widget was never built.
         for name in (
             "_quick", "_sys_tab", "_browser", "_app_tab",
-            "_wu_tab", "_logs_tab", "_large", "_dev_tab", "_discover",
+            "_wu_tab", "_logs_tab", "_large", "_dev_tab", "_discover", "_summary",
         ):
             tab = getattr(self, name, None)
             if hasattr(tab, "_cancel_all"):

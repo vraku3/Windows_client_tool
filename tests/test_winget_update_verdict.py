@@ -120,3 +120,9 @@ def test_the_read_back_honours_cancel(monkeypatch):
     wu.install_update("Acme.App", lambda line: None, is_cancelled=lambda: flag["cancel"], target_version="2.0")
     flag["cancel"] = True
     assert len(seen) == 2 and seen[1]() is True
+
+
+def test_a_version_that_went_down_is_not_an_update(monkeypatch):
+    _fake_winget(monkeypatch, "Successfully installed", _listed("2.0", "4.0"))
+    outcome = wu.install_update("Acme.App", lambda line: None, target_version="4.0", before_version="3.0")
+    assert outcome.state == wl.FAILED and not outcome

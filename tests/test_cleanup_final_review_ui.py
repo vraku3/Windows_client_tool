@@ -139,3 +139,67 @@ def test_a_breakdown_child_inherits_its_parents_age_floor(qapp, tmp_path, no_sys
     child.selected = True
     report, _r, _p = ss.delete_items_report([child])
     assert fresh.exists() and report.kept_recent == 1
+
+
+def test_a_row_the_scanner_left_unselected_shows_unticked_and_is_not_deleted(qapp, tmp_path):
+    """The tree ticked EVERY row while the engine deletes only selected items, so
+    an orphaned VM disk (selected=False by design) showed ticked and was skipped."""
+    from modules.cleanup.components.category_group import CategoryGroup
+    keep = ScanItem(path=str(tmp_path / "vm.vhdx"), size=10, is_dir=False, selected=False)
+    junk = ScanItem(path=str(tmp_path / "junk.tmp"), size=5, is_dir=False)
+    group = CategoryGroup("Mixed", lambda: ScanResult(items=[keep, junk], total_size=15))
+    group.set_result(ScanResult(items=[keep, junk], total_size=15))
+    root = group._tree.topLevelItem(0)
+    states = {root.child(i).data(0, Qt.ItemDataRole.UserRole).path: root.child(i).checkState(0)
+              for i in range(root.childCount())}
+    assert states[keep.path] == Qt.CheckState.Unchecked
+    assert states[junk.path] == Qt.CheckState.Checked
+    assert [i.path for i in group._items_to_clean()] == [junk.path]
+
+
+def test_a_row_the_person_ticks_by_hand_is_deleted_even_if_unselected(qapp, tmp_path):
+    from modules.cleanup.components.category_group import CategoryGroup
+    keep = ScanItem(path=str(tmp_path / "vm.vhdx"), size=10, is_dir=False, selected=False)
+    group = CategoryGroup("Mixed", lambda: ScanResult(items=[keep], total_size=10))
+    group.set_result(ScanResult(items=[keep], total_size=10))
+    group._tree.topLevelItem(0).child(0).setCheckState(0, Qt.CheckState.Checked)
+    chosen = group._items_to_clean()
+    assert [i.path for i in chosen] == [keep.path] and chosen[0].selected is True
+    assert keep.selected is False      # the scan result itself is not mutated
+
+
+def test_the_group_root_shows_partial_when_some_rows_are_unselected(qapp, tmp_path):
+    from modules.cleanup.components.category_group import CategoryGroup
+    keep = ScanItem(path=str(tmp_path / "vm.vhdx"), size=10, is_dir=False, selected=False)
+    junk = ScanItem(path=str(tmp_path / "junk.tmp"), size=5, is_dir=False)
+    group = CategoryGroup("Mixed", lambda: ScanResult(items=[keep, junk], total_size=15))
+    group.set_result(ScanResult(items=[keep, junk], total_size=15))
+    root = group._tree.topLevelItem(0)
+    assert root.checkState(0) == Qt.CheckState.Checked        # every scanner-selected row is ticked
+    assert [i.path for i in group._items_to_clean()] == [junk.path]
+
+
+def test_the_group_root_never_ticks_a_row_the_scanner_left_unselected(qapp, tmp_path):
+    # Codex review: an auto-tristate root ticked EVERY child, so one root click
+    # plus Clean All deleted an orphaned VM disk nobody chose.
+    from modules.cleanup.components.category_group import CategoryGroup
+    keep = ScanItem(path=str(tmp_path / "vm.vhdx"), size=10, is_dir=False, selected=False)
+    junk = ScanItem(path=str(tmp_path / "junk.tmp"), size=5, is_dir=False)
+    group = CategoryGroup("Mixed", lambda: ScanResult(items=[keep, junk], total_size=15))
+    group.set_result(ScanResult(items=[keep, junk], total_size=15))
+    root = group._tree.topLevelItem(0)
+    root.setCheckState(0, Qt.CheckState.Unchecked)
+    assert group._items_to_clean() == []
+    root.setCheckState(0, Qt.CheckState.Checked)
+    assert [i.path for i in group._items_to_clean()] == [junk.path]
+
+
+def test_a_hand_ticked_row_in_an_all_unselected_group_ticks_the_root(qapp, tmp_path):
+    from modules.cleanup.components.category_group import CategoryGroup
+    keep = ScanItem(path=str(tmp_path / "vm.vhdx"), size=10, is_dir=False, selected=False)
+    group = CategoryGroup("VMs", lambda: ScanResult(items=[keep], total_size=10))
+    group.set_result(ScanResult(items=[keep], total_size=10))
+    root = group._tree.topLevelItem(0)
+    assert root.checkState(0) == Qt.CheckState.Unchecked
+    root.child(0).setCheckState(0, Qt.CheckState.Checked)
+    assert root.checkState(0) == Qt.CheckState.Checked

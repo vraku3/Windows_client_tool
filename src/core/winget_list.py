@@ -45,17 +45,26 @@ def parse_list_row(output: str, winget_id: str) -> Optional[Tuple[str, str]]:
     return None
 
 
+def _parts(v: str):
+    v = v.strip().casefold().removeprefix("v")
+    if not re.fullmatch(r"\d+(\.\d+)*", v):
+        return v
+    nums = [int(p) for p in v.split(".")]
+    while len(nums) > 1 and nums[-1] == 0:
+        nums.pop()
+    return tuple(nums)
+
+
 def same_version(a: str, b: str) -> bool:
     """"v2.0", "2.0" and "2.0.0" are one version; anything non-numeric compares as text."""
-    def parts(v):
-        v = v.strip().casefold().removeprefix("v")
-        if not re.fullmatch(r"\d+(\.\d+)*", v):
-            return v
-        nums = [int(p) for p in v.split(".")]
-        while len(nums) > 1 and nums[-1] == 0:
-            nums.pop()
-        return tuple(nums)
-    return parts(a) == parts(b)
+    return _parts(a) == _parts(b)
+
+
+def newer_version(a: str, b: str) -> bool:
+    """True only when both are numeric and `a` is strictly newer than `b` --
+    a non-numeric version cannot be ordered, so it is never "newer"."""
+    pa, pb = _parts(a), _parts(b)
+    return isinstance(pa, tuple) and isinstance(pb, tuple) and pa > pb
 
 
 def refusal(upgrade_output: str) -> Optional[Tuple[str, str]]:
@@ -92,7 +101,7 @@ def verdict(list_rc: int, list_output: str, winget_id: str, target: str,
         return (UNCONFIRMED, "Windows records no exact version for it, so the update is unconfirmed.")
     if target and same_version(installed, target):
         return (UPDATED, f"Now {installed}")
-    if _exact(before) and not same_version(installed, before):
+    if _exact(before) and newer_version(installed, before):
         return (UPDATED, f"Now {installed} (was {before}; {target or 'a newer version'} is offered, "
                          "but this is the newest one that applies here)")
     if any(word in upgrade_output.lower() for word in ("restart", "reboot")):

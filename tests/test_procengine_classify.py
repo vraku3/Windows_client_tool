@@ -247,6 +247,8 @@ def test_the_dotnet_shim_is_not_the_dotnet_runtime():
     assert "mscoree.dll" not in _CLR_MODULES
     assert "mscoreei.dll" not in _CLR_MODULES
 
+    if _clr_loaded_here():
+        pytest.skip("a .NET runtime is loaded in this test process")
     before, _ = is_dotnet(MY_PID)
     try:
         win32pdh.EnumObjectItems(None, None, ".NET CLR Memory",

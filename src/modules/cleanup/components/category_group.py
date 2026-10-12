@@ -7,6 +7,7 @@ Provides:
 - Context menus
 - Background scan via Worker threads
 """
+import dataclasses
 import os
 
 from PyQt6.QtCore import Qt, QTimer, QThreadPool, pyqtSignal
@@ -55,6 +56,7 @@ class CategoryGroup(QWidget):
         self._results = None
         self._scanning = False
         self._cleaning = False
+        self._syncing_ticks = False
         self._auto_refresh_enabled = auto_refresh
         self._refresh_interval_ms = refresh_interval_ms
         self._refresh_timer = QTimer(self)
@@ -157,6 +159,7 @@ class CategoryGroup(QWidget):
         # One line per path, elided in the middle (start + file name stay visible);
         # the full path is on the tooltip. No horizontal scrollbar — never overflows.
         self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self._tree.itemChanged.connect(self._on_tick_changed)
         self._tree.setUniformRowHeights(True)
         self._tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._tree.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -239,25 +242,29 @@ class CategoryGroup(QWidget):
                 self._group_name,
                 format_size(result.total_size),
             ])
+            # NOT auto-tristate: Qt would tick every child from the root, an
+            # orphaned VM disk included. _on_tick_changed lets the root reach
+            # only the rows the scanner selected.
             root.setCheckState(0, Qt.CheckState.Checked)
-            root.setFlags(
-                root.flags()
-                | Qt.ItemFlag.ItemIsAutoTristate
-                | Qt.ItemFlag.ItemIsUserCheckable
-            )
+            root.setFlags(root.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             root.setExpanded(True)
             self._tree.addTopLevelItem(root)
 
             for item in result.items:
                 child = QTreeWidgetItem([item.path, format_size(item.size)])
                 child.setToolTip(0, item.path)  # full path on hover (column elides it)
-                child.setCheckState(0, Qt.CheckState.Checked)
+                # A scanner leaves selected=False on what must never go in a bulk
+                # clean (orphaned VM disks, old profiles); the tick shows exactly
+                # that, and only a person's own tick overrides it.
+                child.setCheckState(0, Qt.CheckState.Checked if item.selected
+                                    else Qt.CheckState.Unchecked)
                 child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 child.setData(0, Qt.ItemDataRole.UserRole, item)
                 child.setTextAlignment(
                     1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
                 )
                 root.addChild(child)
+            self._sync_root_tick(root)
 
             self._status_label.setText(
                 f"Found {len(result.items)} item(s) — {format_size(result.total_size)}"
@@ -282,20 +289,60 @@ class CategoryGroup(QWidget):
 
     # ── Clean ────────────────────────────────────────────────────────────────
 
-    def _do_clean_all(self):
-        if self._cleaning or not self._results:
-            return
+    @staticmethod
+    def _sync_root_tick(root) -> None:
+        """Root is ticked iff every row the SCANNER selected is ticked; the rows it
+        left unselected neither tick nor untick it."""
+        rows = [root.child(j) for j in range(root.childCount())]
+        safe = [c for c in rows if getattr(c.data(0, Qt.ItemDataRole.UserRole), "selected", False)]
+        is_ticked = [c.checkState(0) == Qt.CheckState.Checked for c in (safe or rows)]
+        ticked = all(is_ticked) if safe else any(is_ticked)
+        root.setCheckState(0, Qt.CheckState.Checked if ticked else Qt.CheckState.Unchecked)
 
-        checked: list = []
+    def _on_tick_changed(self, tree_item, column) -> None:
+        """A click on the root ticks/unticks only scanner-selected rows (unticking
+        clears every row); an unselected row is ticked by its own click alone."""
+        if self._syncing_ticks or column != 0:
+            return
+        self._syncing_ticks = True
+        try:
+            root = tree_item.parent()
+            if root is None:
+                want = tree_item.checkState(0)
+                for j in range(tree_item.childCount()):
+                    child = tree_item.child(j)
+                    item = child.data(0, Qt.ItemDataRole.UserRole)
+                    if want == Qt.CheckState.Unchecked:
+                        child.setCheckState(0, Qt.CheckState.Unchecked)
+                    elif item is not None and item.selected:
+                        child.setCheckState(0, Qt.CheckState.Checked)
+                root = tree_item
+            self._sync_root_tick(root)
+        finally:
+            self._syncing_ticks = False
+
+    def _items_to_clean(self) -> list:
+        """The ticked rows, as items the deleter will act on.
+
+        The deleter skips selected=False items, so a row the person ticked by
+        hand is passed as a COPY marked selected -- the tick is their choice --
+        leaving the scan result itself untouched.
+        """
+        chosen: list = []
         for i in range(self._tree.topLevelItemCount()):
             root = self._tree.topLevelItem(i)
             for j in range(root.childCount()):
                 child = root.child(j)
-                if child.checkState(0) == Qt.CheckState.Checked:
-                    item = child.data(0, Qt.ItemDataRole.UserRole)
-                    if item is not None:
-                        checked.append(item)
+                item = child.data(0, Qt.ItemDataRole.UserRole)
+                if item is not None and child.checkState(0) == Qt.CheckState.Checked:
+                    chosen.append(item if item.selected else dataclasses.replace(item, selected=True))
+        return chosen
 
+    def _do_clean_all(self):
+        if self._cleaning or not self._results:
+            return
+
+        checked = self._items_to_clean()
         if not checked:
             return
 

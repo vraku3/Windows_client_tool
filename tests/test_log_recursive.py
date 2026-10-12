@@ -96,8 +96,14 @@ def test_the_real_windows_logs_tree_is_handled(tmp_path):
     found, capped = LogSet.logs_under(r"C:\Windows\Logs")
     assert found, r"found no logs under C:\Windows\Logs"
     ticked = preselected(found)
-    assert len(ticked) < len(found), \
-        "everything was ticked; the big archive should not be"
+    # Pin the rule, not the machine: right after a restart every log here can
+    # be small, so "something stays unticked" failed on a perfectly working run.
+    for path in found:
+        try:
+            small = os.path.getsize(path) <= PRESELECT_MAX_BYTES
+        except OSError:
+            continue  # rolled away between the walk and now
+        assert (path in ticked) == small, path
 
 
 # ---- the checklist dialog -----------------------------------------------

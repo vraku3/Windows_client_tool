@@ -18,6 +18,14 @@ from core.procengine.ntquery import system_processes
 MY_PID = os.getpid()
 
 
+def _clr_loaded_here() -> bool:
+    """True once pythonnet (Thermal Control's LHM bridge) has loaded .NET into
+    THIS test process -- from then on Python really is a .NET process."""
+    import ctypes
+    return bool(ctypes.windll.kernel32.GetModuleHandleW("clr.dll"))
+
+
+
 # ---- immersive ----------------------------------------------------------
 
 def test_this_process_is_not_packaged():
@@ -50,6 +58,8 @@ def test_our_own_modules_can_be_listed():
 
 
 def test_python_is_not_a_dotnet_process():
+    if _clr_loaded_here():
+        pytest.skip("a .NET runtime is loaded in this test process")
     dotnet, error = is_dotnet(MY_PID)
     assert error is None
     assert dotnet is False
@@ -150,6 +160,8 @@ def test_a_file_that_does_not_exist_says_so(tmp_path):
 # ---- the whole classification -------------------------------------------
 
 def test_classifying_this_process():
+    if _clr_loaded_here():
+        pytest.skip("a .NET runtime is loaded in this test process")
     found = classify(MY_PID, sys.executable)
     assert found.pid == MY_PID
     assert found.immersive is False

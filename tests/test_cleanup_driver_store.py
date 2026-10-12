@@ -127,10 +127,18 @@ def test_a_refused_enumeration_supersedes_nothing():
 def test_the_store_folder_comes_from_the_driver_database():
     r"""HKLM\SYSTEM\DriverDatabase\DriverInfFiles\<published>\Active, which
     is readable WITHOUT elevation — only pnputil needs it."""
+    # oemNN numbers are reassigned as drivers come and go (oem49 was AMD's
+    # 3D V-Cache driver until a spacedesk install on 2026-10-12), so this pins
+    # the RULE -- the registry names a real FileRepository folder -- not a package.
+    import os
+    import re
     folder = driver_store.store_folder_for("oem49.inf")
     if folder is None:
         pytest.skip("oem49.inf is not published on this machine")
-    assert folder.lower().startswith("amd3dvcache.inf_")
+    assert re.fullmatch(r"[\w.\-]+\.inf_[a-z0-9]+_[0-9a-f]{16}", folder.lower()), folder
+    repo = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                        "System32", "DriverStore", "FileRepository")
+    assert os.path.isdir(os.path.join(repo, folder)), folder
 
 
 def test_an_unknown_published_name_has_no_folder():

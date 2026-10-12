@@ -103,3 +103,4 @@ full_suite.txt
 
 # Superpowers git worktree fallback (isolated per-plan workspaces)
 .worktrees/
+.claude/.headroom_wrap_settings.lock

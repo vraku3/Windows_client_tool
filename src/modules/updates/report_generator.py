@@ -42,7 +42,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
         f"<tr><td>{_esc(r.get('name'))}</td><td>{_esc(r.get('id'))}</td>"
         f"<td>{_esc(r.get('before'))}</td><td>{_esc(r.get('after'))}</td>"
         f"<td class=\"{'ok' if r.get('confirmed') else 'warn'}\">"
-        f"{'CONFIRMED' if r.get('confirmed') else 'UNCHANGED'}</td></tr>"
+        f"{'CONFIRMED' if r.get('confirmed') else _esc(r.get('state') or 'UNCHANGED')}</td></tr>"
         for r in winget_results
     ) or "<tr><td colspan=5>No winget updates this run.</td></tr>"
 

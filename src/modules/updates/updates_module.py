@@ -213,7 +213,7 @@ class _AppUpdatesTab(QWidget):
             result_item = centered_item(result_text)
             if result_text == "CONFIRMED":
                 result_item.setForeground(QColor(semantic("success")))
-            elif result_text == "UNCHANGED":
+            elif result_text:
                 result_item.setForeground(QColor(semantic("warning")))
             self._table.setItem(row, 5, result_item)
         self._apply_filter(self._filter_edit.text())
@@ -263,20 +263,28 @@ class _AppUpdatesTab(QWidget):
         self._op_timer = QElapsedTimer()
         self._op_timer.start()
 
-        before_map = {u.winget_id: u.installed_version for u in self._updates if u.winget_id in ids}
+        targets = {u.winget_id: u.available_version for u in self._updates if u.winget_id in ids}
+        befores = {u.winget_id: u.installed_version for u in self._updates if u.winget_id in ids}
+        verify = bool(self.app.config.get("updates.verify_after_update", True)) if self.app else True
 
         def _run(worker):
+            outcomes = {}
             for i, wid in enumerate(ids):
                 if worker.is_cancelled:
                     worker.signals.log_line.emit("Cancelled.")
                     break
                 worker.signals.log_line.emit(f"Updating {wid}...")
-                install_update(
+                outcome = install_update(
                     wid, lambda line: worker.signals.log_line.emit(line),
                     is_cancelled=lambda: worker.is_cancelled,
+                    target_version=targets.get(wid, ""),
+                    before_version=befores.get(wid, ""),
+                    verify=verify,
                 )
+                worker.signals.log_line.emit(f"  {outcome.state}: {outcome.detail}")
+                outcomes[wid] = outcome
                 worker.signals.progress.emit(i + 1)
-            return before_map
+            return outcomes
 
         w = Worker(_run)
         w.signals.log_line.connect(self._log.appendPlainText)
@@ -286,38 +294,44 @@ class _AppUpdatesTab(QWidget):
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
 
-    def _on_update_done(self, before_map: dict):
+    def _on_update_done(self, outcomes: dict):
         self._refresh_btn.setEnabled(True)
         self._update_all_btn.setEnabled(True)
         self._progress.hide()
+        confirmed = sum(1 for o in outcomes.values() if o)
         _maybe_toast(
             self.app, self._op_timer, "App updates finished",
-            f"{len(before_map)} package(s) processed.",
+            f"{confirmed}/{len(outcomes)} package(s) confirmed updated.",
         )
-        if self.app and self.app.config.get("updates.verify_after_update", True) and before_map:
-            self._verify_after(before_map)
+        if outcomes:
+            self._verify_after(outcomes)
         else:
             self._do_refresh()
 
-    def _verify_after(self, before_map: dict) -> None:
+    def _verify_after(self, outcomes: dict) -> None:
+        """Re-scan for the table only: each package's verdict already came from
+        reading ITS installed version back (install_update), never from being
+        absent from this list -- a failed re-scan would make every package look updated."""
         patterns = self._patterns()
 
         def _fetch(worker):
             return fetch_updates(patterns=patterns)
 
         w = Worker(_fetch)
-        w.signals.result.connect(lambda after: self._on_verify_done(before_map, after))
+        w.signals.result.connect(lambda after: self._on_verify_done(outcomes, after))
         w.signals.error.connect(self._on_error)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
 
-    def _on_verify_done(self, before_map: dict, after_updates: List[AppUpdate]) -> None:
-        after_ids = {u.winget_id for u in after_updates}
-        results = {wid: ("UNCHANGED" if wid in after_ids else "CONFIRMED") for wid in before_map}
+    def _on_verify_done(self, outcomes: dict, after_updates: List[AppUpdate]) -> None:
+        results = {wid: ("CONFIRMED" if o else o.state) for wid, o in outcomes.items()}
         self._updates = after_updates
         self._render_table(results)
-        confirmed = sum(1 for v in results.values() if v == "CONFIRMED")
-        self._status_lbl.setText(f"Verified — {confirmed}/{len(results)} confirmed updated.")
+        confirmed = sum(1 for o in outcomes.values() if o)
+        not_confirmed = [f"{wid}: {o.detail}" for wid, o in outcomes.items() if not o]
+        self._status_lbl.setText(f"Verified — {confirmed}/{len(outcomes)} confirmed updated.")
+        if not_confirmed:
+            self._log.appendPlainText("\nNot confirmed:\n  " + "\n  ".join(not_confirmed))
         self._update_sel_btn.setEnabled(len(after_updates) > 0)
         self._update_all_btn.setEnabled(len(after_updates) > 0)
         if self._updates_listener:

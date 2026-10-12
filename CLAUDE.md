@@ -540,6 +540,11 @@ Cleanup's Clean All Safe), the session/all-time freed labels and
     (`tabs/_history_tab.py`) and `DriveSummaryBar` (disk_usage on a Worker)
     read it and compute nothing. `_common.get_dir_size` is one scandir walk
     that skips links and placeholders (%TEMP% 2.48 GB: 0.92 s -> 0.55 s).
+  Browser cleanup (`browser_scanner.delete_cache_entries` and
+  `EnhancedBrowserScanner.delete_selected`) goes through the same
+  `delete_items_report` since 2026-10-12: before, both used `rmtree` and
+  credited the scanned size, so a cache a running browser held open was
+  reported freed and never reached History.
   `tools/cleanup_delete_check.py` drives the deleter on a throwaway tree
   (locked file, junction, read-only file, 300-char path, fresh file, a
   `Cookies` file) and exits 1 on any mismatch.
@@ -777,6 +782,8 @@ so anything elevated goes through a `.ps1` wrapper that writes its own log.
 - **Microsoft Store tab** (`_StoreUpdatesTab`, `store_updates_tab.py`) — renders the `source == "msstore"` subset of the *same* winget scan the App Updates tab already ran, dispatched via `UpdatesModule._on_app_updates()` → `_store_tab.set_updates()`. Does **not** run its own winget scan. "Verify Store Updates" triggers `core/mdm_store_trigger.py` (MDM CIM class — needs `COMWorker`).
 - **Run All tab** (`_RunAllTab`, `run_all_tab.py`) — runs checked stages (wu/winget/store/cleanup/dism) sequentially in one worker, then writes run history and an HTML report.
 - **Settings tab** (`_UpdateSettingsTab`) — blocklist editor, verify/restore-point/driver toggles, and the Task Scheduler wiring for `--unattended` mode.
+
+**A winget update counts only when the installed version READ BACK says so** (`core/winget_list.py`, 2026-10-12). `install_update` returns an `UpdateOutcome(state, detail)` — `UPDATED` / `UNCONFIRMED` / `NOT APPLICABLE` / `NEEDS USER` / `FAILED` — decided by `winget list --id X --exact` after the upgrade, parsed by column. The old code counted "No applicable upgrade" as success and called a package updated when it was ABSENT from a re-scan, which a failed re-scan grants to every package at once. A version that moved off the old one is an update even when it is not the newest offered (winget installs the newest installer that applies); "Unknown"/"< x" versions, an unreadable list and an installer that asked for a restart are `UNCONFIRMED`, never `UPDATED`. App Buster's update action decides through the same `verdict()`. `updates.verify_after_update` off skips the read-back and reports `UNCONFIRMED`.
 
 **Shared stage logic** (`stage_runners.py`): `run_wu_stage` / `run_winget_stage` / `run_store_stage` / `run_cleanup_safe_stage` / `run_dism_stage`, each `(app, log_fn, is_cancelled_fn) -> dict`. Used by *both* `_RunAllTab` (threaded, `is_cancelled=lambda: worker.is_cancelled`) and `unattended_runner.py` (headless, `is_cancelled=lambda: False`) — extend this file rather than duplicating stage logic in either caller. `normalize_stage_data()` flattens the per-stage result dicts into the shape `report_generator.py` / `history_writer.py` expect.
 

@@ -83,26 +83,26 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         return {"results": []}
     log(f"winget: {len(before)} package(s) have updates.")
 
-    before_map = {u.winget_id: u.installed_version for u in before}
     results = []
     for i, u in enumerate(before):
         if is_cancelled():
             log("Cancelled.")
             break
         log(f"[{i + 1}/{len(before)}] Updating {u.name} ({u.winget_id})...")
-        install_update(u.winget_id, output_cb=log)
-        results.append({"name": u.name, "id": u.winget_id, "before": before_map.get(u.winget_id, "")})
+        # Each package is judged by reading ITS installed version back -- not by
+        # its absence from a re-scan, which a failed re-scan grants to every package.
+        outcome = install_update(u.winget_id, output_cb=log, is_cancelled=is_cancelled,
+                                 target_version=u.available_version,
+                                 before_version=u.installed_version,
+                                 verify=app.config.get("updates.verify_after_update", True))
+        log(f"  {outcome.state}: {outcome.detail}")
+        results.append({"name": u.name, "id": u.winget_id, "before": u.installed_version,
+                        "confirmed": bool(outcome), "state": outcome.state,
+                        "after": outcome.detail})
 
-    if results and app.config.get("updates.verify_after_update", True):
-        log("winget: verifying installed versions...")
-        after_ids = {a.winget_id for a in fetch_updates(patterns=patterns)}
-        for r in results:
-            confirmed = r["id"] not in after_ids
-            r["confirmed"] = confirmed
-            r["after"] = "updated" if confirmed else "unchanged"
+    if results:
         changed = sum(1 for r in results if r["confirmed"])
         log(f"winget: {changed}/{len(results)} confirmed updated.")
-
     return {"results": results}
 
 

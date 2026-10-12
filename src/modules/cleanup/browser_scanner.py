@@ -12,7 +12,6 @@ Features:
 import json
 import logging
 import os
-import shutil
 from pathlib import Path
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
@@ -448,23 +447,27 @@ def delete_cache_entries(entries: List[CacheEntry], progress_cb=None) -> Tuple[i
     Delete selected cache entries (directories or files).
     Returns (freed_bytes: int, error_count: int).
     """
-    freed = 0
-    errors = 0
-    total = len(entries)
-    for i, entry in enumerate(entries):
-        if not hasattr(entry, 'path') or not entry.path.exists():
-            continue
-        try:
-            if entry.path.is_dir():
-                shutil.rmtree(entry.path, ignore_errors=True)
-            else:
-                entry.path.unlink()
-            freed += entry.size_bytes
-        except Exception:
-            errors += 1
-        if progress_cb:
-            progress_cb(i + 1, total)
-    return freed, errors
+    return _delete_measured(entries, progress_cb)
+
+
+def _delete_measured(entries, progress_cb=None) -> Tuple[int, int]:
+    """Delete through Cleanup's own engine: (MEASURED freed bytes, problem items).
+
+    Both browser paths used to rmtree and credit the scanned size, so a cache
+    a running browser held open was reported freed and never reached History.
+    `delete_items_report` keeps the cache root, leaves files in use (naming
+    the browser that holds them), runs every refusal guard and writes the
+    deletion log. `progress_cb(done, total)`.
+    """
+    from modules.cleanup.cleanup_scanner import ScanItem
+    from modules.cleanup.cleanup_scanner.scanners_system import delete_items_report
+    items = [ScanItem(path=str(e.path), size=int(e.size_bytes or 0), is_dir=Path(e.path).is_dir())
+             for e in entries if getattr(e, "path", None) is not None and Path(e.path).exists()]
+    if not items:
+        return 0, 0
+    report, refused, per_item = delete_items_report(items, on_progress=progress_cb)
+    problems = len(refused) + sum(1 for _path, r in per_item if r.locked or r.denied)
+    return report.freed, problems
 
 
 class EnhancedBrowserScanner:
@@ -638,18 +641,5 @@ class EnhancedBrowserScanner:
         Returns:
             Tuple of (freed_bytes: int, error_count: int)
         """
-        freed = 0
-        errors = 0
-        for i, cat in enumerate(categories):
-            if cat.path.exists():
-                try:
-                    if cat.path.is_dir():
-                        shutil.rmtree(cat.path, ignore_errors=False)
-                    else:
-                        cat.path.unlink()
-                    freed += cat.size_bytes
-                except Exception:
-                    errors += 1
-            if progress_cb:
-                progress_cb(i + 1)
-        return freed, errors
+        return _delete_measured(
+            categories, (lambda done, _total: progress_cb(done)) if progress_cb else None)

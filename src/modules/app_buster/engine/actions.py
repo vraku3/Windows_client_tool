@@ -38,6 +38,7 @@ import winreg
 from datetime import datetime
 from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
+from core import winget_list
 from core.windows_utils import ps_quote, system_drive, system_root
 
 from . import model as m
@@ -593,28 +594,6 @@ def install_windows_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
                    else "Windows did not register it.")
 
 
-def parse_list_row(output: str, winget_id: str) -> Optional[Tuple[str, str]]:
-    """Read installed/available versions from an exact ID's table columns."""
-    columns = None
-    for line in output.splitlines():
-        labels = list(re.finditer(r"\S+", line))
-        names = [label.group() for label in labels]
-        if names[:3] == ["Name", "Id", "Version"]:
-            columns = {label.group(): label.start() for label in labels}
-            continue
-        if columns is None:
-            continue
-        version_start = columns["Version"]
-        if line[columns["Id"]:version_start].strip() != winget_id:
-            continue
-        available_start = columns.get("Available", columns.get("Source", len(line)))
-        installed = line[version_start:available_start].strip()
-        available = (line[available_start:columns.get("Source", len(line))].strip()
-                     if "Available" in columns else "")
-        return (installed, available) if installed else None
-    return None
-
-
 def update_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
     if not rec.winget_id:
         return Outcome(rec, SKIPPED, "winget offers no update for it.")
@@ -624,41 +603,20 @@ def update_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
     for line in out.splitlines()[-15:]:
         if line.strip():
             log(line.rstrip())
-    if "cannot be uninstalled when running with administrator privileges" in out.lower():
-        return Outcome(rec, SKIPPED, "Installed for your account only, and winget will not update it "
-                       "from an app running as administrator. Start the app without admin to update it.")
-    if "no applicable upgrade found" in out.lower():
-        return Outcome(rec, SKIPPED, "winget found no update that applies to this PC.")
+    refused = winget_list.refusal(out)
+    if refused:
+        return Outcome(rec, SKIPPED, refused[1])
     rc2, listed = runner.run(["winget", "list", "--id", rec.winget_id, "--exact",
                               "--disable-interactivity", "--accept-source-agreements"], timeout=120)
-    row = parse_list_row(listed, rec.winget_id) if rc2 == 0 else None
-    if row is None:
-        return Outcome(rec, SKIPPED, "Could not read the installed version back, so the update is unconfirmed.")
-    installed, available = row
-    if installed.casefold() == "unknown" or installed[:1] in "<>":
-        # Windows records no exact version for it, and an update does not add one.
-        return Outcome(rec, SKIPPED, "Windows records no exact version for it, so the update is unconfirmed.")
-    if rec.update and _same_version(installed, rec.update):
-        return Outcome(rec, UPDATED, f"Now {installed}")
-    if not available:
-        # No newer version listed is not proof: the source may simply not have answered.
-        return Outcome(rec, SKIPPED, f"{installed} is installed, not {rec.update or 'the new version'}; "
-                       "the update is unconfirmed.")
-    return Outcome(rec, FAILED, f"winget finished (exit {rc}), but {installed} is still installed "
-                   f"({available} available).")
+    state, detail = winget_list.verdict(rc2, listed, rec.winget_id, rec.update, upgrade_rc=rc,
+                                        before=rec.version, upgrade_output=out)
+    return Outcome(rec, {winget_list.UPDATED: UPDATED, winget_list.FAILED: FAILED}.get(state, SKIPPED),
+                   detail)
 
 
-def _same_version(a: str, b: str) -> bool:
-    """"v2.0", "2.0" and "2.0.0" are one version; anything non-numeric compares as text."""
-    def parts(v):
-        v = v.strip().casefold().removeprefix("v")
-        if not re.fullmatch(r"\d+(\.\d+)*", v):
-            return v
-        nums = [int(p) for p in v.split(".")]
-        while len(nums) > 1 and nums[-1] == 0:
-            nums.pop()
-        return tuple(nums)
-    return parts(a) == parts(b)
+#: Kept importable under their old names; the logic lives in core.winget_list.
+parse_list_row = winget_list.parse_list_row
+_same_version = winget_list.same_version
 
 
 def modify_app(rec: m.AppRecord, runner: Runner, log: Log, cancelled: Cancelled) -> Outcome:

@@ -9,7 +9,9 @@ anything in BootExecute besides Windows' own autocheck entries, and a
 per-user legacy logon script (UserInitMprLogonScript) when one is set, and
 WMI event subscriptions (root\\subscription) other than Windows' own SCM pair, and
 SilentProcessExit monitors, Active Setup StubPaths, print monitors and netsh
-helpers -- those four listing only what is not Microsoft-signed.
+helpers -- those four listing everything except what is provably Windows'
+own (catalog-signed, inside System32/SysWOW64, and every path it is given
+inside %SystemRoot%).
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -27,6 +29,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import winreg
 from concurrent.futures import ThreadPoolExecutor
@@ -784,6 +787,12 @@ _LEGACY_ACTIVE_SETUP = {("{2c7339cf-2b09-4501-b3f3-f3508c9228ed}", "/UserInstall
                         ("{89820200-ecbd-11cf-8b85-00aa005b4340}", "U")}
 
 
+def _stub_runs(stub: str) -> bool:
+    """A legacy placeholder stub is only noise while it names no real file."""
+    exe, _args = resolve_command(stub)
+    return bool(exe) and os.path.isfile(exe)
+
+
 def read_active_setup(inv: Inventory) -> None:
     """Active Setup `StubPath`: run once per user at logon, by Windows or an
     installer. HKLM (both views) and HKCU when present."""
@@ -796,7 +805,7 @@ def read_active_setup(inv: Inventory) -> None:
             stub = _read_value(hive, sub, "StubPath", inv)
             if not stub:
                 continue
-            if (guid.casefold(), str(stub)) in _LEGACY_ACTIVE_SETUP:
+            if (guid.casefold(), str(stub)) in _LEGACY_ACTIVE_SETUP and not _stub_runs(str(stub)):
                 continue
             title = _read_value(hive, sub, "", inv)
             inv.items.append(Item(str(title) if title else guid, str(stub), "Active Setup", scope,
@@ -858,11 +867,58 @@ def _in_windows_dirs(path: str) -> bool:
     return False
 
 
+def _inside_system_root(path: str, base_dir: str) -> bool:
+    """An argument path, resolved (a bare name against the exe's own folder, as
+    the loader would), physically under %SystemRoot%. Unresolvable is False."""
+    if not os.path.isabs(path):
+        path = os.path.join(base_dir, path)
+    target, root = _canonical(path), _canonical(system_root())
+    return bool(target and root and target.startswith(root.rstrip(os.sep) + os.sep))
+
+
+#: A whole token that is only a switch: /s  /FirstLogon  -UserConfig  --verbose-logging
+_SWITCH = re.compile(r"[/-]{1,2}[A-Za-z?][\w?.-]*")
+#: The name part of a switch that carries a value: /i:  /subcategory:  -x=
+_SWITCH_PREFIX = re.compile(r"^[/-]{1,2}[A-Za-z][\w-]*[:=]")
+#: One argument; quoted and unquoted runs glue together ("a b.dll",Entry).
+_ARG = re.compile(r'(?:"[^"]*"|[^\s"])+')
+_PATH_EXTS = (".dll", ".exe", ".cmd", ".bat", ".ps1", ".vbs", ".js", ".hta", ".inf")
+
+
+def _arg_path(token: str) -> Optional[str]:
+    """The path an argument names, or None when it is not path-like."""
+    if _SWITCH.fullmatch(token):
+        return None
+    text = os.path.expandvars(_SWITCH_PREFIX.sub("", token, count=1))
+    head = text.split(",", 1)[0]           # rundll32's "x.dll,Entry"
+    if "\\" in head or "/" in head or head.lower().endswith(_PATH_EXTS):
+        return head
+    return None
+
+
+def _args_inside_windows(exe: str, args: str) -> bool:
+    """Every path-like argument resolves inside %SystemRoot%; for a LOLBIN, every
+    argument that is not a switch must be such a path. Otherwise a signed system
+    interpreter (cmd, rundll32, ...) is running something that is not Windows'."""
+    lolbin = os.path.basename(exe).lower() in LOLBINS
+    base = os.path.dirname(exe)
+    for token in (t.replace('"', "") for t in _ARG.findall(args or "")):
+        path = _arg_path(token)
+        if path is not None:
+            if not _inside_system_root(path, base):
+                return False
+        elif lolbin and not (_SWITCH.fullmatch(token) or _SWITCH_PREFIX.match(token)):
+            return False
+    return True
+
+
 def _is_windows_own(item: Item) -> bool:
-    """Signed (embedded or catalog) AND physically inside System32/SysWOW64. The
-    publisher is a self-written CompanyName and catalog trust follows the hash
-    wherever the file sits, so neither alone proves the file is Windows'."""
-    return item.trust in (trustlib.SIGNED, trustlib.SIGNED_CATALOG) and _in_windows_dirs(item.exe)
+    """Catalog-signed (Windows' own files are; an embedded signature can be any
+    vendor's), physically inside System32/SysWOW64, and every path it is handed
+    inside %SystemRoot% -- `cmd.exe /c C:\\Users\\Public\\x.cmd` is not Windows'."""
+    if item.trust != trustlib.SIGNED_CATALOG or not _in_windows_dirs(item.exe):
+        return False
+    return _args_inside_windows(item.exe, resolve_command(item.command)[1])
 
 
 def drop_windows_own(inv: Inventory) -> None:

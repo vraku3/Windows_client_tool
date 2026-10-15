@@ -311,29 +311,34 @@ _SYS32 = os.path.join(system_root(), "System32", "kernel32.dll")
 _WOW = os.path.join(system_root(), "SysWOW64", "kernel32.dll")
 
 
-def test_filter_drops_signed_files_in_windows_dirs_only(tmp_path):
+def test_filter_drops_catalog_signed_files_in_windows_dirs_only(tmp_path):
+    """Final-review C3: only SIGNED_CATALOG counts. An embedded signature can be
+    any vendor's, so a SIGNED file in System32/SysWOW64 is now kept (was dropped)."""
     outside = str(tmp_path / "x.dll")
     (tmp_path / "x.dll").write_bytes(b"MZ")
     items = [
         _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED_CATALOG, _SYS32),
+        _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED_CATALOG, _WOW),
         _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED, _WOW),
         _it("Netsh Helper", "Microsoft Corporation", _trust.SIGNED, outside),
         _it("Print Monitor", "Microsoft Windows", _trust.SIGNED_CATALOG, outside),
         _it("Print Monitor", None, _trust.UNKNOWN, _SYS32),
         _it("Active Setup", "Microsoft Corporation", _trust.UNSIGNED, _SYS32),
         _it("SilentProcessExit", "Microsoft Corporation", _trust.SIGNED, _SYS32),
-        _it("Run", "Microsoft Corporation", _trust.SIGNED, _SYS32),
+        _it("Run", "Microsoft Corporation", _trust.SIGNED_CATALOG, _SYS32),
     ]
     inv = p.Inventory(items=items)
     p.drop_windows_own(inv)
-    assert [(i.source, i.exe) for i in inv.items] == [
-        ("Netsh Helper", outside), ("Print Monitor", outside), ("Print Monitor", _SYS32),
-        ("Active Setup", _SYS32), ("Run", _SYS32)]
+    assert [(i.source, i.exe, i.trust) for i in inv.items] == [
+        ("Netsh Helper", _WOW, _trust.SIGNED), ("Netsh Helper", outside, _trust.SIGNED),
+        ("Print Monitor", outside, _trust.SIGNED_CATALOG), ("Print Monitor", _SYS32, _trust.UNKNOWN),
+        ("Active Setup", _SYS32, _trust.UNSIGNED), ("SilentProcessExit", _SYS32, _trust.SIGNED),
+        ("Run", _SYS32, _trust.SIGNED_CATALOG)]
 
 
 def test_system32_lookalike_prefix_is_not_system32():
     near = os.path.join(system_root(), "System32evil", "x.dll")
-    inv = p.Inventory(items=[_it("Netsh Helper", "Microsoft", _trust.SIGNED, near)])
+    inv = p.Inventory(items=[_it("Netsh Helper", "Microsoft", _trust.SIGNED_CATALOG, near)])
     p.drop_windows_own(inv)
     assert len(inv.items) == 1
 
@@ -412,7 +417,8 @@ def _stand_in_root(monkeypatch, tmp_path):
 
 
 def _signed(path):
-    return p.Inventory(items=[_it("Netsh Helper", "Microsoft Corporation", _trust.SIGNED, str(path))])
+    return p.Inventory(items=[_it("Netsh Helper", "Microsoft Corporation", _trust.SIGNED_CATALOG,
+                                  str(path))])
 
 
 def test_file_really_inside_stand_in_root_is_dropped(monkeypatch, tmp_path):
@@ -452,12 +458,94 @@ def test_missing_file_is_kept(monkeypatch, tmp_path):
     assert len(inv.items) == 1
 
 
-def test_real_machine_has_no_windows_own_netsh_or_silent_exit():
+def test_real_machine_keeps_only_non_catalog_netsh_and_no_silent_exit():
+    """Final-review C3 measured here: the netsh helpers that survive are the
+    Windows DLLs whose trust reads SIGNED (embedded "Microsoft Windows"
+    signature, which trust.check reports before it looks at the catalog). The
+    rule is deliberately not loosened for them."""
     pythoncom = pytest.importorskip("pythoncom")
     pythoncom.CoInitialize()
     try:
         inv = p.collect()
     finally:
         pythoncom.CoUninitialize()
-    assert [i.name for i in inv.items if i.source == "Netsh Helper"] == []
+    netsh = [i for i in inv.items if i.source == "Netsh Helper"]
+    assert all(i.trust != _trust.SIGNED_CATALOG or not p._in_windows_dirs(i.exe) for i in netsh)
     assert [i.name for i in inv.items if i.source == "SilentProcessExit"] == []
+
+
+# -- final-review C3: a Windows binary handed something that is not Windows' --
+
+def _cmd_item(source, command):
+    exe, _args = p.resolve_command(command)
+    it = p.Item("n", command, source, "Machine", "loc")
+    it.exe, it.trust, it.publisher = exe, _trust.SIGNED_CATALOG, "Microsoft Corporation"
+    return it
+
+
+def _kept(*commands, source="Active Setup"):
+    inv = p.Inventory(items=[_cmd_item(source, c) for c in commands])
+    p.drop_windows_own(inv)
+    return [i.command for i in inv.items]
+
+
+_S32 = os.path.join(system_root(), "System32")
+
+
+@pytest.mark.parametrize("source", ["Active Setup", "SilentProcessExit"])
+def test_signed_interpreter_running_an_outside_payload_is_kept(source):
+    cmd = os.path.join(_S32, "cmd.exe") + r" /c C:\Users\Public\payload.cmd"
+    assert _kept(cmd, source=source) == [cmd]
+
+
+def test_regsvr32_with_everything_inside_windows_is_dropped_only_when_catalog_signed():
+    cmd = r"%SystemRoot%\system32\regsvr32.exe /s /n /i:U shell32.dll"
+    regsvr32 = os.path.join(_S32, "regsvr32.exe")
+    catalog = _trust.check(regsvr32).status == _trust.SIGNED_CATALOG
+    inv = p.Inventory(items=[p.Item("n", cmd, "Active Setup", "Machine", "loc")])
+    p.enrich(inv, {}, p.datetime.now())
+    p.drop_windows_own(inv)
+    assert (inv.items == []) is catalog
+
+
+@pytest.mark.parametrize("args", [
+    "/c echo hi",                                  # LOLBIN, non-path argument
+    r"/c %SystemRoot%\System32\..\..\Users\Public\x.cmd",  # traversal out
+    r"/c C:\Windows\System32\does-not-exist.cmd",  # unresolvable
+    r"/c \\server\share\x.cmd",
+    "/c http://example.invalid/x.hta",
+])
+def test_lolbin_with_any_argument_not_provably_windows_is_kept(args):
+    cmd = os.path.join(_S32, "cmd.exe") + " " + args
+    assert _kept(cmd) == [cmd]
+
+
+def test_rundll32_dll_entry_inside_windows_is_dropped_and_outside_kept(tmp_path):
+    rundll = os.path.join(_S32, "rundll32.exe")
+    inside = f'"{rundll}" "{os.path.join(_S32, "shell32.dll")}",Control_RunDLL'
+    (tmp_path / "e.dll").write_bytes(b"MZ")
+    outside = f'{rundll} {tmp_path / "e.dll"},Entry'
+    assert _kept(inside, outside) == [outside]
+
+
+def test_non_lolbin_with_only_switches_is_dropped():
+    assert _kept(os.path.join(_S32, "ie4uinit.exe") + " -UserConfig") == []
+
+
+def test_non_lolbin_with_an_outside_path_argument_is_kept():
+    cmd = os.path.join(_S32, "ie4uinit.exe") + r" /x:C:\Users\Public\a.inf"
+    assert _kept(cmd) == [cmd]
+
+
+def test_legacy_u_stub_is_listed_once_u_resolves_to_a_file(monkeypatch, tmp_path):
+    base = "HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components"
+    _fake_registry(monkeypatch, {
+        base + "\\{89820200-ECBD-11cf-8b85-00aa005b4340}": {"": "Windows Desktop Update",
+                                                         "StubPath": "U"}})
+    inv = p.Inventory()
+    p.read_active_setup(inv)
+    assert inv.items == []
+    (tmp_path / "U.exe").write_bytes(b"MZ")
+    monkeypatch.chdir(tmp_path)
+    p.read_active_setup(inv)
+    assert [i.command for i in inv.items] == ["U"]

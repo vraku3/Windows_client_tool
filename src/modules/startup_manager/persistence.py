@@ -82,6 +82,7 @@ class Item:
     impact_count: int = 0
     extra: str = ""
     consumer_class: str = ""   # WMI Subscription only: the event consumer's class
+    wmi_exe: str = ""          # WMI CommandLineEventConsumer.ExecutablePath; enrich() uses it as `exe`
     notes: List[Note] = field(default_factory=list)
 
     @property
@@ -557,16 +558,32 @@ _WMI_OWN_CLASS = "NTEventLogEventConsumer"
 _WMI_RUNS_CODE = ("commandlineeventconsumer", "activescripteventconsumer")
 
 
+def _wmi_unquote(text: str) -> str:
+    """Value of a WMI key: single- or double-quoted, backslash escapes."""
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        quote, out, i, body = text[0], [], 0, text[1:-1]
+        while i < len(body):
+            if body[i] == chr(92) and i + 1 < len(body) and body[i + 1] in (quote, chr(92)):
+                i += 1
+            out.append(body[i])
+            i += 1
+        return "".join(out)
+    return text
+
+
 def _wmi_path(path) -> Tuple[str, str]:
     """A WMI object path (optionally host/namespace-prefixed) -> (class, Name)."""
     text = str(path or "")
     if text.startswith(chr(92) * 2) or ":" in text.split(".", 1)[0]:
         text = text.split(":", 1)[-1]
     cls, _sep, rest = text.partition(".")
-    name = rest.partition("=")[2].strip()
-    if len(name) >= 2 and name[0] == name[-1] == '"':
-        name = name[1:-1]
-    return cls.strip(), name.replace(chr(92) + '"', '"').replace(chr(92) * 2, chr(92))
+    return cls.strip(), _wmi_unquote(rest.partition("=")[2])
+
+
+def _wmi_id(cls: str, name: str) -> Tuple[str, str]:
+    """Object-path identity is case-insensitive."""
+    return cls.casefold(), name.casefold()
 
 
 def _wmi_query(class_name: str) -> List[dict]:
@@ -583,24 +600,32 @@ def _wmi_query(class_name: str) -> List[dict]:
 
 def _wmi_command(consumer: Optional[dict], cls: str, name: str) -> str:
     row = consumer or {}
-    if cls.lower() == "commandlineeventconsumer":
-        return str(row.get("CommandLineTemplate") or "")
-    if cls.lower() == "activescripteventconsumer":
+    if cls.casefold() == "commandlineeventconsumer":
+        return str(row.get("CommandLineTemplate") or row.get("ExecutablePath") or "")
+    if cls.casefold() == "activescripteventconsumer":
         return str(row.get("ScriptText") or row.get("ScriptFileName") or "")
     return f"{cls} {name}".strip()
 
 
+_WMI_OWN_ID = (_WMI_OWN_CLASS.casefold(), _WMI_OWN_CONSUMER.casefold())
+
+
 def _wmi_is_own(fname: str, cname: str, ccls: str) -> bool:
-    return (fname, cname, ccls) == (_WMI_OWN_FILTER, _WMI_OWN_CONSUMER, _WMI_OWN_CLASS)
+    return fname.casefold() == _WMI_OWN_FILTER.casefold() and _wmi_id(ccls, cname) == _WMI_OWN_ID
 
 
 def _add_wmi_item(inv: Inventory, fname: str, filter_row: Optional[dict], ccls: str,
                   cname: str, consumer: Optional[dict], tag: str) -> None:
     detail = str((filter_row or {}).get("Query") or "")
-    extra = " ".join(x for x in (detail, f"({tag})" if tag else "") if x)
+    program = ""
+    if ccls.casefold() == "commandlineeventconsumer":
+        program = str((consumer or {}).get("ExecutablePath") or "")
+    extra = " ".join(x for x in (detail, f"(program: {program})" if program else "",
+                                 f"({tag})" if tag else "") if x)
     item = Item(fname, _wmi_command(consumer, ccls, cname), "WMI Subscription", "Machine",
                 _WMI_NS, enabled=True, extra=extra)
     item.consumer_class = ccls
+    item.wmi_exe = program
     inv.items.append(item)
 
 
@@ -611,13 +636,14 @@ def read_wmi_subscriptions(inv: Inventory, query=None) -> None:
     long-standing persistence technique. Measured on this machine: exactly one
     subscription, Windows' own `SCM Event Log Filter` -> `SCM Event Log
     Consumer` (NTEventLogEventConsumer); skipped only when both names AND the
-    consumer class match. Unbound filters and consumers are listed too.
+    consumer class match (case-insensitively, like WMI object paths). Unbound
+    filters and consumers are listed too.
     """
     query = query or _wmi_query
     try:
         bindings = query("__FilterToConsumerBinding")
-        filters = {str(r.get("Name")): r for r in query("__EventFilter")}
-        consumers = {(str(r.get("__CLASS")), str(r.get("Name"))): r for r in query("__EventConsumer")}
+        filters = {str(r.get("Name")).casefold(): r for r in query("__EventFilter")}
+        consumers = {_wmi_id(str(r.get("__CLASS")), str(r.get("Name"))): r for r in query("__EventConsumer")}
     except Exception as error:
         logger.warning("WMI subscription query failed: %s", error)
         inv.problems.append(f"{_WMI_NS}: {error}")
@@ -626,16 +652,18 @@ def read_wmi_subscriptions(inv: Inventory, query=None) -> None:
     for binding in bindings:
         _fcls, fname = _wmi_path(binding.get("Filter"))
         ccls, cname = _wmi_path(binding.get("Consumer"))
-        bound_filters.add(fname)
-        bound_consumers.add((ccls, cname))
+        bound_filters.add(fname.casefold())
+        bound_consumers.add(_wmi_id(ccls, cname))
         if not _wmi_is_own(fname, cname, ccls):
-            _add_wmi_item(inv, fname, filters.get(fname), ccls, cname, consumers.get((ccls, cname)), "")
-    for fname, row in filters.items():
-        if fname not in bound_filters:
-            _add_wmi_item(inv, fname, row, "", "", None, "not bound")
-    for (ccls, cname), row in consumers.items():
-        if (ccls, cname) not in bound_consumers:
-            _add_wmi_item(inv, cname, None, ccls, cname, row, "not bound")
+            row = consumers.get(_wmi_id(ccls, cname))
+            _add_wmi_item(inv, fname, filters.get(fname.casefold()), ccls, cname, row, "")
+    for key, row in filters.items():
+        if key not in bound_filters:
+            _add_wmi_item(inv, str(row.get("Name")), row, "", "", None, "not bound")
+    for key, row in consumers.items():
+        if key not in bound_consumers:
+            name = str(row.get("Name"))
+            _add_wmi_item(inv, name, None, str(row.get("__CLASS")), name, row, "not bound")
 
 
 def read_user_logon_script(inv: Inventory) -> None:
@@ -759,6 +787,8 @@ def enrich(inv: Inventory, impact: Optional[Dict[str, Tuple[int, int]]], now: da
         exe, _args = resolve_command(item.command)
         if item.source == "Service":
             exe = _service_exe(item, exe)
+        if item.wmi_exe:
+            exe = item.wmi_exe
         item.exe = exe
         item.exists = os.path.isfile(exe) if exe else None
     paths = sorted({i.exe for i in inv.items if i.exists})

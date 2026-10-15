@@ -10,7 +10,7 @@ import winreg
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Tuple
 
-from .. import log_readiness
+from .. import audit_policy, log_readiness
 from .accounts import _dword
 from .model import Category, Risk, SecurityControl
 
@@ -158,6 +158,54 @@ def migrate_legacy_value(control_id: str, value: Any) -> Any:
                    control_id, value, migrated)
     return migrated
 
+
+def _audit_words(success: bool, failure: bool) -> str:
+    if success and failure:
+        return "Success and Failure"
+    return "Success" if success else "Failure" if failure else "No Auditing"
+
+
+def _audit_reader(sub: audit_policy.Subcategory) -> Callable[[], Dict[str, Any]]:
+    def read() -> Dict[str, Any]:
+        setting, why = audit_policy.read(sub)
+        if setting is None:
+            return {"status": _UNKNOWN, "color": "amber", "available": False,
+                    "details": [(sub.name, f"Could not read: {why}")]}
+        success, failure = setting
+        enough = ((success or not sub.want_success)
+                  and (failure or not sub.want_failure))
+        now = _audit_words(success, failure)
+        return {"status": now, "color": "green" if enough else "amber",
+                "available": True, "enabled": enough,
+                "details": [(sub.name, now),
+                            ("Wanted", _audit_words(sub.want_success,
+                                                    sub.want_failure)),
+                            ("Windows default", sub.default)]}
+    return read
+
+
+def _audit_control(sub: audit_policy.Subcategory) -> SecurityControl:
+    snake = sub.name.lower().replace(" ", "_")
+    on = audit_policy.on_flags(sub)
+    off = audit_policy.default_flags(sub)
+    return SecurityControl(
+        id=f"audit_{snake}", title=f"Audit: {sub.name}",
+        category=Category.AUDIT_LOGGING,
+        description=f"Whether Windows writes {sub.name} events to the "
+                    "Security log (set by subcategory GUID, so it works on "
+                    "any display language).",
+        why_it_matters="Without this audit setting the Security log has "
+                       "nothing to say about it when an investigation needs "
+                       "it. Reverting restores the Windows default "
+                       f"({sub.default}).",
+        reader=_audit_reader(sub),
+        on_steps=({"type": "command",
+                   "cmd": audit_policy.set_command(sub, *on)},),
+        off_steps=({"type": "command",
+                    "cmd": audit_policy.set_command(sub, *off)},),
+        desired=True, risk=Risk.LOW)
+
+
 CONTROLS: Tuple[SecurityControl, ...] = (
     _size_control(
         "security_log_size", "Security log size", _SECURITY, _SEC_MIN,
@@ -212,4 +260,4 @@ CONTROLS: Tuple[SecurityControl, ...] = (
                        "detail that the built-in logs do not.",
         reader=_read_sysmon, read_only_reason=_SYSMON_WHY,
         desired=True, risk=Risk.LOW),
-)
+) + tuple(_audit_control(sub) for sub in audit_policy.SUBCATEGORIES)

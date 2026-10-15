@@ -1,7 +1,8 @@
 """App Buster -- every app on the PC in one list, O&O AppBuster style.
 
 Windows apps (Store/UWP/MSIX), desktop apps (Win32/MSI), hidden and
-installable ones, system and framework packages (shown, never removable),
+installable ones, system and framework packages (never removable, so hidden
+outside their own System / Framework chips unless View asks for them),
 orphaned leftovers and defect entries. Smart View chips, Cards or Details,
 curated keep/optional/remove recommendations, removal by scope with every
 result read back, install for your account, winget updates, change tracking
@@ -20,8 +21,8 @@ from PyQt6.QtCore import QModelIndex, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QListView, QMenu, QMessageBox, QProgressDialog,
-                             QPushButton, QStackedWidget, QTabBar, QTableView, QToolButton,
-                             QVBoxLayout, QWidget)
+                             QPushButton, QSplitter, QStackedWidget, QTabBar, QTableView,
+                             QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
 from core.admin_utils import is_admin
 from core.base_module import BaseModule
@@ -36,6 +37,7 @@ from . import dialogs
 from .app_list import RECORD_ROLE, AppModel, CardDelegate
 from .engine import actions as act
 from .engine import extras, model as m, scan, views
+from .engine.views import about_html
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,8 @@ class AppBusterWidget(QWidget):
         self._fingerprint = None
         self._restore_asked = False
         self._opts = views.ViewOptions(bool(self._cfg("show_ms", True)),
-                                       bool(self._cfg("show_installable", False)))
+                                       bool(self._cfg("show_installable", False)),
+                                       bool(self._cfg("show_system", False)))
         self._sort = str(self._cfg("sort", "recent"))
         self._descending = bool(self._cfg("descending", True))
         self._model = AppModel(self)
@@ -134,7 +137,19 @@ class AppBusterWidget(QWidget):
         self._empty = QLabel("No apps match.", alignment=Qt.AlignmentFlag.AlignCenter)
         for w in (self._cards, self._table, self._empty):
             self._stack.addWidget(w)
-        lay.addWidget(self._stack, 1)
+        for view in (self._cards, self._table):
+            view.selectionModel().selectionChanged.connect(lambda *_: self._show_about())
+        self._about = QTextBrowser(self)
+        self._about.setOpenExternalLinks(False)
+        self._about.setMinimumWidth(300)
+        self._about.setPlaceholderText("Select an app to see what it is, what it does, and what "
+                                       "removing it would cost.")
+        split = QSplitter(Qt.Orientation.Horizontal, self)
+        split.addWidget(self._stack)
+        split.addWidget(self._about)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
+        lay.addWidget(split, 1)
         self._status = QLabel("")
         lay.addWidget(self._status)
         self._set_layout(str(self._cfg("layout", "cards")))
@@ -235,7 +250,9 @@ class AppBusterWidget(QWidget):
         for label, checked, fn in (
                 ("Group by type", self._tabs.isVisible(), self._toggle_group),
                 ("Show Microsoft apps", self._opts.show_microsoft, self._toggle_ms),
-                ("Show installable Windows apps", self._opts.show_installable, self._toggle_installable)):
+                ("Show installable Windows apps", self._opts.show_installable, self._toggle_installable),
+                ("Show parts of Windows that cannot be removed", self._opts.show_system,
+                 self._toggle_system)):
             a = QAction(label, menu, checkable=True, checked=checked)
             a.toggled.connect(fn)
             menu.addAction(a)
@@ -405,9 +422,9 @@ class AppBusterWidget(QWidget):
         else:
             self._model.set_rows(rows)
             self._size_columns()
-        hidden = views.hidden_by_options(self._rows, self._opts)
-        self._notice_label.setText(f"{hidden} apps are hidden by the View options.")
-        self._notice.setVisible(hidden > 0)
+        notice = views.hidden_notice(self._rows, self._opts)
+        self._notice_label.setText(notice)
+        self._notice.setVisible(bool(notice) and self._view not in views.UNREMOVABLE_VIEWS)
         self._stack.setCurrentIndex(2 if not rows and self._rows else
                                     (0 if self._layout == "cards" else 1))
         if not rows and text and not any(counts.values()):
@@ -450,10 +467,26 @@ class AppBusterWidget(QWidget):
         self._apply()
 
     def _show_all(self) -> None:
-        self._opts.show_microsoft = self._opts.show_installable = True
+        self._opts.show_microsoft = self._opts.show_installable = self._opts.show_system = True
         self._save_cfg("show_ms", True)
         self._save_cfg("show_installable", True)
+        self._save_cfg("show_system", True)
         self._apply()
+
+    def _toggle_system(self, on: bool) -> None:
+        self._opts.show_system = on
+        self._save_cfg("show_system", on)
+        self._apply()
+
+    def _show_about(self) -> None:
+        """The detail panel: what the selected app is, does, and what removing it costs."""
+        if not widget_is_valid(self._about):
+            return
+        recs = self._selected_records()
+        if len(recs) != 1:
+            self._about.clear()
+            return
+        self._about.setHtml(about_html(recs[0]))
 
     def _toggle_ms(self, on: bool) -> None:
         self._opts.show_microsoft = on

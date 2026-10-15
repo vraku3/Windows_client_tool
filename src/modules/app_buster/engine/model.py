@@ -91,6 +91,7 @@ class AppRecord:
     purpose: str = ""                   # orphaned: likely purpose
     vendor: str = ""                    # orphaned: presumed vendor / family
     confidence: str = ""                # orphaned: High / Medium / Unknown
+    about: tuple = ()                   # (what it is, what it does, removing it) -- app_info
     extra: Dict[str, str] = field(default_factory=dict)
 
     @property

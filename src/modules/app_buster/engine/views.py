@@ -69,9 +69,18 @@ FIELD_SORT = {"name": "name", "recommendation": "recommendation", "publisher": "
 
 
 class ViewOptions:
-    def __init__(self, show_microsoft: bool = True, show_installable: bool = False) -> None:
+    def __init__(self, show_microsoft: bool = True, show_installable: bool = False,
+                 show_system: bool = False) -> None:
         self.show_microsoft = show_microsoft
         self.show_installable = show_installable
+        #: System apps and frameworks cannot be removed by anyone, so a list of
+        #: things to remove does not show them unless asked. Their own chips
+        #: (System, Framework) always do -- choosing that chip IS asking.
+        self.show_system = show_system
+
+
+#: The views that exist to show the parts of Windows that cannot be removed.
+UNREMOVABLE_VIEWS = ("system", "framework")
 
 
 def is_microsoft(r: m.AppRecord) -> bool:
@@ -79,10 +88,16 @@ def is_microsoft(r: m.AppRecord) -> bool:
         r.publisher.lower().startswith("microsoft")
 
 
-def passes_options(r: m.AppRecord, opts: ViewOptions) -> bool:
+def is_windows_part(r: m.AppRecord) -> bool:
+    return r.type in (m.SYSTEM, m.FRAMEWORK)
+
+
+def passes_options(r: m.AppRecord, opts: ViewOptions, view: str = "all") -> bool:
     if not opts.show_installable and r.status in (m.INSTALLABLE, m.STAGED):
         return False
     if not opts.show_microsoft and is_microsoft(r) and r.type in (m.WINDOWS, m.DESKTOP):
+        return False
+    if not opts.show_system and is_windows_part(r) and view not in UNREMOVABLE_VIEWS:
         return False
     return True
 
@@ -91,11 +106,32 @@ def hidden_by_options(rows: Sequence[m.AppRecord], opts: ViewOptions) -> int:
     return sum(1 for r in rows if not passes_options(r, opts))
 
 
+def hidden_notice(rows: Sequence[m.AppRecord], opts: ViewOptions) -> str:
+    """What the View options hide, said by kind -- "" when nothing is hidden."""
+    hidden = [r for r in rows if not passes_options(r, opts)]
+    if not hidden:
+        return ""
+    parts = []
+    windows_parts = sum(1 for r in hidden if is_windows_part(r))
+    if windows_parts:
+        parts.append(f"{windows_parts} parts of Windows that cannot be removed (System apps and "
+                     "Frameworks -- their own chips list them)")
+    installable = sum(1 for r in hidden if not is_windows_part(r)
+                      and r.status in (m.INSTALLABLE, m.STAGED))
+    if installable:
+        parts.append(f"{installable} installable apps")
+    rest = len(hidden) - windows_parts - installable
+    if rest:
+        parts.append(f"{rest} Microsoft apps")
+    return "Hidden by the View options: " + "; ".join(parts) + "."
+
+
 def matches(r: m.AppRecord, text: str) -> bool:
     needle = (text or "").strip().lower()
     if not needle:
         return True
-    hay = f"{r.name}\n{r.description}\n{r.publisher}\n{r.package_name}".lower()
+    about = "\n".join(r.about) if r.about else ""
+    hay = f"{r.name}\n{r.description}\n{r.publisher}\n{r.package_name}\n{about}".lower()
     return all(word in hay for word in needle.split())
 
 
@@ -105,8 +141,9 @@ def _view_fn(key: str) -> Callable:
 
 def view_counts(rows: Sequence[m.AppRecord], new_keys, opts: ViewOptions,
                 text: str = "") -> Dict[str, int]:
-    shown = [r for r in rows if passes_options(r, opts) and matches(r, text)]
-    return {k: sum(1 for r in shown if fn(r, new_keys)) for k, _l, fn in SMART_VIEWS}
+    found = [r for r in rows if matches(r, text)]
+    return {k: sum(1 for r in found if passes_options(r, opts, k) and fn(r, new_keys))
+            for k, _l, fn in SMART_VIEWS}
 
 
 def visible_views(counts: Dict[str, int]) -> List[str]:
@@ -159,7 +196,7 @@ DESCENDING_BY_DEFAULT = {"recent", "storage"}
 def arrange(rows: Sequence[m.AppRecord], view: str, text: str, opts: ViewOptions,
             new_keys, sort: str, descending: bool, type_tab: str = "") -> List[m.AppRecord]:
     fn = _view_fn(view)
-    kept = [r for r in rows if passes_options(r, opts) and matches(r, text) and fn(r, new_keys)
+    kept = [r for r in rows if passes_options(r, opts, view) and matches(r, text) and fn(r, new_keys)
             and (not type_tab or r.type == type_tab)]
     kept.sort(key=sort_key(sort), reverse=descending)
     return kept
@@ -253,7 +290,12 @@ def properties(r: m.AppRecord) -> List[Tuple[str, str]]:
             ("Install location", r.install_location or "not recorded"),
             ("Available to", r.available or "nobody"),
             ("Recommendation", f"{r.recommendation} -- {r.extra.get('why', '')}".strip(" -"))]
-    if r.description:
+    if r.about:
+        what, does, remove = r.about
+        rows[1:1] = [("What it is", what), ("What it does", does),
+                     ("Why it cannot be removed" if is_windows_part(r) else "If you remove it",
+                      remove)]
+    if r.description and not (r.about and r.description in r.about[1]):
         rows.insert(1, ("Description", r.description))
     if r.update:
         rows.append(("Update", f"{r.update} via winget ({r.winget_id})"))
@@ -277,6 +319,38 @@ def properties(r: m.AppRecord) -> List[Tuple[str, str]]:
                  ("Confidence", r.confidence or "Unknown")]
         rows += [("Removes", p) for p in r.leftover_paths]
     return rows
+
+
+def about_html(r: m.AppRecord) -> str:
+    """The detail panel beside the list, as simple HTML (no colours: the theme
+    styles the browser)."""
+    from html import escape
+    facts = [r.type, r.status]
+    if r.publisher:
+        facts.append(r.publisher)
+    if r.version:
+        facts.append(f"version {r.version}")
+    if r.storage is not None:
+        facts.append(human_bytes(r.storage))
+    parts = [f"<h2>{escape(r.name)}</h2>", f"<p><i>{escape(' · '.join(facts))}</i></p>"]
+    why = r.extra.get("why", "")
+    parts.append(f"<p><b>Recommendation: {escape(r.recommendation)}</b>"
+                 + (f" &mdash; {escape(why)}" if why else "") + "</p>")
+    if r.about:
+        what, does, remove = r.about
+        label = "Why it cannot be removed" if is_windows_part(r) else "If you remove it"
+        for title, text in (("What it is", what), ("What it does", does), (label, remove)):
+            parts.append(f"<h3>{title}</h3><p>{escape(text)}</p>")
+        if r.extra.get("about_curated") == "no":
+            parts.append("<p><i>This app is not in App Buster's catalog; the text above is "
+                         "built only from what the scan read about it.</i></p>")
+    detail = [("Install location", r.install_location), ("Package", r.full_name),
+              ("Installed", f"{r.installed:%Y-%m-%d}" if r.installed else "")]
+    rows = "".join(f"<tr><td><b>{escape(k)}</b>&nbsp;&nbsp;</td><td>{escape(v)}</td></tr>"
+                   for k, v in detail if v)
+    if rows:
+        parts.append(f"<h3>Details</h3><table>{rows}</table>")
+    return "".join(parts)
 
 
 def properties_text(r: m.AppRecord) -> str:

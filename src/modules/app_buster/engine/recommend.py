@@ -96,7 +96,7 @@ def recommend(rec: m.AppRecord) -> Tuple[str, str]:
     if rec.type in (m.ORPHANED, m.DEFECT):
         return m.OPTIONAL, "Leftover or broken entry; review it before cleaning up."
     if rec.type != m.WINDOWS:
-        return m.KEEP, "Not on the curated list."
+        return m.KEEP, "Not on the list of apps recommended for removal, so it is kept by default."
     hit = CURATED.get((rec.package_name.lower(), rec.publisher_id.lower()))
     if hit:
         return hit
@@ -104,7 +104,7 @@ def recommend(rec: m.AppRecord) -> Tuple[str, str]:
     for prefix, verdict in VENDOR_PREFIXES.items():
         if low.startswith(prefix):
             return verdict
-    return m.KEEP, "Not on the curated list."
+    return m.KEEP, "Not on the list of apps recommended for removal, so it is kept by default."
 
 
 def apply(rows) -> None:

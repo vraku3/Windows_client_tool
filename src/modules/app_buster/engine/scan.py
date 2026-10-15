@@ -11,7 +11,7 @@ import os
 import winreg
 from typing import Callable, List, Optional, Tuple
 
-from . import desktop_apps, model as m, orphans, recommend, windows_apps
+from . import app_info, desktop_apps, model as m, orphans, recommend, windows_apps
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ def scan(progress: Optional[Callable[[int, str], None]] = None) -> ScanResult:
     if out.store is not None:
         out.rows += orphans.find_orphaned_data(installed, store)
     recommend.apply(out.rows)
+    app_info.apply(out.rows)
     say(len(out.rows), "done")
     return out
 

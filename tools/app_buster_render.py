@@ -81,6 +81,12 @@ def main():
     themes.apply_theme("dark")
     set_theme("dark")
     w._set_layout("cards")
+    for view, name in (("system", "about-system.png"), ("all", "about-app.png")):
+        w._pick_view(view)
+        pump(app, 0.3)
+        w._cards.setCurrentIndex(w._model.index(0, 0))
+        pump(app, 0.3)
+        grab(w, name)
     w._pick_view("defect")
     pump(app, 0.3)
     grab(w, "view-defect.png")

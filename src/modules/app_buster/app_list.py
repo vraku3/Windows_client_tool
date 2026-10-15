@@ -140,6 +140,8 @@ class AppModel(QAbstractTableModel):
                 return m.RECOMMENDATION_TIP.get(rec.recommendation, "") + " " + rec.extra.get("why", "")
             if rec.type in (m.ORPHANED, m.DEFECT):
                 return rec.reason
+            if rec.about:
+                return f"{rec.about[0]}\n{rec.about[1]}"
             return rec.description or rec.name
         if role == Qt.ItemDataRole.ForegroundRole and key == "recommendation":
             return QColor(semantic(_BADGE_MEANING.get(rec.recommendation, "info")))

@@ -1626,6 +1626,24 @@ against the real machine.
 - **A cancelled Worker emits `cancelled`, not `result`**, so the batch's
   outcomes live in a list OUTSIDE the worker and the cancel handler reports
   the apps already done.
+- **System apps and Frameworks are hidden outside their own chips** (2026-10-15).
+  Nobody can remove them, and 80 of 278 rows here (47 + 33) buried the list
+  of things that can go. `ViewOptions.show_system` (View > "Show parts of
+  Windows that cannot be removed", off by default) brings them back; the
+  System/Framework chips always list them (`passes_options(r, opts, view)`),
+  and the notice says by kind what is hidden (`views.hidden_notice`).
+- **Every row has an "About": what it is, what it does, what removing it costs**
+  -- or, for a System app/Framework, why it cannot be removed
+  (`engine/app_info.py` over the hand-written `engine/app_info_data.py`:
+  exact package names, package-name prefixes, desktop name regexes). Shown in
+  the detail panel beside the list, in Properties, in the tooltip, and
+  searchable. A row the catalog does not know gets text built ONLY from what
+  the scan read, and the panel says so -- never a guessed purpose. Curated
+  `name`s replace unreadable ones only (GUID-named SystemApps such as
+  `1527c705-...` = File Picker), and System apps sharing one display name get
+  their package tail appended ("Windows Feature Experience Pack
+  (Client.CBS)"). On this machine all 277 non-orphan rows are curated; extend
+  `app_info_data.py` when a new app shows "not in App Buster's catalog".
 - Recommendations match package name AND publisher id (`recommend.CURATED`);
   everything unlisted is **keep**. Storage `None` is "not measured" (shown
   "…" while pending, "—" once there was nothing to measure), never 0.

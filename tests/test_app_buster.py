@@ -205,7 +205,7 @@ def test_empty_views_are_hidden_but_all_never_is():
 def test_installable_apps_are_hidden_until_asked_for():
     opts = views.ViewOptions(show_installable=False)
     assert "d" not in [r.key for r in views.arrange(sample_rows(), "all", "", opts, set(), "name", False)]
-    assert views.hidden_by_options(sample_rows(), opts) == 1
+    assert views.hidden_by_options(sample_rows(), opts) == 2       # + the System app
     opts.show_installable = True
     assert "d" in [r.key for r in views.arrange(sample_rows(), "all", "", opts, set(), "name", False)]
 
@@ -446,7 +446,7 @@ def test_pane_shows_rows_chips_and_the_action_bar(qapp):
     w._busy = True
     w._fill_extras = lambda: None          # no live storage walk / winget in a unit test
     w._scanned((result, None, (1,)))
-    assert not w._busy and len(w._model.rows) == 4          # installable hidden by default
+    assert not w._busy and len(w._model.rows) == 3          # installable + system hidden by default
     assert not w._chips["framework"][0].isVisibleTo(w)
     assert w._chips["orphaned"][0].isVisibleTo(w)
     w._select("remove")

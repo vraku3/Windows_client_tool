@@ -359,6 +359,12 @@ HIDDEN_IMPORTS = [
     # window they cannot read, having written no result file. The pane would
     # correctly report the outcome as unknown, forever.
     "modules.security_dashboard.elevated_helper",
+    # Audit & Logging (2026-10-15): the category module and the two Qt-free
+    # engines it reads through. `load_catalog()` imports the catalog modules
+    # inside a function, so name them here rather than trusting the analyser.
+    "modules.security_dashboard.catalog.audit_logging",
+    "modules.security_dashboard.log_readiness",
+    "modules.security_dashboard.audit_policy",
     # Imported inside a function in all five of its consumers — Hardware
     # Info, Reliability, Security Dashboard, Services and System Report —
     # every one of them behind a `try:` that degrades silently. Same trap as

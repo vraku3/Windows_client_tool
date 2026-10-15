@@ -735,10 +735,40 @@ apps. The two removal queues are separate (`_remove_queue` vs
 
 ### Security Dashboard (`src/modules/security_dashboard/`)
 
-149 actionable controls over 165 `check_*` readers, in seven category tabs.
-`security_reader.py` reads, `catalog/` describes each control (steps, risk,
-`read_value`), `staging.py` collects pending changes, `applier.py` writes via
-`TweakEngine`, `reverting.py` undoes, `profile.py`/baselines compare.
+163 actionable controls in eight category tabs. `security_reader.py` reads,
+`catalog/` describes each control (steps, risk, `read_value`), `staging.py`
+collects pending changes, `applier.py` writes via `TweakEngine`, `reverting.py`
+undoes, `profile.py`/baselines compare. The seventh tab, **Audit & Logging**
+(added 2026-10-15), is built from two Qt-free engines rather than
+`security_reader.py` readers:
+
+- **`log_readiness.py`** reads a channel's `enabled`/`maxSize`/mode and its
+  oldest retained event from `wevtutil gl` + `wevtutil qe /c:1 /rd:false
+  /f:xml`, and reports **COVERAGE** (`now - oldest`), which is the metric that
+  matters, not size. Measured on this machine 2026-10-15: `System` and
+  `Application` were at the 20 MB default and held 6 weeks; PowerShell's
+  operational log was at its 15 MB default and held ~ONE day, because Script
+  Block Logging fills it (M1–M3). `wevtutil gl` answers unelevated even for
+  `Security` (so the SIZE is always known); only its oldest event is refused
+  unelevated, and that is a `refused` reason on the coverage line, not a
+  missing value. A channel that does not exist is `present=False`, distinct
+  from a refusal.
+- **`audit_policy.py`** reads ONE subcategory by **GUID** through `auditpol
+  /get /subcategory:{GUID} /r` (CSV) and writes it with `/set`, never by
+  localized name. The Inclusion Setting text is still localized, so it is
+  matched by containing "Success"/"Failure"; "No Auditing" is `(False, False)`
+  and anything unrecognised answers `None` with a reason rather than a guess
+  (M7). `auditpol` refuses unelevated with `Error 0x00000522` — reported, not
+  guessed. Six subcategories: Process Creation, Logon, Account Lockout,
+  Security Group Management, User Account Management, Audit Policy Change.
+
+`taskscheduler_log_enabled` reads `Microsoft-Windows-TaskScheduler/Operational`
+(off by default — task history is not recorded until it is on, M4);
+`process_cmdline_auditing` is the 4688 command-line value; `sysmon_installed`
+is read-only (M6, no channel where Sysmon was not installed deliberately).
+The two event-log size controls MOVED here from Device & Boot, whose
+`check_security_log_size`/`check_system_log_size` readers (Get-WinEvent, which
+exits 0 and prints "0" when refused) are now in `NOT_A_CONTROL` as superseded.
 
 **The rules here are all one rule: a refusal is not an answer.**
 
@@ -749,7 +779,7 @@ apps. The two removal queues are separate (`_remove_queue` vs
   does not contain "Protected", so a refused BitLocker read answered `False`,
   i.e. "your system drive is NOT encrypted". `read()` is what staging,
   baselines and profiles compare, so this is not only a card label.
-  `tools/security_refusal_sweep.py` asks all 149 controls whether any of them
+  `tools/security_refusal_sweep.py` asks all 163 controls whether any of them
   answers with a value after being refused — **run it unelevated after
   touching a reader**; elevated there is nothing to refuse.
 - **Never treat `rc == 0` as success.** `snapshots._looks_refused(rc, out, err)`
@@ -1400,6 +1430,24 @@ manager has its own `timeout` (the one that matters is under "Windows Boot
 Manager"). Diagnostics-Performance/Operational (events 100-103) and Kernel-Boot 27
 are readable unelevated. svchost impact is per SERVICE, not per exe. Enabled state
 is byte 0 of the `StartupApproved` value (odd = disabled).
+
+`persistence.py` also reads five points the first ten sources missed (added
+2026-10-15): WMI event subscriptions in `root\subscription`,
+SilentProcessExit, Active Setup, print monitors and netsh helpers (M8/M9).
+**Windows ships all of these itself, so the list has to exclude Windows or it
+is a list of Windows.** WMI is filtered by name: the one default subscription
+(`SCM Event Log Filter` → `NTEventLogEventConsumer` `SCM Event Log Consumer`)
+is skipped by BOTH names AND the consumer class — by name alone a rename
+slips through, by class alone every user-added `NTEventLogEventConsumer` is
+lost. The other four are filtered by signature AFTER `enrich()`: an item
+survives only when `not item.is_microsoft`, and a file that cannot be
+verified (trust UNKNOWN) is KEPT, because "could not verify" is not "Microsoft
+shipped it". Consequence measured on this machine: the 21 netsh helpers, the
+6 print monitors and the SCM WMI pair all disappear, while two Windows Active
+Setup stubs whose StubPath is the literal `"/UserInstall"`/`"U"` (unresolvable
+files, therefore unverifiable) remain — that is the rule working, not a bug.
+`read_wmi_subscriptions(inv, query=...)` takes an injectable query; `collect()`
+runs on a `COMWorker` because WMI/COM is involved.
 
 **System Management / Health**: never enable/disable a task by re-registering it
 (`RegisterTaskDefinition` rewrites the principal and breaks SYSTEM/password tasks);

@@ -198,7 +198,9 @@ Displays, modes, monitor audio, DDC/CI. `requires_admin=True`, `read_only_unelev
 
 ### Security Dashboard (`src/modules/security_dashboard/`)
 
-149 controls over `check_*` readers in seven category tabs. `SecurityControl.read()` returns `None` for "could not check" and this is never collapsed into `False` — a refused BitLocker read must never read as "not encrypted". `_looks_refused()` catches tools (`Get-BitLockerVolume`, `Get-Tpm`, `dism`, `netsh`) that exit 0 while refusing.
+163 controls in eight category tabs. `SecurityControl.read()` returns `None` for "could not check" and this is never collapsed into `False` — a refused BitLocker read must never read as "not encrypted". `_looks_refused()` catches tools (`Get-BitLockerVolume`, `Get-Tpm`, `dism`, `netsh`) that exit 0 while refusing.
+
+**Audit & Logging** (the eighth tab, added 2026-10-15) is built from two Qt-free engines, not `security_reader.py`: `log_readiness.py` reports a channel's **coverage** (`now - oldest retained event`, from `wevtutil gl` + `wevtutil qe /c:1 /rd:false /f:xml`) — not just `maxSize`. PowerShell's operational log at its 15 MB default held ONE day here while System at 20 MB held six weeks. `wevtutil gl` answers unelevated even for Security (size known); only its oldest event is refused, which is a reason on the coverage line, not a missing value. `audit_policy.py` reads/writes ONE audit subcategory by **GUID** (`auditpol /subcategory:{GUID} /r`), never by localized name; the Inclusion Setting text is matched by containing "Success"/"Failure", "No Auditing" is `(False, False)`, anything else is `None` with a reason. The two old event-log size controls moved here from Device & Boot (`check_security_log_size`/`check_system_log_size` are now in `NOT_A_CONTROL`).
 
 ### Driver Manager (`src/modules/driver_manager/`)
 

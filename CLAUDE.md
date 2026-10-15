@@ -861,11 +861,19 @@ Measured here (2026-10-15), each of which shaped the code:
   `process_cmdline_auditing` stays a registry step (BackupService restores the
   before-value). `tests/test_audit_logging_revert_roundtrip.py` drives stage
   -> apply -> revert through the real pipeline against a stateful fake.
-- **Owed**: an ELEVATED round trip of the audit/log writes (apply, read back,
-  revert) -- needs a UAC approval with the user present -- and verifying each
-  subcategory's Windows default (the off-steps target) by reading it elevated.
-  Until then the writes are covered by unit tests and the dashboard's own
-  read-back. Unelevated, 6 of the 11 new controls read "unknown" (refused),
+- **Elevated round trip DONE (2026-10-15)**: `tools/audit_logging_roundtrip.py`
+  (elevated; exits 1 on a mismatch) drives stage -> apply -> revert through the
+  real pipeline and compares the RAW state (`wevtutil gl`, `auditpol /r`, the
+  registry) before and after. All 9 controls that had something to stage came
+  back exactly: the four log sizes (Security 20 MB -> 192 -> 20, PowerShell
+  15 -> 256 -> 15), Task Scheduler false -> true -> false, the 4688
+  command-line value absent -> 1 -> ABSENT (not 0), Process Creation, Account
+  Lockout and User Account Management back to their exact pairs. Logon,
+  Security Group Management and Audit Policy Change were already in place
+  (nothing staged). Every subcategory's Windows default in `SUBCATEGORIES`
+  matched this never-configured machine read elevated. Elevated, the Security
+  log at 20 MB held only FOUR days (oldest event 2026-10-11).
+  Unelevated, 6 of the 11 new controls read "unknown" (refused),
   correctly; `tools/security_refusal_sweep.py` finds none answering after a
   refusal. `tools/audit_logging_check.py` prints readiness + persistence
   counts; `tools/audit_logging_shot.py` renders the tab off-screen.

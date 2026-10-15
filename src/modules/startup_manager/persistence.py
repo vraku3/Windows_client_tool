@@ -680,6 +680,18 @@ _IFEO_PATH = _NT_CV + r"\Image File Execution Options"
 _SPE_FLAG = 0x200
 
 
+_NO_MORE_ITEMS = 259
+_REFUSED = object()   # _read_value: the read was refused, which is not the same as absent
+
+
+def _no_more_items(error: OSError) -> bool:
+    """ERROR_NO_MORE_ITEMS -- the only OSError that ends an enumeration normally."""
+    code = getattr(error, "winerror", None)
+    if code is None and error.args:
+        code = error.args[0]
+    return code == _NO_MORE_ITEMS
+
+
 def _enum_names(hive: int, path: str, inv: Inventory, values: bool = False) -> List:
     """Subkey names (or `(name, data)` value pairs). A missing key is [] and fine;
     a refused one is a problem."""
@@ -697,15 +709,19 @@ def _enum_names(hive: int, path: str, inv: Inventory, values: bool = False) -> L
         while True:
             try:
                 out.append(winreg.EnumValue(root, index)[:2] if values else winreg.EnumKey(root, index))
-            except OSError:
-                logger.debug("%s enumeration finished at %d", path, index)
+            except OSError as error:
+                if _no_more_items(error):
+                    logger.debug("%s enumeration finished at %d", path, index)
+                else:
+                    inv.problems.append(f"{path}: enumeration stopped at {index}: {error}")
                 break
             index += 1
     return out
 
 
-def _read_value(hive: int, path: str, name: str, inv: Optional[Inventory] = None):
-    """One value, or None when the key/value is absent (refusals go to `inv`)."""
+def _read_value(hive: int, path: str, name: str, inv: Optional[Inventory] = None, sentinel: bool = False):
+    """One value, or None when the key/value is absent. A refusal is recorded in `inv`
+    and is None too -- or `_REFUSED` when `sentinel` asks to tell it from absent."""
     try:
         with winreg.OpenKey(hive, path) as key:
             return winreg.QueryValueEx(key, name)[0]
@@ -715,15 +731,27 @@ def _read_value(hive: int, path: str, name: str, inv: Optional[Inventory] = None
     except OSError as error:
         if inv is not None:
             inv.problems.append(f"{path}: {error}")
-        return None
+        return _REFUSED if sentinel else None
 
 
-def _system32_dll(name: str) -> str:
-    """A bare DLL name is loaded from System32; a path is left alone."""
+def _system32_dll(name: str, folder: str = "System32") -> str:
+    """A bare DLL name is loaded from System32 (or `folder`); a path is left alone."""
     text = os.path.expandvars(str(name).strip())
     if text and not os.path.dirname(text):
-        return os.path.join(system_root(), "System32", text)
+        return os.path.join(system_root(), folder, text)
     return text
+
+
+def _flag_value(flag) -> Optional[int]:
+    """GlobalFlag as an int: a REG_DWORD, or a REG_SZ hex string ("200", "0x200")."""
+    if isinstance(flag, int):
+        return flag
+    if isinstance(flag, str):
+        try:
+            return int(flag.strip(), 16)
+        except ValueError:
+            logger.debug("GlobalFlag %r is not hex", flag)
+    return None
 
 
 def read_silent_process_exit(inv: Inventory) -> None:
@@ -737,15 +765,23 @@ def read_silent_process_exit(inv: Inventory) -> None:
         monitor = _read_value(hive, sub, "MonitorProcess", inv)
         if not monitor:
             continue
-        flag = _read_value(hive, _IFEO_PATH + _BS + image, "GlobalFlag", inv)
+        flag = _read_value(hive, _IFEO_PATH + _BS + image, "GlobalFlag", inv, sentinel=True)
         item = Item(image, str(monitor), "SilentProcessExit", "Machine", "HKLM" + _BS + sub,
                     enabled=True, extra=f"runs when {image} exits")
-        if not (isinstance(flag, int) and flag & _SPE_FLAG):
+        if flag is _REFUSED or (isinstance(flag, str) and _flag_value(flag) is None):
+            item.inactive = "activation unknown: GlobalFlag unreadable"
+        elif not (_flag_value(flag) or 0) & _SPE_FLAG:
             item.inactive = "inactive: GlobalFlag lacks 0x200"
         inv.items.append(item)
 
 
 _ACTIVE_SETUP = r"Microsoft\Active Setup\Installed Components"
+
+
+#: Windows' own placeholder stubs (no file behind them), matched on the exact
+#: (component GUID, StubPath) pair -- never by name.
+_LEGACY_ACTIVE_SETUP = {("{2c7339cf-2b09-4501-b3f3-f3508c9228ed}", "/UserInstall"),
+                        ("{89820200-ecbd-11cf-8b85-00aa005b4340}", "U")}
 
 
 def read_active_setup(inv: Inventory) -> None:
@@ -760,6 +796,8 @@ def read_active_setup(inv: Inventory) -> None:
             stub = _read_value(hive, sub, "StubPath", inv)
             if not stub:
                 continue
+            if (guid.casefold(), str(stub)) in _LEGACY_ACTIVE_SETUP:
+                continue
             title = _read_value(hive, sub, "", inv)
             inv.items.append(Item(str(title) if title else guid, str(stub), "Active Setup", scope,
                                   label + _BS + sub, enabled=True,
@@ -767,7 +805,8 @@ def read_active_setup(inv: Inventory) -> None:
 
 
 def read_print_monitors(inv: Inventory) -> None:
-    """Print monitor `Driver` DLLs: loaded into the spooler (SYSTEM)."""
+    """Print monitor `Driver` DLLs: loaded into the spooler (SYSTEM). System32 only: the
+    x64 spooler loads only 64-bit monitors, so there is no WOW64 view to read."""
     path = r"SYSTEM\CurrentControlSet\Control\Print\Monitors"
     hive = winreg.HKEY_LOCAL_MACHINE
     for name in _enum_names(hive, path, inv):
@@ -779,19 +818,37 @@ def read_print_monitors(inv: Inventory) -> None:
 
 
 def read_netsh_helpers(inv: Inventory) -> None:
-    """netsh helper DLLs (`HKLM\\SOFTWARE\\Microsoft\\NetSh`, name -> DLL)."""
-    path = r"SOFTWARE\Microsoft\NetSh"
-    for name, dll in _enum_names(winreg.HKEY_LOCAL_MACHINE, path, inv, values=True):
-        if name and isinstance(dll, str) and dll:
-            inv.items.append(Item(name, _system32_dll(dll), "Netsh Helper", "Machine",
-                                  "HKLM" + _BS + path, enabled=True,
-                                  extra="loaded by netsh.exe when it runs"))
+    """netsh helper DLLs (`HKLM\\SOFTWARE\\Microsoft\\NetSh`, name -> DLL), in both
+    registry views; a bare DLL in the WOW6432Node view is loaded from SysWOW64."""
+    views = ((r"SOFTWARE\Microsoft\NetSh", "System32"),
+             (r"SOFTWARE\WOW6432Node\Microsoft\NetSh", "SysWOW64"))
+    for path, folder in views:
+        for name, dll in _enum_names(winreg.HKEY_LOCAL_MACHINE, path, inv, values=True):
+            if name and isinstance(dll, str) and dll:
+                inv.items.append(Item(name, _system32_dll(dll, folder), "Netsh Helper", "Machine",
+                                      "HKLM" + _BS + path, enabled=True,
+                                      extra="loaded by netsh.exe when it runs"))
+
+
+def _in_windows_dirs(path: str) -> bool:
+    if not path:
+        return False
+    target = os.path.normcase(os.path.abspath(path))
+    roots = (os.path.join(system_root(), "System32"), os.path.join(system_root(), "SysWOW64"))
+    return any(target.startswith(os.path.normcase(os.path.abspath(r)) + os.sep) for r in roots)
+
+
+def _is_windows_own(item: Item) -> bool:
+    """Signed (embedded or catalog) AND physically inside System32/SysWOW64. The
+    publisher is a self-written CompanyName and catalog trust follows the hash
+    wherever the file sits, so neither alone proves the file is Windows'."""
+    return item.trust in (trustlib.SIGNED, trustlib.SIGNED_CATALOG) and _in_windows_dirs(item.exe)
 
 
 def drop_windows_own(inv: Inventory) -> None:
-    """After enrich(): drop Microsoft-signed entries of the four sources above.
-    Unverifiable files are kept -- unverifiable is not Windows'."""
-    inv.items = [i for i in inv.items if not (i.source in WINDOWS_OWN_FILTERED and i.is_microsoft)]
+    """After enrich(): drop Windows-shipped entries of the four sources above.
+    Anything unverifiable, or outside the Windows directories, stays listed."""
+    inv.items = [i for i in inv.items if not (i.source in WINDOWS_OWN_FILTERED and _is_windows_own(i))]
 
 
 def read_user_logon_script(inv: Inventory) -> None:

@@ -301,27 +301,105 @@ def test_netsh_helper_values(monkeypatch):
     assert by["ifmon"].command == os.path.join(system_root(), "System32", "ifmon.dll")
 
 
-def _it(source, publisher, status):
+def _it(source, publisher, status, exe=""):
     it = p.Item("n", "c", source, "Machine", "loc")
-    it.publisher, it.trust = publisher, status
+    it.publisher, it.trust, it.exe = publisher, status, exe
     return it
 
 
-def test_microsoft_filter_drops_only_the_four_new_sources():
+_SYS32 = os.path.join(system_root(), "System32", "x.dll")
+_WOW = os.path.join(system_root(), "SysWOW64", "x.dll")
+
+
+def test_filter_drops_signed_files_in_windows_dirs_only(tmp_path):
+    outside = str(tmp_path / "x.dll")
     items = [
-        _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED_CATALOG),
-        _it("Netsh Helper", "Acme Corp", _trust.SIGNED),
-        _it("Print Monitor", None, _trust.UNKNOWN),
-        _it("Active Setup", "Microsoft Corporation", _trust.SIGNED),
-        _it("SilentProcessExit", "Microsoft Corporation", _trust.SIGNED),
-        _it("Run", "Microsoft Corporation", _trust.SIGNED),
-        _it("Service", "Microsoft Corporation", _trust.SIGNED_CATALOG),
+        _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED_CATALOG, _SYS32),
+        _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED, _WOW),
+        _it("Netsh Helper", "Microsoft Corporation", _trust.SIGNED, outside),
+        _it("Print Monitor", "Microsoft Windows", _trust.SIGNED_CATALOG, outside),
+        _it("Print Monitor", None, _trust.UNKNOWN, _SYS32),
+        _it("Active Setup", "Microsoft Corporation", _trust.UNSIGNED, _SYS32),
+        _it("SilentProcessExit", "Microsoft Corporation", _trust.SIGNED, _SYS32),
+        _it("Run", "Microsoft Corporation", _trust.SIGNED, _SYS32),
     ]
     inv = p.Inventory(items=items)
     p.drop_windows_own(inv)
-    assert [(i.source, i.publisher) for i in inv.items] == [
-        ("Netsh Helper", "Acme Corp"), ("Print Monitor", None), ("Run", "Microsoft Corporation"),
-        ("Service", "Microsoft Corporation")]
+    assert [(i.source, i.exe) for i in inv.items] == [
+        ("Netsh Helper", outside), ("Print Monitor", outside), ("Print Monitor", _SYS32),
+        ("Active Setup", _SYS32), ("Run", _SYS32)]
+
+
+def test_system32_lookalike_prefix_is_not_system32():
+    near = os.path.join(system_root(), "System32evil", "x.dll")
+    inv = p.Inventory(items=[_it("Netsh Helper", "Microsoft", _trust.SIGNED, near)])
+    p.drop_windows_own(inv)
+    assert len(inv.items) == 1
+
+
+@pytest.mark.parametrize("flag,active", [(0x200, True), ("200", True), ("0x200", True), ("0X200", True),
+                                         (0x100, False), ("100", False), ("0x0", False)])
+def test_globalflag_dword_and_hex_string(monkeypatch, flag, active):
+    _fake_registry(monkeypatch, {_SPE + "\\a.exe": {"MonitorProcess": "C:\\x\\e.exe"},
+                                 _IFEO + "\\a.exe": {"GlobalFlag": flag}})
+    inv = p.Inventory()
+    p.read_silent_process_exit(inv)
+    assert bool(inv.items[0].inactive) is (not active)
+
+
+def test_refused_globalflag_is_unknown_not_inactive(monkeypatch):
+    _fake_registry(monkeypatch, {_SPE + "\\a.exe": {"MonitorProcess": "C:\\x\\e.exe"},
+                                 _IFEO + "\\a.exe": {"GlobalFlag": 0x200}},
+                   refused=[_IFEO + "\\a.exe"])
+    inv = p.Inventory()
+    p.read_silent_process_exit(inv)
+    item = inv.items[0]
+    assert item.inactive == "activation unknown: GlobalFlag unreadable"
+    assert not item.inactive.startswith("inactive")
+    assert len(inv.problems) == 1 and "Image File Execution Options" in inv.problems[0]
+    p.assess(item, p.datetime.now())
+    assert any(n.code == "silentexit" and "activation unknown: GlobalFlag unreadable" in n.text
+               for n in item.notes)
+
+
+def test_enumeration_error_other_than_no_more_items_is_a_problem(monkeypatch):
+    _fake_registry(monkeypatch, {"HKLM\\SOFTWARE\\Microsoft\\NetSh": {"a": "a.dll", "b": "b.dll"}})
+
+    def boom(key, i):
+        if i == 1:
+            raise OSError(5, "Access is denied")
+        return "a", "a.dll", 1
+    monkeypatch.setattr(p.winreg, "EnumValue", boom)
+    inv = p.Inventory()
+    p.read_netsh_helpers(inv)
+    assert len(inv.items) == 1
+    assert len(inv.problems) == 1 and "NetSh" in inv.problems[0]
+
+
+def test_netsh_wow6432_view_resolves_against_syswow64(monkeypatch):
+    _fake_registry(monkeypatch, {
+        "HKLM\\SOFTWARE\\Microsoft\\NetSh": {"h64": "h.dll"},
+        "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\NetSh": {"h32": "h.dll", "t": "C:\\T\\t.dll"}})
+    inv = p.Inventory()
+    p.read_netsh_helpers(inv)
+    by = {i.name: i for i in inv.items}
+    assert by["h64"].command == os.path.join(system_root(), "System32", "h.dll")
+    assert by["h32"].command == os.path.join(system_root(), "SysWOW64", "h.dll")
+    assert by["t"].command == "C:\\T\\t.dll"
+
+
+def test_legacy_active_setup_stubs_dropped_by_exact_pair_only(monkeypatch):
+    base = "HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components"
+    _fake_registry(monkeypatch, {
+        base + "\\{2C7339CF-2B09-4501-B3F3-F3508C9228ED}": {"": "Themes Setup", "StubPath": "/UserInstall"},
+        base + "\\{89820200-ecbd-11CF-8b85-00aa005b4340}": {"": "Windows Desktop Update", "StubPath": "U"},
+        base + "\\{OTHER-GUID}": {"": "Themes Setup", "StubPath": "/UserInstall"},
+        base + "\\{2C7339CF-2B09-4501-B3F3-F3508C9228ED}x": {"": "Windows Desktop Update", "StubPath": "U"},
+    })
+    inv = p.Inventory()
+    p.read_active_setup(inv)
+    assert sorted(i.location.rsplit("\\", 1)[1] for i in inv.items) == [
+        "{2C7339CF-2B09-4501-B3F3-F3508C9228ED}x", "{OTHER-GUID}"]
 
 
 def test_real_machine_has_no_windows_own_netsh_or_silent_exit():

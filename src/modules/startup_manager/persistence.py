@@ -5,8 +5,19 @@ folders, scheduled tasks with a logon or boot trigger, automatic services,
 the Winlogon Shell/Userinit values when they are not the defaults, Image
 File Execution Options Debugger hijacks, a populated + active AppInit_DLLs
 list, any unrecognised LSA Authentication/Notification/Security Package,
-anything in BootExecute besides Windows' own autocheck entries, and a
-per-user legacy logon script (UserInitMprLogonScript) when one is set.
+anything in BootExecute besides Windows' own autocheck entries, a per-user
+legacy logon script (UserInitMprLogonScript) when one is set, WMI event
+subscriptions in `root\\subscription`, SilentProcessExit MonitorProcess
+entries, Active Setup StubPath entries, print monitors and netsh helper
+DLLs.
+
+The last four sources exist on every Windows machine as Microsoft's own
+components, so a list that showed all of them would be a list of Windows.
+They keep only entries whose file is NOT Microsoft-signed (an unverifiable
+file is kept), applied after `enrich()` sets trust and publisher. WMI
+subscriptions are filtered the same way but by name: Windows' own SCM
+Event Log filter/consumer pair is skipped explicitly (see
+`read_wmi_subscriptions`).
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -24,6 +35,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import winreg
 from concurrent.futures import ThreadPoolExecutor
@@ -66,7 +78,8 @@ class Item:
     name: str
     command: str
     source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service",
-                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute", "Logon Script"
+                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute", "Logon Script",
+                           # "WMI Subscription", "SilentProcessExit", "Active Setup", "Print Monitor", "Netsh Helper"
     scope: str             # "User" | "Machine"
     location: str          # registry key / folder / task folder
     enabled: Optional[bool] = True
@@ -81,6 +94,9 @@ class Item:
     impact_count: int = 0
     extra: str = ""
     notes: List[Note] = field(default_factory=list)
+    #: WMI consumer class for a "WMI Subscription" item (assess() reads it to
+    #: decide warn vs info); "" for every other source.
+    consumer_class: str = ""
 
     @property
     def key(self) -> str:
@@ -572,6 +588,247 @@ def read_user_logon_script(inv: Inventory) -> None:
             "HKCU" + chr(92) + path, enabled=True))
 
 
+# ---- WMI event subscriptions ------------------------------------------------
+
+_WMI_SUB_NAMESPACE = r"root\subscription"
+_WMI_CONSUMER_CLASSES = (
+    "CommandLineEventConsumer", "ActiveScriptEventConsumer",
+    "NTEventLogEventConsumer", "LogFileEventConsumer", "SMTPEventConsumer",
+)
+#: Windows' own subscription. Skipped by BOTH names AND the consumer class --
+#: by name alone would miss a rename, and by class alone would skip every
+#: NTEventLogEventConsumer a user added.
+_SCM_FILTER = "SCM Event Log Filter"
+_SCM_CONSUMER = "SCM Event Log Consumer"
+_SCM_CONSUMER_CLASS = "NTEventLogEventConsumer"
+
+
+def _default_subscription_query(class_name: str) -> List[Dict]:
+    import win32com.client
+
+    service = win32com.client.GetObject(r"winmgmts:\\.\root\subscription")
+    rows: List[Dict] = []
+    for obj in service.ExecQuery(f"SELECT * FROM {class_name}"):
+        rows.append({prop.Name: prop.Value for prop in obj.Properties_})
+    return rows
+
+
+def _wmi_name(path: str) -> str:
+    match = re.search(r'Name="([^"]*)"', path or "")
+    return match.group(1) if match else (path or "").strip()
+
+
+def _consumer_command(class_name: str, row: Dict) -> str:
+    if class_name == "CommandLineEventConsumer":
+        return str(row.get("CommandLineTemplate") or row.get("ExecutablePath") or "")
+    if class_name == "ActiveScriptEventConsumer":
+        return str(row.get("ScriptText") or row.get("ScriptFileName") or "")
+    return f"{class_name} {row.get('Name', '')}".strip()
+
+
+def _add_wmi_item(inv: Inventory, filter_row: Optional[Dict], consumer, bound: bool) -> None:
+    fname = str((filter_row or {}).get("Name", ""))
+    query_text = str((filter_row or {}).get("Query", "")).strip()
+    if consumer is None:
+        inv.items.append(Item(
+            fname, "(no consumer bound)", "WMI Subscription", "Machine",
+            _WMI_SUB_NAMESPACE, enabled=True,
+            extra=(query_text + " -- not bound to any consumer").strip(" -")))
+        return
+    class_name, row = consumer
+    cname = str(row.get("Name", ""))
+    if (class_name == _SCM_CONSUMER_CLASS and fname == _SCM_FILTER
+            and cname == _SCM_CONSUMER):
+        return
+    item = Item(fname or cname, _consumer_command(class_name, row) or "(no command)",
+                "WMI Subscription", "Machine", _WMI_SUB_NAMESPACE, enabled=True,
+                extra=query_text if bound else "not bound to any filter",
+                consumer_class=class_name)
+    inv.items.append(item)
+
+
+def read_wmi_subscriptions(inv: Inventory, query=None) -> None:
+    """WMI permanent event subscriptions under `root\\subscription`.
+
+    Windows ships one of these (the SCM Event Log filter/consumer pair), so
+    listing everything would put a false alarm on every PC -- that one pair
+    is skipped. A filter or consumer left unbound is still listed: attackers
+    leave pieces.
+    """
+    query = query or _default_subscription_query
+    try:
+        filters = {row.get("Name"): row for row in query("__EventFilter")}
+        consumers = {}
+        for class_name in _WMI_CONSUMER_CLASSES:
+            for row in query(class_name):
+                consumers[row.get("Name")] = (class_name, row)
+        bindings = list(query("__FilterToConsumerBinding"))
+    except Exception as error:  # noqa: BLE001 - COM raises pywintypes.com_error
+        logger.warning("WMI root\\subscription could not be read: %s", error)
+        inv.problems.append(f"{_WMI_SUB_NAMESPACE}: {error}")
+        return
+
+    pairs = []
+    bound_filters, bound_consumers = set(), set()
+    for binding in bindings:
+        fname = _wmi_name(binding.get("Filter", ""))
+        cname = _wmi_name(binding.get("Consumer", ""))
+        bound_filters.add(fname)
+        bound_consumers.add(cname)
+        pairs.append((filters.get(fname), consumers.get(cname), True))
+    for fname, row in filters.items():
+        if fname not in bound_filters:
+            pairs.append((row, None, False))
+    for cname, value in consumers.items():
+        if cname not in bound_consumers:
+            pairs.append((None, value, False))
+    for filter_row, consumer, bound in pairs:
+        _add_wmi_item(inv, filter_row, consumer, bound)
+
+
+# ---- the four points Windows also ships, filtered by signature --------------
+
+_SPE_PATH = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SilentProcessExit"
+_IFEO_PATH = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options"
+_ACTIVE_SETUP_ROOTS = (
+    r"SOFTWARE\Microsoft\Active Setup\Installed Components",
+    r"SOFTWARE\WOW6432Node\Microsoft\Active Setup\Installed Components",
+)
+_PRINT_MONITORS = r"SYSTEM\CurrentControlSet\Control\Print\Monitors"
+_NETSH_HELPERS = r"SOFTWARE\Microsoft\NetSh"
+
+#: Sources whose entries exist on every Windows machine as Microsoft's own
+#: components; after enrich() they keep only what is not Microsoft-signed.
+SIGNATURE_FILTERED_SOURCES = ("SilentProcessExit", "Active Setup",
+                              "Print Monitor", "Netsh Helper")
+
+
+def _subkeys(hive: int, path: str) -> Tuple[List[str], Optional[str]]:
+    try:
+        with winreg.OpenKey(hive, path) as root:
+            names: List[str] = []
+            index = 0
+            while True:
+                try:
+                    names.append(winreg.EnumKey(root, index))
+                except OSError:
+                    logger.debug("%s enumeration finished at %d", path, index)
+                    break
+                index += 1
+            return names, None
+    except FileNotFoundError:
+        return [], None
+    except OSError as error:
+        return [], f"{path}: {error}"
+
+
+def _reg_value(hive: int, path: str, name: str) -> Optional[str]:
+    try:
+        with winreg.OpenKey(hive, path) as key:
+            return str(winreg.QueryValueEx(key, name)[0])
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        logger.debug("%s\\%s unreadable: %s", path, name, error)
+        return None
+
+
+def _system32(dll: str) -> str:
+    """A bare DLL name resolves against System32, the loader's own search path."""
+    text = str(dll).strip()
+    if text and os.path.basename(text) == text and not os.path.isabs(text):
+        return os.path.join(system_root(), "System32", text)
+    return text
+
+
+def read_silent_process_exit(inv: Inventory) -> None:
+    """SilentProcessExit: a MonitorProcess runs when the named image exits.
+
+    It only fires when the matching IFEO GlobalFlag carries 0x200, so an
+    entry without it is listed but noted inactive -- the switch that arms it
+    is the thing worth seeing.
+    """
+    names, problem = _subkeys(winreg.HKEY_LOCAL_MACHINE, _SPE_PATH)
+    if problem:
+        inv.problems.append(problem)
+        return
+    for image in names:
+        location = _SPE_PATH + "\\" + image
+        monitor = _reg_value(winreg.HKEY_LOCAL_MACHINE, location, "MonitorProcess")
+        if not monitor:
+            continue
+        flag = _reg_value(winreg.HKEY_LOCAL_MACHINE,
+                          _IFEO_PATH + "\\" + image, "GlobalFlag")
+        try:
+            active = bool(int(flag) & 0x200) if flag else False
+        except ValueError:
+            active = False
+        inv.items.append(Item(image, monitor, "SilentProcessExit", "Machine",
+                              "HKLM\\" + location, enabled=active,
+                              extra=f"runs when {image} exits"))
+
+
+def read_active_setup(inv: Inventory) -> None:
+    """Active Setup StubPath: runs once per user at first logon."""
+    for root in _ACTIVE_SETUP_ROOTS:
+        names, problem = _subkeys(winreg.HKEY_LOCAL_MACHINE, root)
+        if problem:
+            inv.problems.append(problem)
+            continue
+        for guid in names:
+            sub = root + "\\" + guid
+            stub = _reg_value(winreg.HKEY_LOCAL_MACHINE, sub, "StubPath")
+            if not stub:
+                continue
+            display = _reg_value(winreg.HKEY_LOCAL_MACHINE, sub, "DisplayName")
+            inv.items.append(Item(
+                display or guid, stub, "Active Setup", "Machine",
+                "HKLM\\" + sub, enabled=True,
+                extra="runs once per user at logon"))
+
+
+def read_print_monitors(inv: Inventory) -> None:
+    """Print monitors: DLLs loaded into spoolsv.exe, which runs as SYSTEM."""
+    names, problem = _subkeys(winreg.HKEY_LOCAL_MACHINE, _PRINT_MONITORS)
+    if problem:
+        inv.problems.append(problem)
+        return
+    for name in names:
+        location = _PRINT_MONITORS + "\\" + name
+        driver = _reg_value(winreg.HKEY_LOCAL_MACHINE, location, "Driver")
+        if not driver:
+            continue
+        inv.items.append(Item(
+            name, _system32(driver), "Print Monitor", "Machine",
+            "HKLM\\" + location, enabled=True,
+            extra="DLL loaded into spoolsv.exe (running as SYSTEM)"))
+
+
+def read_netsh_helpers(inv: Inventory) -> None:
+    """Netsh helper DLLs: loaded by netsh.exe. Windows ships 20-odd."""
+    values, problem = _read_values(winreg.HKEY_LOCAL_MACHINE, _NETSH_HELPERS)
+    if problem:
+        inv.problems.append(problem)
+        return
+    for name, data in values:
+        inv.items.append(Item(
+            name, _system32(data), "Netsh Helper", "Machine",
+            "HKLM\\" + _NETSH_HELPERS, enabled=True,
+            extra="DLL loaded by netsh.exe"))
+
+
+def _drop_what_windows_shipped(inv: Inventory) -> None:
+    """Keep only the new-source entries whose file is not Microsoft-signed.
+
+    An unverifiable file (trust UNKNOWN) is KEPT: "could not verify" is not
+    "Windows shipped it". WMI subscriptions are not here -- Windows' own pair
+    is skipped by name in read_wmi_subscriptions.
+    """
+    inv.items = [item for item in inv.items
+                 if item.source not in SIGNATURE_FILTERED_SOURCES
+                 or not item.is_microsoft]
+
+
 # ---- enrichment ------------------------------------------------------------
 
 def _under(path: str, roots: List[str]) -> bool:
@@ -654,6 +911,41 @@ def assess(item: Item, now: datetime) -> None:
         item.notes.append(Note("logonscript", "warn",
                                "A legacy per-user logon script (HKCU\\Environment\\UserInitMprLogonScript) "
                                "is set and runs at every interactive logon."))
+    if item.source == "WMI Subscription":
+        if item.consumer_class in ("CommandLineEventConsumer",
+                                   "ActiveScriptEventConsumer"):
+            item.notes.append(Note(
+                "wmi", "warn",
+                "A WMI subscription that runs a program or script when its "
+                "event fires -- a common persistence technique."))
+        elif item.consumer_class:
+            item.notes.append(Note(
+                "wmi", "info",
+                f"A WMI subscription ({item.consumer_class}); read the "
+                "consumer before treating it as a finding."))
+    if item.source == "SilentProcessExit":
+        if item.enabled:
+            item.notes.append(Note(
+                "silentexit", "warn",
+                "A silent-exit monitor runs a program when the named image "
+                "exits, armed by Image File Execution Options."))
+        else:
+            item.notes.append(Note(
+                "inactive", "info",
+                "Inactive: the image's GlobalFlag lacks 0x200, so Windows "
+                "will not run this."))
+    if item.source == "Active Setup":
+        item.notes.append(Note("activesetup", "info",
+                               "An Active Setup StubPath runs once per user at "
+                               "logon and is not a Microsoft-signed component."))
+    if item.source == "Print Monitor":
+        item.notes.append(Note("printmonitor", "warn",
+                               "A print monitor DLL is loaded into spoolsv.exe, "
+                               "which runs as SYSTEM."))
+    if item.source == "Netsh Helper":
+        item.notes.append(Note("netsh", "info",
+                               "A netsh helper DLL is loaded by netsh.exe and is "
+                               "not a Microsoft-signed component."))
 
 
 def enrich(inv: Inventory, impact: Optional[Dict[str, Tuple[int, int]]], now: datetime) -> None:
@@ -838,8 +1130,14 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_lsa_packages(inv)
     read_boot_execute(inv)
     read_user_logon_script(inv)
+    read_wmi_subscriptions(inv)
+    read_silent_process_exit(inv)
+    read_active_setup(inv)
+    read_print_monitors(inv)
+    read_netsh_helpers(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)
+    _drop_what_windows_shipped(inv)
     return inv
 
 

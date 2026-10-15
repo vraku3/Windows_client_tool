@@ -19,7 +19,7 @@ from ..security_reader import (
     check_credential_guard_vbs, check_dump_encryption, check_fast_startup,
     check_hibernation, check_hvci, check_memory_integrity_registry,
     check_ntp_sync, check_pagefile_clear, check_secure_boot_tpm,
-    check_security_log_size, check_smartscreen, check_system_log_size,
+    check_smartscreen,
     check_test_signing, check_tpm_details, check_usb_storage,
     check_wu_auto_update,
 )
@@ -275,46 +275,8 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         risk=Risk.LOW,
     ),
 
-    # -- the record, if something happens -----------------------------------
-    SecurityControl(
-        id="security_log_size",
-        title="Security event log size",
-        category=Category.DEVICE_BOOT,
-        description="How much the Security log holds before it starts "
-                    "overwriting.",
-        why_it_matters="The default is small enough that a busy machine "
-                       "overwrites yesterday. Whatever an intrusion leaves "
-                       "behind is in here, and only for as long as it fits. "
-                       "How big is a retention question, so the catalog "
-                       "suggests rather than insists.",
-        reader=check_security_log_size,
-        read_value=lambda d: d.get("megabytes"),
-        on_steps=({"type": "command",
-                   "cmd": "wevtutil sl Security /ms:201326592"},),
-        off_steps=({"type": "command",
-                    "cmd": "wevtutil sl Security /ms:20971520"},),
-        desired=None,
-        risk=Risk.LOW,
-    ),
-
-    SecurityControl(
-        id="system_log_size",
-        title="System event log size",
-        category=Category.DEVICE_BOOT,
-        description="How much the System log holds before it starts "
-                    "overwriting.",
-        why_it_matters="Driver loads, service failures and boot problems land "
-                       "here, and they are what a compromise of the boot path "
-                       "looks like from the outside.",
-        reader=check_system_log_size,
-        read_value=lambda d: d.get("megabytes"),
-        on_steps=({"type": "command",
-                   "cmd": "wevtutil sl System /ms:67108864"},),
-        off_steps=({"type": "command",
-                    "cmd": "wevtutil sl System /ms:20971520"},),
-        desired=None,
-        risk=Risk.LOW,
-    ),
+    # The Security and System log-size controls moved to audit_logging.py
+    # (Audit & Logging), which sizes them by CIS guidance and reports coverage.
 
     # -- firmware: read, never written --------------------------------------
     SecurityControl(

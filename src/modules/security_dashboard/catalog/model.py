@@ -16,6 +16,7 @@ class Category(Enum):
     SERVICES = "Services"
     FEATURES = "Windows Features"
     EXPLOIT_CVE = "Exploit & CVE"
+    AUDIT_LOGGING = "Audit & Logging"
 
 
 class Risk(Enum):

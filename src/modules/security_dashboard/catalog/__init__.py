@@ -69,6 +69,15 @@ NOT_A_CONTROL: Dict[str, str] = {
         "The build number. It is the input to several checks here -- SMBGhost "
         "gates on it -- but it is not itself a setting.",
 
+    # -- Audit & Logging ------------------------------------------------------
+    "check_security_log_size":
+        "Asks the same question as the `security_log_size` control in Audit & "
+        "Logging, which reads `wevtutil gl` (works unelevated for Security) "
+        "and reports coverage. Two cards writing one value is not allowed.",
+    "check_system_log_size":
+        "Asks the same question as the `system_log_size` control in Audit & "
+        "Logging. Superseded by it.",
+
     # -- Exploit & CVE (Task 6) --------------------------------------------
     "check_windows_defender_cve_mitigations":
         "An aggregate over 24 individual CVE readers, each of which is its "
@@ -94,12 +103,12 @@ NOT_A_CONTROL: Dict[str, str] = {
 
 def load_catalog() -> Dict[str, SecurityControl]:
     """id -> control, across every category module."""
-    from . import (accounts, defender, device_boot, exploit_cve, features,
+    from . import (accounts, audit_logging, defender, device_boot, exploit_cve, features,
                    firewall_network, services)
 
     catalog: Dict[str, SecurityControl] = {}
     for module in (defender, firewall_network, accounts, device_boot,
-                   services, features, exploit_cve):
+                   services, features, exploit_cve, audit_logging):
         for control in module.CONTROLS:
             if control.id in catalog:
                 raise ValueError(f"duplicate control id: {control.id}")

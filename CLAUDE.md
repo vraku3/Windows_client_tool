@@ -735,7 +735,7 @@ apps. The two removal queues are separate (`_remove_queue` vs
 
 ### Security Dashboard (`src/modules/security_dashboard/`)
 
-149 actionable controls over 165 `check_*` readers, in seven category tabs.
+163 actionable controls over 165 `check_*` readers, in eight category tabs.
 `security_reader.py` reads, `catalog/` describes each control (steps, risk,
 `read_value`), `staging.py` collects pending changes, `applier.py` writes via
 `TweakEngine`, `reverting.py` undoes, `profile.py`/baselines compare.
@@ -749,7 +749,7 @@ apps. The two removal queues are separate (`_remove_queue` vs
   does not contain "Protected", so a refused BitLocker read answered `False`,
   i.e. "your system drive is NOT encrypted". `read()` is what staging,
   baselines and profiles compare, so this is not only a card label.
-  `tools/security_refusal_sweep.py` asks all 149 controls whether any of them
+  `tools/security_refusal_sweep.py` asks all 163 controls whether any of them
   answers with a value after being refused — **run it unelevated after
   touching a reader**; elevated there is nothing to refuse.
 - **Never treat `rc == 0` as success.** `snapshots._looks_refused(rc, out, err)`
@@ -801,8 +801,10 @@ Measured here (2026-10-15), each of which shaped the code:
 - **M7** `check_audit_policy` only COUNTED subcategories from localized text.
   The six `audit_*` controls (Process Creation, Logon, Account Lockout, Audit
   Policy Change, ...) now address each subcategory by GUID --
-  `auditpol /get /subcategory:{GUID} /r` -- so they work on any display
-  language; never by display name.
+  `auditpol /get /subcategory:{GUID} /r` and `/set` -- never by display
+  name. Addressing by GUID is language-independent; READING is not: only the
+  four English Inclusion values below are recognised, so a localized Windows
+  reads "unknown" rather than a value.
 - **Exact-value rule**: the Inclusion Setting is matched against exactly four
   values (No Auditing / Success / Failure / Success and Failure,
   case-insensitive, trimmed). Anything else is `None` with a reason, never a
@@ -815,10 +817,26 @@ Measured here (2026-10-15), each of which shaped the code:
   (value_MB >= threshold) with a WARNING, so an old `system_log_size: 64`
   profile never shrinks the log. Baselines (recommended/hardened) gained the
   new ids.
-- **Audit on/off semantics**: on = the wanted flags plus whatever the Windows
-  default enables; off = set exactly the default. It never turns OFF a flag
-  Windows enables by default (Logon is Success+Failure from Windows 10 1809,
-  Success only on older builds, per Microsoft's Advanced Audit Policy docs).
+- **Audit on/off semantics** (final review): Apply passes ONLY the wanted
+  flags, each `:enable` (Process Creation -> `/success:enable`), and never
+  `:disable` -- `auditpol` leaves an unmentioned flag as it is, so a machine
+  auditing Failure keeps it. Off = set exactly the Windows default (Logon is
+  Success+Failure from Windows 10 1809, Success only on older builds, per
+  Microsoft's Advanced Audit Policy docs).
+- **Exact revert (`SecurityControl.revert_probe`)**: a `command` step is
+  marked reverted without running anything, and these readers answer a bool,
+  so the log-size, Task Scheduler and audit writes are `script` steps with a
+  `revert_template` (`${old}`) and a `revert_pattern`. `ChangeSet.add` calls
+  the control's `revert_probe` once and stores the token on the
+  `PendingChange`: exact `maxSize` bytes (`\d{1,12}`), `true`/`false`, or one
+  of the four `/success:X /failure:Y` pairs (`audit_policy.REVERT_PAIRS`). The
+  token reaches the shell only if the probe's own check AND the step's
+  `revert_pattern` match in full. A probe that reads nothing (unelevated
+  auditpol) stages the change with `staging.NO_PROBE_NOTE` in the review
+  dialog and no revert command; the elevated child re-stages and probes again.
+  `process_cmdline_auditing` stays a registry step (BackupService restores the
+  before-value). `tests/test_audit_logging_revert_roundtrip.py` drives stage
+  -> apply -> revert through the real pipeline against a stateful fake.
 - **Owed**: an ELEVATED round trip of the audit/log writes (apply, read back,
   revert) -- needs a UAC approval with the user present -- and verifying each
   subcategory's Windows default (the off-steps target) by reading it elevated.
@@ -1462,17 +1480,27 @@ Filter` + `SCM Event Log Consumer`, class `NTEventLogEventConsumer`) is
 excluded by filter name AND consumer name AND class, case/quote-insensitive;
 a `CommandLineEventConsumer` shows its `ExecutablePath`. For Active Setup,
 Print Monitor and Netsh Helper (and SilentProcessExit) Windows' own entries are
-dropped only when the file is SIGNED/SIGNED_CATALOG AND its realpath is inside
-System32/SysWOW64 -- NEVER by CompanyName (spoofable) and never by catalog
+dropped only when the file is SIGNED_CATALOG (an embedded signature can be any
+vendor's) AND its realpath is inside System32/SysWOW64 AND every path-like
+argument (env vars expanded, `/i:`-style switch names stripped, rundll32's
+`,Entry` cut; a bare name resolves against the exe's folder) resolves by
+realpath inside %SystemRoot% -- and a LOLBIN with any argument that is neither
+a switch nor such a path is kept: `cmd.exe /c C:\Users\Public\payload.cmd` in
+a StubPath is listed. NEVER by CompanyName (spoofable) and never by catalog
 trust alone (a signed copy in a user-writable folder stays listed). Print
 monitors resolve against System32 only; netsh helpers are read from both
 registry views (WOW6432Node resolves against SysWOW64). Two legacy Windows
 Active Setup stubs (`Themes Setup` /UserInstall, `Windows Desktop Update` U)
-are dropped by exact (component GUID, StubPath), never by name. A refused read
+are dropped by exact (component GUID, StubPath), never by name, and only
+while that StubPath names no existing file. A refused read
 (IFEO `DefenderAgentScan.exe`, WinError 5) is a listed problem, not a clean
-result. Real machine raw -> kept: SilentProcessExit 0 -> 0, Active Setup
-13 -> 5 (4 in the later unelevated screenshot run: Brave, Chrome, Google
-Platform Experience, Edge), Print Monitor 6 -> 0, Netsh Helper 21 -> 0. A real
+result. Real machine raw -> kept (after the final-review rule, 2026-10-15):
+SilentProcessExit 0 -> 0, Active Setup 11 -> 4 (Brave, Chrome, Google
+Platform Experience, Edge -- all in Program Files), Print Monitor 6 -> 0,
+Netsh Helper 40 -> 8. The eight are Windows' own `dhcpcmonitor`,
+`nshdnsclient`, `nshhttp` and `whhelper` (System32 + SysWOW64): embedded-signed
+"Microsoft Windows" AND in the catalog, but `trust.check` stops at the
+embedded signature and reports SIGNED, so the SIGNED_CATALOG rule keeps them. A real
 `CommandLine`/`ActiveScript` consumer was never read (creating one needs
 elevation); only the SCM pair was exercised live.
 

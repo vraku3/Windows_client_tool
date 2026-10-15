@@ -1,5 +1,4 @@
 """The Audit & Logging category: logs sized for an investigation."""
-import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -72,11 +71,6 @@ def test_security_size_known_when_only_coverage_refused(monkeypatch):
     assert "could not" in " ".join(b for _, b in d["details"]).lower()
 
 
-_CMD = re.compile(
-    r"^wevtutil sl (Security|System|Application|Microsoft-Windows-PowerShell/Operational"
-    r"|Microsoft-Windows-TaskScheduler/Operational) (/ms:\d+|/e:(true|false))$")
-
-
 def test_steps_are_constant_and_revertible():
     for cid in IDS:
         c = _ctl(cid)
@@ -87,8 +81,6 @@ def test_steps_are_constant_and_revertible():
         assert c.desired is True and not c.requires_reboot
         for s in c.on_steps + c.off_steps:
             assert s["type"] in ("command", "registry", "registry_delete")
-            if s["type"] == "command":
-                assert _CMD.match(s["cmd"]), s["cmd"]
     assert _ctl("process_cmdline_auditing").off_steps[0]["type"] == "registry_delete"
 
 

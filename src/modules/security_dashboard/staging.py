@@ -20,7 +20,10 @@ already went wrong elsewhere in this project:
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
+from .catalog.audit_logging import migrate_legacy_value
 from .catalog.model import Risk, SecurityControl
+
+_LEGACY_SHRINK_GUARDED = ("security_log_size", "system_log_size")
 
 
 class _Unread:
@@ -144,6 +147,14 @@ class ChangeSet:
         pass it and the machine is not read again. Omit it and the control is
         read once, here.
         """
+        legacy = to_value
+        to_value = migrate_legacy_value(control.id, to_value)
+        if (to_value is False and legacy is not False
+                and control.id in _LEGACY_SHRINK_GUARDED):
+            # A saved size below the target does not ask for a smaller log
+            # than the one there now; never stage the shrinking step.
+            self._changes.pop(control.id, None)
+            return
         if to_value is None:
             raise ValueError(
                 f"control {control.id!r} cannot be staged to no value: "

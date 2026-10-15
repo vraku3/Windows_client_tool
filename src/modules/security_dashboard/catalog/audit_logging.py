@@ -136,6 +136,27 @@ _SEC_MIN = 196_608 * 1024
 _SYS_MIN = 32_768 * 1024
 _PS_MIN = 256 * _MB
 _DEFAULT = 20_971_520
+_SYS_WRITE = 67_108_864  # System: the 64 MB the old Device & Boot control wrote
+
+#: Thresholds of the two controls that used to carry an integer MB value.
+_LEGACY_MB_THRESHOLD = {"security_log_size": _SEC_MIN,
+                        "system_log_size": _SYS_MIN}
+
+
+def migrate_legacy_value(control_id: str, value: Any) -> Any:
+    """A profile saved before these controls became booleans stored MB.
+
+    Feeding 64 to truthiness would pick the on-steps for any number, and 20
+    would too, so a number is turned into the bool the control now speaks.
+    """
+    threshold = _LEGACY_MB_THRESHOLD.get(control_id)
+    if (threshold is None or isinstance(value, bool)
+            or not isinstance(value, (int, float))):
+        return value
+    migrated = value * _MB >= threshold
+    logger.warning("%s: legacy numeric profile value %r MB migrated to %s",
+                   control_id, value, migrated)
+    return migrated
 
 CONTROLS: Tuple[SecurityControl, ...] = (
     _size_control(
@@ -145,7 +166,7 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         "busy machine, taking the logon and process evidence with it. CIS "
         "recommends 192 MB or more."),
     _size_control(
-        "system_log_size", "System log size", "System", _SYS_MIN, _DEFAULT,
+        "system_log_size", "System log size", "System", _SYS_WRITE, _DEFAULT,
         _size_reader("System", _SYS_MIN),
         "Service installs and driver loads are recorded here; a small log "
         "forgets them first. CIS recommends 32 MB or more."),

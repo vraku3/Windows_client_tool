@@ -6,8 +6,7 @@ UEFI/legacy mode are read by Windows and changed in the firmware setup screen.
 A switch here would be a button that cannot work.
 
 What IS writable: BitLocker, Memory Integrity, test signing, AutoRun, fast
-startup, hibernation and SmartScreen. (The event-log size controls moved to
-the Audit & Logging category, where log readiness as a whole is read.)
+startup, hibernation, SmartScreen and the two event-log sizes.
 
 BitLocker is the highest-risk entry in the whole catalog, and its
 `why_it_matters` says so in plain words rather than leaving it to the risk
@@ -20,8 +19,9 @@ from ..security_reader import (
     check_credential_guard_vbs, check_dump_encryption, check_fast_startup,
     check_hibernation, check_hvci, check_memory_integrity_registry,
     check_ntp_sync, check_pagefile_clear, check_secure_boot_tpm,
-    check_smartscreen, check_test_signing, check_tpm_details,
-    check_usb_storage, check_wu_auto_update,
+    check_smartscreen,
+    check_test_signing, check_tpm_details, check_usb_storage,
+    check_wu_auto_update,
 )
 from .model import Category, Risk, SecurityControl
 
@@ -274,6 +274,9 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         desired=True,
         risk=Risk.LOW,
     ),
+
+    # The Security and System log-size controls moved to audit_logging.py
+    # (Audit & Logging), which sizes them by CIS guidance and reports coverage.
 
     # -- firmware: read, never written --------------------------------------
     SecurityControl(

@@ -1,19 +1,12 @@
-"""What each log an investigation needs actually keeps, and for how long.
+"""What each important Windows event log keeps, and for how long.
 
-An event log's `maxSize` is not the metric that matters. `System` and
-`Application` on this machine are at Windows' 20 MB default and still reach
-back six weeks; `Microsoft-Windows-PowerShell/Operational` is also at its
-default and its oldest event was ONE day old, because Script Block Logging
-fills it. The number an admin needs is COVERAGE -- how much history the log
-holds right now -- and it is `now - oldest event`, readable from the log
-itself.
-
-Everything here is Qt-free and runs `wevtutil` through an injectable `run`
-so the parsing is tested without the machine. A read that Windows refused (the
-`Security` log and `auditpol` need administrator rights) is reported as a
-refusal with the reason, never as "0 days" or "empty" -- the same rule the
-Security Dashboard already follows.
+Qt-free. Size alone is not the metric -- COVERAGE (now - oldest event) is:
+a full 15 MB PowerShell log can hold one day while a 20 MB System log holds
+six weeks. A refused read is reported as ``refused`` with its reason, never
+as an empty or absent log.
 """
+from __future__ import annotations
+
 import logging
 import re
 import subprocess
@@ -23,10 +16,6 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-#: The logs a first look at an unknown client wants: Windows' three core logs
-#: plus the two that record what actually ran (PowerShell, Task Scheduler).
 IMPORTANT_LOGS = (
     "Security",
     "System",
@@ -34,179 +23,165 @@ IMPORTANT_LOGS = (
     "Microsoft-Windows-PowerShell/Operational",
     "Microsoft-Windows-TaskScheduler/Operational",
 )
+SYSMON_LOG = "Microsoft-Windows-Sysmon/Operational"
 
-#: wevtutil's exit code when the channel does not exist on this edition.
-_ERROR_CHANNEL_NOT_FOUND = 15007
-#: wevtutil's exit code when the caller is not allowed to read the channel.
-_ERROR_ACCESS_DENIED = 5
+_TIMEOUT_S = 20
+_NOT_FOUND_RC = 15007
+_ACCESS_DENIED_RC = 5
+_NEEDS_ADMIN = "needs administrator rights"
+_TIMED_OUT = "wevtutil timed out"
 
-_NOT_FOUND_MARKERS = (
-    "could not be found", "was not found", "no such channel",
-    "could not find the log",
-)
-_DENIED_MARKERS = ("access is denied", "access denied", "unauthorized")
-
-_REFUSED_ADMIN = "needs administrator rights"
-_REFUSED_TIMEOUT = "wevtutil timed out"
-
-_TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d+)?(.*)")
+Run = Callable[[List[str]], Tuple[int, str, str]]
 
 
 @dataclass
 class LogStatus:
     name: str
-    #: False = the channel does not exist on this edition; None = could not ask.
-    present: Optional[bool] = None
+    present: Optional[bool]  # False = channel does not exist; None = could not ask
     enabled: Optional[bool] = None
     max_bytes: Optional[int] = None
-    #: "circular" (overwrite), "archive" (autoBackup), "retain" (retention, no
-    #: backup).
-    mode: Optional[str] = None
-    #: TimeCreated of the oldest retained event, in UTC.
-    oldest: Optional[datetime] = None
-    #: Why the read was refused (access denied, timeout), when it was.
-    refused: Optional[str] = None
+    mode: Optional[str] = None  # "circular" | "archive" | "retain"
+    oldest: Optional[datetime] = None  # UTC
+    refused: Optional[str] = None  # reason when the read was refused
 
     def coverage_days(self, now: datetime) -> Optional[float]:
-        """How many days of history the log holds, or None if unknown."""
+        """Days of history kept, or None when the oldest event is not known."""
         if self.oldest is None:
             return None
         return (now - self.oldest).total_seconds() / 86400.0
 
 
+def _default_run(args: List[str]) -> Tuple[int, str, str]:
+    p = subprocess.run(
+        args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=_TIMEOUT_S, creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    return p.returncode, p.stdout or "", p.stderr or ""
+
+
 def parse_gl(text: str) -> Dict[str, str]:
-    """Flatten `wevtutil gl` output into one dict of key -> value.
-
-    `gl` prints a small tree; the values we want (`enabled`, `retention`,
-    `autoBackup`, `maxSize`) are one per line, indented under a section. The
-    section headers themselves have no value and come out empty; callers look
-    values up by name.
-    """
-    fields: Dict[str, str] = {}
+    """`wevtutil gl` output -> flat {key: value} (sections are flattened)."""
+    out: Dict[str, str] = {}
     for line in text.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip()
-        if key and key not in fields:
-            fields[key] = value.strip()
-    return fields
+        key, sep, value = line.strip().partition(":")
+        if sep and key:
+            out.setdefault(key.strip(), value.strip())
+    return out
 
 
-def _parse_timestamp(raw: str) -> Optional[datetime]:
-    """A wevtutil SystemTime (`...-...T..:..:..[.fffffff]Z`) as a datetime."""
-    match = _TS_RE.match(raw.strip())
-    if not match:
-        return None
-    base, fraction, rest = match.groups()
-    if fraction:
-        fraction = fraction[:7]          # ".5310000" -> ".531000" (µs)
-    if rest in ("Z", "z"):
-        rest = "+00:00"
-    try:
-        parsed = datetime.fromisoformat(base + (fraction or "") + rest)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
+_SYSTEM_TIME = re.compile(r"SystemTime='([^']+)'")
+_FRACTION = re.compile(r"\.(\d+)")
 
 
 def parse_oldest(xml_text: str) -> Optional[datetime]:
-    """TimeCreated SystemTime of the first <Event>, or None if there is none."""
-    match = re.search(r"SystemTime='([^']+)'", xml_text)
-    if match is None:
-        match = re.search(r'SystemTime="([^"]+)"', xml_text)
-    if match is None:
+    """TimeCreated SystemTime of the first <Event>, as UTC; None if absent."""
+    if "<Event" not in xml_text:
         return None
-    return _parse_timestamp(match.group(1))
+    m = _SYSTEM_TIME.search(xml_text)
+    if not m:
+        return None
+    raw = m.group(1)
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
+    raw = _FRACTION.sub(lambda f: "." + f.group(1)[:6].ljust(6, "0"), raw, count=1)
+    try:
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        logger.warning("log_readiness: unparseable event time %r", m.group(1))
+        return None
 
 
-def _default_run(args: List[str]) -> Tuple[int, str, str]:
-    proc = subprocess.run(
-        args, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=20, creationflags=_NO_WINDOW,
-    )
-    return proc.returncode, proc.stdout or "", proc.stderr or ""
+def _is_access_denied(rc: int, text: str) -> bool:
+    return rc == _ACCESS_DENIED_RC or "access is denied" in text.lower()
 
 
-def _call(run: Callable, args: List[str]) -> Tuple[Optional[int], str, str, Optional[str]]:
-    """Run wevtutil, turning a timeout or a missing binary into a reason.
+def _is_not_found(rc: int, text: str) -> bool:
+    low = text.lower()
+    return (rc in (_NOT_FOUND_RC, _NOT_FOUND_RC & 0xFF)
+            or "channel could not be found" in low or "channel was not found" in low)
 
-    Returns (returncode, stdout, stderr, failure); `failure` is a refusal
-    reason and returncode is None when the process itself did not answer.
-    """
+
+def _ask(run: Run, args: List[str]) -> Tuple[Optional[int], str, Optional[str]]:
+    """Run wevtutil; returns (rc, combined text, refusal). Never raises."""
     try:
         rc, out, err = run(args)
-    except subprocess.TimeoutExpired:
-        logger.warning("wevtutil timed out: %s", " ".join(args))
-        return None, "", "", _REFUSED_TIMEOUT
-    except OSError as exc:
-        logger.warning("wevtutil could not be run (%s): %s", exc, " ".join(args))
-        return None, "", "", f"could not run wevtutil: {exc}"
-    return rc, out or "", err or "", None
+    except (subprocess.TimeoutExpired, TimeoutError):
+        return None, "", _TIMED_OUT
+    except OSError as e:
+        logger.warning("log_readiness: wevtutil could not run: %s", e)
+        return None, "", f"wevtutil could not run: {e}"
+    return rc, (out or "") + "\n" + (err or ""), None
 
 
-def _refusal_from(rc: int, err: str) -> str:
-    """What a non-zero wevtutil exit means to the caller."""
-    text = err.lower()
-    if rc == _ERROR_ACCESS_DENIED or any(m in text for m in _DENIED_MARKERS):
-        return _REFUSED_ADMIN
-    first = err.strip().splitlines()
-    return first[0].strip() if first else f"wevtutil exited {rc}"
+def _mode(info: Dict[str, str]) -> str:
+    if info.get("autoBackup", "").lower() == "true":
+        return "archive"
+    if info.get("retention", "").lower() == "true":
+        return "retain"
+    return "circular"
 
 
-def read_log(name: str, run: Optional[Callable] = None) -> LogStatus:
-    """Everything known about one channel; never raises."""
-    run = run or _default_run
-    rc, out, err, failure = _call(run, ["wevtutil", "gl", name])
-    if failure is not None:
-        return LogStatus(name=name, refused=failure)
-    if rc != 0:
-        text = err.lower()
-        if rc == _ERROR_CHANNEL_NOT_FOUND or any(m in text for m in _NOT_FOUND_MARKERS):
-            return LogStatus(name=name, present=False)
-        return LogStatus(name=name, refused=_refusal_from(rc, err))
-
-    fields = parse_gl(out)
-    status = LogStatus(name=name, present=True)
-    enabled = fields.get("enabled", "").lower()
-    if enabled in ("true", "false"):
-        status.enabled = enabled == "true"
+def _max_bytes(info: Dict[str, str]) -> Optional[int]:
     try:
-        status.max_bytes = int(fields.get("maxSize", ""))
-    except ValueError:
-        status.max_bytes = None
-    auto_backup = fields.get("autoBackup", "").lower() == "true"
-    retention = fields.get("retention", "").lower() == "true"
-    if auto_backup:
-        status.mode = "archive"
-    elif retention:
-        status.mode = "retain"
+        return int(info["maxSize"])
+    except (KeyError, ValueError):
+        return None
+
+
+def _read_oldest(name: str, run: Run, st: LogStatus) -> None:
+    rc, text, refusal = _ask(run, ["wevtutil", "qe", name, "/c:1", "/rd:false", "/f:xml"])
+    if refusal:
+        st.refused = refusal
+    elif "<Event" not in text and _is_access_denied(rc or 0, text):
+        # an event's own message may say "access is denied"; only a reply
+        # with no event in it is a refusal, whatever the exit status
+        st.refused = _NEEDS_ADMIN
+    elif rc != 0:
+        st.refused = f"wevtutil failed: {text.strip()[:120]}"
     else:
-        status.mode = "circular"
-
-    status.oldest = _read_oldest(name, run, status)
-    return status
+        st.oldest = parse_oldest(text)
 
 
-def _read_oldest(name: str, run: Callable, status: LogStatus) -> Optional[datetime]:
-    """Oldest retained event; sets `status.refused` if the read was refused."""
-    rc, out, err, failure = _call(
-        run, ["wevtutil", "qe", name, "/c:1", "/rd:false", "/f:xml"])
-    if failure is not None:
-        status.refused = failure
-        return None
+def _read_gl(name: str, run: Run) -> Tuple[Optional[Dict[str, str]], Optional[LogStatus]]:
+    """`(config, None)` from `wevtutil gl`, or `(None, status saying why not)`."""
+    rc, text, refusal = _ask(run, ["wevtutil", "gl", name])
+    if refusal:
+        return None, LogStatus(name, None, refused=refusal)
+    if _is_access_denied(rc or 0, text):
+        return None, LogStatus(name, None, refused=_NEEDS_ADMIN)
     if rc != 0:
-        status.refused = _refusal_from(rc, err)
-        return None
-    return parse_oldest(out)
+        if _is_not_found(rc or 0, text):
+            return None, LogStatus(name, False)
+        return None, LogStatus(name, None, refused=f"wevtutil failed: {text.strip()[:120]}")
+    return parse_gl(text), None
 
 
-def read_all(run: Optional[Callable] = None) -> List[LogStatus]:
-    return [read_log(name, run=run) for name in IMPORTANT_LOGS]
+def read_setting(name: str, key: str, run: Optional[Run] = None) -> Optional[str]:
+    """One raw `wevtutil gl` value (e.g. "maxSize", "enabled"), or None when the
+    log is absent, the read was refused, or the key is not there. Configuration
+    only -- no event query. Callers validate the text before using it."""
+    info, _ = _read_gl(name, run or _default_run)
+    return None if info is None else info.get(key)
 
 
-def sysmon_status(run: Optional[Callable] = None) -> LogStatus:
-    """Sysmon's channel: present only where Sysmon was deliberately installed."""
-    return read_log("Microsoft-Windows-Sysmon/Operational", run=run)
+def read_log(name: str, run: Optional[Run] = None) -> LogStatus:
+    """Configuration and real coverage of one log. Never raises."""
+    run = run or _default_run
+    info, failed = _read_gl(name, run)
+    if info is None:
+        return failed
+    st = LogStatus(name, True, enabled=info.get("enabled", "").lower() == "true",
+                   max_bytes=_max_bytes(info), mode=_mode(info))
+    _read_oldest(name, run, st)
+    return st
+
+
+def read_all(run: Optional[Run] = None) -> List[LogStatus]:
+    return [read_log(n, run) for n in IMPORTANT_LOGS]
+
+
+def sysmon_status(run: Optional[Run] = None) -> LogStatus:
+    return read_log(SYSMON_LOG, run)

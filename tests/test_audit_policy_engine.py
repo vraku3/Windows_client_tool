@@ -1,84 +1,194 @@
-"""Audit subcategories read by GUID, never by localized text."""
+"""Audit subcategories addressed by GUID, read from auditpol's CSV."""
 import pytest
 
-from modules.security_dashboard import audit_policy as ap
+from modules.security_dashboard import audit_policy
+from modules.security_dashboard.audit_policy import SUBCATEGORIES
 from modules.security_dashboard.catalog import load_catalog
+from modules.security_dashboard.catalog.model import Category, Risk
 
-PROCESS = ap.SUBCATEGORIES[0]
-_H = "Machine Name,Policy Target,Subcategory,Subcategory GUID,"\
-     "Inclusion Setting,Exclusion Setting"
-
-
-def _csv(setting: str) -> str:
-    return (f"\n{_H}\n,HOST,Process Creation,{PROCESS.guid},{setting},\n")
+HEADER = ("Machine Name,Policy Target,Subcategory,Subcategory GUID,"
+          "Inclusion Setting,Exclusion Setting\n")
+PROC = SUBCATEGORIES[0]
 
 
-def fake_run(csv_text=_csv("Success and Failure"), rc=0, err=""):
-    def run(args):
-        return rc, csv_text, err
-    return run
+def _csv(setting):
+    return HEADER + f"PC,System,Process Creation,{PROC.guid},{setting},\n"
 
 
-@pytest.mark.parametrize("text,flags", [
-    ("No Auditing", (False, False)),
+@pytest.mark.parametrize("text,expected", [
     ("Success", (True, False)),
     ("Failure", (False, True)),
     ("Success and Failure", (True, True)),
+    ("No Auditing", (False, False)),
 ])
-def test_the_four_inclusion_settings(text, flags):
-    assert ap.parse_r(_csv(text)) == flags
+def test_parse_r_maps_the_four_inclusion_texts(text, expected):
+    assert audit_policy.parse_r(_csv(text)) == expected
 
 
-def test_an_unrecognised_localized_value_is_not_guessed():
-    assert ap.parse_r(_csv("Erfolg und Fehler")) is None
+def test_parse_r_unrecognised_localized_value_is_none():
+    assert audit_policy.parse_r(_csv("Erfolg und Fehler")) is None
+    assert audit_policy.parse_r("") is None
+    assert audit_policy.parse_r(HEADER) is None
 
 
-def test_a_privilege_refusal_is_reported_never_guessed():
-    setting, reason = ap.read(
-        PROCESS, run=fake_run(rc=0x522,
-                              err="Error 0x00000522 occurred:\n"
-                                  "A required privilege is not held by the "
-                                  "client."))
-    assert setting is None and reason == ap.REFUSED
+def test_read_refusal_in_stdout_with_nonzero_exit():
+    out = "Error 0x00000522 occurred:\nA required privilege is not held.\n"
+    setting, why = audit_policy.read(PROC, run=lambda a: (1314, out, ""))
+    assert setting is None and "administrator" in why
 
 
-def test_a_read_setting_is_parsed():
-    setting, reason = ap.read(PROCESS, run=fake_run())
-    assert setting == (True, True) and reason is None
+def test_read_refusal_in_stderr_even_with_exit_zero():
+    setting, why = audit_policy.read(
+        PROC, run=lambda a: (0, "", "Access is denied."))
+    assert setting is None and "administrator" in why
 
 
-def test_set_command_addresses_the_subcategory_by_guid():
-    command = ap.set_command(PROCESS, True, False)
-    assert command == (f"auditpol /set /subcategory:{PROCESS.guid} "
-                       "/success:enable /failure:disable")
-    assert "Process Creation" not in command
+def test_read_success_and_command_uses_guid_and_csv():
+    seen = []
+
+    def run(args):
+        seen.append(args)
+        return 0, _csv("Success"), ""
+
+    assert audit_policy.read(PROC, run=run) == ((True, False), None)
+    assert PROC.guid in " ".join(seen[0]) and "/r" in seen[0]
 
 
-def test_default_flags_read_the_text():
-    assert ap.default_flags("No Auditing") == (False, False)
-    assert ap.default_flags("Success") == (True, False)
+def test_read_unrecognised_output_is_none_with_a_reason():
+    setting, why = audit_policy.read(PROC, run=lambda a: (0, _csv("???"), ""))
+    assert setting is None and why
 
 
-def test_every_subcategory_has_a_control():
-    catalog = load_catalog()
-    for sub in ap.SUBCATEGORIES:
-        cid = "audit_" + sub.name.lower().replace(" ", "_")
-        assert cid in catalog, cid
-        assert catalog[cid].desired is True
+def test_read_missing_tool_is_none_with_a_reason():
+    def run(args):
+        raise OSError("not found")
+    setting, why = audit_policy.read(PROC, run=run)
+    assert setting is None and "not found" in why
 
 
-def test_every_control_off_step_restores_its_default():
-    catalog = load_catalog()
-    for sub in ap.SUBCATEGORIES:
-        cid = "audit_" + sub.name.lower().replace(" ", "_")
-        control = catalog[cid]
-        expected = ap.set_command(sub, *ap.default_flags(sub.default))
-        assert control.off_steps[0]["cmd"] == expected
+def test_set_command_is_the_guid_form():
+    assert audit_policy.set_command(PROC, True, False) == (
+        "auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} "
+        "/success:enable /failure:disable")
 
 
-def test_a_refused_control_read_is_none(monkeypatch):
-    monkeypatch.setattr(ap, "read",
-                        lambda sub, run=None: (None, ap.REFUSED))
-    catalog = load_catalog()
-    assert catalog["audit_logon"].read() is None
-    assert catalog["audit_logon"].reader()["available"] is False
+def test_guids_are_unique_and_well_formed():
+    guids = [s.guid for s in SUBCATEGORIES]
+    assert len(set(guids)) == len(guids)
+    for g in guids:
+        assert g.startswith("{0CCE")
+        assert g.endswith("-69AE-11D9-BED3-505054503030}")
+
+
+def _ctl(sub):
+    name = sub.name.lower().replace(" ", "_")
+    return load_catalog()["audit_" + name]
+
+
+@pytest.mark.parametrize("sub", SUBCATEGORIES, ids=lambda s: s.name)
+def test_control_shape_off_is_the_default_and_revert_is_the_captured_pair(sub):
+    """Final-review C1/C2: script steps whose revert is the EXACT captured
+    success/failure pair (was: a `command` step that never reverted)."""
+    c = _ctl(sub)
+    assert c.category is Category.AUDIT_LOGGING
+    assert c.risk is Risk.LOW and c.requires_admin
+    assert c.revert_probe is not None
+    revert = f"auditpol /set /subcategory:{sub.guid} ${{old}}"
+    (off,) = c.off_steps
+    s, f = audit_policy.default_flags(sub)
+    assert off["type"] == "script"
+    assert off["command"] == audit_policy.set_command(sub, s, f)
+    assert off["revert_template"] == revert
+    (on,) = c.on_steps
+    assert on["type"] == "script" and on["revert_template"] == revert
+    assert on["command"] == audit_policy.enable_command(sub)
+
+
+@pytest.mark.parametrize("sub", SUBCATEGORIES, ids=lambda s: s.name)
+def test_apply_only_enables_what_is_wanted_and_never_disables(sub):
+    """Final-review C2 (replaces "wanted OR default"): Failure-only Process
+    Creation must not get `/failure:disable` from an Apply."""
+    cmd = _ctl(sub).on_steps[0]["command"]
+    assert ":disable" not in cmd
+    assert ("/success:enable" in cmd) is sub.want_success
+    assert ("/failure:enable" in cmd) is sub.want_failure
+    assert ("/success:" in cmd) is sub.want_success
+    assert ("/failure:" in cmd) is sub.want_failure
+
+
+def test_apply_command_exact_forms():
+    lockout = next(s for s in SUBCATEGORIES if s.name == "Account Lockout")
+    assert _ctl(lockout).on_steps[0]["command"] == (
+        f"auditpol /set /subcategory:{lockout.guid} /failure:enable")
+    assert _ctl(PROC).on_steps[0]["command"] == (
+        f"auditpol /set /subcategory:{PROC.guid} /success:enable")
+
+
+@pytest.mark.parametrize("setting,pair", [
+    ((True, True), "/success:enable /failure:enable"),
+    ((True, False), "/success:enable /failure:disable"),
+    ((False, True), "/success:disable /failure:enable"),
+    ((False, False), "/success:disable /failure:disable"),
+])
+def test_probe_returns_one_of_the_four_pairs(monkeypatch, setting, pair):
+    monkeypatch.setattr(audit_policy, "read", lambda sub, run=None: (setting, None))
+    assert _ctl(PROC).revert_probe() == pair
+    assert pair in audit_policy.REVERT_PAIRS
+
+
+def test_probe_is_none_when_unreadable(monkeypatch):
+    monkeypatch.setattr(audit_policy, "read",
+                        lambda sub, run=None: (None, "needs administrator rights"))
+    assert _ctl(PROC).revert_probe() is None
+
+
+def test_read_value_means_everything_wanted_is_included(monkeypatch):
+    lockout = next(s for s in SUBCATEGORIES if s.name == "Account Lockout")
+    c = _ctl(lockout)
+    for setting, expected in [((False, True), True), ((True, True), True),
+                              ((True, False), False), ((False, False), False)]:
+        monkeypatch.setattr(audit_policy, "read",
+                            lambda sub, run=None, s=setting: (s, None))
+        assert c.read() is expected
+
+
+def test_refused_read_is_none_not_false(monkeypatch):
+    monkeypatch.setattr(audit_policy, "read",
+                        lambda sub, run=None: (None, "needs administrator rights"))
+    for sub in SUBCATEGORIES:
+        assert _ctl(sub).read() is None
+
+
+def test_nonzero_exit_never_yields_a_value():
+    good = _csv("Success")
+    s, why = audit_policy.read(PROC, run=lambda a: (1314, good, ""))
+    assert s is None and "administrator" in why
+    s, why = audit_policy.read(PROC, run=lambda a: (5, good, ""))
+    assert s is None and "exited 5" in why
+
+
+@pytest.mark.parametrize("text", ["Unsuccessful", "Successo e fallimento",
+                                  "No Auditing!", ""])
+def test_only_the_four_exact_values_are_recognised(text):
+    assert audit_policy.parse_r(_csv(text)) is None
+    s, why = audit_policy.read(PROC, run=lambda a: (0, _csv(text), ""))
+    assert s is None and repr(text) in why
+
+
+def test_exact_values_are_case_insensitive_and_trimmed():
+    assert audit_policy.parse_r(_csv("  success AND failure ")) == (True, True)
+
+
+def test_parse_r_tolerates_quotes_bom_and_blank_lines():
+    text = ("\ufeff\n" + HEADER + "\n"
+            f'"PC","System","Process Creation","{PROC.guid}",'
+            '"Success and Failure",""\n\n')
+    assert audit_policy.parse_r(text) == (True, True)
+
+
+def test_a_control_wanting_both_flags_needs_both(monkeypatch):
+    c = _ctl(next(s for s in SUBCATEGORIES if s.name == "Logon"))
+    for setting in [(True, False), (False, True)]:
+        monkeypatch.setattr(audit_policy, "read",
+                            lambda sub, run=None, s=setting: (s, None))
+        assert c.read() is False

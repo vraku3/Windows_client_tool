@@ -1,16 +1,10 @@
-"""Read and set the audit subcategories an investigation actually needs.
+"""Audit-policy subcategories, addressed by GUID rather than by name.
 
-`auditpol` prints subcategory names in the OS language, so anything that
-matches on the text breaks the moment the machine is not English. Every read
-here addresses a subcategory by its **GUID** and parses the `/r` CSV, whose
-columns are positional; only the Inclusion Setting VALUE is text, and even
-that is matched by containing "Success"/"Failure" rather than by equality.
-
-The GUIDs below are Microsoft's documented advanced-audit-policy GUIDs. They
-were NOT re-listed on this machine when this was written: `auditpol
-/list /subcategory:* /v`, like `/get`, refuses an unelevated caller with
-`Error 0x00000522 -- A required privilege is not held by the client`. That
-refusal is reported, never guessed at.
+`auditpol` prints localized names, so nothing here matches on them: a
+subcategory is its GUID, and the setting is read from the `/r` CSV. The GUIDs
+were re-listed on this machine with `auditpol /list /subcategory:* /v`, which
+answers unelevated; reading a setting does not (error 0x522) and is reported
+as a refusal, never as "not audited". No PyQt6.
 """
 import csv
 import io
@@ -21,24 +15,25 @@ from typing import Callable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_TIMEOUT_S = 15
+_PRIVILEGE_NOT_HELD = 1314
+_NEEDS_ADMIN ="needs administrator rights"
+_INCLUSION_COLUMN = 4  # Machine, Target, Subcategory, GUID, Inclusion, Exclusion
 
-#: auditpol's "a required privilege is not held by the client".
-_ERROR_NO_PRIVILEGE = 0x522
-
-REFUSED = "needs administrator rights"
+Run = Callable[[List[str]], Tuple[int, str, str]]
+Setting = Tuple[bool, bool]
 
 
 @dataclass(frozen=True)
 class Subcategory:
-    guid: str            # "{0CCE922B-69AE-11D9-BED3-505054503030}"
-    name: str            # English display name, for the UI only
+    guid: str
+    name: str  # English display name, for the UI only
     want_success: bool
     want_failure: bool
-    default: str         # Windows client default
+    default: str  # "No Auditing" | "Success" | "Failure" | "Success and Failure"
 
 
-SUBCATEGORIES: Tuple[Subcategory, ...] = (
+SUBCATEGORIES = (
     Subcategory("{0CCE922B-69AE-11D9-BED3-505054503030}", "Process Creation",
                 True, False, "No Auditing"),
     Subcategory("{0CCE9215-69AE-11D9-BED3-505054503030}", "Logon",
@@ -53,82 +48,115 @@ SUBCATEGORIES: Tuple[Subcategory, ...] = (
                 True, False, "Success"),
 )
 
-#: The only Inclusion Setting text that means "nothing audited". A localized
-#: equivalent is NOT guessed at: on a non-English machine it is an
-#: unrecognised value and `_interpret` answers None, which is honest.
-_NONE_MARKERS = ("no auditing", "none")
+
+_EXACT = {"no auditing": (False, False), "success": (True, False),
+          "failure": (False, True), "success and failure": (True, True)}
 
 
-def default_flags(default: str) -> Tuple[bool, bool]:
-    lowered = default.lower()
-    return ("success" in lowered, "failure" in lowered)
+def _flags(text: str) -> Optional[Setting]:
+    return _EXACT.get(text.strip().lower())
 
 
-def _interpret(value: str) -> Optional[Tuple[bool, bool]]:
-    """An Inclusion Setting cell -> (success, failure), or None if unknown."""
-    lowered = value.strip().lower()
-    if not lowered or lowered in _NONE_MARKERS:
-        return (False, False)
-    success = "success" in lowered
-    failure = "failure" in lowered
-    if success or failure:
-        return (success, failure)
-    return None
+def default_flags(sub: Subcategory) -> Setting:
+    flags = _flags(sub.default)
+    if flags is None:
+        raise ValueError(f"{sub.name}: unknown default {sub.default!r}")
+    return flags
 
 
-def parse_r(csv_text: str) -> Optional[Tuple[bool, bool]]:
-    """The Inclusion Setting of the first data row of an `auditpol ... /r` CSV."""
-    saw_header = False
-    for row in csv.reader(io.StringIO(csv_text)):
-        if len(row) < 5:
-            continue
-        value = row[4].strip()
-        if not saw_header and value.lower() == "inclusion setting":
-            saw_header = True
-            continue
-        return _interpret(value)
-    return None
+def parse_r(csv_text: str) -> Optional[Setting]:
+    """(success, failure) from the `/r` CSV, by column position.
+
+    The header is localized, so the Inclusion Setting column is the fifth.
+    Text that is not one of the four known settings is None, never a guess.
+    """
+    text = _inclusion_text(csv_text)
+    return None if text is None else _flags(text)
+
+
+def _inclusion_text(csv_text: str) -> Optional[str]:
+    rows = [r for r in csv.reader(io.StringIO(csv_text.lstrip("﻿")))
+            if any(c.strip() for c in r)]
+    if len(rows) < 2 or len(rows[-1]) <= _INCLUSION_COLUMN:
+        return None
+    return rows[-1][_INCLUSION_COLUMN]
 
 
 def _default_run(args: List[str]) -> Tuple[int, str, str]:
-    proc = subprocess.run(
-        args, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=20, creationflags=_NO_WINDOW,
-    )
-    return proc.returncode, proc.stdout or "", proc.stderr or ""
+    p = subprocess.run(
+        args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=_TIMEOUT_S, creationflags=subprocess.CREATE_NO_WINDOW)
+    return p.returncode, p.stdout or "", p.stderr or ""
 
 
-def read(sub: Subcategory, run: Optional[Callable] = None
-         ) -> Tuple[Optional[Tuple[bool, bool]], Optional[str]]:
-    """(setting, refusal). A refused read returns (None, reason)."""
-    run = run or _default_run
+def _refused(text: str) -> bool:
+    low = text.lower()
+    return ("0x00000522" in low or "privilege" in low
+            or "access is denied" in low)
+
+
+def read(sub: Subcategory,
+         run: Optional[Run] = None) -> Tuple[Optional[Setting], Optional[str]]:
+    """(setting, None) or (None, why it could not be read). Never raises."""
     args = ["auditpol", "/get", f"/subcategory:{sub.guid}", "/r"]
     try:
-        rc, out, err = run(args)
-    except subprocess.TimeoutExpired:
-        logger.warning("auditpol timed out for %s", sub.name)
+        rc, out, err = (run or _default_run)(args)
+    except (subprocess.TimeoutExpired, TimeoutError):
         return None, "auditpol timed out"
-    except OSError as exc:
-        logger.warning("auditpol could not be run (%s)", exc)
-        return None, f"could not run auditpol: {exc}"
-
-    combined = f"{out}\n{err}".lower()
+    except OSError as e:
+        logger.warning("audit_policy: auditpol could not run: %s", e)
+        return None, f"auditpol could not run: {e}"
+    if rc == _PRIVILEGE_NOT_HELD or _refused(f"{out}\n{err}"):
+        return None, _NEEDS_ADMIN
     if rc != 0:
-        if rc == _ERROR_NO_PRIVILEGE or "privilege" in combined \
-                or "access is denied" in combined:
-            return None, REFUSED
-        first = (err or out).strip().splitlines()
-        return None, first[0].strip() if first else f"auditpol exited {rc}"
-
+        return None, f"auditpol exited {rc}"
     setting = parse_r(out)
     if setting is None:
-        return None, f"unrecognised Inclusion Setting in {sub.name} output"
+        logger.warning("audit_policy: unrecognised auditpol output for %s: %r",
+                       sub.name, out[-200:])
+        return None, ("auditpol answered with a setting this app does not "
+                      f"recognise: {_inclusion_text(out)!r}")
     return setting, None
 
 
+def switches(success: bool, failure: bool) -> str:
+    """The exact `/success:X /failure:Y` pair for a setting -- one of REVERT_PAIRS."""
+    def word(on: bool) -> str:
+        return "enable" if on else "disable"
+
+    return f"/success:{word(success)} /failure:{word(failure)}"
+
+
+#: The only four strings a revert may put after the GUID. A captured value is
+#: checked against this set before it gets anywhere near a shell.
+REVERT_PAIRS = frozenset(switches(s, f) for s in (True, False) for f in (True, False))
+
+
 def set_command(sub: Subcategory, success: bool, failure: bool) -> str:
-    """The `auditpol /set` line for one subcategory, addressed by GUID."""
-    s = "enable" if success else "disable"
-    f = "enable" if failure else "disable"
-    return (f"auditpol /set /subcategory:{sub.guid} "
-            f"/success:{s} /failure:{f}")
+    """Constant-argument command built only from the GUID table: sets BOTH flags."""
+    return f"auditpol /set /subcategory:{sub.guid} {switches(success, failure)}"
+
+
+def enable_command(sub: Subcategory) -> str:
+    """Turn ON what is wanted and say nothing about the rest.
+
+    `auditpol` leaves a flag it is not given exactly as it is, so a machine
+    already auditing Failure keeps Failure when Success is added. Never
+    `:disable` -- applying a recommendation must not switch any auditing off.
+    """
+    parts = [f"auditpol /set /subcategory:{sub.guid}"]
+    if sub.want_success:
+        parts.append("/success:enable")
+    if sub.want_failure:
+        parts.append("/failure:enable")
+    return " ".join(parts)
+
+
+def current_pair(sub: Subcategory, run: Optional[Run] = None) -> Optional[str]:
+    """The setting right now as one of REVERT_PAIRS, or None if it cannot be read."""
+    setting, why = read(sub, run)
+    if setting is None:
+        logger.info("audit_policy: %s cannot be captured for revert: %s", sub.name, why)
+        return None
+    pair = switches(*setting)
+    return pair if pair in REVERT_PAIRS else None

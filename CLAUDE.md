@@ -735,40 +735,10 @@ apps. The two removal queues are separate (`_remove_queue` vs
 
 ### Security Dashboard (`src/modules/security_dashboard/`)
 
-163 actionable controls in eight category tabs. `security_reader.py` reads,
-`catalog/` describes each control (steps, risk, `read_value`), `staging.py`
-collects pending changes, `applier.py` writes via `TweakEngine`, `reverting.py`
-undoes, `profile.py`/baselines compare. The seventh tab, **Audit & Logging**
-(added 2026-10-15), is built from two Qt-free engines rather than
-`security_reader.py` readers:
-
-- **`log_readiness.py`** reads a channel's `enabled`/`maxSize`/mode and its
-  oldest retained event from `wevtutil gl` + `wevtutil qe /c:1 /rd:false
-  /f:xml`, and reports **COVERAGE** (`now - oldest`), which is the metric that
-  matters, not size. Measured on this machine 2026-10-15: `System` and
-  `Application` were at the 20 MB default and held 6 weeks; PowerShell's
-  operational log was at its 15 MB default and held ~ONE day, because Script
-  Block Logging fills it (M1–M3). `wevtutil gl` answers unelevated even for
-  `Security` (so the SIZE is always known); only its oldest event is refused
-  unelevated, and that is a `refused` reason on the coverage line, not a
-  missing value. A channel that does not exist is `present=False`, distinct
-  from a refusal.
-- **`audit_policy.py`** reads ONE subcategory by **GUID** through `auditpol
-  /get /subcategory:{GUID} /r` (CSV) and writes it with `/set`, never by
-  localized name. The Inclusion Setting text is still localized, so it is
-  matched by containing "Success"/"Failure"; "No Auditing" is `(False, False)`
-  and anything unrecognised answers `None` with a reason rather than a guess
-  (M7). `auditpol` refuses unelevated with `Error 0x00000522` — reported, not
-  guessed. Six subcategories: Process Creation, Logon, Account Lockout,
-  Security Group Management, User Account Management, Audit Policy Change.
-
-`taskscheduler_log_enabled` reads `Microsoft-Windows-TaskScheduler/Operational`
-(off by default — task history is not recorded until it is on, M4);
-`process_cmdline_auditing` is the 4688 command-line value; `sysmon_installed`
-is read-only (M6, no channel where Sysmon was not installed deliberately).
-The two event-log size controls MOVED here from Device & Boot, whose
-`check_security_log_size`/`check_system_log_size` readers (Get-WinEvent, which
-exits 0 and prints "0" when refused) are now in `NOT_A_CONTROL` as superseded.
+181 actionable controls (163 + the 18 per-rule ASR controls) in eight category tabs.
+`security_reader.py` reads, `catalog/` describes each control (steps, risk,
+`read_value`), `staging.py` collects pending changes, `applier.py` writes via
+`TweakEngine`, `reverting.py` undoes, `profile.py`/baselines compare.
 
 **Attack Surface Reduction is per-rule, not one count** (2026-10-15).
 `asr_rules.py` (Qt-free) holds Microsoft's documented 18 client rules
@@ -826,6 +796,79 @@ Tools (all real-machine, none of them press a button unless asked):
 `security_refusal_sweep.py`, `security_pane_timing.py`, `security_apply_dryrun.py`,
 and the `*_render.py` trio. `Start-Process -Verb RunAs` cannot redirect output,
 so anything elevated goes through a `.ps1` wrapper that writes its own log.
+
+#### Audit & Logging tab (2026-10-15)
+
+`Category.AUDIT_LOGGING` ("Audit & Logging", `catalog/audit_logging.py`),
+readers in `log_readiness.py` and `audit_policy.py`. Controls 152 -> 163.
+Measured here (2026-10-15), each of which shaped the code:
+
+- **M1** Security/System/Application are at the 20 MB default, circular. CIS
+  Windows 11 L1: Security >= 196,608 KB, System and Application >= 32,768 KB.
+  Targets are `security_log_size` 192 MB, `system_log_size` (WRITES 64 MB,
+  threshold 32 MB), `application_log_size` 32 MB, `powershell_log_size` 256 MB.
+  `wevtutil gl` answers unelevated, so the size is known without elevation.
+- **M2/M3** Size is not the metric, COVERAGE (now - oldest event) is:
+  PowerShell/Operational is full at 15 MB with about ONE day of history
+  (Script Block Logging fills it); System/Application go back six weeks.
+  `LogStatus` timestamps keep their UTC offset.
+- **M4** `TaskScheduler/Operational` is DISABLED by default
+  (`taskscheduler_log_enabled`).
+- **M5** Reading the Security log and `auditpol /get` need elevation
+  (`wevtutil qe Security` -> access denied; auditpol 0x522/1314). A refusal is
+  detected from stdout+stderr WHATEVER the exit code (wevtutil can refuse with
+  exit 0), and an `<Event` in a reply is trusted over refusal wording inside it
+  (a 4625's own message can say "access is denied"). Security coverage is
+  therefore "needs administrator rights" unelevated.
+- **M6** Sysmon is absent (channel does not exist): `sysmon_installed` is
+  read-only; deploying a kernel driver is out of scope.
+- **M7** `check_audit_policy` only COUNTED subcategories from localized text.
+  The six `audit_*` controls (Process Creation, Logon, Account Lockout, Audit
+  Policy Change, ...) now address each subcategory by GUID --
+  `auditpol /get /subcategory:{GUID} /r` and `/set` -- never by display
+  name. Addressing by GUID is language-independent; READING is not: only the
+  four English Inclusion values below are recognised, so a localized Windows
+  reads "unknown" rather than a value.
+- **Exact-value rule**: the Inclusion Setting is matched against exactly four
+  values (No Auditing / Success / Failure / Success and Failure,
+  case-insensitive, trimmed). Anything else is `None` with a reason, never a
+  substring guess (a localized OS shows "unknown", not a wrong value).
+- **Nonzero-exit rule**: any nonzero `auditpol` exit is a refusal and gates
+  parsing (1314 = needs administrator); a zero exit is not proof either.
+- **Moved ids**: `security_log_size` and `system_log_size` lived in Device &
+  Boot and keep the SAME ids so saved profiles resolve. They were numeric (MB)
+  and are now bool; `staging.ChangeSet.add` migrates a legacy numeric value
+  (value_MB >= threshold) with a WARNING, so an old `system_log_size: 64`
+  profile never shrinks the log. Baselines (recommended/hardened) gained the
+  new ids.
+- **Audit on/off semantics** (final review): Apply passes ONLY the wanted
+  flags, each `:enable` (Process Creation -> `/success:enable`), and never
+  `:disable` -- `auditpol` leaves an unmentioned flag as it is, so a machine
+  auditing Failure keeps it. Off = set exactly the Windows default (Logon is
+  Success+Failure from Windows 10 1809, Success only on older builds, per
+  Microsoft's Advanced Audit Policy docs).
+- **Exact revert (`SecurityControl.revert_probe`)**: a `command` step is
+  marked reverted without running anything, and these readers answer a bool,
+  so the log-size, Task Scheduler and audit writes are `script` steps with a
+  `revert_template` (`${old}`) and a `revert_pattern`. `ChangeSet.add` calls
+  the control's `revert_probe` once and stores the token on the
+  `PendingChange`: exact `maxSize` bytes (`\d{1,12}`), `true`/`false`, or one
+  of the four `/success:X /failure:Y` pairs (`audit_policy.REVERT_PAIRS`). The
+  token reaches the shell only if the probe's own check AND the step's
+  `revert_pattern` match in full. A probe that reads nothing (unelevated
+  auditpol) stages the change with `staging.NO_PROBE_NOTE` in the review
+  dialog and no revert command; the elevated child re-stages and probes again.
+  `process_cmdline_auditing` stays a registry step (BackupService restores the
+  before-value). `tests/test_audit_logging_revert_roundtrip.py` drives stage
+  -> apply -> revert through the real pipeline against a stateful fake.
+- **Owed**: an ELEVATED round trip of the audit/log writes (apply, read back,
+  revert) -- needs a UAC approval with the user present -- and verifying each
+  subcategory's Windows default (the off-steps target) by reading it elevated.
+  Until then the writes are covered by unit tests and the dashboard's own
+  read-back. Unelevated, 6 of the 11 new controls read "unknown" (refused),
+  correctly; `tools/security_refusal_sweep.py` finds none answering after a
+  refusal. `tools/audit_logging_check.py` prints readiness + persistence
+  counts; `tools/audit_logging_shot.py` renders the tab off-screen.
 
 ### UpdatesModule (`src/modules/updates/`)
 
@@ -1458,24 +1501,36 @@ manager has its own `timeout` (the one that matters is under "Windows Boot
 Manager"). Diagnostics-Performance/Operational (events 100-103) and Kernel-Boot 27
 are readable unelevated. svchost impact is per SERVICE, not per exe. Enabled state
 is byte 0 of the `StartupApproved` value (odd = disabled).
-
-`persistence.py` also reads five points the first ten sources missed (added
-2026-10-15): WMI event subscriptions in `root\subscription`,
-SilentProcessExit, Active Setup, print monitors and netsh helpers (M8/M9).
-**Windows ships all of these itself, so the list has to exclude Windows or it
-is a list of Windows.** WMI is filtered by name: the one default subscription
-(`SCM Event Log Filter` → `NTEventLogEventConsumer` `SCM Event Log Consumer`)
-is skipped by BOTH names AND the consumer class — by name alone a rename
-slips through, by class alone every user-added `NTEventLogEventConsumer` is
-lost. The other four are filtered by signature AFTER `enrich()`: an item
-survives only when `not item.is_microsoft`, and a file that cannot be
-verified (trust UNKNOWN) is KEPT, because "could not verify" is not "Microsoft
-shipped it". Consequence measured on this machine: the 21 netsh helpers, the
-6 print monitors and the SCM WMI pair all disappear, while two Windows Active
-Setup stubs whose StubPath is the literal `"/UserInstall"`/`"U"` (unresolvable
-files, therefore unverifiable) remain — that is the rule working, not a bug.
-`read_wmi_subscriptions(inv, query=...)` takes an injectable query; `collect()`
-runs on a `COMWorker` because WMI/COM is involved.
+Persistence v2 (2026-10-15, `startup_manager/persistence.py`) adds WMI
+event subscriptions, SilentProcessExit (`GlobalFlag` 0x200), Active Setup, Print
+Monitors and Netsh helpers. Rules: Windows' own WMI pair (`SCM Event Log
+Filter` + `SCM Event Log Consumer`, class `NTEventLogEventConsumer`) is
+excluded by filter name AND consumer name AND class, case/quote-insensitive;
+a `CommandLineEventConsumer` shows its `ExecutablePath`. For Active Setup,
+Print Monitor and Netsh Helper (and SilentProcessExit) Windows' own entries are
+dropped only when the file is SIGNED_CATALOG (an embedded signature can be any
+vendor's) AND its realpath is inside System32/SysWOW64 AND every path-like
+argument (env vars expanded, `/i:`-style switch names stripped, rundll32's
+`,Entry` cut; a bare name resolves against the exe's folder) resolves by
+realpath inside %SystemRoot% -- and a LOLBIN with any argument that is neither
+a switch nor such a path is kept: `cmd.exe /c C:\Users\Public\payload.cmd` in
+a StubPath is listed. NEVER by CompanyName (spoofable) and never by catalog
+trust alone (a signed copy in a user-writable folder stays listed). Print
+monitors resolve against System32 only; netsh helpers are read from both
+registry views (WOW6432Node resolves against SysWOW64). Two legacy Windows
+Active Setup stubs (`Themes Setup` /UserInstall, `Windows Desktop Update` U)
+are dropped by exact (component GUID, StubPath), never by name, and only
+while that StubPath names no existing file. A refused read
+(IFEO `DefenderAgentScan.exe`, WinError 5) is a listed problem, not a clean
+result. Real machine raw -> kept (after the final-review rule, 2026-10-15):
+SilentProcessExit 0 -> 0, Active Setup 11 -> 4 (Brave, Chrome, Google
+Platform Experience, Edge -- all in Program Files), Print Monitor 6 -> 0,
+Netsh Helper 40 -> 8. The eight are Windows' own `dhcpcmonitor`,
+`nshdnsclient`, `nshhttp` and `whhelper` (System32 + SysWOW64): embedded-signed
+"Microsoft Windows" AND in the catalog, but `trust.check` stops at the
+embedded signature and reports SIGNED, so the SIGNED_CATALOG rule keeps them. A real
+`CommandLine`/`ActiveScript` consumer was never read (creating one needs
+elevation); only the SCM pair was exercised live.
 
 **System Management / Health**: never enable/disable a task by re-registering it
 (`RegisterTaskDefinition` rewrites the principal and breaks SYSTEM/password tasks);

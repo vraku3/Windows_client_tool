@@ -612,7 +612,9 @@ class ReviewDialog(QDialog):
             if change.control_id in unread:
                 lines.append("    its current value could not be read, so "
                              "this is applied without knowing what it was")
-            if change.control_id in one_way:
+            if change.revert_note:
+                lines.append(f"    {change.revert_note}")
+            elif change.control_id in one_way:
                 lines.append("    cannot be undone by this tool: nothing "
                              "records what to put back")
             if control.requires_reboot:

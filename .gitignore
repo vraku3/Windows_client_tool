@@ -101,6 +101,9 @@ scratchpad/
 suite*.txt
 full_suite.txt
 
+# Local Codex session hooks/settings (machine-specific)
+.codex/
+
 # Superpowers git worktree fallback (isolated per-plan workspaces)
 .worktrees/
 .claude/.headroom_wrap_settings.lock

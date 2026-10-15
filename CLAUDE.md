@@ -770,6 +770,30 @@ The two event-log size controls MOVED here from Device & Boot, whose
 `check_security_log_size`/`check_system_log_size` readers (Get-WinEvent, which
 exits 0 and prints "0" when refused) are now in `NOT_A_CONTROL` as superseded.
 
+**Attack Surface Reduction is per-rule, not one count** (2026-10-15).
+`asr_rules.py` (Qt-free) holds Microsoft's documented 18 client rules
+(GUID/name/why); `catalog/defender.py` gives each its own control that
+`Add-MpPreference`/`Remove-MpPreference`s a SINGLE rule by GUID
+(`Set-MpPreference` on the whole Ids/Actions array would rewrite every other
+rule). The action codes are read from the installed
+`%SystemRoot%\System32\WindowsPowerShell\v1.0\Modules\Defender\
+MSFT_MpPreference.cdxml` (`MpPreference.ASRRuleActionType`: Disabled 0,
+Enabled 1, AuditMode 2, NotConfigured 5, Warn 6). Microsoft's three "Standard
+protection" rules carry `desired=True` and join the recommended baseline; the
+other fifteen are `desired=None` -- which an environment should enforce
+depends on what it runs. `AsrRuleActionType` has no `ValidateSet` on
+`AttackSurfaceReductionRules_Actions`, but the way back is `Remove-MpPreference`
+(NotConfigured = Windows' default). Rules are off by default on every machine,
+so an unconfigured rule is a definite answer, not "unknown".
+
+**`check_defender_exclusions` lists the exclusions, not just their count.**
+An admin can now read which paths/processes/extensions/IPs are exempt (capped
+at 8 per category with a `(+N more)` suffix); `ExclusionIpAddress` is counted
+too -- that is the one an attacker adds to keep a C2 reachable. The redaction
+rule is unchanged: unelevated, Defender answers with the single string
+`"N/A: Must be an administrator to view exclusions"`, which is a refusal
+(`available: False`), never one exclusion.
+
 **The rules here are all one rule: a refusal is not an answer.**
 
 - **`SecurityControl.read()` returns `None` for "we could not look", and it is
@@ -814,6 +838,10 @@ so anything elevated goes through a `.ps1` wrapper that writes its own log.
 - **Settings tab** (`_UpdateSettingsTab`) — blocklist editor, verify/restore-point/driver toggles, and the Task Scheduler wiring for `--unattended` mode.
 
 **A winget update counts only when the installed version READ BACK says so** (`core/winget_list.py`, 2026-10-12). `install_update` returns an `UpdateOutcome(state, detail)` — `UPDATED` / `UNCONFIRMED` / `NOT APPLICABLE` / `NEEDS USER` / `FAILED` — decided by `winget list --id X --exact` after the upgrade, parsed by column. The old code counted "No applicable upgrade" as success and called a package updated when it was ABSENT from a re-scan, which a failed re-scan grants to every package at once. A version that moved off the old one is an update even when it is not the newest offered (winget installs the newest installer that applies); "Unknown"/"< x" versions, an unreadable list and an installer that asked for a restart are `UNCONFIRMED`, never `UPDATED`. App Buster's update action decides through the same `verdict()`. `updates.verify_after_update` off skips the read-back and reports `UNCONFIRMED`.
+
+**Every winget call is forced non-interactive** (2026-10-15). `_run_winget` appends `--disable-interactivity` to whatever args it is given, so no subcommand can block on a prompt. Measured on a real Update All run: `winget upgrade --id Blizzard.BattleNet` had `--silent` but not the flag, printed "Specify the install root:" and died with `0x8a150042 : Error reading input in prompt`. `winget_list.refusal` now recognises that wording (plus "requires an install location") and returns a `NEEDS INPUT` state telling the user to update that package by hand, instead of a bare UNCONFIRMED.
+
+**The WU table shows size as the upper bound it is.** `IUpdate.MaxDownloadSize` is the maximum, not the delta: the Defender security-intelligence update reported 1539 MB (its whole bundle). `windows_updater.size_text()` prints `≤ max`, or a `min–max` range when `IUpdate.MinDownloadSize` (present in wuapi.dll's type library) is smaller; the disk-space preflight still uses the maximum. The table also gained a **Severity** column (`IUpdate.MsrcSeverity`) and a **Restart** column (`IUpdate.InstallationBehavior.RebootBehavior`, from `tagInstallationRebootBehavior`: `irbNeverReboots` 0, `irbAlwaysRequiresReboot` 1, `irbCanRequestReboot` 2), and the status line summarises "N critical/important, M need a restart". Unreadable fields are "—", never a guess.
 
 **Shared stage logic** (`stage_runners.py`): `run_wu_stage` / `run_winget_stage` / `run_store_stage` / `run_cleanup_safe_stage` / `run_dism_stage`, each `(app, log_fn, is_cancelled_fn) -> dict`. Used by *both* `_RunAllTab` (threaded, `is_cancelled=lambda: worker.is_cancelled`) and `unattended_runner.py` (headless, `is_cancelled=lambda: False`) — extend this file rather than duplicating stage logic in either caller. `normalize_stage_data()` flattens the per-stage result dicts into the shape `report_generator.py` / `history_writer.py` expect.
 

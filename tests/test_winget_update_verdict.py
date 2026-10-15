@@ -126,3 +126,54 @@ def test_a_version_that_went_down_is_not_an_update(monkeypatch):
     _fake_winget(monkeypatch, "Successfully installed", _listed("2.0", "4.0"))
     outcome = wu.install_update("Acme.App", lambda line: None, target_version="4.0", before_version="3.0")
     assert outcome.state == wl.FAILED and not outcome
+
+
+# -- interactivity -----------------------------------------------------------
+
+def test_a_package_needing_an_install_location_needs_input(monkeypatch):
+    """Battle.net here: winget asks for an install root no headless run can give."""
+    _fake_winget(monkeypatch, "This package requires an install location\n"
+                              "Specify the install root: "
+                              "0x8a150042 : Error reading input in prompt", "")
+    outcome = wu.install_update("Blizzard.BattleNet", lambda line: None,
+                                target_version="1.19.3")
+    assert outcome.state == wl.NEEDS_INPUT and not outcome
+    assert "by hand" in outcome.detail
+
+
+def test_every_winget_call_is_forced_non_interactive(monkeypatch):
+    captured = {}
+
+    class FakeProc:
+        pid = 1
+        stdout = iter([])
+
+        def wait(self):
+            return 0
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        return FakeProc()
+
+    monkeypatch.setattr(wu.subprocess, "Popen", fake_popen)
+    wu._run_winget(["upgrade", "--id", "X", "--exact", "--silent"])
+    assert "--disable-interactivity" in captured["args"]
+
+
+def test_the_flag_is_not_added_twice(monkeypatch):
+    captured = {}
+
+    class FakeProc:
+        pid = 1
+        stdout = iter([])
+
+        def wait(self):
+            return 0
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        return FakeProc()
+
+    monkeypatch.setattr(wu.subprocess, "Popen", fake_popen)
+    wu._run_winget(["list", "--disable-interactivity"])
+    assert captured["args"].count("--disable-interactivity") == 1

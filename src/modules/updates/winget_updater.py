@@ -30,7 +30,19 @@ def _run_winget(
     its own. A side thread polls `is_cancelled` and kills the process tree
     if it fires, the same pattern `windows_features/features_module.py`'s
     `_run_dism_action` uses for the identical shape of bug.
+
+    **`--disable-interactivity` is forced onto EVERY call here**, so no
+    subcommand can ever block on a prompt. Measured 2026-08-15: an
+    unattended run of `winget upgrade --id Blizzard.BattleNet` printed
+    "Specify the install root:" and died with `0x8a150042 : Error reading
+    input in prompt`, because that package needs an install location and
+    winget asked a question no caller in a headless run can answer. With
+    the flag, winget refuses cleanly with a message `winget_list.refusal`
+    can read and report, instead of hanging or half-installing.
     """
+    args = list(args)
+    if "--disable-interactivity" not in args:
+        args.append("--disable-interactivity")
     try:
         proc = subprocess.Popen(
             ["winget"] + args,
@@ -155,7 +167,8 @@ class UpdateOutcome:
     """What ONE package's update did, decided by reading its version back.
 
     `state` is one of core.winget_list's UPDATED / UNCONFIRMED / NOT_APPLICABLE /
-    NEEDS_USER / FAILED; `detail` is the sentence the table and the report show.
+    NEEDS_USER / NEEDS_INPUT / FAILED; `detail` is the sentence the table and the
+    report show.
     Truthy only when the read-back proved the update.
     """
     winget_id: str

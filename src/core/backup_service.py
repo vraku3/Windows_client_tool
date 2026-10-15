@@ -570,7 +570,8 @@ class BackupService:
                 else:
                     subprocess.run(
                         ["winget", "install", target, "--silent",
-                         "--accept-package-agreements"],
+                         "--accept-package-agreements",
+                         "--disable-interactivity"],
                         check=False, capture_output=True,
                         creationflags=subprocess.CREATE_NO_WINDOW,
                         timeout=120,

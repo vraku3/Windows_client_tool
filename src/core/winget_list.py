@@ -17,10 +17,22 @@ UPDATED = "UPDATED"
 UNCONFIRMED = "UNCONFIRMED"      # could not prove it either way
 NOT_APPLICABLE = "NOT APPLICABLE"  # winget had nothing that applies to this PC
 NEEDS_USER = "NEEDS USER"        # per-user install, refused from an elevated process
+NEEDS_INPUT = "NEEDS INPUT"      # the package wants an answer only a person can give
 FAILED = "FAILED"                # read back: the old version is still installed
 
 PER_USER_REFUSAL = "cannot be uninstalled when running with administrator privileges"
 NO_APPLICABLE = "no applicable upgrade found"
+#: A package that needs an install location, or asks anything else interactively.
+#: Measured on this machine (2026-10-15): `Blizzard.BattleNet` prints
+#: "Specify the install root:" and `0x8a150042 : Error reading input in prompt`.
+#: Every winget call now runs with `--disable-interactivity`, so this is what
+#: such a package reports instead of blocking.
+NEEDS_INPUT_MARKERS = (
+    "requires an install location",
+    "specify the install root",
+    "error reading input in prompt",
+    "0x8a150042",
+)
 
 
 def parse_list_row(output: str, winget_id: str) -> Optional[Tuple[str, str]]:
@@ -73,6 +85,11 @@ def refusal(upgrade_output: str) -> Optional[Tuple[str, str]]:
     if PER_USER_REFUSAL in text:
         return (NEEDS_USER, "Installed for your account only, and winget will not update it "
                             "from an app running as administrator. Start the app without admin to update it.")
+    if any(marker in text for marker in NEEDS_INPUT_MARKERS):
+        return (NEEDS_INPUT, "This package needs an answer only you can give -- an install "
+                             "location, or an interactive prompt -- so winget left it as it "
+                             "was. Update this one by hand (winget with --location, or its "
+                             "own updater).")
     if NO_APPLICABLE in text:
         return (NOT_APPLICABLE, "winget found no update that applies to this PC.")
     return None

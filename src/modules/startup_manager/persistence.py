@@ -6,7 +6,8 @@ the Winlogon Shell/Userinit values when they are not the defaults, Image
 File Execution Options Debugger hijacks, a populated + active AppInit_DLLs
 list, any unrecognised LSA Authentication/Notification/Security Package,
 anything in BootExecute besides Windows' own autocheck entries, and a
-per-user legacy logon script (UserInitMprLogonScript) when one is set.
+per-user legacy logon script (UserInitMprLogonScript) when one is set, and
+WMI event subscriptions (root\\subscription) other than Windows' own SCM pair.
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -66,7 +67,7 @@ class Item:
     name: str
     command: str
     source: str            # "Run", "Run (32-bit)", "RunOnce", "Startup folder", "Scheduled task", "Service",
-                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute", "Logon Script"
+                           # "Winlogon", "IFEO", "AppInit", "LSA Package", "BootExecute", "Logon Script", "WMI Subscription"
     scope: str             # "User" | "Machine"
     location: str          # registry key / folder / task folder
     enabled: Optional[bool] = True
@@ -80,6 +81,7 @@ class Item:
     impact_ms: Optional[int] = None
     impact_count: int = 0
     extra: str = ""
+    consumer_class: str = ""   # WMI Subscription only: the event consumer's class
     notes: List[Note] = field(default_factory=list)
 
     @property
@@ -546,6 +548,96 @@ def read_boot_execute(inv: Inventory) -> None:
             "HKLM" + chr(92) + _BOOT_EXECUTE_PATH + chr(92) + "BootExecute", enabled=True))
 
 
+_WMI_NS = "root" + chr(92) + "subscription"
+#: Windows' own subscription (measured M8): filter, consumer and consumer
+#: class must ALL match to be skipped.
+_WMI_OWN_FILTER = "SCM Event Log Filter"
+_WMI_OWN_CONSUMER = "SCM Event Log Consumer"
+_WMI_OWN_CLASS = "NTEventLogEventConsumer"
+_WMI_RUNS_CODE = ("commandlineeventconsumer", "activescripteventconsumer")
+
+
+def _wmi_path(path) -> Tuple[str, str]:
+    """A WMI object path (optionally host/namespace-prefixed) -> (class, Name)."""
+    text = str(path or "")
+    if text.startswith(chr(92) * 2) or ":" in text.split(".", 1)[0]:
+        text = text.split(":", 1)[-1]
+    cls, _sep, rest = text.partition(".")
+    name = rest.partition("=")[2].strip()
+    if len(name) >= 2 and name[0] == name[-1] == '"':
+        name = name[1:-1]
+    return cls.strip(), name.replace(chr(92) + '"', '"').replace(chr(92) * 2, chr(92))
+
+
+def _wmi_query(class_name: str) -> List[dict]:
+    """Default WMI reader: each instance as a dict, plus its `__CLASS`."""
+    import win32com.client
+    service = win32com.client.GetObject("winmgmts:" + chr(92) * 2 + "." + chr(92) + _WMI_NS)
+    rows = []
+    for obj in service.ExecQuery(f"SELECT * FROM {class_name}"):
+        row = {prop.Name: prop.Value for prop in obj.Properties_}
+        row["__CLASS"] = obj.Path_.Class
+        rows.append(row)
+    return rows
+
+
+def _wmi_command(consumer: Optional[dict], cls: str, name: str) -> str:
+    row = consumer or {}
+    if cls.lower() == "commandlineeventconsumer":
+        return str(row.get("CommandLineTemplate") or "")
+    if cls.lower() == "activescripteventconsumer":
+        return str(row.get("ScriptText") or row.get("ScriptFileName") or "")
+    return f"{cls} {name}".strip()
+
+
+def _wmi_is_own(fname: str, cname: str, ccls: str) -> bool:
+    return (fname, cname, ccls) == (_WMI_OWN_FILTER, _WMI_OWN_CONSUMER, _WMI_OWN_CLASS)
+
+
+def _add_wmi_item(inv: Inventory, fname: str, filter_row: Optional[dict], ccls: str,
+                  cname: str, consumer: Optional[dict], tag: str) -> None:
+    detail = str((filter_row or {}).get("Query") or "")
+    extra = " ".join(x for x in (detail, f"({tag})" if tag else "") if x)
+    item = Item(fname, _wmi_command(consumer, ccls, cname), "WMI Subscription", "Machine",
+                _WMI_NS, enabled=True, extra=extra)
+    item.consumer_class = ccls
+    inv.items.append(item)
+
+
+def read_wmi_subscriptions(inv: Inventory, query=None) -> None:
+    """Permanent WMI event subscriptions: a filter (the event), a consumer
+    (the action) and a binding joining them. A command-line or script
+    consumer runs code with no Run key, task or service to find it -- a
+    long-standing persistence technique. Measured on this machine: exactly one
+    subscription, Windows' own `SCM Event Log Filter` -> `SCM Event Log
+    Consumer` (NTEventLogEventConsumer); skipped only when both names AND the
+    consumer class match. Unbound filters and consumers are listed too.
+    """
+    query = query or _wmi_query
+    try:
+        bindings = query("__FilterToConsumerBinding")
+        filters = {str(r.get("Name")): r for r in query("__EventFilter")}
+        consumers = {(str(r.get("__CLASS")), str(r.get("Name"))): r for r in query("__EventConsumer")}
+    except Exception as error:
+        logger.warning("WMI subscription query failed: %s", error)
+        inv.problems.append(f"{_WMI_NS}: {error}")
+        return
+    bound_filters, bound_consumers = set(), set()
+    for binding in bindings:
+        _fcls, fname = _wmi_path(binding.get("Filter"))
+        ccls, cname = _wmi_path(binding.get("Consumer"))
+        bound_filters.add(fname)
+        bound_consumers.add((ccls, cname))
+        if not _wmi_is_own(fname, cname, ccls):
+            _add_wmi_item(inv, fname, filters.get(fname), ccls, cname, consumers.get((ccls, cname)), "")
+    for fname, row in filters.items():
+        if fname not in bound_filters:
+            _add_wmi_item(inv, fname, row, "", "", None, "not bound")
+    for (ccls, cname), row in consumers.items():
+        if (ccls, cname) not in bound_consumers:
+            _add_wmi_item(inv, cname, None, ccls, cname, row, "not bound")
+
+
 def read_user_logon_script(inv: Inventory) -> None:
     """`UserInitMprLogonScript` under HKCU\\Environment -- the legacy NT
     per-user logon script mechanism, still honoured today and commonly set
@@ -650,6 +742,12 @@ def assess(item: Item, now: datetime) -> None:
         item.notes.append(Note("bootexecute", "warn",
                                "Runs in the kernel-mode session before Windows itself starts, and is "
                                "not one of Windows' own autocheck entries."))
+    if item.source == "WMI Subscription":
+        runs_code = item.consumer_class.lower() in _WMI_RUNS_CODE
+        text = ("a WMI subscription that runs a program/script when its event fires -- "
+                "a common persistence technique") if runs_code else \
+            f"a WMI event subscription ({item.consumer_class or 'no consumer'})"
+        item.notes.append(Note("wmi", "warn" if runs_code else "info", text))
     if item.source == "Logon Script":
         item.notes.append(Note("logonscript", "warn",
                                "A legacy per-user logon script (HKCU\\Environment\\UserInitMprLogonScript) "
@@ -837,6 +935,7 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_appinit_dlls(inv)
     read_lsa_packages(inv)
     read_boot_execute(inv)
+    read_wmi_subscriptions(inv)
     read_user_logon_script(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)

@@ -359,6 +359,12 @@ HIDDEN_IMPORTS = [
     # window they cannot read, having written no result file. The pane would
     # correctly report the outcome as unknown, forever.
     "modules.security_dashboard.elevated_helper",
+    # Audit & Logging: log_readiness and audit_policy are imported inside the
+    # catalog's reader functions, and the catalog module is discovered by
+    # package walk -- miss any and the tab is silently empty when frozen.
+    "modules.security_dashboard.log_readiness",
+    "modules.security_dashboard.audit_policy",
+    "modules.security_dashboard.catalog.audit_logging",
     # Imported inside a function in all five of its consumers — Hardware
     # Info, Reliability, Security Dashboard, Services and System Report —
     # every one of them behind a `try:` that degrades silently. Same trap as

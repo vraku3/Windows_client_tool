@@ -773,6 +773,61 @@ Tools (all real-machine, none of them press a button unless asked):
 and the `*_render.py` trio. `Start-Process -Verb RunAs` cannot redirect output,
 so anything elevated goes through a `.ps1` wrapper that writes its own log.
 
+#### Audit & Logging tab (2026-10-15)
+
+`Category.AUDIT_LOGGING` ("Audit & Logging", `catalog/audit_logging.py`),
+readers in `log_readiness.py` and `audit_policy.py`. Controls 152 -> 163.
+Measured here (2026-10-15), each of which shaped the code:
+
+- **M1** Security/System/Application are at the 20 MB default, circular. CIS
+  Windows 11 L1: Security >= 196,608 KB, System and Application >= 32,768 KB.
+  Targets are `security_log_size` 192 MB, `system_log_size` (WRITES 64 MB,
+  threshold 32 MB), `application_log_size` 32 MB, `powershell_log_size` 256 MB.
+  `wevtutil gl` answers unelevated, so the size is known without elevation.
+- **M2/M3** Size is not the metric, COVERAGE (now - oldest event) is:
+  PowerShell/Operational is full at 15 MB with about ONE day of history
+  (Script Block Logging fills it); System/Application go back six weeks.
+  `LogStatus` timestamps keep their UTC offset.
+- **M4** `TaskScheduler/Operational` is DISABLED by default
+  (`taskscheduler_log_enabled`).
+- **M5** Reading the Security log and `auditpol /get` need elevation
+  (`wevtutil qe Security` -> access denied; auditpol 0x522/1314). A refusal is
+  detected from stdout+stderr WHATEVER the exit code (wevtutil can refuse with
+  exit 0), and an `<Event` in a reply is trusted over refusal wording inside it
+  (a 4625's own message can say "access is denied"). Security coverage is
+  therefore "needs administrator rights" unelevated.
+- **M6** Sysmon is absent (channel does not exist): `sysmon_installed` is
+  read-only; deploying a kernel driver is out of scope.
+- **M7** `check_audit_policy` only COUNTED subcategories from localized text.
+  The six `audit_*` controls (Process Creation, Logon, Account Lockout, Audit
+  Policy Change, ...) now address each subcategory by GUID --
+  `auditpol /get /subcategory:{GUID} /r` -- so they work on any display
+  language; never by display name.
+- **Exact-value rule**: the Inclusion Setting is matched against exactly four
+  values (No Auditing / Success / Failure / Success and Failure,
+  case-insensitive, trimmed). Anything else is `None` with a reason, never a
+  substring guess (a localized OS shows "unknown", not a wrong value).
+- **Nonzero-exit rule**: any nonzero `auditpol` exit is a refusal and gates
+  parsing (1314 = needs administrator); a zero exit is not proof either.
+- **Moved ids**: `security_log_size` and `system_log_size` lived in Device &
+  Boot and keep the SAME ids so saved profiles resolve. They were numeric (MB)
+  and are now bool; `staging.ChangeSet.add` migrates a legacy numeric value
+  (value_MB >= threshold) with a WARNING, so an old `system_log_size: 64`
+  profile never shrinks the log. Baselines (recommended/hardened) gained the
+  new ids.
+- **Audit on/off semantics**: on = the wanted flags plus whatever the Windows
+  default enables; off = set exactly the default. It never turns OFF a flag
+  Windows enables by default (Logon is Success+Failure from Windows 10 1809,
+  Success only on older builds, per Microsoft's Advanced Audit Policy docs).
+- **Owed**: an ELEVATED round trip of the audit/log writes (apply, read back,
+  revert) -- needs a UAC approval with the user present -- and verifying each
+  subcategory's Windows default (the off-steps target) by reading it elevated.
+  Until then the writes are covered by unit tests and the dashboard's own
+  read-back. Unelevated, 6 of the 11 new controls read "unknown" (refused),
+  correctly; `tools/security_refusal_sweep.py` finds none answering after a
+  refusal. `tools/audit_logging_check.py` prints readiness + persistence
+  counts; `tools/audit_logging_shot.py` renders the tab off-screen.
+
 ### UpdatesModule (`src/modules/updates/`)
 
 5-tab module in `ModuleGroup.TOOLS`, `requires_admin = True`. This installs updates — it is a different thing from `DiagnoseModule`'s embedded Windows Update *log* viewer.
@@ -1400,6 +1455,26 @@ manager has its own `timeout` (the one that matters is under "Windows Boot
 Manager"). Diagnostics-Performance/Operational (events 100-103) and Kernel-Boot 27
 are readable unelevated. svchost impact is per SERVICE, not per exe. Enabled state
 is byte 0 of the `StartupApproved` value (odd = disabled).
+Persistence v2 (2026-10-15, `startup_manager/persistence.py`) adds WMI
+event subscriptions, SilentProcessExit (`GlobalFlag` 0x200), Active Setup, Print
+Monitors and Netsh helpers. Rules: Windows' own WMI pair (`SCM Event Log
+Filter` + `SCM Event Log Consumer`, class `NTEventLogEventConsumer`) is
+excluded by filter name AND consumer name AND class, case/quote-insensitive;
+a `CommandLineEventConsumer` shows its `ExecutablePath`. For Active Setup,
+Print Monitor and Netsh Helper (and SilentProcessExit) Windows' own entries are
+dropped only when the file is SIGNED/SIGNED_CATALOG AND its realpath is inside
+System32/SysWOW64 -- NEVER by CompanyName (spoofable) and never by catalog
+trust alone (a signed copy in a user-writable folder stays listed). Print
+monitors resolve against System32 only; netsh helpers are read from both
+registry views (WOW6432Node resolves against SysWOW64). Two legacy Windows
+Active Setup stubs (`Themes Setup` /UserInstall, `Windows Desktop Update` U)
+are dropped by exact (component GUID, StubPath), never by name. A refused read
+(IFEO `DefenderAgentScan.exe`, WinError 5) is a listed problem, not a clean
+result. Real machine raw -> kept: SilentProcessExit 0 -> 0, Active Setup
+13 -> 5 (4 in the later unelevated screenshot run: Brave, Chrome, Google
+Platform Experience, Edge), Print Monitor 6 -> 0, Netsh Helper 21 -> 0. A real
+`CommandLine`/`ActiveScript` consumer was never read (creating one needs
+elevation); only the SCM pair was exercised live.
 
 **System Management / Health**: never enable/disable a task by re-registering it
 (`RegisterTaskDefinition` rewrites the principal and breaks SYSTEM/password tasks);

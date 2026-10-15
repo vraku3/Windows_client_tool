@@ -44,7 +44,7 @@ def test_the_seven_controls_are_in_the_new_category():
     controls = load_catalog()
     found = {cid for cid, c in controls.items()
              if c.category is Category.AUDIT_LOGGING}
-    assert found == _NEW_IDS
+    assert _NEW_IDS <= found
     assert Category.AUDIT_LOGGING.value == "Audit & Logging"
 
 

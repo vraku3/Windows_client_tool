@@ -25,7 +25,7 @@ revertible and no string read off the machine reaches a command line.
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Tuple
 
-from .. import log_readiness
+from .. import audit_policy, log_readiness
 from ..security_reader import NEEDS_ADMIN, _reg_read
 from .model import Category, Risk, SecurityControl
 
@@ -152,6 +152,85 @@ def read_sysmon() -> Dict[str, Any]:
             "enabled": True, "details": details}
 
 
+def _audit_text(success: bool, failure: bool) -> str:
+    if success and failure:
+        return "Success and Failure"
+    if success:
+        return "Success"
+    if failure:
+        return "Failure"
+    return "No Auditing"
+
+
+def _audit_includes(sub: audit_policy.Subcategory,
+                    setting: Tuple[bool, bool]) -> bool:
+    success, failure = setting
+    if sub.want_success and not success:
+        return False
+    if sub.want_failure and not failure:
+        return False
+    return True
+
+
+def _audit_reader(sub: audit_policy.Subcategory) -> Callable[[], Dict[str, Any]]:
+    def read() -> Dict[str, Any]:
+        setting, reason = audit_policy.read(sub)
+        if setting is None:
+            return {"status": f"Unknown — {NEEDS_ADMIN}", "color": "amber",
+                    "available": False,
+                    "details": [(sub.name, reason or NEEDS_ADMIN)]}
+        includes = _audit_includes(sub, setting)
+        text = _audit_text(*setting)
+        return {"status": text, "color": "green" if includes else "amber",
+                "available": True, "enabled": includes,
+                "details": [(sub.name, text),
+                            ("Windows default", sub.default)]}
+    return read
+
+
+def _audit_step(sub: audit_policy.Subcategory, success: bool, failure: bool
+                ) -> Dict[str, Any]:
+    return _command(audit_policy.set_command(sub, success, failure))
+
+
+#: What each subcategory is for, in the words an admin would use.
+_AUDIT_WHY = {
+    "Process Creation": "A process-creation event is the first line of almost "
+                        "every intrusion timeline: without it there is no "
+                        "record of what ran.",
+    "Logon": "Logon events show who signed in, from where and how -- "
+             "interactive, network, RDP or a service account.",
+    "Account Lockout": "A lockout records a failed-password spray against an "
+                       "account, often the first visible sign of an attack.",
+    "Security Group Management": "Changes to groups are privilege escalation; "
+                                 "an added administrator is the end of an "
+                                 "attack, not the start.",
+    "User Account Management": "Account creation and changes are how an "
+                               "attacker keeps access after the first break-in.",
+    "Audit Policy Change": "If someone can turn auditing off, every other "
+                           "control here is worthless; this records the "
+                           "attempt.",
+}
+
+
+def _audit_control(sub: audit_policy.Subcategory) -> SecurityControl:
+    def_success, def_failure = audit_policy.default_flags(sub.default)
+    control_id = "audit_" + sub.name.lower().replace(" ", "_")
+    return SecurityControl(
+        id=control_id,
+        title=f"Audit: {sub.name}",
+        category=Category.AUDIT_LOGGING,
+        description=f"Whether Windows records {sub.name} events.",
+        why_it_matters=_AUDIT_WHY[sub.name],
+        reader=_audit_reader(sub),
+        on_steps=(_audit_step(sub, sub.want_success or def_success,
+                              sub.want_failure or def_failure),),
+        off_steps=(_audit_step(sub, def_success, def_failure),),
+        desired=True,
+        risk=Risk.LOW,
+    )
+
+
 _SYSMON_REASON = (
     "Sysmon is a Sysinternals kernel driver. It is installed and configured "
     "deliberately, with a reviewed configuration file, and this app does not "
@@ -272,4 +351,4 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         reader=read_sysmon,
         read_only_reason=_SYSMON_REASON,
     ),
-)
+) + tuple(_audit_control(sub) for sub in audit_policy.SUBCATEGORIES)

@@ -365,6 +365,9 @@ HIDDEN_IMPORTS = [
     "modules.security_dashboard.catalog.audit_logging",
     "modules.security_dashboard.log_readiness",
     "modules.security_dashboard.audit_policy",
+    # Attack Surface Reduction per-rule model (2026-10-15), imported at the
+    # top of catalog/defender.py.
+    "modules.security_dashboard.asr_rules",
     # Imported inside a function in all five of its consumers — Hardware
     # Info, Reliability, Security Dashboard, Services and System Report —
     # every one of them behind a `try:` that degrades silently. Same trap as

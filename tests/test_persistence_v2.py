@@ -150,3 +150,186 @@ def test_active_script_fallback_and_warn_and_other_classes_info():
     for cls in ("NTEventLogEventConsumer", "SMTPEventConsumer"):
         item = one(cls)
         assert item.has("wmi") and not item.flagged
+
+
+# ---- Task 5: SilentProcessExit, Active Setup, Print Monitors, Netsh helpers ----
+
+import os  # noqa: E402
+import winreg as _wr  # noqa: E402
+
+from modules.startup_manager import trust as _trust  # noqa: E402
+from core.windows_utils import system_root  # noqa: E402
+
+_HIVES = {_wr.HKEY_LOCAL_MACHINE: "HKLM", _wr.HKEY_CURRENT_USER: "HKCU"}
+
+
+class _FakeKey:
+    def __init__(self, path):
+        self.path = path
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _fake_registry(monkeypatch, tree, refused=()):
+    """tree: {"HKLM\\path": {value: data}}; a key exists when it or any child is listed."""
+    orig = {k.casefold(): k for k in tree}
+    tree = {k.casefold(): v for k, v in tree.items()}
+    refused = {r.casefold() for r in refused}
+
+    def children(path):
+        pre = path + "\\"
+        return sorted({orig[k][len(pre):].split("\\")[0] for k in tree if k.startswith(pre)})
+
+    def open_key(base, sub, *a):
+        path = (base.path if isinstance(base, _FakeKey) else _HIVES[base]) + ("\\" + sub if sub else "")
+        path = path.casefold()
+        if path in refused:
+            raise PermissionError(5, "Access is denied")
+        if path not in tree and not children(path):
+            raise FileNotFoundError(2, "not found")
+        return _FakeKey(path)
+
+    def enum_key(key, i):
+        names = children(key.path)
+        if i >= len(names):
+            raise OSError(259, "no more")
+        return names[i]
+
+    def enum_value(key, i):
+        items = list(tree.get(key.path, {}).items())
+        if i >= len(items):
+            raise OSError(259, "no more")
+        return items[i][0], items[i][1], 1
+
+    def query(key, name):
+        vals = {k.casefold(): v for k, v in tree.get(key.path, {}).items()}
+        if name.casefold() not in vals:
+            raise FileNotFoundError(2, "no value")
+        return vals[name.casefold()], 1
+
+    monkeypatch.setattr(p.winreg, "OpenKey", open_key)
+    monkeypatch.setattr(p.winreg, "EnumKey", enum_key)
+    monkeypatch.setattr(p.winreg, "EnumValue", enum_value)
+    monkeypatch.setattr(p.winreg, "QueryValueEx", query)
+
+
+_SPE = "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SilentProcessExit"
+_IFEO = "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options"
+
+
+def test_silent_process_exit_active_and_inactive(monkeypatch):
+    _fake_registry(monkeypatch, {
+        _SPE + "\\a.exe": {"MonitorProcess": "C:\\x\\evil.exe"},
+        _SPE + "\\b.exe": {"MonitorProcess": "C:\\x\\other.exe"},
+        _IFEO + "\\a.exe": {"GlobalFlag": 0x200},
+        _IFEO + "\\b.exe": {"GlobalFlag": 0x100},
+        _SPE + "\\c.exe": {"ReportingMode": 1},
+    })
+    inv = p.Inventory()
+    p.read_silent_process_exit(inv)
+    by = {i.name: i for i in inv.items}
+    assert set(by) == {"a.exe", "b.exe"} and inv.problems == []
+    assert by["a.exe"].source == "SilentProcessExit" and by["a.exe"].command == "C:\\x\\evil.exe"
+    assert "a.exe exits" in by["a.exe"].extra and not by["a.exe"].inactive
+    assert by["b.exe"].inactive == "inactive: GlobalFlag lacks 0x200"
+    p.assess(by["b.exe"], p.datetime.now())
+    assert any(n.code == "silentexit" and n.severity == "info" and "inactive: GlobalFlag lacks 0x200" in n.text
+               for n in by["b.exe"].notes)
+
+
+def test_missing_keys_are_not_problems(monkeypatch):
+    _fake_registry(monkeypatch, {})
+    inv = p.Inventory()
+    for reader in (p.read_silent_process_exit, p.read_active_setup,
+                   p.read_print_monitors, p.read_netsh_helpers):
+        reader(inv)
+    assert inv.items == [] and inv.problems == []
+
+
+def test_refused_key_is_a_problem(monkeypatch):
+    _fake_registry(monkeypatch, {"HKLM\\SOFTWARE\\Microsoft\\NetSh": {"x": "a.dll"}},
+                   refused=["HKLM\\SOFTWARE\\Microsoft\\NetSh"])
+    inv = p.Inventory()
+    p.read_netsh_helpers(inv)
+    assert inv.items == [] and len(inv.problems) == 1 and "NetSh" in inv.problems[0]
+
+
+def test_active_setup_stubpath_both_views(monkeypatch):
+    base = "HKLM\\SOFTWARE\\Microsoft\\Active Setup\\Installed Components"
+    wow = "HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Active Setup\\Installed Components"
+    _fake_registry(monkeypatch, {
+        base + "\\{G1}": {"": "Some Product", "StubPath": "\"C:\\P\\stub.exe\" /user"},
+        base + "\\{G2}": {"Version": "1"},
+        wow + "\\{G3}": {"StubPath": "C:\\Q\\w.exe"},
+    })
+    inv = p.Inventory()
+    p.read_active_setup(inv)
+    by = {i.name: i for i in inv.items}
+    assert set(by) == {"Some Product", "{G3}"}
+    assert by["Some Product"].source == "Active Setup"
+    assert by["Some Product"].command == "\"C:\\P\\stub.exe\" /user"
+    assert by["{G3}"].location.startswith("HKLM\\SOFTWARE\\WOW6432Node")
+
+
+def test_print_monitor_bare_dll_resolves_to_system32(monkeypatch):
+    mon = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors"
+    _fake_registry(monkeypatch, {
+        mon + "\\Local Port": {"Driver": "localspl.dll"},
+        mon + "\\Vendor": {"Driver": "C:\\Vendor\\mon.dll"},
+        mon + "\\NoDriver": {},
+    })
+    inv = p.Inventory()
+    p.read_print_monitors(inv)
+    by = {i.name: i for i in inv.items}
+    assert set(by) == {"Local Port", "Vendor"}
+    assert by["Local Port"].source == "Print Monitor"
+    assert by["Local Port"].command == os.path.join(system_root(), "System32", "localspl.dll")
+    assert by["Vendor"].command == "C:\\Vendor\\mon.dll"
+
+
+def test_netsh_helper_values(monkeypatch):
+    _fake_registry(monkeypatch, {"HKLM\\SOFTWARE\\Microsoft\\NetSh": {
+        "ifmon": "ifmon.dll", "thirdparty": "C:\\T\\h.dll", "": "ignored-default"}})
+    inv = p.Inventory()
+    p.read_netsh_helpers(inv)
+    by = {i.name: i for i in inv.items}
+    assert set(by) == {"ifmon", "thirdparty"} and by["ifmon"].source == "Netsh Helper"
+    assert by["ifmon"].command == os.path.join(system_root(), "System32", "ifmon.dll")
+
+
+def _it(source, publisher, status):
+    it = p.Item("n", "c", source, "Machine", "loc")
+    it.publisher, it.trust = publisher, status
+    return it
+
+
+def test_microsoft_filter_drops_only_the_four_new_sources():
+    items = [
+        _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED_CATALOG),
+        _it("Netsh Helper", "Acme Corp", _trust.SIGNED),
+        _it("Print Monitor", None, _trust.UNKNOWN),
+        _it("Active Setup", "Microsoft Corporation", _trust.SIGNED),
+        _it("SilentProcessExit", "Microsoft Corporation", _trust.SIGNED),
+        _it("Run", "Microsoft Corporation", _trust.SIGNED),
+        _it("Service", "Microsoft Corporation", _trust.SIGNED_CATALOG),
+    ]
+    inv = p.Inventory(items=items)
+    p.drop_windows_own(inv)
+    assert [(i.source, i.publisher) for i in inv.items] == [
+        ("Netsh Helper", "Acme Corp"), ("Print Monitor", None), ("Run", "Microsoft Corporation"),
+        ("Service", "Microsoft Corporation")]
+
+
+def test_real_machine_has_no_windows_own_netsh_or_silent_exit():
+    pythoncom = pytest.importorskip("pythoncom")
+    pythoncom.CoInitialize()
+    try:
+        inv = p.collect()
+    finally:
+        pythoncom.CoUninitialize()
+    assert [i.name for i in inv.items if i.source == "Netsh Helper"] == []
+    assert [i.name for i in inv.items if i.source == "SilentProcessExit"] == []

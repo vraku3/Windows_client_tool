@@ -7,7 +7,9 @@ File Execution Options Debugger hijacks, a populated + active AppInit_DLLs
 list, any unrecognised LSA Authentication/Notification/Security Package,
 anything in BootExecute besides Windows' own autocheck entries, and a
 per-user legacy logon script (UserInitMprLogonScript) when one is set, and
-WMI event subscriptions (root\\subscription) other than Windows' own SCM pair.
+WMI event subscriptions (root\\subscription) other than Windows' own SCM pair, and
+SilentProcessExit monitors, Active Setup StubPaths, print monitors and netsh
+helpers -- those four listing only what is not Microsoft-signed.
 
 Each item is enriched with: the executable it resolves to, whether that file
 exists, its Authenticode/catalog trust (`trust.py`), the publisher, when this
@@ -82,6 +84,7 @@ class Item:
     impact_count: int = 0
     extra: str = ""
     consumer_class: str = ""   # WMI Subscription only: the event consumer's class
+    inactive: str = ""         # SilentProcessExit: why the entry cannot fire
     wmi_exe: str = ""          # WMI CommandLineEventConsumer.ExecutablePath; enrich() uses it as `exe`
     notes: List[Note] = field(default_factory=list)
 
@@ -666,6 +669,131 @@ def read_wmi_subscriptions(inv: Inventory, query=None) -> None:
             _add_wmi_item(inv, name, None, str(row.get("__CLASS")), name, row, "not bound")
 
 
+# ---- Windows-own-filtered sources: SilentProcessExit, Active Setup, Print Monitors, Netsh -----
+
+#: Sources whose Windows-shipped entries are dropped after enrich() (M9).
+WINDOWS_OWN_FILTERED = frozenset({"SilentProcessExit", "Active Setup", "Print Monitor", "Netsh Helper"})
+_BS = chr(92)
+_NT_CV = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+_SPE_PATH = _NT_CV + r"\SilentProcessExit"
+_IFEO_PATH = _NT_CV + r"\Image File Execution Options"
+_SPE_FLAG = 0x200
+
+
+def _enum_names(hive: int, path: str, inv: Inventory, values: bool = False) -> List:
+    """Subkey names (or `(name, data)` value pairs). A missing key is [] and fine;
+    a refused one is a problem."""
+    try:
+        root = winreg.OpenKey(hive, path)
+    except FileNotFoundError:
+        logger.debug("%s does not exist", path)
+        return []
+    except OSError as error:
+        inv.problems.append(f"{path}: {error}")
+        return []
+    out: List = []
+    with root:
+        index = 0
+        while True:
+            try:
+                out.append(winreg.EnumValue(root, index)[:2] if values else winreg.EnumKey(root, index))
+            except OSError:
+                logger.debug("%s enumeration finished at %d", path, index)
+                break
+            index += 1
+    return out
+
+
+def _read_value(hive: int, path: str, name: str, inv: Optional[Inventory] = None):
+    """One value, or None when the key/value is absent (refusals go to `inv`)."""
+    try:
+        with winreg.OpenKey(hive, path) as key:
+            return winreg.QueryValueEx(key, name)[0]
+    except FileNotFoundError:
+        logger.debug("%s: value %r absent", path, name)
+        return None
+    except OSError as error:
+        if inv is not None:
+            inv.problems.append(f"{path}: {error}")
+        return None
+
+
+def _system32_dll(name: str) -> str:
+    """A bare DLL name is loaded from System32; a path is left alone."""
+    text = os.path.expandvars(str(name).strip())
+    if text and not os.path.dirname(text):
+        return os.path.join(system_root(), "System32", text)
+    return text
+
+
+def read_silent_process_exit(inv: Inventory) -> None:
+    """`SilentProcessExit\\<image>\\MonitorProcess`: launches a program when the
+    named image exits. It only fires when the image's IFEO `GlobalFlag` has
+    0x200 set, so an entry without it is listed but marked inactive. The key
+    does not exist on a clean Windows (measured)."""
+    hive = winreg.HKEY_LOCAL_MACHINE
+    for image in _enum_names(hive, _SPE_PATH, inv):
+        sub = _SPE_PATH + _BS + image
+        monitor = _read_value(hive, sub, "MonitorProcess", inv)
+        if not monitor:
+            continue
+        flag = _read_value(hive, _IFEO_PATH + _BS + image, "GlobalFlag", inv)
+        item = Item(image, str(monitor), "SilentProcessExit", "Machine", "HKLM" + _BS + sub,
+                    enabled=True, extra=f"runs when {image} exits")
+        if not (isinstance(flag, int) and flag & _SPE_FLAG):
+            item.inactive = "inactive: GlobalFlag lacks 0x200"
+        inv.items.append(item)
+
+
+_ACTIVE_SETUP = r"Microsoft\Active Setup\Installed Components"
+
+
+def read_active_setup(inv: Inventory) -> None:
+    """Active Setup `StubPath`: run once per user at logon, by Windows or an
+    installer. HKLM (both views) and HKCU when present."""
+    places = [(winreg.HKEY_LOCAL_MACHINE, "HKLM", "Machine", "SOFTWARE" + _BS + _ACTIVE_SETUP),
+              (winreg.HKEY_LOCAL_MACHINE, "HKLM", "Machine", r"SOFTWARE\WOW6432Node" + _BS + _ACTIVE_SETUP),
+              (winreg.HKEY_CURRENT_USER, "HKCU", "User", "Software" + _BS + _ACTIVE_SETUP)]
+    for hive, label, scope, path in places:
+        for guid in _enum_names(hive, path, inv):
+            sub = path + _BS + guid
+            stub = _read_value(hive, sub, "StubPath", inv)
+            if not stub:
+                continue
+            title = _read_value(hive, sub, "", inv)
+            inv.items.append(Item(str(title) if title else guid, str(stub), "Active Setup", scope,
+                                  label + _BS + sub, enabled=True,
+                                  extra=f"{guid} -- runs once per user at logon"))
+
+
+def read_print_monitors(inv: Inventory) -> None:
+    """Print monitor `Driver` DLLs: loaded into the spooler (SYSTEM)."""
+    path = r"SYSTEM\CurrentControlSet\Control\Print\Monitors"
+    hive = winreg.HKEY_LOCAL_MACHINE
+    for name in _enum_names(hive, path, inv):
+        driver = _read_value(hive, path + _BS + name, "Driver", inv)
+        if driver:
+            inv.items.append(Item(name, _system32_dll(driver), "Print Monitor", "Machine",
+                                  "HKLM" + _BS + path + _BS + name, enabled=True,
+                                  extra="loaded into the print spooler (SYSTEM)"))
+
+
+def read_netsh_helpers(inv: Inventory) -> None:
+    """netsh helper DLLs (`HKLM\\SOFTWARE\\Microsoft\\NetSh`, name -> DLL)."""
+    path = r"SOFTWARE\Microsoft\NetSh"
+    for name, dll in _enum_names(winreg.HKEY_LOCAL_MACHINE, path, inv, values=True):
+        if name and isinstance(dll, str) and dll:
+            inv.items.append(Item(name, _system32_dll(dll), "Netsh Helper", "Machine",
+                                  "HKLM" + _BS + path, enabled=True,
+                                  extra="loaded by netsh.exe when it runs"))
+
+
+def drop_windows_own(inv: Inventory) -> None:
+    """After enrich(): drop Microsoft-signed entries of the four sources above.
+    Unverifiable files are kept -- unverifiable is not Windows'."""
+    inv.items = [i for i in inv.items if not (i.source in WINDOWS_OWN_FILTERED and i.is_microsoft)]
+
+
 def read_user_logon_script(inv: Inventory) -> None:
     """`UserInitMprLogonScript` under HKCU\\Environment -- the legacy NT
     per-user logon script mechanism, still honoured today and commonly set
@@ -776,6 +904,9 @@ def assess(item: Item, now: datetime) -> None:
                 "a common persistence technique") if runs_code else \
             f"a WMI event subscription ({item.consumer_class or 'no consumer'})"
         item.notes.append(Note("wmi", "warn" if runs_code else "info", text))
+    if item.source == "SilentProcessExit":
+        text = "runs a program when the named image exits"
+        item.notes.append(Note("silentexit", "info", f"{text} ({item.inactive})" if item.inactive else text))
     if item.source == "Logon Script":
         item.notes.append(Note("logonscript", "warn",
                                "A legacy per-user logon script (HKCU\\Environment\\UserInitMprLogonScript) "
@@ -967,8 +1098,13 @@ def collect(history_path: Optional[str] = None, slow=None, now: Optional[datetim
     read_boot_execute(inv)
     read_wmi_subscriptions(inv)
     read_user_logon_script(inv)
+    read_silent_process_exit(inv)
+    read_active_setup(inv)
+    read_print_monitors(inv)
+    read_netsh_helpers(inv)
     apply_first_seen(inv, history_path, now)
     enrich(inv, impact_map(slow or []), now)
+    drop_windows_own(inv)
     return inv
 
 

@@ -307,12 +307,13 @@ def _it(source, publisher, status, exe=""):
     return it
 
 
-_SYS32 = os.path.join(system_root(), "System32", "x.dll")
-_WOW = os.path.join(system_root(), "SysWOW64", "x.dll")
+_SYS32 = os.path.join(system_root(), "System32", "kernel32.dll")
+_WOW = os.path.join(system_root(), "SysWOW64", "kernel32.dll")
 
 
 def test_filter_drops_signed_files_in_windows_dirs_only(tmp_path):
     outside = str(tmp_path / "x.dll")
+    (tmp_path / "x.dll").write_bytes(b"MZ")
     items = [
         _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED_CATALOG, _SYS32),
         _it("Netsh Helper", "Microsoft Windows", _trust.SIGNED, _WOW),
@@ -400,6 +401,55 @@ def test_legacy_active_setup_stubs_dropped_by_exact_pair_only(monkeypatch):
     p.read_active_setup(inv)
     assert sorted(i.location.rsplit("\\", 1)[1] for i in inv.items) == [
         "{2C7339CF-2B09-4501-B3F3-F3508C9228ED}x", "{OTHER-GUID}"]
+
+
+def _stand_in_root(monkeypatch, tmp_path):
+    root = tmp_path / "Win"
+    (root / "System32").mkdir(parents=True)
+    (root / "SysWOW64").mkdir()
+    monkeypatch.setattr(p, "system_root", lambda: str(root))
+    return root
+
+
+def _signed(path):
+    return p.Inventory(items=[_it("Netsh Helper", "Microsoft Corporation", _trust.SIGNED, str(path))])
+
+
+def test_file_really_inside_stand_in_root_is_dropped(monkeypatch, tmp_path):
+    root = _stand_in_root(monkeypatch, tmp_path)
+    dll = root / "System32" / "x.dll"
+    dll.write_bytes(b"MZ")
+    inv = _signed(dll)
+    p.drop_windows_own(inv)
+    assert inv.items == []
+
+
+def test_junction_out_of_system32_is_kept(monkeypatch, tmp_path):
+    import _winapi
+    root = _stand_in_root(monkeypatch, tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "x.dll").write_bytes(b"MZ")
+    _winapi.CreateJunction(str(outside), str(root / "System32" / "jn"))
+    inv = _signed(root / "System32" / "jn" / "x.dll")
+    p.drop_windows_own(inv)
+    assert len(inv.items) == 1
+
+
+def test_traversal_out_of_root_is_kept(monkeypatch, tmp_path):
+    root = _stand_in_root(monkeypatch, tmp_path)
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "x.dll").write_bytes(b"MZ")
+    inv = _signed(str(root / "System32") + "\\..\\..\\outside\\x.dll")
+    p.drop_windows_own(inv)
+    assert len(inv.items) == 1
+
+
+def test_missing_file_is_kept(monkeypatch, tmp_path):
+    root = _stand_in_root(monkeypatch, tmp_path)
+    inv = _signed(root / "System32" / "gone.dll")
+    p.drop_windows_own(inv)
+    assert len(inv.items) == 1
 
 
 def test_real_machine_has_no_windows_own_netsh_or_silent_exit():

@@ -830,12 +830,32 @@ def read_netsh_helpers(inv: Inventory) -> None:
                                       extra="loaded by netsh.exe when it runs"))
 
 
+def _canonical(path: str) -> Optional[str]:
+    """The real location of an EXISTING path, junctions/symlinks/`..` resolved, `\\\\?\\`
+    prefix stripped, case-folded. None when it cannot be resolved."""
+    try:
+        real = os.path.realpath(path, strict=True)
+    except (OSError, ValueError) as error:
+        logger.debug("cannot resolve %s: %s", path, error)
+        return None
+    if real.startswith("\\\\?\\UNC\\"):
+        real = "\\\\" + real[8:]
+    elif real.startswith("\\\\?\\"):
+        real = real[4:]
+    return os.path.normcase(real)
+
+
 def _in_windows_dirs(path: str) -> bool:
-    if not path:
+    """True only when the file exists and, fully resolved, sits under the resolved
+    System32 or SysWOW64. Unresolvable never counts as Windows'."""
+    target = _canonical(path) if path else None
+    if target is None:
         return False
-    target = os.path.normcase(os.path.abspath(path))
-    roots = (os.path.join(system_root(), "System32"), os.path.join(system_root(), "SysWOW64"))
-    return any(target.startswith(os.path.normcase(os.path.abspath(r)) + os.sep) for r in roots)
+    for name in ("System32", "SysWOW64"):
+        root = _canonical(os.path.join(system_root(), name))
+        if root and target.startswith(root.rstrip(os.sep) + os.sep):
+            return True
+    return False
 
 
 def _is_windows_own(item: Item) -> bool:

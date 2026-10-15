@@ -17,10 +17,46 @@ class WindowsUpdate:
     kb: str
     title: str
     classification: str
+    #: `IUpdate.MaxDownloadSize`, in MB -- an UPPER BOUND, not the delta that
+    #: actually downloads. The disk-space preflight uses this worst case.
     size_mb: float
     release_date: str
     identity: object = field(default=None, repr=False)  # IUpdate COM object, stored for install
     is_hidden: bool = False
+    #: `IUpdate.MinDownloadSize` -- the floor WUA knows, often 0. Shown as a
+    #: range with `size_mb` when it is present and smaller.
+    min_size_mb: float = 0.0
+
+
+def _com_mb(obj, attr: str) -> float:
+    """One WUA size attribute in MB, coerced off the COM boundary.
+
+    MaxDownloadSize/MinDownloadSize are DECIMAL in wuapi.idl, so pywin32 hands
+    back a decimal.Decimal -- and Decimal/int stays Decimal, which then dies on
+    the first `/ 1024.0` downstream. Coerce here, once. An unreadable attribute
+    is 0.0, logged, never a crash.
+    """
+    try:
+        return float(getattr(obj, attr)) / (1024 * 1024)
+    except Exception:
+        logger.debug("update size %s is unreadable", attr, exc_info=True)
+        return 0.0
+
+
+def size_text(u: "WindowsUpdate") -> str:
+    """Download size for a table row or a log line.
+
+    `MaxDownloadSize` is the maximum, not the amount that will be downloaded:
+    the Defender security-intelligence update here reported 1539 MB, the size
+    of its whole bundle, while the delta served is far smaller. Printing that
+    bare reads as a broken figure, so it is shown as `<= max`, or as a
+    `min-max` range when WUA also reports a smaller minimum.
+    """
+    if u.size_mb <= 0:
+        return "—"
+    if u.min_size_mb and u.min_size_mb < u.size_mb:
+        return f"{u.min_size_mb:.0f}–{u.size_mb:.0f} MB"
+    return f"≤{u.size_mb:.0f} MB"
 
 
 @dataclass
@@ -72,14 +108,9 @@ def fetch_pending_updates(
             # Classification
             cats = [u.Categories.Item(j).Name for j in range(u.Categories.Count)]
             classification = cats[0] if cats else "Unknown"
-            # Size. MaxDownloadSize is a DECIMAL in wuapi.idl, so pywin32
-            # hands back a decimal.Decimal — and Decimal/int stays Decimal,
-            # which then dies on the first `/ 1024.0` downstream. Coerce here,
-            # at the boundary, so nothing past this point ever sees one.
-            try:
-                size_mb = float(u.MaxDownloadSize) / (1024 * 1024)
-            except Exception:
-                size_mb = 0.0
+            # Size: both bounds, coerced off the DECIMAL COM boundary.
+            size_mb = _com_mb(u, "MaxDownloadSize")
+            min_size_mb = _com_mb(u, "MinDownloadSize")
             # Date
             try:
                 release_date = str(u.LastDeploymentChangeTime)[:10]
@@ -95,8 +126,8 @@ def fetch_pending_updates(
 
             updates.append(WindowsUpdate(
                 kb=kb, title=u.Title, classification=classification,
-                size_mb=size_mb, release_date=release_date, identity=u,
-                is_hidden=hidden,
+                size_mb=size_mb, min_size_mb=min_size_mb,
+                release_date=release_date, identity=u, is_hidden=hidden,
             ))
     except Exception as e:
         raise RuntimeError(f"Failed to query Windows Updates: {_explain(e)}") from e
@@ -161,7 +192,7 @@ def install_updates_iter(
             break
         if progress_cb:
             progress_cb(i, total, u.title)
-        _log(f"[{i + 1}/{total}] {u.title}  ({u.size_mb:.1f} MB)")
+        _log(f"[{i + 1}/{total}] {u.title}  ({size_text(u)})")
 
         if u.identity is None:
             results.append(InstallResult(u.kb, u.title, False, None, "stale scan — no COM identity, re-scan first"))

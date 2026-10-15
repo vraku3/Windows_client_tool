@@ -25,7 +25,7 @@ from modules.updates.winget_updater import (
 )
 from modules.updates.windows_updater import (
     fetch_pending_updates, install_updates_iter, hide_update,
-    WindowsUpdate, InstallResult,
+    WindowsUpdate, InstallResult, size_text,
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
 from modules.updates.run_all_tab import _RunAllTab
@@ -438,7 +438,7 @@ class _WinUpdatesTab(QWidget):
 
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
-            ["KB", "Title", "Classification", "Size (MB)", "Released", "Result"]
+            ["KB", "Title", "Classification", "Download", "Released", "Result"]
         )
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         center_header(self._table)
@@ -530,7 +530,7 @@ class _WinUpdatesTab(QWidget):
             title = u.title + ("  [hidden]" if u.is_hidden else "")
             self._table.setItem(row, 1, centered_item(title))
             self._table.setItem(row, 2, centered_item(u.classification))
-            self._table.setItem(row, 3, centered_item(f"{u.size_mb:.1f}"))
+            self._table.setItem(row, 3, centered_item(size_text(u)))
             self._table.setItem(row, 4, centered_item(u.release_date))
             key = u.kb or u.title
             result_text = (results or {}).get(key, "")

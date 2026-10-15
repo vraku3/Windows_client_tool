@@ -32,9 +32,11 @@ class _Cat:
 
 
 class _Update:
-    def __init__(self, title="Fake update", size=Decimal("549453824"), kbs=("5001234",)):
+    def __init__(self, title="Fake update", size=Decimal("549453824"),
+                 kbs=("5001234",), min_size=Decimal("0")):
         self.Title = title
         self.MaxDownloadSize = size
+        self.MinDownloadSize = min_size
         self.KBArticleIDs = _Coll(kbs)
         self.Categories = _Coll([_Cat("Security Updates")])
         self.LastDeploymentChangeTime = "2026-08-19 00:00:00+00:00"
@@ -66,6 +68,32 @@ def test_size_mb_is_a_float_even_though_com_returns_decimal(monkeypatch):
     assert len(updates) == 1
     assert isinstance(updates[0].size_mb, float), type(updates[0].size_mb)
     assert updates[0].size_mb == pytest.approx(524.0, abs=0.5)
+
+
+def test_size_text_is_an_upper_bound_not_an_exact_figure():
+    """MaxDownloadSize is the whole-package maximum; the Defender security
+    intelligence update here reported 1539 MB. Shown as `<= max`."""
+    u = windows_updater.WindowsUpdate("KB2267602", "T", "Security Updates",
+                                      1539.4, "2026-10-15")
+    assert windows_updater.size_text(u) == "≤1539 MB"
+
+
+def test_size_text_shows_a_range_when_the_minimum_is_known():
+    u = windows_updater.WindowsUpdate("KB2267602", "T", "c", 1539.4, "d",
+                                      min_size_mb=120.0)
+    assert windows_updater.size_text(u) == "120–1539 MB"
+
+
+def test_size_text_for_an_unreadable_size_is_a_dash():
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 0.0, "d")
+    assert windows_updater.size_text(u) == "—"
+
+
+def test_the_minimum_download_size_is_read_from_com(monkeypatch):
+    _install_fake_session(monkeypatch, [
+        _Update(size=Decimal("104857600"), min_size=Decimal("52428800"))])
+    updates = windows_updater.fetch_pending_updates()
+    assert updates[0].min_size_mb == pytest.approx(50.0, abs=0.5)
 
 
 def test_summed_sizes_survive_the_preflight(monkeypatch):

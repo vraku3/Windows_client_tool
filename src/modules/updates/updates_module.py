@@ -25,7 +25,7 @@ from modules.updates.winget_updater import (
 )
 from modules.updates.windows_updater import (
     fetch_pending_updates, install_updates_iter, hide_update,
-    WindowsUpdate, InstallResult, size_text,
+    WindowsUpdate, InstallResult, size_text, severity_text, reboot_text,
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
 from modules.updates.run_all_tab import _RunAllTab
@@ -436,9 +436,10 @@ class _WinUpdatesTab(QWidget):
         self._progress.hide()
         layout.addWidget(self._progress)
 
-        self._table = QTableWidget(0, 6)
+        self._table = QTableWidget(0, 8)
         self._table.setHorizontalHeaderLabels(
-            ["KB", "Title", "Classification", "Download", "Released", "Result"]
+            ["KB", "Title", "Classification", "Severity", "Download",
+             "Restart", "Released", "Result"]
         )
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         center_header(self._table)
@@ -516,7 +517,16 @@ class _WinUpdatesTab(QWidget):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._render_table()
-        self._status_lbl.setText(f"{len(updates)} pending update(s).")
+        severe = sum(1 for u in updates
+                     if u.severity.lower() in ("critical", "important"))
+        reboot = sum(1 for u in updates if u.reboot in ("1", "2"))
+        extra = []
+        if severe:
+            extra.append(f"{severe} critical/important")
+        if reboot:
+            extra.append(f"{reboot} need a restart")
+        suffix = (" — " + ", ".join(extra)) if extra else ""
+        self._status_lbl.setText(f"{len(updates)} pending update(s){suffix}.")
         self._install_btn.setEnabled(len(updates) > 0)
         try:
             self._reboot_banner.setVisible(is_reboot_pending())
@@ -530,8 +540,10 @@ class _WinUpdatesTab(QWidget):
             title = u.title + ("  [hidden]" if u.is_hidden else "")
             self._table.setItem(row, 1, centered_item(title))
             self._table.setItem(row, 2, centered_item(u.classification))
-            self._table.setItem(row, 3, centered_item(size_text(u)))
-            self._table.setItem(row, 4, centered_item(u.release_date))
+            self._table.setItem(row, 3, centered_item(severity_text(u)))
+            self._table.setItem(row, 4, centered_item(size_text(u)))
+            self._table.setItem(row, 5, centered_item(reboot_text(u)))
+            self._table.setItem(row, 6, centered_item(u.release_date))
             key = u.kb or u.title
             result_text = (results or {}).get(key, "")
             result_item = centered_item(result_text)
@@ -539,7 +551,7 @@ class _WinUpdatesTab(QWidget):
                 result_item.setForeground(QColor(semantic("success")))
             elif result_text:
                 result_item.setForeground(QColor("#e06c75"))
-            self._table.setItem(row, 5, result_item)
+            self._table.setItem(row, 7, result_item)
 
     def _on_error(self, err_str: str):
         self._refresh_btn.setEnabled(True)

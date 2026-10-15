@@ -31,12 +31,20 @@ class _Cat:
         self.Name = name
 
 
+class _Behavior:
+    def __init__(self, reboot):
+        self.RebootBehavior = reboot
+
+
 class _Update:
     def __init__(self, title="Fake update", size=Decimal("549453824"),
-                 kbs=("5001234",), min_size=Decimal("0")):
+                 kbs=("5001234",), min_size=Decimal("0"),
+                 severity="Important", reboot=0):
         self.Title = title
         self.MaxDownloadSize = size
         self.MinDownloadSize = min_size
+        self.MsrcSeverity = severity
+        self.InstallationBehavior = _Behavior(reboot)
         self.KBArticleIDs = _Coll(kbs)
         self.Categories = _Coll([_Cat("Security Updates")])
         self.LastDeploymentChangeTime = "2026-08-19 00:00:00+00:00"
@@ -94,6 +102,27 @@ def test_the_minimum_download_size_is_read_from_com(monkeypatch):
         _Update(size=Decimal("104857600"), min_size=Decimal("52428800"))])
     updates = windows_updater.fetch_pending_updates()
     assert updates[0].min_size_mb == pytest.approx(50.0, abs=0.5)
+
+
+def test_severity_and_reboot_behavior_are_read_from_com(monkeypatch):
+    _install_fake_session(monkeypatch, [
+        _Update(title="Critical one", severity="Critical", reboot=1),
+        _Update(title="Low one", severity="Low", reboot=0),
+    ])
+    updates = windows_updater.fetch_pending_updates()
+    assert updates[0].severity == "Critical"
+    assert windows_updater.reboot_text(updates[0]) == "Yes"
+    assert windows_updater.severity_text(updates[0]) == "Critical"
+    assert windows_updater.reboot_text(updates[1]) == "No"
+
+
+def test_reboot_and_severity_text_fall_back_honestly():
+    from modules.updates.windows_updater import WindowsUpdate
+    blank = WindowsUpdate("KB1", "T", "c", 10.0, "d")
+    assert windows_updater.reboot_text(blank) == "—"
+    assert windows_updater.severity_text(blank) == "—"
+    assert windows_updater.reboot_text(
+        WindowsUpdate("KB1", "T", "c", 10.0, "d", reboot="2")) == "May ask"
 
 
 def test_summed_sizes_survive_the_preflight(monkeypatch):

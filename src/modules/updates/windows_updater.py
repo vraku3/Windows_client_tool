@@ -26,6 +26,40 @@ class WindowsUpdate:
     #: `IUpdate.MinDownloadSize` -- the floor WUA knows, often 0. Shown as a
     #: range with `size_mb` when it is present and smaller.
     min_size_mb: float = 0.0
+    #: `IUpdate.MsrcSeverity` ("Critical"/"Important"/"Moderate"/"Low").
+    severity: str = ""
+    #: `IUpdate.InstallationBehavior.RebootBehavior` as a string, from the
+    #: tagInstallationRebootBehavior enum: 0 never reboots, 1 always requires a
+    #: reboot, 2 may request one.
+    reboot: str = ""
+
+
+#: tagInstallationRebootBehavior, read from wuapi.dll's generated type module.
+_REBOOT_TEXT = {"0": "No", "1": "Yes", "2": "May ask"}
+
+
+def severity_text(u: "WindowsUpdate") -> str:
+    return u.severity or "—"
+
+
+def reboot_text(u: "WindowsUpdate") -> str:
+    return _REBOOT_TEXT.get(u.reboot, "—")
+
+
+def _com_str(obj, attr: str) -> str:
+    try:
+        return str(getattr(obj, attr) or "").strip()
+    except Exception:
+        logger.debug("update attribute %s is unreadable", attr, exc_info=True)
+        return ""
+
+
+def _com_reboot(obj) -> str:
+    try:
+        return str(int(obj.InstallationBehavior.RebootBehavior))
+    except Exception:
+        logger.debug("RebootBehavior is unreadable", exc_info=True)
+        return ""
 
 
 def _com_mb(obj, attr: str) -> float:
@@ -111,6 +145,8 @@ def fetch_pending_updates(
             # Size: both bounds, coerced off the DECIMAL COM boundary.
             size_mb = _com_mb(u, "MaxDownloadSize")
             min_size_mb = _com_mb(u, "MinDownloadSize")
+            severity = _com_str(u, "MsrcSeverity")
+            reboot = _com_reboot(u)
             # Date
             try:
                 release_date = str(u.LastDeploymentChangeTime)[:10]
@@ -127,6 +163,7 @@ def fetch_pending_updates(
             updates.append(WindowsUpdate(
                 kb=kb, title=u.Title, classification=classification,
                 size_mb=size_mb, min_size_mb=min_size_mb,
+                severity=severity, reboot=reboot,
                 release_date=release_date, identity=u, is_hidden=hidden,
             ))
     except Exception as e:

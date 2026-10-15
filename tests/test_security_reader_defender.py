@@ -175,6 +175,42 @@ def test_a_refused_exclusion_read_says_so(prefs):
     assert result.get("total") is None
 
 
+def test_the_exclusions_are_listed_not_just_counted(prefs):
+    """A count an admin cannot see into is useless -- the whole point is which
+    paths are exempt, so they can be reviewed and removed."""
+    prefs["data"] = {"ExclusionPath": [r"C:\Tools", r"D:\Games"],
+                     "ExclusionProcess": ["msbuild.exe"],
+                     "ExclusionExtension": [], "ExclusionIpAddress": []}
+
+    result = security_reader.check_defender_exclusions()
+
+    assert _detail(result, "Paths excluded") == r"C:\Tools; D:\Games"
+    assert _detail(result, "Processes excluded") == "msbuild.exe"
+
+
+def test_ip_address_exclusions_are_counted(prefs):
+    prefs["data"] = {"ExclusionPath": [], "ExclusionProcess": [],
+                     "ExclusionExtension": [],
+                     "ExclusionIpAddress": ["10.0.0.5", "1.2.3.4"]}
+
+    result = security_reader.check_defender_exclusions()
+
+    assert result["total"] == 2
+    assert _detail(result, "IP addresses") == "2"
+
+
+def test_a_long_exclusion_list_is_capped_in_the_detail(prefs):
+    prefs["data"] = {"ExclusionPath": [f"C:\\p{i}" for i in range(20)],
+                     "ExclusionProcess": [], "ExclusionExtension": [],
+                     "ExclusionIpAddress": []}
+
+    result = security_reader.check_defender_exclusions()
+
+    assert _detail(result, "Paths") == "20"
+    text = _detail(result, "Paths excluded")
+    assert text.endswith("(+12 more)")
+
+
 # -- check_defender_cloud_block_level ----------------------------------------
 
 def test_cloud_block_level_uses_microsofts_own_value_names(prefs):

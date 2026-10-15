@@ -3407,17 +3407,44 @@ def check_ntp_sync() -> Dict[str, Any]:
 #: exclusion. Three of those read as "3 exclusions".
 _EXCLUSION_REDACTED = "must be an administrator"
 
+#: (display label, Get-MpPreference field). IP-address exclusions were left out
+#: before and are exactly the kind an attacker adds to keep a C2 reachable.
+_EXCLUSION_FIELDS = (("Paths", "ExclusionPath"),
+                     ("Processes", "ExclusionProcess"),
+                     ("Extensions", "ExclusionExtension"),
+                     ("IP addresses", "ExclusionIpAddress"))
+
+#: List this many entries per category in the detail panel; a real machine can
+#: carry hundreds.
+_EXCLUSION_LIST_CAP = 8
+
+
+def _exclusion_items(raw) -> Optional[List[str]]:
+    """The listed exclusions, or None if Defender redacted the list.
+
+    Unelevated, Get-MpPreference does not refuse -- it answers with one string
+    saying it will not tell you, which `len()` counted as one exclusion.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    items = [str(item).strip() for item in raw if str(item).strip()]
+    if any(_EXCLUSION_REDACTED in item.lower() for item in items):
+        return None
+    return items
+
 
 def _exclusion_count(raw) -> Optional[int]:
     """How many exclusions, or None if Defender redacted the list."""
-    if raw is None:
-        return 0
-    if isinstance(raw, str):
-        raw = [raw]
-    if any(isinstance(item, str) and _EXCLUSION_REDACTED in item.lower()
-           for item in raw):
-        return None
-    return len(raw)
+    items = _exclusion_items(raw)
+    return None if items is None else len(items)
+
+
+def _exclusion_entries_text(items: List[str]) -> str:
+    text = "; ".join(items[:_EXCLUSION_LIST_CAP])
+    extra = len(items) - _EXCLUSION_LIST_CAP
+    return f"{text} … (+{extra} more)" if extra > 0 else text
 
 
 def check_defender_exclusions() -> Dict[str, Any]:
@@ -3427,23 +3454,26 @@ def check_defender_exclusions() -> Dict[str, Any]:
         if reason is not None:
             return {"status": "Unknown", "color": "amber", "available": False,
                     "details": [("Exclusions", f"Could not read: {reason}")]}
-        counts = {label: _exclusion_count(prefs.get(field))
-                  for label, field in (("Paths", "ExclusionPath"),
-                                       ("Processes", "ExclusionProcess"),
-                                       ("Extensions", "ExclusionExtension"))}
-        if any(c is None for c in counts.values()):
+        listed = {label: _exclusion_items(prefs.get(field))
+                  for label, field in _EXCLUSION_FIELDS}
+        if any(items is None for items in listed.values()):
             return {"status": "Unknown", "color": "amber", "available": False,
                     "details": [("Exclusions",
                                  "Defender will not list exclusions to a "
                                  "non-administrator -- run elevated to see "
                                  "them")]}
-        total = sum(counts.values())
+        total = sum(len(items) for items in listed.values())
         color = "green" if total == 0 else ("amber" if total <= 5 else "red")
+        details = [(label, str(len(listed[label])))
+                   for label, _field in _EXCLUSION_FIELDS]
+        for label, _field in _EXCLUSION_FIELDS:
+            if listed[label]:
+                details.append((f"{label} excluded",
+                                _exclusion_entries_text(listed[label])))
         return {"status": f"{total} exclusions", "color": color,
-                "available": True, "total": total,
-                "details": [(label, str(count))
-                            for label, count in counts.items()]}
+                "available": True, "total": total, "details": details}
     except Exception:
+        logger.warning("check_defender_exclusions failed", exc_info=True)
         return {"status": "Error", "color": "amber", "details": []}
 
 # Threat actions

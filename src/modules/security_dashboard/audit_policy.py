@@ -16,7 +16,8 @@ from typing import Callable, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 _TIMEOUT_S = 15
-_NEEDS_ADMIN = "needs administrator rights"
+_PRIVILEGE_NOT_HELD = 1314
+_NEEDS_ADMIN ="needs administrator rights"
 _INCLUSION_COLUMN = 4  # Machine, Target, Subcategory, GUID, Inclusion, Exclusion
 
 Run = Callable[[List[str]], Tuple[int, str, str]]
@@ -48,12 +49,12 @@ SUBCATEGORIES = (
 )
 
 
+_EXACT = {"no auditing": (False, False), "success": (True, False),
+          "failure": (False, True), "success and failure": (True, True)}
+
+
 def _flags(text: str) -> Optional[Setting]:
-    low = text.strip().lower()
-    if low == "no auditing":
-        return (False, False)
-    success, failure = "success" in low, "failure" in low
-    return (success, failure) if (success or failure) else None
+    return _EXACT.get(text.strip().lower())
 
 
 def default_flags(sub: Subcategory) -> Setting:
@@ -69,10 +70,16 @@ def parse_r(csv_text: str) -> Optional[Setting]:
     The header is localized, so the Inclusion Setting column is the fifth.
     Text that is not one of the four known settings is None, never a guess.
     """
-    rows = [r for r in csv.reader(io.StringIO(csv_text)) if r]
+    text = _inclusion_text(csv_text)
+    return None if text is None else _flags(text)
+
+
+def _inclusion_text(csv_text: str) -> Optional[str]:
+    rows = [r for r in csv.reader(io.StringIO(csv_text.lstrip("﻿")))
+            if any(c.strip() for c in r)]
     if len(rows) < 2 or len(rows[-1]) <= _INCLUSION_COLUMN:
         return None
-    return _flags(rows[-1][_INCLUSION_COLUMN])
+    return rows[-1][_INCLUSION_COLUMN]
 
 
 def _default_run(args: List[str]) -> Tuple[int, str, str]:
@@ -99,13 +106,16 @@ def read(sub: Subcategory,
     except OSError as e:
         logger.warning("audit_policy: auditpol could not run: %s", e)
         return None, f"auditpol could not run: {e}"
-    if _refused(f"{out}\n{err}"):
+    if rc == _PRIVILEGE_NOT_HELD or _refused(f"{out}\n{err}"):
         return None, _NEEDS_ADMIN
+    if rc != 0:
+        return None, f"auditpol exited {rc}"
     setting = parse_r(out)
     if setting is None:
-        logger.warning("audit_policy: unrecognised auditpol output for %s (rc=%s)",
-                       sub.name, rc)
-        return None, f"auditpol answered with a setting this app does not recognise (exit {rc})"
+        logger.warning("audit_policy: unrecognised auditpol output for %s: %r",
+                       sub.name, out[-200:])
+        return None, ("auditpol answered with a setting this app does not "
+                      f"recognise: {_inclusion_text(out)!r}")
     return setting, None
 
 

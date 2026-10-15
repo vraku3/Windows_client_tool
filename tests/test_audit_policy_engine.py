@@ -121,3 +121,38 @@ def test_refused_read_is_none_not_false(monkeypatch):
                         lambda sub, run=None: (None, "needs administrator rights"))
     for sub in SUBCATEGORIES:
         assert _ctl(sub).read() is None
+
+
+def test_nonzero_exit_never_yields_a_value():
+    good = _csv("Success")
+    s, why = audit_policy.read(PROC, run=lambda a: (1314, good, ""))
+    assert s is None and "administrator" in why
+    s, why = audit_policy.read(PROC, run=lambda a: (5, good, ""))
+    assert s is None and "exited 5" in why
+
+
+@pytest.mark.parametrize("text", ["Unsuccessful", "Successo e fallimento",
+                                  "No Auditing!", ""])
+def test_only_the_four_exact_values_are_recognised(text):
+    assert audit_policy.parse_r(_csv(text)) is None
+    s, why = audit_policy.read(PROC, run=lambda a: (0, _csv(text), ""))
+    assert s is None and repr(text) in why
+
+
+def test_exact_values_are_case_insensitive_and_trimmed():
+    assert audit_policy.parse_r(_csv("  success AND failure ")) == (True, True)
+
+
+def test_parse_r_tolerates_quotes_bom_and_blank_lines():
+    text = ("\ufeff\n" + HEADER + "\n"
+            f'"PC","System","Process Creation","{PROC.guid}",'
+            '"Success and Failure",""\n\n')
+    assert audit_policy.parse_r(text) == (True, True)
+
+
+def test_a_control_wanting_both_flags_needs_both(monkeypatch):
+    c = _ctl(next(s for s in SUBCATEGORIES if s.name == "Logon"))
+    for setting in [(True, False), (False, True)]:
+        monkeypatch.setattr(audit_policy, "read",
+                            lambda sub, run=None, s=setting: (s, None))
+        assert c.read() is False

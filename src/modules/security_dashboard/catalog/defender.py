@@ -21,8 +21,9 @@ pass reports them as REFUSED rather than as applied (Task 11). The machine this
 was written on has Tamper Protection ON and Defender in Passive Mode, so no
 Defender write here has been verified end-to-end against a live Defender.
 """
-from typing import Tuple
+from typing import Any, Dict, Tuple
 
+from .. import asr_rules, snapshots
 from ..security_reader import (
     check_applocker, check_cloud_protection, check_controlled_folder_access,
     check_defender, check_defender_archive_scanning, check_defender_asr_rules,
@@ -141,6 +142,82 @@ def _threat_control(suffix: str, severity: str, param: str) -> SecurityControl:
         off_steps=(_set_pref(f"-{param} None", _REVERT_THREAT_ACTION),),
         desired=2,
         risk=Risk.LOW,
+    )
+
+
+#: A control's comparable value is a bool (blocking or not), so a revert can
+#: only put the rule back to Enabled or Disabled -- it cannot know whether the
+#: machine had the rule in Audit, Warn or NotConfigured before.
+_ASR_REVERT = {"True": "Enabled", "False": "Disabled"}
+
+
+def _asr_step(rule: asr_rules.Rule, enable: bool) -> Dict[str, Any]:
+    """One ASR rule, set or cleared by GUID.
+
+    `Add-MpPreference`/`Remove-MpPreference` address a SINGLE rule, which is
+    exactly what a per-rule control needs -- `Set-MpPreference` on the whole
+    Ids/Actions array would rewrite every other rule. The GUID is single-quoted
+    so the braces are not read as a PowerShell scriptblock.
+    """
+    ids = f"-AttackSurfaceReductionRules_Ids '{rule.guid}'"
+    actions = "-AttackSurfaceReductionRules_Actions"
+    revert = f"{_PS}Add-MpPreference {ids} {actions} ${{old}}"
+    if enable:
+        command = f"{_PS}Add-MpPreference {ids} {actions} Enabled"
+    else:
+        command = f"{_PS}Remove-MpPreference {ids}"
+    return {"type": "script", "command": command,
+            "revert_template": revert, "revert_values": _ASR_REVERT}
+
+
+def _asr_reader(rule: asr_rules.Rule):
+    def read() -> Dict[str, Any]:
+        prefs = snapshots.mp_preference()
+        reason = snapshots.unavailable("mp_preference")
+        if reason is not None:
+            return {"status": "Unknown", "color": "amber", "available": False,
+                    "details": [(rule.name, f"Could not read: {reason}")]}
+        action = asr_rules.state_for(asr_rules.read_actions(prefs), rule)
+        if action is None:
+            return {"status": "Unknown", "color": "amber", "available": False,
+                    "details": [(rule.name,
+                                 "Defender did not report its ASR rule state")]}
+        blocking = action == asr_rules.ACTION_BLOCK
+        details = [(rule.name, asr_rules.state_text(action))]
+        if rule.caution:
+            details.append(("Before you enforce it", rule.caution))
+        return {"status": asr_rules.state_text(action),
+                "color": "green" if blocking else "amber",
+                "available": True, "enabled": blocking, "action": action,
+                "details": details}
+    return read
+
+
+def _asr_control(rule: asr_rules.Rule) -> SecurityControl:
+    """One Attack Surface Reduction rule as its own control.
+
+    Microsoft's three "Standard protection" rules carry `desired=True` (that is
+    Microsoft's own recommended preset, so they are in the recommended
+    baseline). The other fifteen are `desired=None`: the catalog has no opinion,
+    because which of them a machine should enforce depends on what it runs --
+    the card shows the real state and offers the action without calling an
+    unconfigured rule a problem.
+    """
+    why = ("Windows leaves every ASR rule off by default, so this technique is "
+           "unblocked until the rule is set.")
+    if rule.caution:
+        why = f"{why} {rule.caution}"
+    return SecurityControl(
+        id=f"asr_{rule.slug}",
+        title=rule.name,
+        category=Category.DEFENDER,
+        description=rule.why,
+        why_it_matters=why,
+        reader=_asr_reader(rule),
+        on_steps=(_asr_step(rule, True),),
+        off_steps=(_asr_step(rule, False),),
+        desired=True if rule.standard else None,
+        risk=Risk.LOW if rule.standard else Risk.MEDIUM,
     )
 
 
@@ -543,4 +620,4 @@ CONTROLS: Tuple[SecurityControl, ...] = (
                          "load policy itself is a boot setting under Group "
                          "Policy > System > Early Launch Antimalware.",
     ),
-)
+) + tuple(_asr_control(rule) for rule in asr_rules.RULES)

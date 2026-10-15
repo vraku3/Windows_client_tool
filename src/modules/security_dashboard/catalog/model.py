@@ -53,6 +53,12 @@ class SecurityControl:
     #: "enabled" key; multi-valued controls (NTLM level, cached logon count,
     #: cloud block level) supply their own.
     read_value: Optional[Callable[[Dict[str, Any]], Any]] = None
+    #: For a control whose comparable value is not what a revert needs (a
+    #: bool "big enough" where the revert needs the exact old size): returns
+    #: the exact prior setting as a revert token, or None if it cannot be
+    #: read. Staging calls it once and fills `${old}` from it instead of from
+    #: `from_value`; each step's `revert_pattern` must match the token.
+    revert_probe: Optional[Callable[[], Optional[str]]] = None
 
     def __post_init__(self):
         has_reason = bool(self.read_only_reason and self.read_only_reason.strip())

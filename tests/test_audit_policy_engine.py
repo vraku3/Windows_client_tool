@@ -86,24 +86,60 @@ def _ctl(sub):
 
 
 @pytest.mark.parametrize("sub", SUBCATEGORIES, ids=lambda s: s.name)
-def test_control_shape_and_revert_restores_the_default(sub):
+def test_control_shape_off_is_the_default_and_revert_is_the_captured_pair(sub):
+    """Final-review C1/C2: script steps whose revert is the EXACT captured
+    success/failure pair (was: a `command` step that never reverted)."""
     c = _ctl(sub)
     assert c.category is Category.AUDIT_LOGGING
     assert c.risk is Risk.LOW and c.requires_admin
+    assert c.revert_probe is not None
+    revert = f"auditpol /set /subcategory:{sub.guid} ${{old}}"
     (off,) = c.off_steps
     s, f = audit_policy.default_flags(sub)
-    assert off == {"type": "command", "cmd": audit_policy.set_command(sub, s, f)}
+    assert off["type"] == "script"
+    assert off["command"] == audit_policy.set_command(sub, s, f)
+    assert off["revert_template"] == revert
     (on,) = c.on_steps
-    assert on["type"] == "command" and sub.guid in on["cmd"]
+    assert on["type"] == "script" and on["revert_template"] == revert
+    assert on["command"] == audit_policy.enable_command(sub)
 
 
-def test_on_steps_never_turn_off_what_windows_enables():
+@pytest.mark.parametrize("sub", SUBCATEGORIES, ids=lambda s: s.name)
+def test_apply_only_enables_what_is_wanted_and_never_disables(sub):
+    """Final-review C2 (replaces "wanted OR default"): Failure-only Process
+    Creation must not get `/failure:disable` from an Apply."""
+    cmd = _ctl(sub).on_steps[0]["command"]
+    assert ":disable" not in cmd
+    assert ("/success:enable" in cmd) is sub.want_success
+    assert ("/failure:enable" in cmd) is sub.want_failure
+    assert ("/success:" in cmd) is sub.want_success
+    assert ("/failure:" in cmd) is sub.want_failure
+
+
+def test_apply_command_exact_forms():
     lockout = next(s for s in SUBCATEGORIES if s.name == "Account Lockout")
-    # wants Failure, default is Success -> both enabled
-    assert _ctl(lockout).on_steps[0]["cmd"].endswith(
-        "/success:enable /failure:enable")
-    assert _ctl(PROC).on_steps[0]["cmd"].endswith(
-        "/success:enable /failure:disable")
+    assert _ctl(lockout).on_steps[0]["command"] == (
+        f"auditpol /set /subcategory:{lockout.guid} /failure:enable")
+    assert _ctl(PROC).on_steps[0]["command"] == (
+        f"auditpol /set /subcategory:{PROC.guid} /success:enable")
+
+
+@pytest.mark.parametrize("setting,pair", [
+    ((True, True), "/success:enable /failure:enable"),
+    ((True, False), "/success:enable /failure:disable"),
+    ((False, True), "/success:disable /failure:enable"),
+    ((False, False), "/success:disable /failure:disable"),
+])
+def test_probe_returns_one_of_the_four_pairs(monkeypatch, setting, pair):
+    monkeypatch.setattr(audit_policy, "read", lambda sub, run=None: (setting, None))
+    assert _ctl(PROC).revert_probe() == pair
+    assert pair in audit_policy.REVERT_PAIRS
+
+
+def test_probe_is_none_when_unreadable(monkeypatch):
+    monkeypatch.setattr(audit_policy, "read",
+                        lambda sub, run=None: (None, "needs administrator rights"))
+    assert _ctl(PROC).revert_probe() is None
 
 
 def test_read_value_means_everything_wanted_is_included(monkeypatch):

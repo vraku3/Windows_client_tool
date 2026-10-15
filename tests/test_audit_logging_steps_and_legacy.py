@@ -11,7 +11,13 @@ MB = 1024 * 1024
 
 
 def _cmd(log, arg):
-    return {"type": "command", "cmd": f"wevtutil sl {log} {arg}"}
+    """A `wevtutil sl` script step whose revert puts back the value captured
+    by the control's probe (final-review C1: a `command` step never reverts)."""
+    flag = arg.split(":", 1)[0]
+    pattern = r"\d{1,12}" if flag == "/ms" else "true|false"
+    return {"type": "script", "command": f"wevtutil sl {log} {arg}",
+            "revert_template": f"wevtutil sl {log} {flag}:${{old}}",
+            "revert_pattern": pattern}
 
 
 _PS = "Microsoft-Windows-PowerShell/Operational"
@@ -43,6 +49,8 @@ def _ctl(cid):
 def _at(monkeypatch, name, mb):
     st = LogStatus(name, True, enabled=True, max_bytes=mb * MB, mode="circular")
     monkeypatch.setattr(log_readiness, "read_log", lambda n, run=None: st)
+    monkeypatch.setattr(log_readiness, "read_setting",
+                        lambda n, key, run=None: str(mb * MB) if key == "maxSize" else "true")
 
 
 @pytest.mark.parametrize("cid", sorted(EXACT))

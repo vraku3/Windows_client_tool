@@ -80,7 +80,11 @@ def test_steps_are_constant_and_revertible():
         assert c.on_steps and c.off_steps and c.requires_admin
         assert c.desired is True and not c.requires_reboot
         for s in c.on_steps + c.off_steps:
-            assert s["type"] in ("command", "registry", "registry_delete")
+            assert s["type"] in ("script", "registry", "registry_delete")
+            if s["type"] == "script":
+                # final-review C1: every shell write reverts to a captured value
+                assert "${old}" in s["revert_template"] and s["revert_pattern"]
+                assert c.revert_probe is not None
     assert _ctl("process_cmdline_auditing").off_steps[0]["type"] == "registry_delete"
 
 

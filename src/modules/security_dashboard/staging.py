@@ -17,13 +17,23 @@ already went wrong elsewhere in this project:
   in a worker thread, with no user in front of it. It is refused here instead,
   where the message can still name the control.
 """
+import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 from .catalog.audit_logging import migrate_legacy_value
 from .catalog.model import Risk, SecurityControl
 
+logger = logging.getLogger(__name__)
+
 _LEGACY_SHRINK_GUARDED = ("security_log_size", "system_log_size")
+
+#: Shown in the review dialog for a change whose prior setting the control's
+#: revert probe could not capture.
+NO_PROBE_NOTE = ("cannot be undone automatically: the setting before this "
+                 "change could not be read, so nothing records what to put "
+                 "back (an elevated apply reads it again first)")
 
 
 class _Unread:
@@ -60,12 +70,51 @@ def _revert_command(template: str, values: Optional[Dict[str, str]],
     return template.replace("${old}", old) if old is not None else None
 
 
+def _probed_command(template: str, pattern: Optional[str],
+                    token: Optional[str]) -> Optional[str]:
+    """Fill `${old}` from a revert probe's token, only if the step's own
+    `revert_pattern` matches it in full. No pattern, no command: a token off
+    the machine never reaches a shell unchecked."""
+    if not isinstance(token, str) or not pattern:
+        return None
+    if re.fullmatch(pattern, token) is None:
+        logger.warning("revert token %r does not match %r; no revert command",
+                       token, pattern)
+        return None
+    return template.replace("${old}", token)
+
+
+def _probe(control: SecurityControl) -> Optional[str]:
+    try:
+        token = control.revert_probe()
+    except Exception:
+        logger.warning("control %r: revert probe raised; it cannot be undone "
+                       "automatically", control.id, exc_info=True)
+        return None
+    return token if isinstance(token, str) else None
+
+
 @dataclass(frozen=True)
 class PendingChange:
     control_id: str
     control: SecurityControl
     from_value: Optional[Any]
     to_value: Any
+    #: The control's `revert_probe()` answer, captured when staged.
+    revert_token: Optional[str] = None
+
+    @property
+    def revert_note(self) -> Optional[str]:
+        """Why this change cannot be undone, when its probe captured nothing."""
+        if self.control.revert_probe is not None and not self.has_probed_revert:
+            return NO_PROBE_NOTE
+        return None
+
+    @property
+    def has_probed_revert(self) -> bool:
+        return any(step.get("revert_command")
+                   for step in self.resolved_steps()
+                   if step.get("type") == "script")
 
     def resolved_steps(self) -> Tuple[Dict, ...]:
         """The steps to run, with `script` reverts computed from `from_value`.
@@ -91,6 +140,11 @@ class PendingChange:
           reports 0 for an unconfigured severity and 0 is not a member of the
           ThreatAction enum, so no command reverts to it.
 
+        A control with a `revert_probe` takes none of these: its token,
+        captured at staging, fills `${old}` only if the step's
+        `revert_pattern` matches it in full; otherwise there is no revert
+        command and `revert_note` says so.
+
         Steps are copied before anything is popped: the catalog's dicts are
         shared across every ChangeSet in the process.
         """
@@ -99,7 +153,11 @@ class PendingChange:
             step = dict(step)
             template = step.pop("revert_template", None)
             values = step.pop("revert_values", None)
-            if template:
+            pattern = step.pop("revert_pattern", None)
+            if template and self.control.revert_probe is not None:
+                step["revert_command"] = _probed_command(
+                    template, pattern, self.revert_token)
+            elif template:
                 step["revert_command"] = _revert_command(
                     template, values, self.from_value)
             resolved.append(step)
@@ -166,9 +224,10 @@ class ChangeSet:
         if current == to_value:
             self._changes.pop(control.id, None)
             return
+        token = _probe(control) if control.revert_probe is not None else None
         self._changes[control.id] = PendingChange(
             control_id=control.id, control=control,
-            from_value=current, to_value=to_value)
+            from_value=current, to_value=to_value, revert_token=token)
 
     def remove(self, control_id: str) -> None:
         self._changes.pop(control_id, None)

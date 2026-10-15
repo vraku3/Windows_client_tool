@@ -119,16 +119,44 @@ def read(sub: Subcategory,
     return setting, None
 
 
-def set_command(sub: Subcategory, success: bool, failure: bool) -> str:
-    """Constant-argument command built only from the GUID table."""
+def switches(success: bool, failure: bool) -> str:
+    """The exact `/success:X /failure:Y` pair for a setting -- one of REVERT_PAIRS."""
     def word(on: bool) -> str:
         return "enable" if on else "disable"
 
-    return (f"auditpol /set /subcategory:{sub.guid} "
-            f"/success:{word(success)} /failure:{word(failure)}")
+    return f"/success:{word(success)} /failure:{word(failure)}"
 
 
-def on_flags(sub: Subcategory) -> Setting:
-    """What is wanted, plus whatever Windows already enables by default."""
-    d_success, d_failure = default_flags(sub)
-    return (sub.want_success or d_success, sub.want_failure or d_failure)
+#: The only four strings a revert may put after the GUID. A captured value is
+#: checked against this set before it gets anywhere near a shell.
+REVERT_PAIRS = frozenset(switches(s, f) for s in (True, False) for f in (True, False))
+
+
+def set_command(sub: Subcategory, success: bool, failure: bool) -> str:
+    """Constant-argument command built only from the GUID table: sets BOTH flags."""
+    return f"auditpol /set /subcategory:{sub.guid} {switches(success, failure)}"
+
+
+def enable_command(sub: Subcategory) -> str:
+    """Turn ON what is wanted and say nothing about the rest.
+
+    `auditpol` leaves a flag it is not given exactly as it is, so a machine
+    already auditing Failure keeps Failure when Success is added. Never
+    `:disable` -- applying a recommendation must not switch any auditing off.
+    """
+    parts = [f"auditpol /set /subcategory:{sub.guid}"]
+    if sub.want_success:
+        parts.append("/success:enable")
+    if sub.want_failure:
+        parts.append("/failure:enable")
+    return " ".join(parts)
+
+
+def current_pair(sub: Subcategory, run: Optional[Run] = None) -> Optional[str]:
+    """The setting right now as one of REVERT_PAIRS, or None if it cannot be read."""
+    setting, why = read(sub, run)
+    if setting is None:
+        logger.info("audit_policy: %s cannot be captured for revert: %s", sub.name, why)
+        return None
+    pair = switches(*setting)
+    return pair if pair in REVERT_PAIRS else None

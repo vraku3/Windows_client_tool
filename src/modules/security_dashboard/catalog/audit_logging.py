@@ -2,13 +2,20 @@
 
 Sizes come from `wevtutil gl`, which answers unelevated even for Security; only
 the coverage line (the oldest event) needs elevation there. Every write is a
-`wevtutil sl` with constant arguments, takes effect immediately, and has an
-off step that puts Windows' default back. A refused read is `available: False`.
+`wevtutil sl` or `auditpol /set` with constant arguments and takes effect
+immediately. The readers answer a bool ("big enough", "recording"), which is
+not what a revert needs, so each of these controls has a `revert_probe` that
+captures the EXACT prior setting (size in bytes, true/false, the audit
+success/failure pair) at staging time; Revert puts that back. A probe answer
+is validated against a regex/allowlist here and again by the step's
+`revert_pattern` before it reaches a shell. A refused read is
+`available: False`.
 """
 import logging
+import re
 import winreg
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from .. import audit_policy, log_readiness
 from .accounts import _dword
@@ -116,8 +123,40 @@ def _read_cmdline() -> Dict[str, Any]:
             "details": [(_CMDLINE_VALUE, "1" if on else "not set")]}
 
 
-def _sl(log: str, arg: str) -> Dict[str, Any]:
-    return {"type": "command", "cmd": f"wevtutil sl {log} {arg}"}
+#: What a captured prior setting may look like before it is put in a command.
+SIZE_PATTERN = r"\d{1,12}"
+BOOL_PATTERN = r"true|false"
+AUDIT_PATTERN = "|".join(re.escape(p) for p in sorted(audit_policy.REVERT_PAIRS))
+
+
+def _sl(log: str, flag: str, value: Any, pattern: str) -> Dict[str, Any]:
+    """`wevtutil sl` that reverts to the value captured by the control's probe."""
+    return {"type": "script", "command": f"wevtutil sl {log} /{flag}:{value}",
+            "revert_template": f"wevtutil sl {log} /{flag}:${{old}}",
+            "revert_pattern": pattern}
+
+
+def _size_probe(log: str) -> Callable[[], Optional[str]]:
+    def probe() -> Optional[str]:
+        raw = log_readiness.read_setting(log, "maxSize")
+        token = (raw or "").strip()
+        return token if re.fullmatch(SIZE_PATTERN, token) else None
+    return probe
+
+
+def _enabled_probe(log: str) -> Callable[[], Optional[str]]:
+    def probe() -> Optional[str]:
+        raw = log_readiness.read_setting(log, "enabled")
+        token = (raw or "").strip().lower()
+        return token if re.fullmatch(BOOL_PATTERN, token) else None
+    return probe
+
+
+def _audit_probe(sub: audit_policy.Subcategory) -> Callable[[], Optional[str]]:
+    def probe() -> Optional[str]:
+        pair = audit_policy.current_pair(sub)
+        return pair if pair in audit_policy.REVERT_PAIRS else None
+    return probe
 
 
 def _size_control(cid: str, title: str, log: str, want: int, default: int,
@@ -126,10 +165,11 @@ def _size_control(cid: str, title: str, log: str, want: int, default: int,
         id=cid, title=title, category=Category.AUDIT_LOGGING,
         description=f"How much of the {log} log Windows keeps before "
                     "overwriting the oldest events.",
-        why_it_matters=why, reader=reader,
-        on_steps=(_sl(log, f"/ms:{want}"),),
-        off_steps=(_sl(log, f"/ms:{default}"),),
-        desired=True, risk=Risk.LOW)
+        why_it_matters=why + " Revert puts back the exact size it had before.",
+        reader=reader,
+        on_steps=(_sl(log, "ms", want, SIZE_PATTERN),),
+        off_steps=(_sl(log, "ms", default, SIZE_PATTERN),),
+        desired=True, risk=Risk.LOW, revert_probe=_size_probe(log))
 
 
 _SEC_MIN = 196_608 * 1024
@@ -184,26 +224,34 @@ def _audit_reader(sub: audit_policy.Subcategory) -> Callable[[], Dict[str, Any]]
     return read
 
 
+def _audit_step(sub: audit_policy.Subcategory, command: str) -> Dict[str, Any]:
+    return {"type": "script", "command": command,
+            "revert_template": f"auditpol /set /subcategory:{sub.guid} ${{old}}",
+            "revert_pattern": AUDIT_PATTERN}
+
+
 def _audit_control(sub: audit_policy.Subcategory) -> SecurityControl:
     snake = sub.name.lower().replace(" ", "_")
-    on = audit_policy.on_flags(sub)
     off = audit_policy.default_flags(sub)
     return SecurityControl(
         id=f"audit_{snake}", title=f"Audit: {sub.name}",
         category=Category.AUDIT_LOGGING,
         description=f"Whether Windows writes {sub.name} events to the "
-                    "Security log (set by subcategory GUID, so it works on "
-                    "any display language).",
+                    "Security log. Set by subcategory GUID, so the write does "
+                    "not depend on the display language; the reading "
+                    "recognises only the four English settings (No Auditing, "
+                    "Success, Failure, Success and Failure) and reports "
+                    "anything else as unknown.",
         why_it_matters="Without this audit setting the Security log has "
                        "nothing to say about it when an investigation needs "
-                       "it. Reverting restores the Windows default "
-                       f"({sub.default}).",
+                       "it. Applying only switches ON what is wanted and never "
+                       "turns any auditing off; Revert puts back the exact "
+                       "success/failure setting it had before. Switching it "
+                       f"off sets the Windows default ({sub.default}).",
         reader=_audit_reader(sub),
-        on_steps=({"type": "command",
-                   "cmd": audit_policy.set_command(sub, *on)},),
-        off_steps=({"type": "command",
-                    "cmd": audit_policy.set_command(sub, *off)},),
-        desired=True, risk=Risk.LOW)
+        on_steps=(_audit_step(sub, audit_policy.enable_command(sub)),),
+        off_steps=(_audit_step(sub, audit_policy.set_command(sub, *off)),),
+        desired=True, risk=Risk.LOW, revert_probe=_audit_probe(sub))
 
 
 CONTROLS: Tuple[SecurityControl, ...] = (
@@ -237,9 +285,9 @@ CONTROLS: Tuple[SecurityControl, ...] = (
                        "task history is the first place to look, and with it "
                        "off there is nothing to read.",
         reader=_read_taskscheduler,
-        on_steps=(_sl(_TASK_LOG, "/e:true"),),
-        off_steps=(_sl(_TASK_LOG, "/e:false"),),
-        desired=True, risk=Risk.LOW),
+        on_steps=(_sl(_TASK_LOG, "e", "true", BOOL_PATTERN),),
+        off_steps=(_sl(_TASK_LOG, "e", "false", BOOL_PATTERN),),
+        desired=True, risk=Risk.LOW, revert_probe=_enabled_probe(_TASK_LOG)),
     SecurityControl(
         id="process_cmdline_auditing", title="Command line in process events",
         category=Category.AUDIT_LOGGING,

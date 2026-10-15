@@ -145,19 +145,34 @@ def _read_oldest(name: str, run: Run, st: LogStatus) -> None:
         st.oldest = parse_oldest(text)
 
 
+def _read_gl(name: str, run: Run) -> Tuple[Optional[Dict[str, str]], Optional[LogStatus]]:
+    """`(config, None)` from `wevtutil gl`, or `(None, status saying why not)`."""
+    rc, text, refusal = _ask(run, ["wevtutil", "gl", name])
+    if refusal:
+        return None, LogStatus(name, None, refused=refusal)
+    if _is_access_denied(rc or 0, text):
+        return None, LogStatus(name, None, refused=_NEEDS_ADMIN)
+    if rc != 0:
+        if _is_not_found(rc or 0, text):
+            return None, LogStatus(name, False)
+        return None, LogStatus(name, None, refused=f"wevtutil failed: {text.strip()[:120]}")
+    return parse_gl(text), None
+
+
+def read_setting(name: str, key: str, run: Optional[Run] = None) -> Optional[str]:
+    """One raw `wevtutil gl` value (e.g. "maxSize", "enabled"), or None when the
+    log is absent, the read was refused, or the key is not there. Configuration
+    only -- no event query. Callers validate the text before using it."""
+    info, _ = _read_gl(name, run or _default_run)
+    return None if info is None else info.get(key)
+
+
 def read_log(name: str, run: Optional[Run] = None) -> LogStatus:
     """Configuration and real coverage of one log. Never raises."""
     run = run or _default_run
-    rc, text, refusal = _ask(run, ["wevtutil", "gl", name])
-    if refusal:
-        return LogStatus(name, None, refused=refusal)
-    if _is_access_denied(rc or 0, text):
-        return LogStatus(name, None, refused=_NEEDS_ADMIN)
-    if rc != 0:
-        if _is_not_found(rc or 0, text):
-            return LogStatus(name, False)
-        return LogStatus(name, None, refused=f"wevtutil failed: {text.strip()[:120]}")
-    info = parse_gl(text)
+    info, failed = _read_gl(name, run)
+    if info is None:
+        return failed
     st = LogStatus(name, True, enabled=info.get("enabled", "").lower() == "true",
                    max_bytes=_max_bytes(info), mode=_mode(info))
     _read_oldest(name, run, st)

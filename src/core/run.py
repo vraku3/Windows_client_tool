@@ -66,29 +66,59 @@ def run(
     if isinstance(argv, str):  # pragma: no cover - programmer error
         raise TypeError("run() takes a list of arguments, not a command string")
 
-    logger.debug("run: %s (timeout=%ss)", subprocess.list2cmdline(list(argv)), timeout)
+    args = list(argv)
+    logger.debug("run: %s (timeout=%ss)", subprocess.list2cmdline(args), timeout)
+    proc = subprocess.Popen(
+        args,
+        stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=cwd,
+        creationflags=CREATE_NO_WINDOW,
+    )
     try:
-        return subprocess.run(
-            list(argv),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            cwd=cwd,
-            check=check,
-            input=input_text,
-            creationflags=CREATE_NO_WINDOW,
-        )
+        stdout, stderr = proc.communicate(input_text, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        logger.warning("run: timed out after %ss: %s",
-                       timeout, subprocess.list2cmdline(list(argv)))
-        return subprocess.CompletedProcess(
-            args=list(argv),
-            returncode=TIMED_OUT,
-            stdout=_as_text(exc.stdout),
-            stderr=f"timed out after {timeout}s",
-        )
+        logger.warning("run: timed out after %ss: %s", timeout, subprocess.list2cmdline(args))
+        return subprocess.CompletedProcess(args, TIMED_OUT, _reap(proc, exc),
+                                           f"timed out after {timeout}s")
+    if check and proc.returncode:
+        raise subprocess.CalledProcessError(proc.returncode, args, stdout, stderr)
+    return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+
+
+#: How long to wait for output after the tree is killed. A descendant that
+#: still holds the pipe after `taskkill /T /F` is not worth waiting for.
+_DRAIN_TIMEOUT = 5.0
+
+
+def _reap(proc: "subprocess.Popen[str]", exc: subprocess.TimeoutExpired) -> str:
+    """Kill the WHOLE process tree, then drain with a bounded wait.
+
+    `subprocess.run(timeout=)` does not keep the promise this module makes:
+    on a timeout it kills only the direct child and then calls
+    `communicate()` again with NO timeout, so a grandchild still holding the
+    inherited stdout pipe makes it wait for that grandchild to finish. Here
+    `run(["cmd", "/c", "ping -n 10 ..."], timeout=0.4)` took ~9 s -- ping's
+    whole run -- and pytest's own timeout killed the suite (2026-10-15). The
+    same trap hung Debloat's Apps tab for 20 minutes (`appx_service._run_ps`).
+    """
+    try:
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
+                       timeout=10, creationflags=CREATE_NO_WINDOW)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.warning("run: taskkill of pid %s failed: %s", proc.pid, e)
+        proc.kill()
+    try:
+        stdout, _stderr = proc.communicate(timeout=_DRAIN_TIMEOUT)
+        return _as_text(stdout) or _as_text(exc.stdout)
+    except subprocess.TimeoutExpired:
+        logger.warning("run: pid %s still held its output pipe %ss after taskkill /T /F; "
+                       "giving up on the drain", proc.pid, _DRAIN_TIMEOUT)
+        return _as_text(exc.stdout)
 
 
 def run_ps(script: str, *, timeout: float = PS_DEFAULT_TIMEOUT) -> "subprocess.CompletedProcess[str]":

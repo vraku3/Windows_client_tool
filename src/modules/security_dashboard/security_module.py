@@ -9,7 +9,6 @@ Each toggle stores its previous state for per-setting revert.
 import ctypes
 import os
 import threading
-import re
 import shutil
 import tempfile
 from ctypes import wintypes
@@ -19,10 +18,9 @@ from typing import Any, Dict, List, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QDialog, QHeaderView, QMenu, QFileDialog,
     QPushButton, QLabel, QFrame, QProgressBar, QCheckBox, QLineEdit,
-    QPlainTextEdit, QTabWidget, QTableWidget, QGroupBox, QScrollArea, QSizePolicy,
+    QPlainTextEdit, QTabWidget, QTableWidget, QScrollArea, QSizePolicy,
 )
 from PyQt6.QtCore import QSize, QThreadPool, pyqtSignal
-from PyQt6.QtGui import QColor
 
 import logging
 
@@ -34,7 +32,6 @@ from core.search_provider import FilterField, SearchProvider, SearchQuery, Searc
 from core.table_ui import centered_item, fit_table
 from core.worker import Worker, COMWorker
 from ui.error_banner import ErrorBanner
-from ui.empty_state import EmptyState
 from modules.security_dashboard import snapshots
 from modules.security_dashboard.catalog import load_catalog
 from modules.security_dashboard.catalog.model import Category, ControlState
@@ -47,9 +44,9 @@ from modules.security_dashboard.profile import (
     read_profile, write_profile)
 from modules.security_dashboard.reverting import revert_batch
 from modules.security_dashboard.staging import ChangeSet
+from modules.security_dashboard.triage_tab import TriageTab
 from modules.security_dashboard.security_reader import (
     get_overview_status,
-    get_security_events,
     run_quick_scan,
     run_update_definitions,
 )
@@ -837,7 +834,6 @@ class SecurityDashboardModule(BaseModule):
         #: The optional_features snapshot is an 8s DISM enumeration;
         #: it is warmed once, when the module is first opened.
         self._snapshot_prefetch_started = False
-        self._loaded_events = False
         #: The catalog, and the pane's own copy of what it last read. Both
         #: are what staging and the filters work off, so neither the machine
         #: nor a snapshot is consulted again to answer "is this a problem".
@@ -850,8 +846,7 @@ class SecurityDashboardModule(BaseModule):
         self._widget: Optional[QWidget] = None
         self._history_rows: List[Any] = []
         self._last_baseline_plan: Optional[dict] = None
-        self._events_progress: Optional[QProgressBar] = None
-        self._events_table: Optional[QTableWidget] = None
+        self._triage: Optional[TriageTab] = None
 
     def get_refresh_interval(self) -> Optional[int]:
         """No timer. Refresh is a button.
@@ -944,7 +939,8 @@ class SecurityDashboardModule(BaseModule):
                                       category.value.replace("&", "&&"))
             self._tab_names[index] = category.value
         self._tabs.addTab(self._build_history_tab(), "History")
-        self._tabs.addTab(self._build_events_tab(), "Security Events")
+        self._triage = TriageTab()
+        self._tabs.addTab(self._triage, "Incident Triage")
         # Connected AFTER the addTab loop: addTab fires currentChanged
         # synchronously for the first tab added, which would kick off a read
         # during create_widget.
@@ -1118,118 +1114,10 @@ class SecurityDashboardModule(BaseModule):
 
     # ── Tab 5: Security Events ────────────────────────────────────────────
 
-    def _build_events_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
-
-        events_group = QGroupBox("Recent Security Events")
-        events_layout = QVBoxLayout(events_group)
-        self._events_progress = QProgressBar()
-        self._events_progress.setFixedHeight(3)
-        self._events_progress.setRange(0, 0)
-        self._events_progress.hide()
-        events_layout.addWidget(self._events_progress)
-
-        self._events_table = QTableWidget()
-        self._events_table.setColumnCount(4)
-        self._events_table.setHorizontalHeaderLabels(
-            ["Time", "Event ID", "Description", "Logon Info"])
-        fit_table(self._events_table, stretch=[2], content=[0, 1, 3])
-        self._events_table.setAlternatingRowColors(True)
-        self._events_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._events_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._events_table.setStyleSheet("""
-            QTableWidget { background: #2d2d2d;
-                           border: 1px solid #3c3c3c; border-radius: 4px; }
-            QTableWidget::item { padding: 4px; }
-            QTableWidget::item:selected { background: #094771; }
-            QHeaderView::section { background: #3c3c3c; color: #b0b0b0;
-                                   padding: 4px; border: none; }
-        """)
-        events_layout.addWidget(self._events_table)
-
-        # Empty state
-        self._events_empty = EmptyState(
-            "🛡️", "No recent security events",
-            "Nothing found in the Security log yet. Refresh to check again.",
-            "Refresh",
-        )
-        self._events_empty.action_triggered.connect(self._load_events)
-        events_layout.addWidget(self._events_empty)
-        self._events_empty.hide()
-
-        layout.addWidget(events_group, 1)
-        return tab
-
-    def _load_events(self):
-        """Load security events in background."""
-        if not _widget_valid(self._events_progress):
-            return
-        self._events_progress.show()
-
-        worker = Worker(lambda _w: get_security_events(30))
-        self._workers.append(worker)
-
-        def on_result(events: list):
-            if not _widget_valid(self._events_table):
-                return
-            self._events_progress.hide()
-            self._update_events_table(events)
-
-        def on_error(err):
-            if not _widget_valid(self._events_table):
-                return
-            self._events_progress.hide()
-            emsg = str(err[1]) if isinstance(err, tuple) else str(err)
-            self._error_banner.set_error(f"Could not read the Security event log: {emsg}. "
-                                         "Run as administrator to see these events.")
-            self._error_banner.show()
-            self._events_table.hide()
-            self._events_empty.hide()
-
-        worker.signals.result.connect(on_result)
-        worker.signals.error.connect(on_error)
-
-        QThreadPool.globalInstance().start(worker)
-
-    def _update_events_table(self, events: list):
-        if not _widget_valid(self._events_table):
-            return
-        self._events_table.setRowCount(0)
-        if not events:
-            self._events_table.hide()
-            self._events_empty.show()
-            return
-        self._events_table.show()
-        self._events_empty.hide()
-
-        for ev in events:
-            row = self._events_table.rowCount()
-            self._events_table.insertRow(row)
-            self._events_table.setItem(row, 0, centered_item(ev.get("time", "")))
-
-            eid = ev.get("event_id", "")
-            eid_item = centered_item(eid)
-            eid_color = "#E74C3C" if eid == "1102" else "#e0e0e0"
-            eid_item.setForeground(QColor(eid_color))
-            self._events_table.setItem(row, 1, eid_item)
-
-            self._events_table.setItem(row, 2, centered_item(
-                ev.get("description", "")))
-
-            # Logon type
-            msg = ev.get("message", "")
-            logon_info = ""
-            m = re.search(r"LogonType:\s*(\d+)", msg)
-            if m:
-                logon_type = int(m.group(1))
-                lt_map = {2: "Interactive", 3: "Network", 4: "Batch",
-                          5: "Service", 7: "Unlock", 8: "Network Cleartext",
-                          9: "New Credentials", 10: "Remote Interactive",
-                          11: "Cached Interactive"}
-                logon_info = f"LogonType {m.group(1)} ({lt_map.get(logon_type, '')})"
-            self._events_table.setItem(row, 3, centered_item(logon_info))
+    def _load_events(self) -> None:
+        """Incident Triage reads its logs on a Worker; see triage_tab."""
+        if self._triage is not None:
+            self._triage.load()
 
     # ── Quick Actions ─────────────────────────────────────────────────────
 
@@ -1330,9 +1218,6 @@ class SecurityDashboardModule(BaseModule):
         if not self._loaded_overview:
             self._loaded_overview = True
             self._refresh_overview()
-        if not self._loaded_events:
-            self._loaded_events = True
-            self._load_events()
 
     def _on_tab_changed(self, index: int):
         """Read a category tab the first time it is actually shown.
@@ -1342,6 +1227,10 @@ class SecurityDashboardModule(BaseModule):
         """
         if self._tabs.tabText(index) == "History":
             self._load_history()
+            return
+        if self._tabs.widget(index) is self._triage and self._triage is not None:
+            if not self._triage.loaded:
+                self._load_events()
             return
         tab = self._category_tabs.get(self._tab_names.get(index))
         if tab is not None:
@@ -1367,14 +1256,18 @@ class SecurityDashboardModule(BaseModule):
             self._tab_names.get(self._tabs.currentIndex()))
         if current is not None:
             self._read_category(current, force=True, invalidate_first=True)
-        if self._loaded_events:
+        if self._triage is not None and self._triage.loaded:
             self._load_events()
 
     def on_deactivate(self) -> None:
         self.cancel_all_workers()
+        if self._triage is not None:
+            self._triage._cancel_all()
 
     def on_stop(self) -> None:
         self.cancel_all_workers()
+        if self._triage is not None:
+            self._triage._cancel_all()
 
 
 

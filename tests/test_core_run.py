@@ -22,10 +22,20 @@ def test_a_timeout_is_reported_not_raised():
     """A caller wanting to show "that took too long" should not have to wrap
     every call in try/except TimeoutExpired — that is exactly the discipline
     31 call sites failed to keep."""
+    import time
+    start = time.monotonic()
     result = run_mod.run(["cmd", "/c", "ping -n 10 127.0.0.1"], timeout=0.4)
     assert result.returncode == run_mod.TIMED_OUT
     assert run_mod.timed_out(result)
     assert "timed out" in result.stderr.lower()
+    # The grandchild (ping) holds the pipe: without killing the whole tree this
+    # took ping's full ~9 s. "Never hangs" means the timeout plus a short reap.
+    assert time.monotonic() - start < 5
+
+
+def test_input_reaches_the_process():
+    result = run_mod.run(["findstr", "x"], input_text="axb\nnope\n")
+    assert result.returncode == 0 and result.stdout.strip() == "axb"
 
 
 def test_a_nonzero_exit_is_not_a_timeout():

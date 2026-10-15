@@ -764,6 +764,34 @@ rule is unchanged: unelevated, Defender answers with the single string
 `"N/A: Must be an administrator to view exclusions"`, which is a refusal
 (`available: False`), never one exclusion.
 
+**Incident Triage tab** (2026-10-15; replaced the flat "Security Events"
+list): `incident_triage.py` (Qt-free) + `triage_tab.py`. "Did anyone get in,
+and what changed?" over a 1/7/30/90-day window, as grouped findings
+(severity, count, first/last, evidence, what to do) from Security (4625,
+4740, 4720/4722/4726, 4738 by a person, 4728/4732/4756, 1102, 4719, 4624 type
+10 only), System (7045, 104), Defender Operational (1116/1117, 5001, 5007),
+PowerShell 4104 at Level 3 and Task Scheduler 106. ~0.6 s elevated. Measured
+here, each shaping a rule:
+- 7045: 140 installs / 65 services in 30 days. A binary in a user-writable
+  folder or started via a script host is HIGH -- HWiNFO's kernel driver from
+  `AppData\Local\Temp` is the real example. Judge the EXE path only
+  (CyberGhost's service passes a `systemprofile\AppData` ARGUMENT); resolve
+  `\SystemRoot\`, `\??\` and bare `system32\...` driver paths first;
+  `ProgramData\Microsoft\Windows Defender` is admin-only.
+- Defender 5007: 593 events, 14 that matter (`\Exclusions\` added). 5001
+  (real-time off) is INFO when Security Center (`root/SecurityCenter2`
+  `AntiVirusProduct`, middle byte of productState 0x10/0x11 = on) reports
+  another AV on -- matched by EXACT name, because "Bitdefender" contains
+  "defender" (that bug shipped for one run).
+- 4104 Level 3 is PowerShell's keyword heuristic: CDXML `Cmdletization`
+  wrappers (~75 here) are counted apart as benign; the rest grouped by text.
+- 4738 by SYSTEM (Microsoft-account sync, 19 here) is dropped.
+- Task creation is unrecorded by default (TaskScheduler/Operational off, 4698
+  needs Other Object Access auditing): an UNKNOWN finding pointing at Audit &
+  Logging, never "no tasks". Unelevated, Security is one UNKNOWN finding
+  ("not a clean result"); System, Defender and PowerShell still answer
+  (verified with a `runas /trustlevel:0x20000` token).
+
 **The rules here are all one rule: a refusal is not an answer.**
 
 - **`SecurityControl.read()` returns `None` for "we could not look", and it is

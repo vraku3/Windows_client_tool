@@ -84,3 +84,30 @@ def test_read_all_covers_important_logs():
 def test_real_system_log_is_readable_unelevated():
     s = lr.read_log("System")
     assert s.present is True and s.max_bytes and s.oldest is not None
+
+
+def test_zero_exit_refusal_for_gl_has_no_values():
+    s = lr.read_log("Security", run=fake_run(gl="Access is denied."))
+    assert s.refused and s.present is None and s.enabled is None and s.mode is None
+
+
+def test_zero_exit_refusal_for_qe_is_not_an_empty_log():
+    s = lr.read_log("Security", run=fake_run(qe="Access is denied."))
+    assert s.refused and s.oldest is None
+
+
+def test_event_text_mentioning_access_denied_is_not_a_refusal():
+    xml = XML.replace("</Event>", "<Data>Access is denied.</Data></Event>")
+    s = lr.read_log("System", run=fake_run(qe=xml))
+    assert s.refused is None and s.oldest is not None
+
+
+def _ev(t):
+    return "<Event><System><TimeCreated SystemTime='" + t + "'/></System></Event>"
+
+
+def test_offset_timestamps_normalise_to_utc():
+    utc = timezone.utc
+    assert lr.parse_oldest(_ev("2026-09-04T18:23:11.5310000+02:00")) == datetime(2026, 9, 4, 16, 23, 11, 531000, tzinfo=utc)
+    assert lr.parse_oldest(_ev("2026-09-04T18:23:11+02:00")) == datetime(2026, 9, 4, 16, 23, 11, tzinfo=utc)
+    assert lr.parse_oldest(_ev("2026-09-04T18:23:11.5310000Z")) == datetime(2026, 9, 4, 18, 23, 11, 531000, tzinfo=utc)

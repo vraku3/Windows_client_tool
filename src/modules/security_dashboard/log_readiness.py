@@ -70,6 +70,7 @@ def parse_gl(text: str) -> Dict[str, str]:
 
 
 _SYSTEM_TIME = re.compile(r"SystemTime='([^']+)'")
+_FRACTION = re.compile(r"\.(\d+)")
 
 
 def parse_oldest(xml_text: str) -> Optional[datetime]:
@@ -79,12 +80,15 @@ def parse_oldest(xml_text: str) -> Optional[datetime]:
     m = _SYSTEM_TIME.search(xml_text)
     if not m:
         return None
-    raw = m.group(1).rstrip("Z")
-    head, dot, frac = raw.partition(".")
-    if dot:
-        raw = f"{head}.{frac[:6].ljust(6, '0')}"
+    raw = m.group(1)
+    if raw.endswith(("Z", "z")):
+        raw = raw[:-1] + "+00:00"
+    raw = _FRACTION.sub(lambda f: "." + f.group(1)[:6].ljust(6, "0"), raw, count=1)
     try:
-        return datetime.fromisoformat(raw + "+00:00").astimezone(timezone.utc)
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
     except ValueError:
         logger.warning("log_readiness: unparseable event time %r", m.group(1))
         return None
@@ -109,7 +113,7 @@ def _ask(run: Run, args: List[str]) -> Tuple[Optional[int], str, Optional[str]]:
     except OSError as e:
         logger.warning("log_readiness: wevtutil could not run: %s", e)
         return None, "", f"wevtutil could not run: {e}"
-    return rc, out if rc == 0 else (err or out), None
+    return rc, (out or "") + "\n" + (err or ""), None
 
 
 def _mode(info: Dict[str, str]) -> str:
@@ -131,9 +135,12 @@ def _read_oldest(name: str, run: Run, st: LogStatus) -> None:
     rc, text, refusal = _ask(run, ["wevtutil", "qe", name, "/c:1", "/rd:false", "/f:xml"])
     if refusal:
         st.refused = refusal
+    elif "<Event" not in text and _is_access_denied(rc or 0, text):
+        # an event's own message may say "access is denied"; only a reply
+        # with no event in it is a refusal, whatever the exit status
+        st.refused = _NEEDS_ADMIN
     elif rc != 0:
-        st.refused = _NEEDS_ADMIN if _is_access_denied(rc or 0, text) else (
-            f"wevtutil failed: {text.strip()[:120]}")
+        st.refused = f"wevtutil failed: {text.strip()[:120]}"
     else:
         st.oldest = parse_oldest(text)
 
@@ -144,11 +151,11 @@ def read_log(name: str, run: Optional[Run] = None) -> LogStatus:
     rc, text, refusal = _ask(run, ["wevtutil", "gl", name])
     if refusal:
         return LogStatus(name, None, refused=refusal)
+    if _is_access_denied(rc or 0, text):
+        return LogStatus(name, None, refused=_NEEDS_ADMIN)
     if rc != 0:
         if _is_not_found(rc or 0, text):
             return LogStatus(name, False)
-        if _is_access_denied(rc or 0, text):
-            return LogStatus(name, None, refused=_NEEDS_ADMIN)
         return LogStatus(name, None, refused=f"wevtutil failed: {text.strip()[:120]}")
     info = parse_gl(text)
     st = LogStatus(name, True, enabled=info.get("enabled", "").lower() == "true",

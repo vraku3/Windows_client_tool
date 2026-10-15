@@ -57,6 +57,18 @@ NOT_A_CONTROL: Dict[str, str] = {
         "helper. The `service_mapsbroker` control is bound to "
         "check_service_mapsbroker.",
 
+    # Superseded by the Audit & Logging category, which reads every log's
+    # size through `wevtutil gl` (works unelevated, even for Security) and
+    # adds coverage, mode and the channels that ship off. These two readers
+    # read the same value through `Get-WinEvent -ListLog`, which exits 0 and
+    # prints "0" when refused -- the exact confusion the new engine removes.
+    "check_security_log_size":
+        "Superseded by the `security_log_size` control in the Audit & "
+        "Logging category, read through log_readiness.read_log.",
+    "check_system_log_size":
+        "Superseded by the `system_log_size` control in the Audit & Logging "
+        "category, read through log_readiness.read_log.",
+
     "check_disk_cleanup_state":
         "Reports whether cleanmgr.exe is present and Storage Sense has a "
         "policy. A capability reading, and disk cleanup is the Cleanup "
@@ -94,12 +106,12 @@ NOT_A_CONTROL: Dict[str, str] = {
 
 def load_catalog() -> Dict[str, SecurityControl]:
     """id -> control, across every category module."""
-    from . import (accounts, defender, device_boot, exploit_cve, features,
-                   firewall_network, services)
+    from . import (accounts, audit_logging, defender, device_boot, exploit_cve,
+                   features, firewall_network, services)
 
     catalog: Dict[str, SecurityControl] = {}
     for module in (defender, firewall_network, accounts, device_boot,
-                   services, features, exploit_cve):
+                   services, features, exploit_cve, audit_logging):
         for control in module.CONTROLS:
             if control.id in catalog:
                 raise ValueError(f"duplicate control id: {control.id}")

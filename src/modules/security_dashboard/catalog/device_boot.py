@@ -6,7 +6,8 @@ UEFI/legacy mode are read by Windows and changed in the firmware setup screen.
 A switch here would be a button that cannot work.
 
 What IS writable: BitLocker, Memory Integrity, test signing, AutoRun, fast
-startup, hibernation, SmartScreen and the two event-log sizes.
+startup, hibernation and SmartScreen. (The event-log size controls moved to
+the Audit & Logging category, where log readiness as a whole is read.)
 
 BitLocker is the highest-risk entry in the whole catalog, and its
 `why_it_matters` says so in plain words rather than leaving it to the risk
@@ -19,9 +20,8 @@ from ..security_reader import (
     check_credential_guard_vbs, check_dump_encryption, check_fast_startup,
     check_hibernation, check_hvci, check_memory_integrity_registry,
     check_ntp_sync, check_pagefile_clear, check_secure_boot_tpm,
-    check_security_log_size, check_smartscreen, check_system_log_size,
-    check_test_signing, check_tpm_details, check_usb_storage,
-    check_wu_auto_update,
+    check_smartscreen, check_test_signing, check_tpm_details,
+    check_usb_storage, check_wu_auto_update,
 )
 from .model import Category, Risk, SecurityControl
 
@@ -272,47 +272,6 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         on_steps=(_dword(_SMARTSCREEN_POLICY, "EnableSmartScreen", 1),),
         off_steps=(_dword(_SMARTSCREEN_POLICY, "EnableSmartScreen", 0),),
         desired=True,
-        risk=Risk.LOW,
-    ),
-
-    # -- the record, if something happens -----------------------------------
-    SecurityControl(
-        id="security_log_size",
-        title="Security event log size",
-        category=Category.DEVICE_BOOT,
-        description="How much the Security log holds before it starts "
-                    "overwriting.",
-        why_it_matters="The default is small enough that a busy machine "
-                       "overwrites yesterday. Whatever an intrusion leaves "
-                       "behind is in here, and only for as long as it fits. "
-                       "How big is a retention question, so the catalog "
-                       "suggests rather than insists.",
-        reader=check_security_log_size,
-        read_value=lambda d: d.get("megabytes"),
-        on_steps=({"type": "command",
-                   "cmd": "wevtutil sl Security /ms:201326592"},),
-        off_steps=({"type": "command",
-                    "cmd": "wevtutil sl Security /ms:20971520"},),
-        desired=None,
-        risk=Risk.LOW,
-    ),
-
-    SecurityControl(
-        id="system_log_size",
-        title="System event log size",
-        category=Category.DEVICE_BOOT,
-        description="How much the System log holds before it starts "
-                    "overwriting.",
-        why_it_matters="Driver loads, service failures and boot problems land "
-                       "here, and they are what a compromise of the boot path "
-                       "looks like from the outside.",
-        reader=check_system_log_size,
-        read_value=lambda d: d.get("megabytes"),
-        on_steps=({"type": "command",
-                   "cmd": "wevtutil sl System /ms:67108864"},),
-        off_steps=({"type": "command",
-                    "cmd": "wevtutil sl System /ms:20971520"},),
-        desired=None,
         risk=Risk.LOW,
     ),
 

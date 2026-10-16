@@ -7,9 +7,9 @@ def module(qapp):
     return ScriptsModule()
 
 
-def test_the_hub_has_one_child(module):
-    assert len(module.children) == 1
-    assert type(module.children[0]).__name__ == "FileForensicsModule"
+def test_the_hub_hosts_the_library_then_file_forensics(module):
+    assert [type(c).__name__ for c in module.children] == ["ScriptLibraryModule",
+                                                           "FileForensicsModule"]
 
 
 def test_the_hub_builds_a_widget_with_one_tab(module, qapp):

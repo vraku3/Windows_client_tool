@@ -1851,6 +1851,41 @@ keep, for the same reason: it lets the engine test headless.
   dropped — the same rule Security Dashboard and the Tweak System hold
   elsewhere in this app.
 
+**Script Library** (2026-10-16, the hub's FIRST tab: `scripts_hub/library.py`
++ `support_bundle.py`, Qt-free; `library_module.py` is the pane). 17 built-in
+READ-ONLY checks in four categories (who restarted the PC and why, uptime +
+Fast Startup, automatic services not running, software installed in 14 days,
+hotfixes, listening ports with their program, ipconfig, DNS cache, routes,
+saved Wi-Fi names, local Administrators by SID S-1-5-32-544, non-Microsoft
+scheduled tasks, certificates expiring in 60 days, firewall profiles, shares,
+system summary, third-party drivers), plus the user's own `.ps1/.cmd/.bat` from
+`%APPDATA%\WindowsTweaker\scripts` (first comment block = description; the run
+confirm shows the WHOLE file; they can change anything). Output streams through
+`Worker.signals.log_line`; Stop and the timeout kill the process TREE.
+`tests/test_script_library.py` fails if a built-in contains a writing verb.
+Every built-in was run elevated AND with a `runas /trustlevel:0x20000` token
+before it shipped; what that found:
+- **`Get-DnsClientCache` returns an EMPTY list, no error, for a standard user**
+  (0 entries vs 94 elevated; `ipconfig /displaydns` says "requires
+  elevation"). The check refuses unelevated rather than say "cache is empty".
+- `Get-Process -IncludeUserName` THROWS unelevated (not suppressed by
+  `-ErrorAction`). Redirected PowerShell serialises errors and progress to
+  stderr as CLIXML (`#< CLIXML`, `<Objs ...>`), so built-ins run with
+  `-OutputFormat Text`, `$ProgressPreference = 'SilentlyContinue'`, and the
+  body wrapped in `& { } 2>&1` that prints each ErrorRecord as one
+  `ERROR:` line. Bodies go in as `-EncodedCommand` (quotes and newlines
+  survive). An `admin=True` check prints a `NOTE:` line unelevated saying what
+  is missing (non-Microsoft tasks: 66 lines unelevated vs 110 elevated).
+- **Support bundle** ("Collect support bundle…"): one zip on the REAL Desktop
+  (`known_folder`, OneDrive-redirected here) with systeminfo, ipconfig, route,
+  netstat, driverquery, services, installed programs, 7 days of
+  System/Application (+Security elevated) `.evtx`, gpresult HTML, powercfg,
+  dxdiag and the library checks. `MANIFEST.txt` lists every step as OK /
+  FAILED (exit + last words) / SKIPPED (why) / TIMED OUT / CANCELLED -- never
+  a silently missing file. Measured: 31 OK in 19 s elevated; unelevated 27 OK
+  + 2 SKIPPED (Security log, `powercfg /requests`), and the manifest notes
+  that unelevated `gpresult` holds only the user half.
+
 ## Pending restart (`src/core/pending_reboot.py`)
 
 One answer for the whole app; `windows_utils.is_reboot_pending`, the

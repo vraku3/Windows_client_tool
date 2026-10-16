@@ -379,6 +379,13 @@ HIDDEN_IMPORTS = [
     # inside __init__, per the composite-hosting convention -- the frozen
     # build runs fine until someone opens the Scripts tab.
     "modules.file_forensics.file_forensics_module",
+    # Script Library (2026-10-16): imported inside ScriptsModule.__init__.
+    "modules.scripts_hub.library_module",
+    "modules.scripts_hub.library",
+    "modules.scripts_hub.support_bundle",
+    # Incident Triage (2026-10-15), imported at the top of security_module.
+    "modules.security_dashboard.triage_tab",
+    "modules.security_dashboard.incident_triage",
     "httpx", "paramiko",
     "openpyxl", "reportlab",
     "PIL", "PIL._imaging",

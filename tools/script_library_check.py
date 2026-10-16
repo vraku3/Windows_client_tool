@@ -1,6 +1,6 @@
 """Run every Script Library script against THIS machine and report problems.
 
-    .venv\\Scripts\\python.exe tools\\script_library_check.py [out.txt] [--only id,id] [--parse-only]
+    .venv\\Scripts\\python.exe tools\\script_library_check.py [out.txt] [--only=id,id] [--module=client_more] [--parse-only]
 
 Every script is first parsed by PowerShell's own parser (syntax errors fail
 here even for server scripts that can never run on this PC). Then each one
@@ -72,7 +72,12 @@ def judge(script, result):
 def main(argv):
     out_path = next((a for a in argv if not a.startswith("--")), None)
     only = next((a.split("=", 1)[1] for a in argv if a.startswith("--only=")), "")
-    scripts = [s for s in lib.built_in() if not only or s.id in only.split(",")]
+    module = next((a.split("=", 1)[1] for a in argv if a.startswith("--module=")), "")
+    pool = lib.built_in()
+    if module:
+        import importlib
+        pool = importlib.import_module(f"modules.scripts_hub.catalog.{module}").SCRIPTS
+    scripts = [s for s in pool if not only or s.id in only.split(",")]
     lines = [f"admin={bool(ctypes.windll.shell32.IsUserAnAdmin())}  scripts={len(scripts)}"]
     errs = parse_errors(scripts)
     lines += ["PARSE " + e for e in errs]

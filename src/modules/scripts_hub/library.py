@@ -288,8 +288,10 @@ CLIENT_CATEGORIES = ("Troubleshooting", "System", "Hardware", "Storage", "Perfor
                      "Updates & servicing", "Services & processes", "Startup & tasks",
                      "Applications", "Power", "Printing", "Group Policy", "Remote access",
                      "Inventory")
-SERVER_CATEGORIES = ("Active Directory", "DNS Server", "DHCP Server", "IIS", "Hyper-V",
-                     "File server", "Failover Cluster", "Roles & features")
+SERVER_CATEGORIES = ("Active Directory", "Group Policy (domain)", "DNS Server", "DHCP Server",
+                     "File server", "Storage & free space", "IIS", "Hyper-V", "Failover Cluster",
+                     "Remote Desktop Services", "WSUS", "Certificate Services", "Print server",
+                     "Log parsing", "Fleet (remote servers)", "Roles & features")
 USER_CATEGORY = "My scripts"
 CATEGORIES = CLIENT_CATEGORIES + SERVER_CATEGORIES + (USER_CATEGORY,)
 
@@ -358,6 +360,116 @@ def load_user_scripts(folder: Optional[str] = None) -> List[Script]:
                           kind=POWERSHELL if ext == ".ps1" else CMD, read_only=False,
                           timeout=1800.0, path=path))
     return out
+
+
+# ---- editing ---------------------------------------------------------------------------------
+
+_WRAP_OPEN = "& {\n"
+_WRAP_CLOSE = "\n} 2>&1 | ForEach-Object { "
+
+
+def editable_source(script: Script) -> str:
+    """A script as a person would write it: a built-in's body without the
+    error/progress wrapper `ps()` adds (the copy is run the same way as any
+    user script, so it needs none). A user script is its own file."""
+    body = script.body
+    if script.path or script.kind == CMD:
+        return body
+    start = body.find(_WRAP_OPEN)
+    end = body.rfind(_WRAP_CLOSE)
+    if start < 0 or end < start:
+        return body
+    head = body[:start]
+    keep = [ln for ln in head.splitlines() if ln.startswith("& {") or ln.startswith("$Progress")]
+    return "\n".join(keep + [body[start + len(_WRAP_OPEN):end]]).strip() + "\n"
+
+
+def _safe_name(text: str) -> str:
+    return re.sub(r"[^\w.-]+", "_", text).strip("_") or "script"
+
+
+def export_for_editing(script: Script, folder: Optional[str] = None) -> tuple:
+    """Copy a built-in into the user's scripts folder so it can be edited, and
+    return (path, created). An existing copy is never overwritten -- it may
+    hold the user's edits -- and is returned with created=False."""
+    folder = folder or user_scripts_dir()
+    os.makedirs(folder, exist_ok=True)
+    ext = ".cmd" if script.kind == CMD else ".ps1"
+    path = os.path.join(folder, _safe_name(script.id) + ext)
+    if os.path.exists(path):
+        return path, False
+    if script.kind == CMD:
+        text = (f"@echo off\nrem {script.title}\nrem {script.description}\n"
+                f"rem Copied from WinClientTool's built-in '{script.id}'.\n{script.body}\n")
+    else:
+        desc = script.description.replace("#>", "# >")
+        text = (f"<#\n.SYNOPSIS\n{script.title}\n\n.DESCRIPTION\n{desc}\n\n"
+                f".NOTES\nCopied from WinClientTool's built-in script '{script.id}'. Edit freely;\n"
+                f"the original stays in the app.\n#>\n\n{editable_source(script)}")
+    with open(path, "w", encoding="utf-8-sig") as f:
+        f.write(text)
+    return path, True
+
+
+_NEW_TEMPLATE = """<#
+.SYNOPSIS
+{title}
+
+.DESCRIPTION
+What this script checks or does. This first comment block is the
+description the Script Library shows.
+#>
+
+# Lines starting with [OK], [WARN], [BAD] or [INFO] are coloured in the app.
+$os = Get-CimInstance Win32_OperatingSystem
+"[INFO] $($os.Caption) build $($os.BuildNumber)"
+"""
+
+
+def new_script(title: str, folder: Optional[str] = None) -> str:
+    """Create a new .ps1 from a template in the user's folder; never overwrite."""
+    folder = folder or user_scripts_dir()
+    os.makedirs(folder, exist_ok=True)
+    stem = _safe_name(title)
+    path = os.path.join(folder, stem + ".ps1")
+    n = 2
+    while os.path.exists(path):
+        path = os.path.join(folder, f"{stem}_{n}.ps1")
+        n += 1
+    with open(path, "w", encoding="utf-8-sig") as f:
+        f.write(_NEW_TEMPLATE.format(title=title))
+    return path
+
+
+#: (label, how to find it) in preference order. ISE is a Feature on Demand
+#: on Windows 11 and may be absent; VS Code and Notepad are the fallbacks.
+def editors() -> List[tuple]:
+    import shutil
+    windir = os.environ.get("SystemRoot") or os.environ.get("windir") or ""
+    out = []
+    ise = os.path.join(windir, "System32", "WindowsPowerShell", "v1.0", "powershell_ise.exe")
+    if os.path.isfile(ise):
+        out.append(("PowerShell ISE", ise))
+    code = shutil.which("code")
+    if code:
+        out.append(("Visual Studio Code", code))
+    out.append(("Notepad", os.path.join(windir, "System32", "notepad.exe")))
+    return out
+
+
+def editor_command(path: str, editor: Optional[str] = None) -> List[str]:
+    """argv that opens `path` for editing: the named editor, else ISE for a
+    .ps1 when installed, else the first available."""
+    choices = editors()
+    if editor:
+        exe = next((e for label, e in choices if label == editor), None)
+    else:
+        ps1 = path.lower().endswith(".ps1")
+        exe = next((e for label, e in choices if ps1 or label != "PowerShell ISE"), None)
+    exe = exe or choices[-1][1]
+    if exe.lower().endswith(".cmd"):          # VS Code's launcher is a batch file
+        return ["cmd.exe", "/c", exe, path]
+    return [exe, path]
 
 
 # ---- running ---------------------------------------------------------------------------------

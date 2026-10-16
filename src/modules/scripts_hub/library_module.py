@@ -15,8 +15,8 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
-                             QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
+from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+                             QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from core.base_module import BaseModule
@@ -130,6 +130,7 @@ class ScriptLibraryModule(BaseModule):
         self._search.textChanged.connect(lambda _t: self._fill_tree())
         bar.addWidget(self._search, 1)
         for label, fn in (("Collect support bundle…", self._collect_bundle),
+                          ("New script…", self._new_script),
                           ("Open my scripts folder", self._open_user_folder),
                           ("Reload", self._reload)):
             b = QPushButton(label, parent)
@@ -159,6 +160,17 @@ class ScriptLibraryModule(BaseModule):
             b.setEnabled(False)
             self._btn[key] = b
             row.addWidget(b)
+        # A plain button with a menu, so it looks like its neighbours; the
+        # first entry is the preferred editor (PowerShell ISE when present).
+        self._edit = QPushButton("Edit", box)
+        self._edit.setToolTip("Open the script in an editor. A built-in is copied to your scripts "
+                              "folder first -- the copy is yours to change, the original stays.")
+        menu = QMenu(self._edit)
+        for label, _exe in library.editors():
+            menu.addAction(f"Edit in {label}", lambda checked=False, lb=label: self._edit_current(lb))
+        self._edit.setMenu(menu)
+        self._edit.setEnabled(False)
+        row.insertWidget(3, self._edit)
         row.addStretch(1)
         self._status = QLabel("", box)
         set_role(self._status, "statusInfo")
@@ -253,6 +265,7 @@ class ScriptLibraryModule(BaseModule):
         self._btn["run"].setEnabled(self._current is not None and not running)
         self._btn["stop"].setEnabled(running)
         self._btn["view"].setEnabled(self._current is not None)
+        self._edit.setEnabled(self._current is not None)
         has_output = bool(self._output.toPlainText())
         self._btn["copy"].setEnabled(has_output)
         self._btn["save"].setEnabled(has_output)
@@ -359,6 +372,64 @@ class ScriptLibraryModule(BaseModule):
         except OSError as e:
             self._banner.set_error(f"Could not save the output: {e}")
             self._banner.show()
+
+    def _edit_current(self, editor: Optional[str]) -> None:
+        """Open the selected script for editing. A user script opens as it is; a
+        built-in lives inside the app, so a copy goes to the scripts folder first."""
+        script = self._current
+        if script is None:
+            return
+        if script.path:
+            path, note = script.path, ""
+        else:
+            try:
+                path, created = library.export_for_editing(script)
+            except OSError as e:
+                self._banner.set_error(f"Could not copy the script to edit it: {e}")
+                self._banner.show()
+                return
+            note = ("Copied to your scripts folder -- edit the copy; the built-in stays as it is."
+                    if created else "You already have a copy of this script -- opening it.")
+        self._open_in_editor(path, editor, note)
+        self._reload()
+        self._select_path(path)
+
+    def _open_in_editor(self, path: str, editor: Optional[str], note: str) -> None:
+        argv = library.editor_command(path, editor)
+        try:
+            subprocess.Popen(argv, creationflags=library.CREATE_NO_WINDOW)
+        except OSError as e:
+            self._banner.set_error(f"Could not open an editor ({argv[0]}): {e}")
+            self._banner.show()
+            return
+        used = editor or next((label for label, exe in library.editors() if exe in argv), argv[0])
+        self._status.setText(f"{note} Opened {os.path.basename(path)} in {used}. "
+                             "Changes apply the next time you run it.".strip())
+
+    def _select_path(self, path: str) -> None:
+        from PyQt6.QtWidgets import QTreeWidgetItemIterator
+        it = QTreeWidgetItemIterator(self._tree)
+        while it.value():
+            node = it.value()
+            script = node.data(0, _SCRIPT_ROLE)
+            if script is not None and script.path and os.path.normcase(script.path) == os.path.normcase(path):
+                self._tree.setCurrentItem(node)
+                return
+            it += 1
+
+    def _new_script(self) -> None:
+        title, ok = QInputDialog.getText(self._widget, "New script", "Name of the new script:")
+        if not ok or not title.strip():
+            return
+        try:
+            path = library.new_script(title.strip())
+        except OSError as e:
+            self._banner.set_error(f"Could not create the script: {e}")
+            self._banner.show()
+            return
+        self._open_in_editor(path, None, "Created from a template.")
+        self._reload()
+        self._select_path(path)
 
     def _open_user_folder(self) -> None:
         folder = library.user_scripts_dir()

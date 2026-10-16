@@ -1851,6 +1851,35 @@ keep, for the same reason: it lets the engine test headless.
   dropped — the same rule Security Dashboard and the Tweak System hold
   elsewhere in this app.
 
+**Script Library v3** (2026-10-16): 621 scripts -- 342 client, 279 server/Wintel
+(`catalog/client_more.py`, `server_ad.py`, `server_infra.py`, `server_ops.py` added
+to the files below; new server categories Group Policy (domain), Storage & free
+space, RDS, WSUS, Certificate Services, Print server, Log parsing and Fleet).
+Full check, elevated and standard user: 0 failures; elevated 402 ran + 217 NOT
+AVAILABLE here. Facts the runs added:
+- **`Win32_Volume` and `Win32_ShadowCopy` return NOTHING for a standard user**,
+  and `Get-Process -IncludeUserName` throws -- a free-space check over
+  Win32_Volume would have said "every volume is fine" unelevated. Guarded.
+- A provider that is not registered (`Wininit`, `Winlogon` here) makes
+  `Get-WinEvent -FilterHashtable` throw; `catalog._base.EV`'s `EvRead` treats
+  that like "no events", and tells apart a log that does not exist (NOT
+  AVAILABLE), no match ([OK]) and a refusal (ERROR).
+- **Fleet scripts** read `%APPDATA%\WindowsTweaker\scripts\servers.txt` (one
+  name per line) and fall back to THIS computer, so they were really run
+  here; they use CIM over DCOM (`New-CimSessionOption -Protocol Dcom`, no
+  WinRM), never `Win32_Product` (it triggers MSI self-repair) but
+  `Win32_InstalledWin32Program`, and StdRegProv for pending-reboot keys.
+- **The scripts are inside the exe**: catalog modules are compiled into the
+  PYZ (listed in `HIDDEN_IMPORTS`); a built-in is written to the running PC's
+  %TEMP% only when run. `tools/check_frozen_scripts.py` reads the built exe's
+  PYZ and exits 1 if any `scripts_hub` module is missing -- run it after a build.
+- **Editing**: "Edit" (menu: PowerShell ISE / VS Code / Notepad, ISE first
+  when installed) opens a user script in place; a built-in is first copied by
+  `library.export_for_editing` to the scripts folder as `<id>.ps1` with a
+  `.SYNOPSIS` header and the body unwrapped (`editable_source`), never
+  overwriting an existing copy. "New script…" starts from a template. User
+  scripts run their file with `-File`, so edits apply on the next Run.
+
 **Script Library catalog** (2026-10-16): 285 READ-ONLY scripts -- the 17 core
 checks below plus `scripts_hub/catalog/` (one module per area, `_base.maker`
 wraps bodies), in a three-level tree: Windows client (18 categories, 222

@@ -7,7 +7,7 @@ error. They were syntax-checked with PowerShell's own parser on a Windows 11
 client; they have NOT run against a real server role here, and `requires`
 says so on their card.
 """
-from ._base import CHK, CMD, L, T, maker, need_cmd
+from ._base import CHK, L, T, maker, need_cmd
 
 _AD = "the ActiveDirectory module (RSAT: Active Directory tools, or a domain controller)"
 _GPM = "the GroupPolicy module (RSAT: Group Policy Management)"

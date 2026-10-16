@@ -392,6 +392,10 @@ HIDDEN_IMPORTS = [
     "modules.scripts_hub.catalog.client_security",
     "modules.scripts_hub.catalog.client_mgmt",
     "modules.scripts_hub.catalog.server",
+    "modules.scripts_hub.catalog.client_more",
+    "modules.scripts_hub.catalog.server_ad",
+    "modules.scripts_hub.catalog.server_infra",
+    "modules.scripts_hub.catalog.server_ops",
     # Incident Triage (2026-10-15), imported at the top of security_module.
     "modules.security_dashboard.triage_tab",
     "modules.security_dashboard.incident_triage",

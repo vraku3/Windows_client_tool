@@ -1,5 +1,5 @@
 """Event logs and Network checks. Read-only."""
-from ._base import CHK, CMD, L, T, maker, need_admin
+from ._base import CHK, CMD, T, maker, need_admin
 
 E = maker("Event logs")
 N = maker("Network")

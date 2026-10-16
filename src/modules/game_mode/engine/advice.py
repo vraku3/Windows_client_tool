@@ -171,7 +171,8 @@ def collect(system, own_pid: int, session: int) -> Facts:
     f.ram_free_gb, f.ram_total_gb = mem.available / 2 ** 30, mem.total / 2 ** 30
     procs = system.processes()
     f.handles, f.processes = sum(p.handles for p in procs), len(procs)
-    groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0])
+    groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0],
+                          system.fullscreen_pids())
     f.heavy_apps = [(g.label, g.exe, len(g.roots), g.handles) for g in groups[:12]]
     f.max_after = f.handles - freed_estimate(procs, groups, preset(catalog.MAX, groups).close)
     _floor(f, procs)

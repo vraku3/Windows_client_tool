@@ -37,6 +37,7 @@ class FakeSystem:
                            "\\MyOwnTask": True}
         self.protected = {"\\Microsoft\\Windows\\Feedback\\Siuf\\DmClient"}
         self.anim = True
+        self.fullscreen = set()
         self.procs = [Proc(10, 1, "OneDrive.exe", 3000, 1, 100), Proc(11, 1, "chrome.exe", 5000, 1, 101),
                       Proc(12, 11, "chrome.exe", 900, 1, 102), Proc(13, 1, "explorer.exe", 9000, 1, 103),
                       Proc(14, 1, "deluge.exe", 1900, 1, 104), Proc(20, 1, "svchost.exe", 800, 0, 105)]
@@ -92,6 +93,8 @@ class FakeSystem:
         if exe_path and exe_path.lower().endswith(tuple(self.fail_close)):
             return "refused"
         self.procs = [p for p in self.procs if p.pid not in pids]
+
+    def fullscreen_pids(self): return set(self.fullscreen)
 
     def alive(self, pid, ct): return any(p.pid == pid and p.create_time == ct for p in self.procs)
 
@@ -387,3 +390,53 @@ def test_service_patterns_resolve_to_installed_instances():
     assert catalog.service_spec("OneSyncSvc_103c87").label == "Sync Host"
     assert catalog.service_spec("GoogleUpdaterService157.0.8089.0").label == "Google Updater"
     assert catalog.service_spec("WinDefend") is None
+
+
+def _groups(procs, paths, protect=None):
+    return session.running_apps(procs, 1, 999, lambda pid: paths.get(pid), protect)
+
+
+def test_a_running_game_is_never_closed_by_maximum():
+    procs = [Proc(1, 0, "explorer.exe", 9000, 1, 1),
+             Proc(50, 1, "steam.exe", 1000, 1, 10), Proc(51, 50, "eldenring.exe", 4000, 1, 20),
+             Proc(60, 1, "Battle.net.exe", 2000, 1, 11), Proc(61, 60, "Wow.exe", 6000, 1, 21),
+             Proc(70, 1, "standalone.exe", 3000, 1, 12), Proc(80, 1, "fullscreen.exe", 3000, 1, 13),
+             Proc(90, 1, "AppControl.exe", 500, 1, 14)]
+    paths = {51: r"D:\SteamLibrary\steamapps\common\ELDEN RING\Game\eldenring.exe",
+             61: r"C:\Program Files (x86)\World of Warcraft\_retail_\Wow.exe",
+             70: r"E:\Games\Standalone\standalone.exe",
+             80: r"C:\Program Files\Something\fullscreen.exe",
+             90: r"C:\Program Files\AppControl\ui\AppControl.exe"}
+    groups = _groups(procs, paths, protect={80})
+    names = {g.exe for g in groups}
+    assert names == {"appcontrol.exe"}            # launcher child, game folder, fullscreen: kept
+    assert "eldenring.exe" not in session.preset(catalog.MAX, groups).close
+
+
+def test_a_reused_pid_is_not_taken_for_a_launcher_parent():
+    # pid 50 is Steam NOW, but it started after the process whose ppid says 50
+    procs = [Proc(50, 1, "steam.exe", 1000, 1, 500), Proc(51, 50, "oldtool.exe", 400, 1, 100)]
+    groups = _groups(procs, {51: r"C:\Program Files\Tool\oldtool.exe"})
+    assert {g.exe for g in groups} == {"oldtool.exe"}
+
+
+def test_helpers_are_folded_into_the_app_that_started_them():
+    procs = [Proc(10, 1, "Code.exe", 7000, 1, 1), Proc(11, 10, "Code.exe", 500, 1, 2),
+             Proc(12, 11, "pet.exe", 75, 1, 3), Proc(13, 10, "copilot-runtime.exe", 284, 1, 4),
+             Proc(20, 1, "deluge.exe", 1900, 1, 5)]
+    paths = {10: r"C:\Users\u\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+             12: r"C:\Users\u\.vscode\extensions\x\pet.exe",
+             13: r"C:\Users\u\AppData\Local\Programs\Microsoft VS Code\x\copilot-runtime.exe",
+             20: r"C:\Program Files\Deluge\deluge.exe"}
+    groups = _groups(procs, paths)
+    assert {g.exe for g in groups} == {"code.exe", "deluge.exe"}
+    code = next(g for g in groups if g.exe == "code.exe")
+    assert code.handles == 7000 + 500 + 75 + 284
+
+
+def test_discord_is_closed_by_maximum_and_reopened():
+    spec = catalog.spec_for("Discord.exe")
+    assert spec.level == catalog.MAX and spec.reopen
+    for exe in ("DefenderSessionHelper.exe", "GameInputRedistService.exe", "bash.exe",
+                "gameoverlayui64.exe", "parsecd.exe"):
+        assert catalog.never_close(exe), exe

@@ -258,6 +258,26 @@ class WinSystem:
             time.sleep(0.25)
         return not any(psutil.pid_exists(p) for p in pids)
 
+    def fullscreen_pids(self) -> set:
+        """The process owning the foreground window when that window covers
+        its whole monitor -- a game already running, which nothing may close.
+        The desktop itself (Progman/WorkerW) does not count."""
+        import win32api
+        import win32gui
+        import win32process
+        try:
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd or win32gui.GetClassName(hwnd) in ("Progman", "WorkerW", "Shell_TrayWnd"):
+                return set()
+            rect = win32gui.GetWindowRect(hwnd)
+            monitor = win32api.GetMonitorInfo(win32api.MonitorFromWindow(hwnd, 2))["Monitor"]
+            if tuple(rect) != tuple(monitor):
+                return set()
+            return {win32process.GetWindowThreadProcessId(hwnd)[1]}
+        except Exception as error:  # noqa: BLE001 -- pywin32 raises pywintypes.error
+            logger.warning("game mode: foreground window unreadable: %s", error)
+            return set()
+
     def alive(self, pid: int, create_time: int) -> bool:
         return any(p.pid == pid and p.create_time == create_time for p in self.processes())
 

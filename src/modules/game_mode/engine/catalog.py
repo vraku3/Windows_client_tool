@@ -93,6 +93,8 @@ SERVICES = (
     ServiceSpec("SensorDataService", "Sensor Data", "Sensors (none on a desktop).", MAX),
     ServiceSpec("SensorService", "Sensor Service", "Sensors (none on a desktop).", MAX),
     ServiceSpec("SensrSvc", "Sensor Monitoring", "Sensors (none on a desktop).", MAX),
+    ServiceSpec("FileSyncHelper", "OneDrive file sync helper", "OneDrive's service.", MAX),
+    ServiceSpec("Bonjour Service", "Bonjour (mDNS)", "Apple/Blizzard network discovery.", MAX),
     ServiceSpec("SysMain", "SysMain (Superfetch)",
                 "Preloads programs into RAM. Can help load times, so it is left alone "
                 "unless you tick it.", OPT),
@@ -188,44 +190,120 @@ class AppSpec:
 
 
 _TABS = "--restore-last-session"
+_SYNC = "Syncs files: disk and network bursts."
+_TORRENT = "Torrent upload fills the line: ping spikes."
+_CHAT = "Closed by Maximum; messages arrive after Game Mode is off."
+
+
+def _a(exe, label, why, level, **kw) -> AppSpec:
+    return AppSpec(exe, label, why, level, **kw)
+
+
 APPS = (
-    AppSpec("onedrive.exe", "OneDrive", "Syncs files: disk and network bursts.", REC),
-    AppSpec("deluge.exe", "Deluge (torrents)", "Torrent upload fills the line: ping spikes.", REC),
-    AppSpec("qbittorrent.exe", "qBittorrent", "Torrent upload fills the line: ping spikes.", REC),
-    AppSpec("utorrent.exe", "uTorrent", "Torrent upload fills the line: ping spikes.", REC),
-    AppSpec("bittorrent.exe", "BitTorrent", "Torrent upload fills the line: ping spikes.", REC),
-    AppSpec("dropbox.exe", "Dropbox", "Syncs files: disk and network bursts.", REC),
-    AppSpec("googledrivefs.exe", "Google Drive", "Syncs files: disk and network bursts.", REC),
-    AppSpec("creative cloud.exe", "Adobe Creative Cloud", "Background updater and sync.", REC),
-    AppSpec("widgetboard.exe", "Widgets", "News feed kept alive in the background.", REC, reopen=False),
-    AppSpec("widgets.exe", "Widgets", "News feed kept alive in the background.", REC, reopen=False),
-    AppSpec("snippingtool.exe", "Snipping Tool",
-            "Stays resident after a screenshot; Print Screen starts it again.", REC, reopen=False),
-    AppSpec("m365copilot.exe", "Microsoft 365 Copilot", "Background web app.", REC),
-    AppSpec("phoneexperiencehost.exe", "Phone Link", "Keeps a link to your phone open.", REC),
-    AppSpec("crossdeviceresume.exe", "Cross-device resume",
-            "Phone-to-PC handoff; Windows starts it again when needed.", MAX, reopen=False),
-    AppSpec("searchhost.exe", "Windows Search box",
-            "The search flyout; Windows starts it again the next time you search.", MAX, reopen=False),
-    AppSpec("ms-teams.exe", "Microsoft Teams", "Closed by Maximum; you will miss calls meanwhile.",
-            MAX, lower=True),
-    AppSpec("whatsapp.root.exe", "WhatsApp", "Closed by Maximum; messages arrive after.", MAX, lower=True),
-    AppSpec("whatsapp.exe", "WhatsApp", "Closed by Maximum; messages arrive after.", MAX, lower=True),
-    AppSpec("chatgpt.exe", "ChatGPT / Codex", "Closed by Maximum.", MAX, lower=True),
-    AppSpec("chrome.exe", "Google Chrome", "Closed by Maximum; reopened with your tabs.", MAX,
-            lower=True, reopen_args=_TABS),
-    AppSpec("msedge.exe", "Microsoft Edge", "Closed by Maximum; reopened with your tabs.", MAX,
-            lower=True, reopen_args=_TABS),
-    AppSpec("brave.exe", "Brave", "Closed by Maximum; reopened with your tabs.", MAX, lower=True,
-            reopen_args=_TABS),
-    AppSpec("firefox.exe", "Firefox", "Closed by Maximum; Firefox restores tabs if it is set to.",
-            MAX, lower=True),
-    AppSpec("code.exe", "Visual Studio Code",
-            "Closed by Maximum; it reopens its windows and unsaved files itself.", MAX, lower=True),
-    AppSpec("notepad.exe", "Notepad", "Closed by Maximum; it keeps unsaved tabs itself.", MAX),
-    AppSpec("dashboard.exe", "CyberGhost", "Left open: closing it may drop the VPN.", OPT),
-    AppSpec("spotify.exe", "Spotify", "Left open: music while you play.", OPT),
-    AppSpec("discord.exe", "Discord", "Left open: voice chat. Never lowered (audio would crackle).", OPT),
+    # -- sync and cloud: disk + network bursts (Recommended) -------------------------------------
+    _a("onedrive.exe", "OneDrive", _SYNC, REC),
+    _a("onedrive.sync.service.exe", "OneDrive sync service", "OneDrive's helper; OneDrive starts it.",
+       REC, reopen=False),
+    _a("filecoauth.exe", "OneDrive co-authoring", "OneDrive's helper; started when needed.", REC,
+       reopen=False),
+    _a("dropbox.exe", "Dropbox", _SYNC, REC),
+    _a("googledrivefs.exe", "Google Drive", _SYNC, REC),
+    _a("icloudservices.exe", "iCloud", _SYNC, REC),
+    _a("iclouddrive.exe", "iCloud Drive", _SYNC, REC),
+    _a("megasync.exe", "MEGA", _SYNC, REC),
+    _a("pcloud.exe", "pCloud", _SYNC, REC),
+    _a("box.exe", "Box Drive", _SYNC, REC),
+    _a("nextcloud.exe", "Nextcloud", _SYNC, REC),
+    _a("owncloud.exe", "ownCloud", _SYNC, REC),
+    _a("syncthing.exe", "Syncthing", _SYNC, REC),
+    _a("synologydrive.exe", "Synology Drive", _SYNC, REC),
+    # -- torrents and download managers ----------------------------------------------------------
+    _a("deluge.exe", "Deluge (torrents)", _TORRENT, REC),
+    _a("qbittorrent.exe", "qBittorrent", _TORRENT, REC),
+    _a("utorrent.exe", "uTorrent", _TORRENT, REC),
+    _a("bittorrent.exe", "BitTorrent", _TORRENT, REC),
+    _a("transmission-qt.exe", "Transmission", _TORRENT, REC),
+    _a("tixati.exe", "Tixati", _TORRENT, REC),
+    _a("idman.exe", "Internet Download Manager", "Downloads fill the line.", REC),
+    _a("fdm.exe", "Free Download Manager", "Downloads fill the line.", REC),
+    # -- updaters and resident helpers -----------------------------------------------------------
+    _a("creative cloud.exe", "Adobe Creative Cloud", "Background updater and sync.", REC),
+    _a("adobe desktop service.exe", "Adobe Desktop Service", "Creative Cloud's engine.", REC,
+       reopen=False),
+    _a("ccxprocess.exe", "Adobe CCX Process", "Creative Cloud helper.", REC, reopen=False),
+    _a("coresync.exe", "Adobe Core Sync", "Creative Cloud file sync.", REC, reopen=False),
+    _a("adobeipcbroker.exe", "Adobe IPC Broker", "Creative Cloud helper.", REC, reopen=False),
+    _a("jusched.exe", "Java Update Scheduler", "Checks for Java updates.", REC),
+    _a("mathworksservicehost.exe", "MathWorks Service Host",
+       "MATLAB's background host (licensing, updates); MATLAB starts it again.", MAX, reopen=False),
+    _a("widgetboard.exe", "Widgets", "News feed kept alive in the background.", REC, reopen=False),
+    _a("widgets.exe", "Widgets", "News feed kept alive in the background.", REC, reopen=False),
+    _a("widgetservice.exe", "Widgets service", "Widgets' background runtime.", REC, reopen=False),
+    _a("snippingtool.exe", "Snipping Tool",
+       "Stays resident after a screenshot; Print Screen starts it again.", REC, reopen=False),
+    _a("m365copilot.exe", "Microsoft 365 Copilot", "Background web app.", REC),
+    _a("phoneexperiencehost.exe", "Phone Link", "Keeps a link to your phone open.", REC),
+    _a("yourphone.exe", "Phone Link (older)", "Keeps a link to your phone open.", REC),
+    _a("wallpaper32.exe", "Wallpaper Engine", "Animated wallpaper: GPU time behind the game.", REC),
+    _a("wallpaper64.exe", "Wallpaper Engine", "Animated wallpaper: GPU time behind the game.", REC),
+    _a("lively.exe", "Lively Wallpaper", "Animated wallpaper: GPU time behind the game.", REC),
+    # -- Windows' own on-demand helpers (Maximum) ------------------------------------------------
+    _a("crossdeviceresume.exe", "Cross-device resume",
+       "Phone-to-PC handoff; Windows starts it again when needed.", MAX, reopen=False),
+    _a("searchhost.exe", "Windows Search box",
+       "The search flyout; Windows starts it again the next time you search.", MAX, reopen=False),
+    # -- chat and voice (Maximum) ----------------------------------------------------------------
+    _a("discord.exe", "Discord", _CHAT + " Reopened after.", MAX),
+    _a("ms-teams.exe", "Microsoft Teams", "Closed by Maximum; you will miss calls meanwhile.", MAX,
+       lower=True),
+    _a("teams.exe", "Microsoft Teams (classic)", "Closed by Maximum; you will miss calls meanwhile.",
+       MAX, lower=True),
+    _a("whatsapp.root.exe", "WhatsApp", _CHAT, MAX, lower=True),
+    _a("whatsapp.exe", "WhatsApp", _CHAT, MAX, lower=True),
+    _a("telegram.exe", "Telegram", _CHAT, MAX, lower=True),
+    _a("signal.exe", "Signal", _CHAT, MAX, lower=True),
+    _a("slack.exe", "Slack", _CHAT, MAX, lower=True),
+    _a("skype.exe", "Skype", _CHAT, MAX, lower=True),
+    _a("zoom.exe", "Zoom", _CHAT, MAX, lower=True),
+    _a("viber.exe", "Viber", _CHAT, MAX, lower=True),
+    _a("messenger.exe", "Messenger", _CHAT, MAX, lower=True),
+    # -- browsers (Maximum, reopened with their tabs) ----------------------------------------------
+    _a("chrome.exe", "Google Chrome", "Closed by Maximum; reopened with your tabs.", MAX, lower=True,
+       reopen_args=_TABS),
+    _a("msedge.exe", "Microsoft Edge", "Closed by Maximum; reopened with your tabs.", MAX, lower=True,
+       reopen_args=_TABS),
+    _a("brave.exe", "Brave", "Closed by Maximum; reopened with your tabs.", MAX, lower=True,
+       reopen_args=_TABS),
+    _a("vivaldi.exe", "Vivaldi", "Closed by Maximum; reopened with your tabs.", MAX, lower=True,
+       reopen_args=_TABS),
+    _a("opera.exe", "Opera", "Closed by Maximum; Opera restores its own tabs.", MAX, lower=True),
+    _a("firefox.exe", "Firefox", "Closed by Maximum; Firefox restores tabs if it is set to.", MAX,
+       lower=True),
+    # -- work apps (Maximum) ---------------------------------------------------------------------
+    _a("chatgpt.exe", "ChatGPT / Codex", "Closed by Maximum.", MAX, lower=True),
+    _a("code.exe", "Visual Studio Code",
+       "Closed by Maximum; it reopens its windows and unsaved files itself.", MAX, lower=True),
+    _a("cursor.exe", "Cursor", "Closed by Maximum; it reopens its windows itself.", MAX, lower=True),
+    _a("notepad.exe", "Notepad", "Closed by Maximum; it keeps unsaved tabs itself.", MAX),
+    _a("notion.exe", "Notion", "Closed by Maximum.", MAX, lower=True),
+    _a("obsidian.exe", "Obsidian", "Closed by Maximum.", MAX, lower=True),
+    _a("evernote.exe", "Evernote", "Closed by Maximum.", MAX, lower=True),
+    _a("postman.exe", "Postman", "Closed by Maximum.", MAX, lower=True),
+    _a("docker desktop.exe", "Docker Desktop", "Closed by Maximum (its containers keep running).",
+       MAX),
+    _a("appcontrol.exe", "AppControl", "Process monitor window; its service keeps running.", MAX),
+    _a("powertoys.exe", "PowerToys", "Closed by Maximum; its shortcuts return after.", MAX),
+    _a("rainmeter.exe", "Rainmeter", "Desktop widgets redrawing behind the game.", MAX),
+    _a("everything.exe", "Everything (search)", "Keeps a live file index.", MAX),
+    _a("anydesk.exe", "AnyDesk", "Remote access client.", MAX),
+    _a("teamviewer.exe", "TeamViewer", "Remote access client.", MAX),
+    _a("itunes.exe", "iTunes", "Closed by Maximum.", MAX),
+    # -- left open unless you tick them ----------------------------------------------------------
+    _a("dashboard.exe", "CyberGhost", "Left open: closing it may drop the VPN.", OPT),
+    _a("spotify.exe", "Spotify", "Left open: music while you play.", OPT),
+    _a("sharex.exe", "ShareX", "Left open: screenshot and clip hotkeys while you play.", OPT),
+    _a("overwolf.exe", "Overwolf", "Left open: in-game add-ons.", OPT),
+    _a("vlc.exe", "VLC", "Left open.", OPT),
 )
 
 APP_BY_EXE: Dict[str, AppSpec] = {a.exe: a for a in APPS}
@@ -234,29 +312,58 @@ APP_BY_EXE: Dict[str, AppSpec] = {a.exe: a for a in APPS}
 #: Windows starts them again when they are next needed.
 WINDOWS_ON_DEMAND = frozenset({"searchhost.exe", "crossdeviceresume.exe"})
 
+#: Game launchers. Anything they started -- the game itself -- is never
+#: closed, however it is named (see `session.running_apps`).
+LAUNCHERS = (
+    "steam.exe", "battle.net.exe", "agent.exe", "epicgameslauncher.exe", "eadesktop.exe",
+    "ealauncher.exe", "origin.exe", "ubisoftconnect.exe", "upc.exe", "galaxyclient*.exe",
+    "riotclient*.exe", "xboxpcapp.exe", "gamelaunchhelper.exe", "playnite*.exe", "heroic.exe",
+    "rockstarlauncher.exe", "launcher.exe", "bsglauncher.exe", "wargaminggamecenter.exe",
+)
+
+#: Folders games live in: nothing running from one is ever closed.
+GAME_FOLDERS = (
+    "\\steamapps\\", "\\epic games\\", "\\xboxgames\\", "\\gog galaxy\\games\\", "\\riot games\\",
+    "\\ea games\\", "\\ubisoft game launcher\\games\\", "\\battle.net\\", "\\blizzard",
+    "\\rockstar games\\", "\\games\\", "\\windowsapps\\microsoft.gaming",
+)
+
 #: Never offered for closing, whatever is ticked: game launchers (the game
 #: needs them), the shell, input, security, Outlook/Office (their .pst/.ost
-#: data files), peripherals (mouse DPI, macros, RGB), monitoring and fan
-#: tools, terminals and AI agents that may be mid-task, and this app itself.
-NEVER_CLOSE = (
-    "steam.exe", "steamwebhelper.exe", "steamservice.exe", "battle.net.exe", "agent.exe",
-    "epicgameslauncher.exe", "epicwebhelper.exe", "eadesktop.exe", "eabackgroundservice.exe",
-    "ubisoftconnect.exe", "upc.exe", "galaxyclient*.exe", "riotclient*.exe", "vgtray.exe",
-    "xboxpcapp.exe", "gamingservices*.exe", "gamebar*.exe",
+#: data files), peripherals (mouse DPI, macros, RGB), controllers and game
+#: input, monitoring and fan tools, streaming hosts, terminals and AI agents
+#: that may be mid-task, and this app itself.
+NEVER_CLOSE = LAUNCHERS + (
+    "steamwebhelper.exe", "steamservice.exe", "gameoverlayui*.exe", "epicwebhelper.exe",
+    "eabackgroundservice.exe", "vgtray.exe", "gamingservices*.exe", "gamebar*.exe", "gameinput*.exe",
     "explorer.exe", "dwm.exe", "textinputhost.exe", "ctfmon.exe", "shellexperiencehost.exe",
     "startmenuexperiencehost.exe", "shellhost.exe", "sihost.exe", "msedgewebview2.exe",
     "bd*.exe", "seccenter.exe", "vsserv*.exe", "msmpeng.exe", "securityhealth*.exe", "nissrv.exe",
+    "defender*.exe", "mpdefender*.exe", "mpcmdrun.exe", "smartscreen.exe",
     "outlook.exe", "olk.exe", "winword.exe", "excel.exe", "powerpnt.exe", "onenote*.exe",
     "msaccess.exe", "mspub.exe", "lync.exe", "officeclicktorun.exe",
     "audiodg.exe", "rtkauduservice64.exe", "amdrsserv.exe", "radeonsoftware.exe", "atieclxx.exe",
     "amdow.exe", "nvcontainer.exe", "nvidia*.exe", "nvsphelper64.exe",
     "lghub*.exe", "logi*.exe", "razer*.exe", "steelseries*.exe", "icue*.exe", "corsair*.exe",
-    "armourycrate*.exe", "wooting*.exe", "signalrgb*.exe", "openrgb*.exe",
+    "armourycrate*.exe", "wooting*.exe", "signalrgb*.exe", "openrgb*.exe", "ds4windows.exe",
+    "dsx*.exe", "x360ce*.exe", "joytokey*.exe", "8bitdo*.exe",
     "rtss*.exe", "msiafterburner.exe", "hwinfo*.exe", "fancontrol.exe", "obs64.exe", "obs32.exe",
+    "parsec*.exe", "sunshine*.exe", "moonlight*.exe",
     "claude.exe", "node.exe", "codex.exe", "python.exe", "pythonw.exe", "windowsterminal.exe",
     "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "wsl*.exe",
+    "bash.exe", "sh.exe", "mintty.exe", "git.exe", "ssh.exe",
     "winclienttool*.exe",
 )
+
+
+def is_launcher(exe: str) -> bool:
+    low = exe.lower()
+    return any(fnmatch.fnmatch(low, pattern) for pattern in LAUNCHERS)
+
+
+def in_game_folder(path: str) -> bool:
+    low = (path or "").lower()
+    return any(folder in low for folder in GAME_FOLDERS)
 
 
 def never_close(exe: str) -> bool:

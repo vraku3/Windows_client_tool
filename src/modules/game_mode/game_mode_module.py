@@ -251,7 +251,8 @@ class GameModeModule(BaseModule):
         def work(_w):
             facts = advice.collect(system, own, sid)
             procs = system.processes()
-            groups = session.running_apps(procs, sid, own, lambda pid: system.details(pid)[0])
+            groups = session.running_apps(procs, sid, own, lambda pid: system.details(pid)[0],
+                                          system.fullscreen_pids())
             plan = session.recommended_plan(facts.cpu, system.plans(), facts.vcache_installed)
             states = {spec.name: [(n, system.service(n)) for n in system.service_names(spec.name)]
                       for spec in catalog.SERVICES}

@@ -134,11 +134,20 @@ class AppGroup:
 
 
 def running_apps(procs: List[Proc], session: int, own_pid: int,
-                 path_of: Callable[[int], Optional[str]]) -> List[AppGroup]:
+                 path_of: Callable[[int], Optional[str]],
+                 protect: Optional[Set[int]] = None) -> List[AppGroup]:
     """Programs in `session` that Game Mode could close, biggest first.
-    Windows' own (anything under %SystemRoot%) and NEVER_CLOSE are left out,
-    except the few Windows starts again on demand (WINDOWS_ON_DEMAND)."""
+
+    Left out: Windows' own (anything under %SystemRoot%, except the few it
+    starts again on demand), NEVER_CLOSE, and -- so a game that is already
+    running is never closed -- anything a game launcher started, anything
+    running from a game folder, and the pids in `protect` (the full-screen
+    foreground window). A helper whose parent is another listed program is
+    folded into that program: VS Code's language servers are VS Code.
+    """
     windir = os.path.normcase(os.environ.get("SystemRoot") or os.environ.get("windir") or "\\Windows")
+    by_pid = {p.pid: p for p in procs}
+    protect = protect or set()
     by_name: Dict[str, List[Proc]] = {}
     for p in procs:
         if p.session == session and p.pid != own_pid and p.session != 0:
@@ -146,17 +155,48 @@ def running_apps(procs: List[Proc], session: int, own_pid: int,
     pids_by_name = {n: {p.pid for p in ps} for n, ps in by_name.items()}
     groups = []
     for name, ps in by_name.items():
-        if catalog.never_close(name) or any(p.pid == own_pid for p in ps):
+        if catalog.never_close(name) or any(p.pid == own_pid or p.pid in protect for p in ps):
             continue
         roots = [p for p in ps if p.ppid not in pids_by_name[name]] or ps[:1]
+        if any(_started_by_launcher(r, by_pid) for r in roots):
+            continue
         path = path_of(roots[0].pid) or ""
-        if not path or (os.path.normcase(path).startswith(windir)
-                        and name not in catalog.WINDOWS_ON_DEMAND):
+        if not path or catalog.in_game_folder(path) or (
+                os.path.normcase(path).startswith(windir) and name not in catalog.WINDOWS_ON_DEMAND):
             continue
         spec = catalog.spec_for(name)
         groups.append(AppGroup(name, spec.label if spec else os.path.basename(path), spec,
                                ps, roots))
-    return sorted(groups, key=lambda g: -g.handles)
+    return sorted(_fold_helpers(groups), key=lambda g: -g.handles)
+
+
+def _started_by_launcher(proc: Proc, by_pid: Dict[int, Proc]) -> bool:
+    """Is a game launcher among `proc`'s ancestors? A parent is only believed
+    while it is OLDER than its child -- Windows reuses PIDs."""
+    seen, child, cur = set(), proc, by_pid.get(proc.ppid)
+    while cur is not None and cur.pid not in seen and cur.create_time <= child.create_time:
+        if catalog.is_launcher(cur.name):
+            return True
+        seen.add(cur.pid)
+        child, cur = cur, by_pid.get(cur.ppid)
+    return False
+
+
+def _fold_helpers(groups: List[AppGroup]) -> List[AppGroup]:
+    changed = True
+    while changed:
+        changed = False
+        owner = {p.pid: g for g in groups for p in g.procs}
+        for g in groups:
+            parents = {id(owner[r.ppid]): owner[r.ppid] for r in g.roots if r.ppid in owner}
+            if len(parents) == 1 and len(g.roots) == sum(1 for r in g.roots if r.ppid in owner):
+                parent = next(iter(parents.values()))
+                if parent is not g:
+                    parent.procs.extend(g.procs)
+                    groups = [x for x in groups if x is not g]
+                    changed = True
+                    break
+    return groups
 
 
 def total_handles(procs: List[Proc]) -> int:
@@ -389,7 +429,8 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     if choices.visuals:
         on.visuals()
     on.services(choices.services, elevated)
-    groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0])
+    groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0],
+                          system.fullscreen_pids())
     on.close_apps(groups, choices.close)
     if choices.lower:
         on.lower(groups, choices.close)

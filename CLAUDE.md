@@ -2040,6 +2040,20 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   here, deleted again by OFF) and 21 updater/maintenance scheduled tasks
   (`catalog.TASKS`, via `IRegisteredTask.Enabled`, never re-registered; a
   protected task is reported and not journaled).
+- **A game already running is never closed, whatever is ticked**
+  (`running_apps`): anything whose ancestors include a game launcher
+  (`catalog.LAUNCHERS`; a parent counts only while it is OLDER than its
+  child, PIDs are reused), anything running from a game folder
+  (`GAME_FOLDERS`: steamapps, Epic Games, XboxGames, Riot Games, \Games\
+  ...), and the owner of a full-screen foreground window
+  (`fullscreen_pids`). A helper whose parent is another listed program is
+  folded into it (`_fold_helpers`): VS Code's `pet.exe`/`copilot-runtime.exe`
+  are VS Code, Codex's computer-use helper is Codex. The first real preview
+  of Maximum would otherwise have closed `DefenderSessionHelper.exe`
+  (Defender), `GameInputRedistService.exe` (game controller input) and Git's
+  `bash.exe` -- all now in `NEVER_CLOSE`. Discord is MAX (closed and
+  reopened); ~80 apps are catalogued (sync, torrents, chat, browsers,
+  updaters, wallpaper engines, work apps).
 - **4,000 handles is not reachable, and the pane says so with numbers**
   (measured 2026-10-16: 227,720 total; kernel System ~8,400, session-0
   Windows services ~46,000, Bitdefender ~13,000; `msedgewebview2` x40 =

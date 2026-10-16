@@ -1891,6 +1891,20 @@ AVAILABLE here. Facts the runs added:
   Add-WindowsCapability with 0x800F0954 unless policy allows Windows Update;
   the confirm dialog says so. UI: "Required modules…" lists all of them, and a
   script's card shows its requirement and "Install required module…".
+- **The scripts folder is a setting** (`modules.scripts.folder`, "Change…" /
+  "Reset to default" above the tree; default `%APPDATA%\WindowsTweaker\scripts`).
+  `library.set_user_scripts_dir()` holds it; every run gets it as
+  `%WCT_SCRIPTS_DIR%`, which is where the fleet checks read `servers.txt`
+  (a test runs one against a chosen folder for real).
+- **The output pane is PowerShell ISE's console**: QSS role `iseConsole` (white,
+  black Lucida Console 10pt) in both themes, span colours from the LIGHT
+  palettes whatever the app theme, plain text/headers/keys left black, a
+  `PS <dir>> .\<id>.ps1` prompt before the run and a fresh prompt after;
+  built-ins start in the user's profile like ISE. Two real defects this
+  fixed: `setFont(Consolas)` was overridden by the application stylesheet, so
+  tables and Format-List colons did not line up (fonts must come from QSS),
+  and the `Key : value` regex coloured IPv6 table rows (`UDP   ::`) as keys --
+  the colon must now be followed by a space or the end.
 - **Editing**: "Edit" (menu: PowerShell ISE / VS Code / Notepad, ISE first
   when installed) opens a user script in place; a built-in is first copied by
   `library.export_for_editing` to the scripts folder as `<id>.ps1` with a

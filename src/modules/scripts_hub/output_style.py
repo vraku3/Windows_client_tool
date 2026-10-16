@@ -20,7 +20,9 @@ _TAG = re.compile(r"^(\s*)(\[(OK|WARN|BAD|INFO)\])")
 _RULE = re.compile(r"^\s*-{3,}[-\s]*$")
 #: `Name         : value` (Format-List). The key holds no path separators and
 #: no second colon, so `C:\Windows` and timestamps are not keys.
-_KEY = re.compile(r"^(\s*[A-Za-z][\w .()/#'-]{0,40}?)(\s+:\s?)(.*)$")
+#: The colon must be followed by a space or the end: a table row such as
+#: "UDP   ::" (an IPv6 address) is not a key (measured -- it was coloured as one).
+_KEY = re.compile(r"^(\s*[A-Za-z][\w .()/#'-]{0,40}?)(\s+:)(?=\s|$)(\s?)(.*)$")
 _TAG_KIND = {"OK": OK, "WARN": WARN, "BAD": BAD, "INFO": INFO}
 
 
@@ -53,5 +55,5 @@ def spans(line: str) -> List[Tuple[str, str]]:
         return [(line, WARN)]
     k = _KEY.match(line)
     if k and "\\" not in k.group(1):
-        return [(k.group(1), KEY), (k.group(2) + k.group(3), PLAIN)]
+        return [(k.group(1), KEY), (k.group(2) + k.group(3) + k.group(4), PLAIN)]
     return [(line, PLAIN)]

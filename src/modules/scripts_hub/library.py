@@ -298,9 +298,28 @@ CATEGORIES = CLIENT_CATEGORIES + SERVER_CATEGORIES + (USER_CATEGORY,)
 
 # ---- user scripts ----------------------------------------------------------------------------
 
-def user_scripts_dir() -> str:
+#: The folder the person chose in the pane (persisted in the app config as
+#: `modules.scripts.folder`); None means the default below.
+_folder_override: Optional[str] = None
+
+#: Child processes see the folder in this variable, so a script (the fleet
+#: checks read servers.txt from it) follows the person's choice.
+FOLDER_ENV = "WCT_SCRIPTS_DIR"
+
+
+def default_user_scripts_dir() -> str:
     base = os.environ.get("APPDATA") or os.path.expanduser("~")
     return os.path.join(base, "WindowsTweaker", "scripts")
+
+
+def set_user_scripts_dir(path: Optional[str]) -> None:
+    """Use `path` as the scripts folder (None or "" = back to the default)."""
+    global _folder_override
+    _folder_override = os.path.normpath(path) if path else None
+
+
+def user_scripts_dir() -> str:
+    return _folder_override or default_user_scripts_dir()
 
 
 _PS_BLOCK = re.compile(r"<#(.*?)#>", re.S)
@@ -518,6 +537,24 @@ def _body_file(script: Script) -> str:
     return path
 
 
+def working_dir(script: Script) -> str:
+    """Where a script runs: a user script in its own folder; a built-in in the
+    user's profile, which is where PowerShell ISE starts too."""
+    return os.path.dirname(script.path) if script.path else os.path.expanduser("~")
+
+
+def prompt_line(script: Script) -> str:
+    """The line ISE would show for running this script: `PS <dir>> <command>`."""
+    where = working_dir(script)
+    if script.path:
+        command = f"& '{script.path}'" if script.kind == POWERSHELL else f"cmd /c '{script.path}'"
+    elif script.kind == CMD:
+        command = script.body.strip().splitlines()[0]
+    else:
+        command = f".\\{_safe_name(script.id)}.ps1"
+    return f"PS {where}> {command}"
+
+
 def _kill_tree(pid: int) -> None:
     try:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
@@ -536,10 +573,12 @@ def run(script: Script, on_line: Callable[[str], None],
     start = time.monotonic()
     result = RunResult(script.id, None)
     body_file = _body_file(script) if script.kind == POWERSHELL and not script.path else ""
+    env = dict(os.environ)
+    env[FOLDER_ENV] = user_scripts_dir()
     try:
         proc = popen(command_for(script, body_file), stdout=subprocess.PIPE,
                      stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                     cwd=os.path.dirname(script.path) or None, creationflags=CREATE_NO_WINDOW)
+                     cwd=working_dir(script), env=env, creationflags=CREATE_NO_WINDOW)
     except OSError as e:
         # An antivirus refusing the launch arrives here as "Access is denied".
         line = (f"ERROR: Windows refused to start the script: {e}. An antivirus may have "

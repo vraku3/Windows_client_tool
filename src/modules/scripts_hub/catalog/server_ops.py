@@ -1,8 +1,8 @@
 """Wintel operations: log parsing, fleet checks across many servers, and more
 roles & features. Read-only.
 
-Fleet scripts read their targets from `servers.txt` in the user's scripts
-folder (one name per line, # comments); with no list they check THIS
+Fleet scripts read their targets from `servers.txt` in the scripts folder
+(the one chosen in the pane, passed as %WCT_SCRIPTS_DIR%) (one name per line, # comments); with no list they check THIS
 computer, which is how they were verified here. They talk CIM over DCOM, so
 they need no WinRM -- only RPC/WMI through the target's firewall and an
 account that is admin there.
@@ -15,7 +15,7 @@ RF = maker("Roles & features", server=True)
 
 #: Defines $targets and `Each { param($name, $cim) ... }` -- runs the block per
 #: target with a DCOM CIM session, reporting unreachable ones as [BAD].
-FLEET = r"""$list = Join-Path $env:APPDATA 'WindowsTweaker\scripts\servers.txt'
+FLEET = r"""$list = Join-Path $(if ($env:WCT_SCRIPTS_DIR) { $env:WCT_SCRIPTS_DIR } else { Join-Path $env:APPDATA 'WindowsTweaker\scripts' }) 'servers.txt'
 $targets = if (Test-Path $list) { Get-Content $list | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') } } else { @($env:COMPUTERNAME) }
 if (-not (Test-Path $list)) { "[INFO] No $list -- checking this computer only. Put one server name per line in that file to check many." }
 $opt = New-CimSessionOption -Protocol Dcom
@@ -180,7 +180,7 @@ Get-ChildItem $d -Recurse -Filter 'PowerShell_transcript*' -ErrorAction Silently
     FL("fl_app_search", "Find servers that have a program",
        "Which servers have a program whose name matches the pattern in the first line of "
        "servers-app.txt (default: 'Java').",
-       FLEET + r"""$pf = Join-Path $env:APPDATA 'WindowsTweaker\scripts\servers-app.txt'
+       FLEET + r"""$pf = Join-Path $(if ($env:WCT_SCRIPTS_DIR) { $env:WCT_SCRIPTS_DIR } else { Join-Path $env:APPDATA 'WindowsTweaker\scripts' }) 'servers-app.txt'
 $pat = if (Test-Path $pf) { (Get-Content $pf | Select-Object -First 1).Trim() } else { 'Java' }
 "Looking for: *$pat*"
 Each { param($t, $c) Get-CimInstance Win32_InstalledWin32Program -CimSession $c -ErrorAction SilentlyContinue | Where-Object Name -like "*$pat*" | ForEach-Object { '{0,-20} {1} {2}' -f $t, $_.Name, $_.Version } }""",
@@ -214,7 +214,7 @@ Each { param($t, $c) $cbs = Invoke-CimMethod -CimSession $c -Namespace root\cimv
        timeout=600),
     FL("fl_time_offset", "Clock offset of every server",
        "Each server's clock offset against this computer (w32tm /stripchart).",
-       r"""$list = Join-Path $env:APPDATA 'WindowsTweaker\scripts\servers.txt'
+       r"""$list = Join-Path $(if ($env:WCT_SCRIPTS_DIR) { $env:WCT_SCRIPTS_DIR } else { Join-Path $env:APPDATA 'WindowsTweaker\scripts' }) 'servers.txt'
 $targets = if (Test-Path $list) { Get-Content $list | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') } } else { @($env:COMPUTERNAME) }
 foreach ($t in $targets) { $o = w32tm /stripchart /computer:$t /samples:1 /dataonly 2>&1 | Select-Object -Last 1; '{0,-20} {1}' -f $t, $o }""",
        timeout=300),
@@ -235,13 +235,13 @@ foreach ($t in $targets) { $o = w32tm /stripchart /computer:$t /samples:1 /datao
     FL("fl_certificates_expiring", "Certificates expiring on every server",
        "Machine certificates expiring within 30 days per server (needs WinRM: Invoke-Command, "
        "since the certificate store is not exposed through CIM).",
-       r"""$list = Join-Path $env:APPDATA 'WindowsTweaker\scripts\servers.txt'
+       r"""$list = Join-Path $(if ($env:WCT_SCRIPTS_DIR) { $env:WCT_SCRIPTS_DIR } else { Join-Path $env:APPDATA 'WindowsTweaker\scripts' }) 'servers.txt'
 $targets = if (Test-Path $list) { Get-Content $list | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') } } else { @($env:COMPUTERNAME) }
 foreach ($t in $targets) { try { $r = if ($t -eq $env:COMPUTERNAME) { Get-ChildItem Cert:\LocalMachine\My | Where-Object NotAfter -lt (Get-Date).AddDays(30) } else { Invoke-Command -ComputerName $t -ErrorAction Stop -ScriptBlock { Get-ChildItem Cert:\LocalMachine\My | Where-Object NotAfter -lt (Get-Date).AddDays(30) } }
   if (-not $r) { "[OK]   $t -- nothing expiring" } else { $r | ForEach-Object { "[WARN] $t -- $($_.Subject) expires $($_.NotAfter)" } } } catch { "[BAD]  $t -- $($_.Exception.Message)" } }"""),
     FL("fl_ping_sweep", "Reachability of every server",
        "Ping and RPC (135) / SMB (445) / RDP (3389) / WinRM (5985) reachability per server.",
-       r"""$list = Join-Path $env:APPDATA 'WindowsTweaker\scripts\servers.txt'
+       r"""$list = Join-Path $(if ($env:WCT_SCRIPTS_DIR) { $env:WCT_SCRIPTS_DIR } else { Join-Path $env:APPDATA 'WindowsTweaker\scripts' }) 'servers.txt'
 $targets = if (Test-Path $list) { Get-Content $list | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') } } else { @($env:COMPUTERNAME) }
 foreach ($t in $targets) { $ping = Test-Connection $t -Count 1 -Quiet
   $ports = foreach ($p in 135, 445, 3389, 5985) { $ok = Test-NetConnection $t -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue; "$p=$(if ($ok) {'open'} else {'closed'})" }

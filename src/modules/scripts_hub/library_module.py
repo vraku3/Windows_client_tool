@@ -14,14 +14,14 @@ import subprocess
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QThreadPool
-from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                              QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from core.base_module import BaseModule
-from core.semantic_colors import chrome, semantic
 from core.module_groups import ModuleGroup
+from core.semantic_colors import CHROME_PALETTES, SEMANTIC_PALETTES
 from core.table_ui import set_role
 from core.widget_life import widget_is_valid
 from core.worker import Worker
@@ -32,6 +32,7 @@ from . import library, modules_catalog, output_style, support_bundle
 logger = logging.getLogger(__name__)
 
 _SCRIPT_ROLE = Qt.ItemDataRole.UserRole
+_FOLDER_KEY = "modules.scripts.folder"
 _MAX_OUTPUT_LINES = 20_000
 
 
@@ -47,22 +48,24 @@ def badges(script: library.Script, elevated: bool) -> str:
     return "  ·  ".join(parts)
 
 
-#: Output colour per `output_style` kind: (semantic or chrome role, bold, italic).
-_STYLE = {output_style.OK: ("success", False, False), output_style.WARN: ("warning", False, False),
-          output_style.BAD: ("error", True, False), output_style.INFO: ("info", False, False),
-          output_style.NA: ("text_muted", False, True), output_style.HEADER: ("info", True, False),
-          output_style.RULE: ("text_muted", False, False), output_style.KEY: ("match", False, False)}
+#: The output pane looks like PowerShell ISE's console in every app theme: white,
+#: black Lucida Console (the `iseConsole` QSS role). So the span colours come
+#: from the LIGHT palettes whatever the app theme is -- the dark theme's amber
+#: is unreadable on white. Like ISE, ordinary text, table headers and list keys
+#: stay plain black; only verdicts, errors and warnings are coloured.
+_ISE_STYLE = {output_style.OK: ("success", False), output_style.WARN: ("warning", False),
+              output_style.BAD: ("error", False), output_style.INFO: ("info", False),
+              output_style.NA: ("text_muted", True)}
 
 
 def _format(kind: str) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    style = _STYLE.get(kind)
+    style = _ISE_STYLE.get(kind)
     if style is None:
         return fmt
-    role, bold, italic = style
-    fmt.setForeground(QColor(chrome(role) if role.startswith("text") else semantic(role)))
-    if bold:
-        fmt.setFontWeight(QFont.Weight.Bold)
+    role, italic = style
+    palette = CHROME_PALETTES["light"] if role.startswith("text") else SEMANTIC_PALETTES["light"]
+    fmt.setForeground(QColor(palette[role]))
     fmt.setFontItalic(italic)
     return fmt
 
@@ -96,6 +99,19 @@ class ScriptLibraryModule(BaseModule):
 
     def on_start(self, app) -> None:
         self.app = app
+        library.set_user_scripts_dir(self._config_get(_FOLDER_KEY, ""))
+
+    def _config_get(self, key: str, default):
+        config = getattr(getattr(self, "app", None), "config", None)
+        if config is None:
+            return default
+        value = config.get(key, default)
+        return default if value is None else value
+
+    def _config_set(self, key: str, value) -> None:
+        config = getattr(getattr(self, "app", None), "config", None)
+        if config is not None:
+            config.set(key, value)
 
     def get_refresh_interval(self):
         return None
@@ -106,6 +122,7 @@ class ScriptLibraryModule(BaseModule):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addLayout(self._build_toolbar(w))
+        lay.addLayout(self._build_folder_row(w))
         self._banner = ErrorBanner("", w)
         self._banner.hide()
         lay.addWidget(self._banner)
@@ -125,6 +142,42 @@ class ScriptLibraryModule(BaseModule):
         lay.addWidget(split, 1)
         self._widget = w
         return w
+
+    def _build_folder_row(self, parent: QWidget) -> QHBoxLayout:
+        row = QHBoxLayout()
+        self._folder_label = QLabel("", parent)
+        self._folder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        set_role(self._folder_label, "statusInfo")
+        row.addWidget(self._folder_label, 1)
+        for label, fn in (("Change…", self._change_folder), ("Reset to default", self._reset_folder)):
+            b = QPushButton(label, parent)
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        self._show_folder()
+        return row
+
+    def _show_folder(self) -> None:
+        folder = library.user_scripts_dir()
+        custom = folder != library.default_user_scripts_dir()
+        self._folder_label.setText(f"Scripts folder: {folder}" + ("" if custom else "  (default)")
+                                   + "  --  your .ps1/.cmd/.bat files, copies of built-ins you "
+                                     "edit, and servers.txt for the fleet checks")
+
+    def _change_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(self._widget, "Choose the scripts folder",
+                                                  library.user_scripts_dir())
+        if not folder:
+            return
+        library.set_user_scripts_dir(folder)
+        self._config_set(_FOLDER_KEY, folder)
+        self._show_folder()
+        self._reload()
+
+    def _reset_folder(self) -> None:
+        library.set_user_scripts_dir(None)
+        self._config_set(_FOLDER_KEY, "")
+        self._show_folder()
+        self._reload()
 
     def _build_toolbar(self, parent: QWidget) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -183,9 +236,9 @@ class ScriptLibraryModule(BaseModule):
         self._output.setReadOnly(True)
         self._output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._output.setMaximumBlockCount(_MAX_OUTPUT_LINES)
-        mono = QFont("Consolas")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        self._output.setFont(mono)
+        # Font and colours come from the `iseConsole` role: an application
+        # stylesheet overrides setFont(), which is why columns did not line up.
+        set_role(self._output, "iseConsole")
         self._output.setPlaceholderText("Output appears here as the script runs.")
         need_row = QHBoxLayout()
         self._need = QLabel("", box)
@@ -356,6 +409,7 @@ class ScriptLibraryModule(BaseModule):
         if not script.read_only and not self._confirm_user_script(script):
             return
         self._output.clear()
+        self._append(library.prompt_line(script), plain=True)
         self._status.setText(f"Running {script.title}…")
         w = Worker(lambda worker: library.run(script, worker.signals.log_line.emit,
                                               lambda: worker.is_cancelled))
@@ -368,7 +422,7 @@ class ScriptLibraryModule(BaseModule):
         self._update_buttons()
         QThreadPool.globalInstance().start(w)
 
-    def _append(self, line: str) -> None:
+    def _append(self, line: str, plain: bool = False) -> None:
         """Append one line, coloured. A `----` rule restyles the line above it as
         a table header -- the header is only known once its rule arrives."""
         if not widget_is_valid(self._output):
@@ -381,7 +435,7 @@ class ScriptLibraryModule(BaseModule):
             header.mergeCharFormat(_format(output_style.HEADER))
         if not self._output.document().isEmpty():
             cursor.insertBlock()
-        for text, kind in output_style.spans(line):
+        for text, kind in ([(line, output_style.PLAIN)] if plain else output_style.spans(line)):
             cursor.insertText(text, _format(kind))
         self._output.setTextCursor(cursor)
         self._output.ensureCursorVisible()
@@ -390,6 +444,9 @@ class ScriptLibraryModule(BaseModule):
         self._run_worker = None
         if not widget_is_valid(self._status):
             return
+        if self._current is not None:              # ISE ends a run with a fresh prompt
+            self._append("", plain=True)
+            self._append(f"PS {library.working_dir(self._current)}> ", plain=True)
         if result is None:
             self._status.setText("Stopped.")
         elif result.cancelled:

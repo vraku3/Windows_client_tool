@@ -484,3 +484,19 @@ QLabel#monitorInactive { color: #858585; }
 QPlainTextEdit#mono {
     font-family: Consolas, "Cascadia Mono", monospace;
 }
+
+/* Script Library output: looks like PowerShell ISE's console pane -- white,
+   black Lucida Console -- in every theme, so tables and Format-List columns
+   line up exactly as they would in ISE. The font has to come from here: an
+   application stylesheet overrides a widget's setFont(). */
+QPlainTextEdit#iseConsole {
+    background-color: #ffffff;
+    color: #000000;
+    font-family: "Lucida Console", Consolas, monospace;
+    font-size: 10pt;
+    border: 1px solid #a0a0a0;
+    border-radius: 0px;
+    padding: 4px;
+    selection-background-color: #add6ff;
+    selection-color: #000000;
+}

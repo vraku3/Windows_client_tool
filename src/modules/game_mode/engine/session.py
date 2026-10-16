@@ -92,10 +92,15 @@ class Choices:
     #: Restart Explorer at the end of ON: a fresh shell, without the handles
     #: a long-running one accumulates (11,273 here). Open folder windows close.
     explorer: bool = False
+    #: REC or MAX while the ticks are exactly a preset's -- then they are
+    #: recomputed from the catalog every time, so an app or service added to
+    #: the catalog later is included without pressing the button again.
+    #: "custom" once anything is ticked by hand.
+    preset: str = catalog.REC
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
-        out.update(services=sorted(self.services), close=sorted(self.close))
+        out.update(services=sorted(self.services), close=sorted(self.close), preset=self.preset)
         return out
 
 
@@ -106,7 +111,7 @@ def preset(level: str, groups: List["AppGroup"]) -> Choices:
     wanted = {catalog.REC} if level == catalog.REC else {catalog.REC, catalog.MAX}
     c = Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
                 close={a.exe for a in catalog.APPS if a.level in wanted},
-                visuals=level == catalog.MAX, explorer=level == catalog.MAX)
+                visuals=level == catalog.MAX, explorer=level == catalog.MAX, preset=level)
     if level == catalog.MAX:
         c.close |= {g.exe for g in groups if g.spec is None}
     return c
@@ -123,6 +128,7 @@ def choices_from_config(data) -> Choices:
         c.services = {s for s in data["services"] if isinstance(s, str)}
     if isinstance(data.get("close"), list):
         c.close = {s.lower() for s in data["close"] if isinstance(s, str)}
+    c.preset = data.get("preset") if data.get("preset") in (catalog.REC, catalog.MAX) else "custom"
     return c
 
 
@@ -398,21 +404,26 @@ class _On:
         self.log(OK, f"{spec.label}: stopped")
 
     def close_apps(self, groups: List[AppGroup], wanted: Set[str]) -> None:
-        for g in groups:
-            if g.exe not in wanted:
-                continue
+        """Every program is journaled first, then all are closed together."""
+        chosen = [g for g in groups if g.exe in wanted]
+        entries, jobs = [], []
+        for g in chosen:
             path, cmdline, elevated = self.s.details(g.roots[0].pid)
             program, args = split_command_line(cmdline or "")
             extra = g.spec.reopen_args if g.spec else ""
             if extra and extra not in args:
                 args = f"{args} {extra}".strip()
             reopen = g.spec.reopen if g.spec else True
-            entry = self.j.record({
+            entries.append(self.j.record({
                 "kind": "app_close", "exe": g.exe, "label": g.label, "path": path or program,
                 "args": args, "cwd": os.path.dirname(path or program), "aumid": self.s.aumid(g.roots[0].pid),
                 "reopen": reopen and elevated is not True, "was_elevated": elevated,
-                "handles": g.handles, "processes": len(g.procs)})
-            error = self.s.close([p.pid for p in g.procs], path)
+                "handles": g.handles, "processes": len(g.procs)}))
+            jobs.append(([p.pid for p in g.procs], path))
+        if not jobs:
+            return
+        self.log(INFO, f"Closing {len(jobs)} program(s) together...")
+        for g, entry, error in zip(chosen, entries, self.s.close_many(jobs)):
             if error:
                 self.log(BAD, f"{g.label}: not closed ({error})")
                 continue

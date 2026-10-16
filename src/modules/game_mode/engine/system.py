@@ -217,21 +217,38 @@ class WinSystem:
 
     def close(self, pids: List[int], exe_path: Optional[str], grace: float = 8.0) -> Optional[str]:
         """Ask politely, then end what is left. None when every pid is gone."""
-        if exe_path and os.path.basename(exe_path).lower() == "onedrive.exe":
-            run([exe_path, "/shutdown"], timeout=20)       # OneDrive's own documented exit
-        self._post_close(set(pids))
-        if self._wait_gone(pids, grace):
-            return None
+        return self.close_many([(pids, exe_path)], grace)[0]
+
+    def close_many(self, jobs: List[Tuple[List[int], Optional[str]]],
+                   grace: float = 8.0) -> List[Optional[str]]:
+        """Close several programs AT ONCE: every one is asked politely, all of
+        them get the same `grace`, then whatever is left is ended. One at a
+        time, the first real Maximum run took 1 min 43 s for 18 programs --
+        most of it waiting 8 s on tray apps that ignore WM_CLOSE."""
+        for _pids, exe_path in jobs:
+            if exe_path and os.path.basename(exe_path).lower() == "onedrive.exe":
+                run([exe_path, "/shutdown"], timeout=20)   # OneDrive's own documented exit
+        self._post_close({pid for pids, _path in jobs for pid in pids})
+        self._wait_gone([pid for pids, _path in jobs for pid in pids], grace)
+        results = [self._end_left(pids) for pids, _path in jobs]
+        leftover = [pid for pids, _path in jobs for pid in pids]
+        self._wait_gone(leftover, 5.0)
+        import psutil
+        return [err or (None if not any(psutil.pid_exists(p) for p in pids)
+                        else "still running after it was ended")
+                for err, (pids, _path) in zip(results, jobs)]
+
+    @staticmethod
+    def _end_left(pids: List[int]) -> Optional[str]:
         import psutil
         for pid in pids:
             try:
                 psutil.Process(pid).kill()
             except psutil.NoSuchProcess:
-                logger.debug("game mode: %s exited on its own before it was ended", pid)
-                continue
+                logger.debug("game mode: %s closed politely or exited on its own", pid)
             except (psutil.Error, OSError) as error:
                 return f"could not end process {pid}: {error}"
-        return None if self._wait_gone(pids, 5.0) else "still running after it was ended"
+        return None
 
     @staticmethod
     def _post_close(pids) -> None:

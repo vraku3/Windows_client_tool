@@ -40,6 +40,7 @@ class FakeSystem:
         self.fullscreen = set()
         self.wifi = False
         self.explorer_restarts = 0
+        self.close_batches = []
         self.procs = [Proc(10, 1, "OneDrive.exe", 3000, 1, 100), Proc(11, 1, "chrome.exe", 5000, 1, 101),
                       Proc(12, 11, "chrome.exe", 900, 1, 102), Proc(13, 1, "explorer.exe", 9000, 1, 103),
                       Proc(14, 1, "deluge.exe", 1900, 1, 104), Proc(20, 1, "svchost.exe", 800, 0, 105)]
@@ -106,6 +107,10 @@ class FakeSystem:
             if p.name == 'explorer.exe':
                 self.procs.remove(p)
                 self.procs.append(Proc(p.pid + 1000, 1, 'explorer.exe', 3000, 1, p.create_time + 1))
+
+    def close_many(self, jobs, grace=8.0):
+        self.close_batches.append(len(jobs))
+        return [self.close(pids, path) for pids, path in jobs]
 
     def alive(self, pid, ct): return any(p.pid == pid and p.create_time == ct for p in self.procs)
 
@@ -487,3 +492,19 @@ def test_maximum_restarts_explorer_last_and_off_needs_nothing(journal):
 
 def test_searchhost_is_not_closed_by_maximum_it_comes_back_in_a_second():
     assert catalog.spec_for("SearchHost.exe").level == catalog.OPT
+
+
+def test_programs_are_closed_together_in_one_batch(journal):
+    sys_ = FakeSystem()
+    session.turn_on(sys_, _choices(), journal, _quiet, own_pid=999, session=1)
+    assert sys_.close_batches == [2]                     # OneDrive and Deluge, one batch
+
+
+def test_a_preset_follows_the_catalog_until_ticked_by_hand():
+    groups = []
+    c = session.preset(catalog.MAX, groups)
+    assert c.preset == catalog.MAX
+    back = session.choices_from_config(c.to_config())
+    assert back.preset == catalog.MAX and back == c
+    old = session.choices_from_config({"services": ["WSearch"], "close": []})   # saved before presets
+    assert old.preset == "custom"

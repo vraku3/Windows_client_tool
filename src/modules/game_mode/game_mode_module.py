@@ -38,6 +38,7 @@ from .engine.system import WinSystem
 logger = logging.getLogger(__name__)
 
 CONFIG_KEY = "modules.game_mode.choices"
+LIVE_MS = 5_000
 ENFORCE_MS = 60_000
 _ES_CONTINUOUS, _ES_SYSTEM, _ES_DISPLAY = 0x80000000, 0x00000001, 0x00000002
 _LEVEL_COLOR = {session.OK: "success", session.INFO: "info", session.WARN: "warning",
@@ -78,6 +79,7 @@ class GameModeModule(BaseModule):
         self._groups: List[session.AppGroup] = []
         self._procs: list = []
         self._enforce_timer: Optional[QTimer] = None
+        self._live_timer: Optional[QTimer] = None
 
     # ---- lifecycle ----------------------------------------------------------------------------
     def on_start(self, app) -> None:
@@ -94,8 +96,30 @@ class GameModeModule(BaseModule):
         if not self._loaded:
             self._loaded = True
             self._refresh_all()
+        if self._live_timer is None:
+            self._live_timer = QTimer()
+            self._live_timer.timeout.connect(self._live_tick)
+        self._live_timer.start(LIVE_MS)
+
+    def on_deactivate(self) -> None:
+        if self._live_timer is not None:
+            self._live_timer.stop()
+
+    def _live_tick(self) -> None:
+        """The handle count, every few seconds, while the pane is on screen
+        (one NtQuerySystemInformation call -- milliseconds)."""
+        if self._busy or not widget_is_valid(self._numbers):
+            return
+        try:
+            procs = self._system.processes()
+        except OSError as error:
+            logger.warning("game mode: live count unreadable: %s", error)
+            return
+        self._numbers.setText(self._numbers_text(session.total_handles(procs), len(procs)))
 
     def on_stop(self) -> None:
+        if self._live_timer is not None:
+            self._live_timer.stop()
         if self._enforce_timer is not None:
             self._enforce_timer.stop()
         _keep_awake(False)
@@ -125,6 +149,11 @@ class GameModeModule(BaseModule):
         lay.addWidget(self._tabs, 1)
         self._widget = w
         self._show_state()
+        if self._journal.active:
+            started = self._journal.data.get("started") or 0
+            when = datetime.datetime.fromtimestamp(started).strftime("%H:%M") if started else "earlier"
+            self._show_error(f"Game Mode is still ON from {when} -- this app was closed while it was on. "
+                             "Game Mode OFF puts everything back exactly as it was.")
         return w
 
     def _build_header(self, parent: QWidget) -> QHBoxLayout:
@@ -270,6 +299,10 @@ class GameModeModule(BaseModule):
             return
         facts, groups, (plan_guid, plan_why), states, procs = payload
         self._groups, self._procs = groups, procs
+        if self._choices.preset in (catalog.REC, catalog.MAX) and not self._journal.active:
+            self._choices = session.preset(self._choices.preset, groups)   # follow the catalog
+            self._sync_flag_boxes()
+            self._save_choices()
         self._fill_advice(advice.findings(facts))
         self._advice_status.setText(f"{facts.cpu}  ·  read {datetime.datetime.now():%H:%M:%S}")
         self._plan_cb.setText("Power plan: " + (f"switch to the one this CPU wants -- {plan_why}"
@@ -329,12 +362,15 @@ class GameModeModule(BaseModule):
 
     def _apply_preset(self, level: str) -> None:
         self._choices = session.preset(level, self._groups)
+        self._sync_flag_boxes()
+        self._save_choices()
+        self._refill_ticks()
+
+    def _sync_flag_boxes(self) -> None:
         for attr, cb in self._flag_boxes.items():
             cb.blockSignals(True)
             cb.setChecked(getattr(self._choices, attr))
             cb.blockSignals(False)
-        self._save_choices()
-        self._refill_ticks()
 
     def _refill_ticks(self) -> None:
         for tree, bucket in ((self._svc_tree, self._choices.services),
@@ -353,8 +389,9 @@ class GameModeModule(BaseModule):
             return
         total = session.total_handles(self._procs)
         freed = session.freed_estimate(self._procs, self._groups, self._choices.close)
-        self._estimate.setText(f"Programs ticked to close hold ~{freed:,} handles (web-view helpers "
-                               f"included) -> about {total - freed:,} of {total:,} left")
+        name = {catalog.REC: "Recommended", catalog.MAX: "Maximum"}.get(self._choices.preset, "Custom")
+        self._estimate.setText(f"{name}: programs ticked to close hold ~{freed:,} handles (web-view "
+                               f"helpers included) -> about {total - freed:,} of {total:,} left")
 
     def _app_plan(self, g: session.AppGroup, ticked: bool) -> str:
         if ticked:
@@ -371,7 +408,9 @@ class GameModeModule(BaseModule):
     # ---- choices ------------------------------------------------------------------------------
     def _flag(self, attr: str, on: bool) -> None:
         setattr(self._choices, attr, on)
+        self._choices.preset = "custom"
         self._save_choices()
+        self._update_estimate()
         if attr == "lower":
             self._fill_apps(self._groups)
 
@@ -394,6 +433,7 @@ class GameModeModule(BaseModule):
 
     def _toggle(self, bucket: set, key: str, on: bool) -> None:
         (bucket.add if on else bucket.discard)(key)
+        self._choices.preset = "custom"
         self._save_choices()
 
     # ---- state --------------------------------------------------------------------------------
@@ -418,9 +458,13 @@ class GameModeModule(BaseModule):
 
     def _numbers_text(self, handles: Optional[int], processes: Optional[int]) -> str:
         d = self._journal.data
+        if self._journal.active and d.get("handles_before") is not None and handles is not None:
+            freed = d["handles_before"] - handles
+            return (f"Handles now {handles:,} in {processes} processes  ·  before Game Mode "
+                    f"{d['handles_before']:,} in {d.get('processes_before')} ({freed:,} fewer)")
         if self._journal.active and d.get("handles_after") is not None:
             freed = d.get("handles_before", 0) - d["handles_after"]
-            return (f"Handles {d['handles_before']:,} -> {d['handles_after']:,} ({freed:+,} freed)  ·  "
+            return (f"Handles {d['handles_before']:,} -> {d['handles_after']:,} ({freed:,} freed)  ·  "
                     f"processes {d.get('processes_before')} -> {d.get('processes_after')}")
         if handles is not None:
             return f"Now: {handles:,} handles in {processes} processes"

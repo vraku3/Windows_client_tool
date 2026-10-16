@@ -1873,6 +1873,24 @@ AVAILABLE here. Facts the runs added:
   PYZ (listed in `HIDDEN_IMPORTS`); a built-in is written to the running PC's
   %TEMP% only when run. `tools/check_frozen_scripts.py` reads the built exe's
   PYZ and exits 1 if any `scripts_hub` module is missing -- run it after a build.
+- **Server modules are NOT bundled -- they cannot be.** ActiveDirectory,
+  DnsServer, GroupPolicy, Hyper-V, FailoverClusters, WSUS... are Microsoft
+  components installed by Windows. `scripts_hub/modules_catalog.py` maps each
+  script to its requirement from the guard cmdlet it checks first (`ad` 70
+  scripts, `dns` 19, `hyperv` 19, `gpo` 17, `dhcp` 17, `iis` 17, ...),
+  detects them in one PowerShell call (`Get-Command <probe>`; a key missing
+  from the answer is "unknown", never "not installed"), and installs the
+  supported way: RSAT Features on Demand on 10/11 (`Add-WindowsCapability
+  -Online -Name Rsat.<x>.Tools~~~~0.0.1.0` -- all 21 names read from
+  `Get-WindowsCapability -Online -Name Rsat*` here), optional features for the
+  Hyper-V/IIS modules, `Install-WindowsFeature` on Server (documented names,
+  not run here). Dedup, MPIO, Windows Server Backup and a CA are roles with no
+  client tool and say so. The install runs in a visible elevated PowerShell
+  window (`ShellExecuteW runas`, `-NoExit`) -- verified end to end with a
+  read-only command through the same path. WSUS-managed PCs fail
+  Add-WindowsCapability with 0x800F0954 unless policy allows Windows Update;
+  the confirm dialog says so. UI: "Required modules…" lists all of them, and a
+  script's card shows its requirement and "Install required module…".
 - **Editing**: "Edit" (menu: PowerShell ISE / VS Code / Notepad, ISE first
   when installed) opens a user script in place; a built-in is first copied by
   `library.export_for_editing` to the scripts folder as `<id>.ps1` with a

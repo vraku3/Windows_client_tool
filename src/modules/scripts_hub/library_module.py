@@ -27,7 +27,7 @@ from core.widget_life import widget_is_valid
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
 
-from . import library, output_style, support_bundle
+from . import library, modules_catalog, output_style, support_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,10 @@ class ScriptLibraryModule(BaseModule):
         self._run_worker: Optional[Worker] = None
         self._bundle_worker: Optional[Worker] = None
         self._elevated = support_bundle.is_admin()
+        #: requirement key -> installed (absent = not known yet), and whether
+        #: this is Windows Server -- filled by a background detection.
+        self._mod_status: Dict[str, bool] = {}
+        self._is_server = False
 
     def on_start(self, app) -> None:
         self.app = app
@@ -131,6 +135,7 @@ class ScriptLibraryModule(BaseModule):
         bar.addWidget(self._search, 1)
         for label, fn in (("Collect support bundle…", self._collect_bundle),
                           ("New script…", self._new_script),
+                          ("Required modules…", self._show_modules),
                           ("Open my scripts folder", self._open_user_folder),
                           ("Reload", self._reload)):
             b = QPushButton(label, parent)
@@ -182,8 +187,17 @@ class ScriptLibraryModule(BaseModule):
         mono.setStyleHint(QFont.StyleHint.Monospace)
         self._output.setFont(mono)
         self._output.setPlaceholderText("Output appears here as the script runs.")
+        need_row = QHBoxLayout()
+        self._need = QLabel("", box)
+        self._need.setWordWrap(True)
+        self._install_req = QPushButton("Install required module…", box)
+        self._install_req.clicked.connect(self._install_current_requirement)
+        self._install_req.hide()
+        need_row.addWidget(self._need, 1)
+        need_row.addWidget(self._install_req)
         for widget in (self._title, self._badges, self._desc):
             lay.addWidget(widget)
+        lay.addLayout(need_row)
         lay.addLayout(row)
         lay.addWidget(self._status)
         lay.addWidget(self._output, 1)
@@ -210,6 +224,20 @@ class ScriptLibraryModule(BaseModule):
             return
         self._scripts = library.all_scripts()
         self._fill_tree()
+        self._detect_modules()
+
+    def _detect_modules(self) -> None:
+        """Ask once per reload which server modules this PC has (~1 s)."""
+        w = Worker(lambda _w: modules_catalog.detect())
+        w.signals.result.connect(self._modules_detected)
+        self._workers.append(w)
+        QThreadPool.globalInstance().start(w)
+
+    def _modules_detected(self, payload) -> None:
+        status, server = payload
+        self._mod_status, self._is_server = status, server
+        if widget_is_valid(self._need) and self._current is not None:
+            self._show_requirement(self._current)
 
     def _fill_tree(self) -> None:
         if not widget_is_valid(self._tree):
@@ -258,7 +286,43 @@ class ScriptLibraryModule(BaseModule):
         self._title.setText(script.title)
         self._badges.setText(badges(script, self._elevated))
         self._desc.setText(script.description + (f"\n\nFile: {script.path}" if script.path else ""))
+        self._show_requirement(script)
         self._update_buttons()
+
+    def _show_requirement(self, script: library.Script) -> None:
+        """Which module this script needs and whether this PC has it."""
+        req = modules_catalog.requirement_for(script)
+        if req is None:
+            self._need.clear()
+            self._install_req.hide()
+            return
+        have = self._mod_status.get(req.key)
+        if have:
+            self._need.setText(f"Uses {req.label} -- installed on this PC.")
+            set_role(self._need, "statusSuccess")
+            self._install_req.hide()
+            return
+        state = "not installed on this PC" if have is False else "checking whether it is installed…"
+        self._need.setText(f"Needs {req.label} -- {state}. Without it the script prints NOT AVAILABLE.")
+        set_role(self._need, "statusWarning" if have is False else "statusInfo")
+        installable = modules_catalog.install_command(req, self._is_server) is not None
+        self._install_req.setVisible(have is False and installable)
+
+    def _install_current_requirement(self) -> None:
+        from .modules_dialog import start_install
+        req = modules_catalog.requirement_for(self._current) if self._current else None
+        if req is None:
+            return
+        message = start_install(self._widget, req, self._is_server)
+        if message:
+            self._status.setText(message + " Press Reload when it finishes.")
+
+    def _show_modules(self) -> None:
+        from .modules_dialog import ModulesDialog
+        ModulesDialog(self._mod_status, self._is_server, self._scripts,
+                      lambda msg: widget_is_valid(self._status) and self._status.setText(msg),
+                      self._widget).exec()
+        self._detect_modules()
 
     def _update_buttons(self) -> None:
         running = self._run_worker is not None

@@ -1279,10 +1279,17 @@ class FirewallManagerModule(BaseModule):
         if not name:
             return
 
+        # netsh and Remove-NetFirewallRule both select by DISPLAY name, which is
+        # not unique (one app often has TCP/UDP, in/out rules under one name):
+        # say how many rules this one row really stands for.
+        sharing = sum(1 for r in self._all_rules if r.name == name)
+        scope = (f"\n\n{sharing} rules share this name -- ALL {sharing} will be deleted."
+                 if sharing > 1 else "")
         reply = QMessageBox.warning(
             self._outer, "Delete Rule",
-            f"Delete firewall rule:\n{name}?\n\nThis cannot be undone.",
+            f"Delete firewall rule:\n{name}?{scope}\n\nThis cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
@@ -1329,6 +1336,18 @@ class FirewallManagerModule(BaseModule):
         new_state = current_state != "Yes"
 
         wanted = "Yes" if new_state else "No"
+        sharing = sum(1 for r in self._all_rules if r.name == name)
+        if sharing > 1:
+            verb = "enable" if new_state else "disable"
+            reply = QMessageBox.question(
+                self._outer, "Several Rules Share This Name",
+                f"{sharing} firewall rules are named:\n{name}\n\n"
+                f"Windows addresses rules by this name, so all {sharing} will be {verb}d.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         self._status_lbl.setText(
             f"Setting rule '{name}' to {'enabled' if new_state else 'disabled'}..."
         )

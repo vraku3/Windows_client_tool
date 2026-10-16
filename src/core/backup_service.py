@@ -536,6 +536,26 @@ class BackupService:
                 "confirm it was refused — treating the write as done, "
                 "not verified", target, value_name)
 
+    @staticmethod
+    def _revert_scheduled_task(task: str, before) -> None:
+        """Put a task the tweak DISABLED back. There was no branch for this
+        step type at all, so it fell through to "reverted" and the task stayed
+        disabled. `before` is schtasks' Status at apply time: already Disabled
+        means nothing to do; unrecorded ("Unknown", e.g. a refused query or a
+        localized Status label) is an error, never a silent success."""
+        if before == "Disabled":
+            return
+        if not before or before == "Unknown":
+            raise RuntimeError(f"{task}: its state before the tweak was not recorded -- "
+                               "left as it is; enable it in Task Scheduler if it should run")
+        result = subprocess.run(
+            ["schtasks", "/change", "/tn", task, "/enable"],
+            check=False, capture_output=True, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW, timeout=30)
+        if result.returncode != 0:
+            raise RuntimeError(f"schtasks /enable {task} failed: "
+                               f"{(result.stderr or result.stdout).strip()}")
+
     def revert_step(self, step_id: str) -> bool:
         row = self._conn.execute(
             "SELECT step_type, target, before_value, revert_command, restore_point_id, "
@@ -576,6 +596,8 @@ class BackupService:
                         creationflags=subprocess.CREATE_NO_WINDOW,
                         timeout=120,
                     )
+            elif step_type == "scheduled_task":
+                self._revert_scheduled_task(target, before)
             elif step_type == "file":
                 src = before["src"]
                 dest = before["dest"]

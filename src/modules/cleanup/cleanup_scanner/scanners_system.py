@@ -2108,6 +2108,16 @@ def delete_items_report(items: List[ScanItem],
     still records what it had measured so far, flagged ``cancelled``.
     """
     from modules.cleanup.cleanup_scanner.deleter import DeleteReport, delete_path
+    from modules.cleanup.cleanup_scanner.exclusions import is_excluded, list_exclusions
+
+    # filter_items() only drops an item that IS, or is inside, an exclusion; an
+    # item that CONTAINS one (%TEMP% while %TEMP%\keep is excluded) still
+    # reached the walk and took the excluded folder with it. The walk checks
+    # every entry against the exclusions read at delete time.
+    exclusions = list_exclusions()
+
+    def _skip(path: str, is_dir: bool) -> bool:
+        return _protected_entry(path, is_dir) or (bool(exclusions) and is_excluded(path, exclusions))
 
     def _do_delete():
         report, refused, per_item = DeleteReport(), [], []
@@ -2132,7 +2142,7 @@ def delete_items_report(items: List[ScanItem],
                 continue
             one = delete_path(item.path, item.is_dir, keep_root=item.keep_root,
                               keep_newer_than_s=item.keep_newer_than_hours * 3600,
-                              cancelled=cancelled, skip=_protected_entry)
+                              cancelled=cancelled, skip=_skip)
             per_item.append((item.path, one))
             report.merge(one)
         from modules.cleanup import cleanup_history

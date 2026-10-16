@@ -40,17 +40,34 @@ def create_restore_point(description: str, timeout: int = 60) -> Tuple[bool, str
 
     try:
         safe_desc = description.replace("'", "''")
+        # Read back, never trust the exit code: Checkpoint-Computer can print a
+        # WARNING (for example "already created within the past 1440 minutes")
+        # and exit 0 with no restore point made. It counts only when a point
+        # NEWER than every earlier one exists with exactly this description.
+        script = (
+            "$ErrorActionPreference = 'Stop'; "
+            "$before = @(Get-ComputerRestorePoint -ErrorAction SilentlyContinue | "
+            "ForEach-Object { [int]$_.SequenceNumber }) | Measure-Object -Maximum; "
+            "$floor = if ($before.Count) { [int]$before.Maximum } else { 0 }; "
+            f"Checkpoint-Computer -Description '{safe_desc}' -RestorePointType 'MODIFY_SETTINGS'; "
+            "$new = Get-ComputerRestorePoint | Where-Object { [int]$_.SequenceNumber -gt $floor "
+            f"-and $_.Description -eq '{safe_desc}' }} | Select-Object -Last 1; "
+            "if ($new) { 'RESTORE-POINT-CREATED ' + $new.SequenceNumber } "
+            "else { 'RESTORE-POINT-NOT-CREATED'; exit 2 }"
+        )
         result = subprocess.run(
-            [
-                "powershell", "-NoProfile", "-Command",
-                f"Checkpoint-Computer -Description '{safe_desc}' -RestorePointType 'MODIFY_SETTINGS'",
-            ],
+            ["powershell", "-NoProfile", "-Command", script],
             capture_output=True, text=True, timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         output = (result.stdout or "") + (result.stderr or "")
-        return result.returncode == 0, output
+        created = result.returncode == 0 and "RESTORE-POINT-CREATED" in output
+        if not created:
+            logger.warning("System restore point not confirmed (rc=%s): %s",
+                           result.returncode, output.strip()[-400:])
+        return created, output
     except Exception as e:
+        logger.warning("Checkpoint-Computer failed: %s", e)
         return False, str(e)
 
 

@@ -92,6 +92,20 @@ def _subkeys(hive, path: str) -> Optional[List[str]]:
         return None
 
 
+def _subkeys_checked(hive, path: str) -> Tuple[List[str], bool]:
+    """(subkeys, read): a key that does not exist is read -- it has none --
+    while a key we were refused is NOT, and the caller must not conclude
+    anything from its absence."""
+    try:
+        with _open(hive, path) as key:
+            return [winreg.EnumKey(key, i) for i in range(winreg.QueryInfoKey(key)[0])], True
+    except FileNotFoundError:
+        return [], True
+    except OSError as e:
+        logger.warning("cannot read %s: %s", path, e)
+        return [], False
+
+
 def full_key(entry: SoftwareEntry) -> str:
     """'HKLM\\SOFTWARE\\...\\Uninstall\\<subkey>' -- the reader drops the hive."""
     return f"{HIVE_NAMES.get(entry.type_, 'HKLM')}\\{entry.registry_key}"
@@ -125,15 +139,26 @@ def _exists(path: str) -> Optional[bool]:
 def msi_local_packages() -> Dict[str, Tuple[str, str, str]]:
     """{packed product code: (LocalPackage, DisplayName, InstallLocation)} over
     every per-user and per-machine Windows Installer registration."""
+    return msi_local_packages_read()[0]
+
+
+def msi_local_packages_read() -> Tuple[Dict[str, Tuple[str, str, str]], bool]:
+    """The map above, and whether EVERY UserData key could be read. A refused
+    SID or Products key is not "no registrations there": without this,
+    ghost_registrations() called a real suite component orphaned (and offered
+    to delete its Installer keys) because its LocalPackage was simply unread."""
     out: Dict[str, Tuple[str, str, str]] = {}
     hklm = winreg.HKEY_LOCAL_MACHINE
-    for sid in _subkeys(hklm, USERDATA) or []:
-        for packed in _subkeys(hklm, f"{USERDATA}\\{sid}\\Products") or []:
+    sids, complete = _subkeys_checked(hklm, USERDATA)
+    for sid in sids:
+        products, read = _subkeys_checked(hklm, f"{USERDATA}\\{sid}\\Products")
+        complete = complete and read
+        for packed in products:
             props = f"{USERDATA}\\{sid}\\Products\\{packed}\\InstallProperties"
             out[packed.upper()] = (str(_value(hklm, props, "LocalPackage") or ""),
                                    str(_value(hklm, props, "DisplayName") or ""),
                                    str(_value(hklm, props, "InstallLocation") or ""))
-    return out
+    return out, complete
 
 
 def judge(entry: SoftwareEntry, local_package: str = "",
@@ -228,10 +253,17 @@ def msi_registration_keys(product_code: str) -> Tuple[str, ...]:
     return tuple(keys)
 
 
-def ghost_registrations(arp_codes: set, msi: Dict[str, Tuple[str, str, str]]) -> List[m.AppRecord]:
+def ghost_registrations(arp_codes: set, msi: Dict[str, Tuple[str, str, str]],
+                        msi_complete: bool = True) -> List[m.AppRecord]:
     """Windows Installer products with no Uninstall entry, no cached installer
-    and no install folder: registered, and nothing behind it."""
+    and no install folder: registered, and nothing behind it. Nothing is
+    called a ghost when part of UserData could not be read -- the "missing"
+    cached installer may just be one we were refused."""
     out: List[m.AppRecord] = []
+    if not msi_complete:
+        logger.warning("app buster: Installer UserData only partly readable; "
+                       "ghost registrations not judged this scan")
+        return out
     for packed in _subkeys(winreg.HKEY_LOCAL_MACHINE, CLASSES_PRODUCTS) or []:
         code = unsquish_guid(packed)
         if not code or code.upper() in arp_codes:
@@ -256,7 +288,7 @@ def ghost_registrations(arp_codes: set, msi: Dict[str, Tuple[str, str, str]]) ->
 
 
 def read_desktop_apps() -> List[m.AppRecord]:
-    msi = msi_local_packages()
+    msi, msi_complete = msi_local_packages_read()
     seen = set()
     rows: List[m.AppRecord] = []
     codes = set()
@@ -270,5 +302,5 @@ def read_desktop_apps() -> List[m.AppRecord]:
             continue
         seen.add(ident)
         rows.append(record_from_entry(entry, msi))
-    rows += ghost_registrations(codes, msi)
+    rows += ghost_registrations(codes, msi, msi_complete)
     return rows

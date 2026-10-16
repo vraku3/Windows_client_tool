@@ -2121,6 +2121,34 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   Character Map probe is gone: a copy launched from %TEMP% is now blocked with
   a modal Explorer error on this PC, so only Paint is closed and reopened.
 
+### Whole-app review fixes (2026-10-17)
+
+Leads from a `/gpt` whole-app review (six Codex workers stopped at the
+ChatGPT usage limit; these six leads were verified and fixed by Claude):
+
+- **Cleanup exclusions inside a selected item**: `filter_items` drops only
+  items that ARE or sit INSIDE an exclusion, so `%TEMP%` with `%TEMP%\keep`
+  excluded deleted `keep`. `delete_items_report` now passes the exclusions
+  into the deleter's `skip` (with `_protected_entry`); the item is cleaned,
+  the excluded folder stays (listed as denied).
+- **App Buster ghost registrations on a partial read**: `msi_local_packages_read`
+  tells a missing key (read, empty) from a refused one; if any UserData key
+  was refused, `ghost_registrations` judges nothing -- an unread
+  LocalPackage is not a missing one, and an orphan row offers deletion.
+- **Tweak revert of `scheduled_task` steps** had no branch at all and was
+  marked reverted with the task still disabled. `_revert_scheduled_task`
+  re-enables it (`schtasks /change /enable`, exit code checked), leaves one
+  that was already Disabled, and FAILS on an unrecorded ("Unknown") state.
+- **Firewall rules are addressed by DISPLAY name**, which is not unique; the
+  delete confirmation and the double-click toggle now say how many rules
+  share the name (all are affected). Addressing by rule ID is still owed.
+- **Hosts save** truncated the live file before writing; it now writes a temp
+  file beside it, fsyncs, and `os.replace`s (verified on a scratch file).
+- **`create_restore_point` reads back**: a new point (sequence above every
+  earlier one) with exactly this description must exist, or it is not
+  created -- Checkpoint-Computer can warn and exit 0. Measured: confirmed
+  point #39 in 9.8 s.
+
 ## Pending restart (`src/core/pending_reboot.py`)
 
 One answer for the whole app; `windows_utils.is_reboot_pending`, the

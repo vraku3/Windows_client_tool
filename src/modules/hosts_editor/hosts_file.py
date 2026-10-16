@@ -39,6 +39,7 @@ import ctypes
 import logging
 import os
 import shutil
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple
@@ -225,14 +226,31 @@ def backup_file(path: str, backup_dir: str) -> str:
 
 
 def write_bytes_verified(path: str, data: bytes) -> Optional[str]:
-    """Write then read back. None on success, else the reason."""
+    """Write then read back. None on success, else the reason.
+
+    Written to a temporary file beside it, flushed to disk, then swapped in
+    with os.replace: opening the hosts file itself with "wb" truncated it
+    first, so a crash or power loss between the truncate and the write left
+    an EMPTY hosts file (the backup existed, but nothing restored it)."""
+    tmp = None
     try:
-        with open(path, "wb") as fh:
+        fd, tmp = tempfile.mkstemp(prefix="hosts.", suffix=".tmp", dir=os.path.dirname(path) or ".")
+        with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        tmp = None
         with open(path, "rb") as fh:
             back = fh.read()
     except OSError as exc:
         return str(exc)
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError as exc:
+                logger.warning("Could not remove temporary hosts file %s: %s", tmp, exc)
     return None if back == data else "the file read back differs from what was written"
 
 

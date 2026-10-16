@@ -32,9 +32,12 @@ class ServiceSpec:
     label: str
     why: str
     level: str
-    #: Windows starts these again on its own (a trigger, a schedule); while
-    #: Game Mode is on and the app is open they are stopped again.
+    #: Kept for the catalog's readers; while Game Mode is on and the app is
+    #: open, EVERY service it stopped is stopped again if Windows restarts it
+    #: (at most `session.MAX_RESTOPS` times each).
     restop: bool = False
+    #: "no_wifi": only stopped when no Wi-Fi adapter is connected.
+    when: str = ""
 
     @property
     def default(self) -> bool:
@@ -66,6 +69,8 @@ SERVICES = (
     ServiceSpec("AdobeARMservice", "Adobe Acrobat Update", _UPDATER, REC, True),
     ServiceSpec("OneDrive Updater Service", "OneDrive Updater", _UPDATER, REC, True),
     ServiceSpec("uhssvc", "Microsoft Update Health", "Update health checks.", REC),
+    ServiceSpec("InventorySvc", "Inventory and Compatibility Appraisal",
+                "Scans installed programs for telemetry and upgrade checks.", REC),
     ServiceSpec("DiagTrack", "Connected User Experiences and Telemetry",
                 "Collects and uploads diagnostic data.", REC),
     ServiceSpec("dmwappushservice", "Device management WAP push",
@@ -95,6 +100,21 @@ SERVICES = (
     ServiceSpec("SensrSvc", "Sensor Monitoring", "Sensors (none on a desktop).", MAX),
     ServiceSpec("FileSyncHelper", "OneDrive file sync helper", "OneDrive's service.", MAX),
     ServiceSpec("Bonjour Service", "Bonjour (mDNS)", "Apple/Blizzard network discovery.", MAX),
+    ServiceSpec("appcservice", "AppControl Service",
+                "Restarts the AppControl window within a second of it closing (measured).", MAX),
+    ServiceSpec("WlanSvc", "WLAN AutoConfig",
+                "Background Wi-Fi scans cause latency spikes; stopped only when no Wi-Fi "
+                "adapter is connected (this PC plays on Ethernet).", MAX, when="no_wifi"),
+    ServiceSpec("DisplayEnhancementService", "Display Enhancement",
+                "Adaptive brightness for built-in panels.", MAX),
+    ServiceSpec("CloudBackupRestoreSvc_*", "Cloud Backup and Restore", "Windows Backup sync.", MAX),
+    ServiceSpec("NPSMSvc_*", "Now Playing Session Manager", "The media flyout.", MAX),
+    ServiceSpec("RmSvc", "Radio Management", "Airplane-mode switch.", MAX),
+    ServiceSpec("DusmSvc", "Data Usage", "Counts network data per app.", MAX),
+    ServiceSpec("ShellHWDetection", "Shell Hardware Detection", "AutoPlay pop-ups.", MAX),
+    ServiceSpec("whesvc", "Windows Health and Optimized Experiences", "Background health checks.",
+                MAX),
+    ServiceSpec("DevicesFlowUserSvc_*", "Devices Flow", "Device pairing pop-ups.", MAX),
     ServiceSpec("SysMain", "SysMain (Superfetch)",
                 "Preloads programs into RAM. Can help load times, so it is left alone "
                 "unless you tick it.", OPT),
@@ -251,7 +271,8 @@ APPS = (
     _a("crossdeviceresume.exe", "Cross-device resume",
        "Phone-to-PC handoff; Windows starts it again when needed.", MAX, reopen=False),
     _a("searchhost.exe", "Windows Search box",
-       "The search flyout; Windows starts it again the next time you search.", MAX, reopen=False),
+       "Left open: Windows starts it again within a second (measured), so closing it only "
+       "costs CPU.", OPT, reopen=False),
     # -- chat and voice (Maximum) ----------------------------------------------------------------
     _a("discord.exe", "Discord", _CHAT + " Reopened after.", MAX),
     _a("ms-teams.exe", "Microsoft Teams", "Closed by Maximum; you will miss calls meanwhile.", MAX,

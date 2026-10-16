@@ -38,6 +38,8 @@ class FakeSystem:
         self.protected = {"\\Microsoft\\Windows\\Feedback\\Siuf\\DmClient"}
         self.anim = True
         self.fullscreen = set()
+        self.wifi = False
+        self.explorer_restarts = 0
         self.procs = [Proc(10, 1, "OneDrive.exe", 3000, 1, 100), Proc(11, 1, "chrome.exe", 5000, 1, 101),
                       Proc(12, 11, "chrome.exe", 900, 1, 102), Proc(13, 1, "explorer.exe", 9000, 1, 103),
                       Proc(14, 1, "deluge.exe", 1900, 1, 104), Proc(20, 1, "svchost.exe", 800, 0, 105)]
@@ -95,6 +97,15 @@ class FakeSystem:
         self.procs = [p for p in self.procs if p.pid not in pids]
 
     def fullscreen_pids(self): return set(self.fullscreen)
+
+    def wifi_connected(self): return self.wifi
+
+    def restart_explorer(self, session):
+        self.explorer_restarts += 1
+        for p in list(self.procs):
+            if p.name == 'explorer.exe':
+                self.procs.remove(p)
+                self.procs.append(Proc(p.pid + 1000, 1, 'explorer.exe', 3000, 1, p.create_time + 1))
 
     def alive(self, pid, ct): return any(p.pid == pid and p.create_time == ct for p in self.procs)
 
@@ -265,12 +276,18 @@ def test_a_refused_close_is_reported_and_not_reopened(journal):
     assert r"C:\Program Files\Deluge\deluge.exe" not in [n for n, _ in sys_.launched]
 
 
-def test_enforce_stops_again_only_restop_services(journal):
+def test_enforce_stops_again_every_stopped_service_but_gives_up_after_three(journal):
     sys_ = FakeSystem()
     session.turn_on(sys_, _choices(), journal, _quiet, own_pid=999, session=1)
-    sys_.svc["WSearch"][0] = sys_.svc["TrkWks"][0] = "Running"
-    assert session.enforce(sys_, journal, _quiet) == 1
-    assert sys_.svc["WSearch"][0] == "Stopped" and sys_.svc["TrkWks"][0] == "Running"
+    lines = []
+    for _round in range(5):
+        sys_.svc["WSearch"][0] = sys_.svc["TrkWks"][0] = "Running"
+        session.enforce(sys_, journal, lambda lvl, t: lines.append((lvl, t)))
+    assert sum("TrkWks" in t or "Distributed Link" in t for _l, t in lines if "stopped it again" in t) == 3
+    assert any("left running from now on" in t for _l, t in lines)
+    assert sys_.svc["WSearch"][0] == "Running"          # given up after three
+    session.turn_off(sys_, journal, _quiet, settle=0.1)
+    assert sys_.svc["WSearch"][0] == "Running" and sys_.svc["TrkWks"][0] == "Running"
 
 
 def test_plan_choice_follows_the_cpu():
@@ -440,3 +457,33 @@ def test_discord_is_closed_by_maximum_and_reopened():
     for exe in ("DefenderSessionHelper.exe", "GameInputRedistService.exe", "bash.exe",
                 "gameoverlayui64.exe", "parsecd.exe"):
         assert catalog.never_close(exe), exe
+
+
+def test_wlan_is_stopped_only_without_wifi(journal):
+    for wifi, expect in ((False, "Stopped"), (True, "Running"), (None, "Running")):
+        sys_ = FakeSystem()
+        sys_.svc["WlanSvc"] = ["Running", "Automatic"]
+        sys_.wifi = wifi
+        j = Journal(journal.folder + str(wifi))
+        session.turn_on(sys_, _choices(services={"WlanSvc"}), j, _quiet, own_pid=999, session=1)
+        assert sys_.svc["WlanSvc"][0] == expect, wifi
+        session.turn_off(sys_, j, _quiet, settle=0.1)
+        assert sys_.svc["WlanSvc"][0] == "Running"
+
+
+def test_maximum_restarts_explorer_last_and_off_needs_nothing(journal):
+    sys_ = FakeSystem()
+    groups = session.running_apps(sys_.procs, 1, 999, lambda pid: sys_.paths.get(pid))
+    maximum = session.preset(catalog.MAX, groups)
+    assert maximum.explorer and not session.preset(catalog.REC, groups).explorer
+    lines = []
+    session.turn_on(sys_, maximum, journal, lambda lvl, t: lines.append((lvl, t)), 999, 1)
+    assert sys_.explorer_restarts == 1
+    assert "Explorer restarted fresh" in lines[-1][1] or any("Explorer restarted" in t for _l, t in lines)
+    report = session.turn_off(sys_, journal, _quiet, settle=0.5)
+    assert any("Explorer was restarted fresh" in r["text"] for r in report)
+    assert sys_.explorer_restarts == 1
+
+
+def test_searchhost_is_not_closed_by_maximum_it_comes_back_in_a_second():
+    assert catalog.spec_for("SearchHost.exe").level == catalog.OPT

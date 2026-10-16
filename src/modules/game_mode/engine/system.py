@@ -278,6 +278,52 @@ class WinSystem:
             logger.warning("game mode: foreground window unreadable: %s", error)
             return set()
 
+    def wifi_connected(self) -> Optional[bool]:
+        """Is a Wi-Fi adapter up? NdisPhysicalMedium 9 is Native 802.11 --
+        language-independent, unlike adapter names. None = could not read."""
+        res = run(["powershell", "-NoProfile", "-Command",
+                   "@(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object "
+                   "{ $_.NdisPhysicalMedium -eq 9 -and $_.Status -eq 'Up' }).Count"], timeout=30)
+        text = (res.stdout or "").strip()
+        if res.returncode != 0 or not text.isdigit():
+            logger.warning("game mode: Wi-Fi state unreadable: %s", (res.stderr or text)[:200])
+            return None
+        return int(text) > 0
+
+    def restart_explorer(self, session: int, wait: float = 15.0) -> Optional[str]:
+        """End every explorer.exe in `session`; Windows restarts the shell
+        (AutoRestartShell=1). If it has not within `wait`, start it as the
+        signed-in user through a one-shot scheduled task (never elevated)."""
+        import psutil
+        old = {p.pid for p in self.processes() if p.name.lower() == "explorer.exe" and p.session == session}
+        for pid in old:
+            try:
+                psutil.Process(pid).kill()
+            except psutil.NoSuchProcess:
+                logger.debug("game mode: explorer %s already gone", pid)
+            except (psutil.Error, OSError) as error:
+                return f"could not end explorer {pid}: {error}"
+        if self._shell_back(old, session, wait):
+            time.sleep(3.0)                      # let the taskbar and tray settle
+            return None
+        logger.warning("game mode: the shell did not restart by itself; starting it")
+        task = "WinClientTool_GameMode_Explorer"
+        run(["schtasks", "/create", "/tn", task, "/tr", "explorer.exe", "/sc", "once", "/st", "00:00",
+             "/it", "/rl", "LIMITED", "/f"], timeout=30)
+        run(["schtasks", "/run", "/tn", task], timeout=30)
+        back = self._shell_back(old, session, wait)
+        run(["schtasks", "/delete", "/tn", task, "/f"], timeout=30)
+        return None if back else "the shell did not come back -- press Ctrl+Shift+Esc, File > Run, explorer"
+
+    def _shell_back(self, old: set, session: int, wait: float) -> bool:
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if any(p.name.lower() == "explorer.exe" and p.session == session and p.pid not in old
+                   for p in self.processes()):
+                return True
+            time.sleep(0.5)
+        return False
+
     def alive(self, pid: int, create_time: int) -> bool:
         return any(p.pid == pid and p.create_time == create_time for p in self.processes())
 

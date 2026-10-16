@@ -2054,6 +2054,22 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   `bash.exe` -- all now in `NEVER_CLOSE`. Discord is MAX (closed and
   reopened); ~80 apps are catalogued (sync, torrents, chat, browsers,
   updaters, wallpaper engines, work apps).
+- **The user's first real Maximum ON (2026-10-16): 218,241 -> 119,147 handles,
+  327 -> 190 processes**, WoW (started by Battle.net) left running. What it
+  taught: SearchHost came back ONE SECOND after it was closed (now OPT --
+  closing it only costs CPU); AppControl came back one second later too,
+  restarted by its own `appcservice` (now stopped first, MAX); Windows
+  restarted Search, Update and PcaSvc within minutes, so `enforce()` now
+  re-stops EVERY service Game Mode stopped, at most `MAX_RESTOPS` (3) times
+  each, then leaves it running and says so once. Round 3 added InventorySvc
+  (REC), Display Enhancement, Cloud Backup, Now Playing, Radio Management,
+  Data Usage, AutoPlay detection, Health Experiences, Devices Flow (MAX),
+  WLAN AutoConfig only when `wifi_connected()` is False (NdisPhysicalMedium 9,
+  language-independent; this PC is on 2.5 GbE), and an Explorer restart as
+  the LAST step of Maximum (`restart_explorer`: Explorer here held 11,273
+  handles; AutoRestartShell=1 brings it back, a one-shot LIMITED scheduled
+  task starts it as the user if not). CyberGhost (UI + 7 WebView2, ~6,700
+  handles) stays OPT because of the VPN.
 - **4,000 handles is not reachable, and the pane says so with numbers**
   (measured 2026-10-16: 227,720 total; kernel System ~8,400, session-0
   Windows services ~46,000, Bitdefender ~13,000; `msedgewebview2` x40 =

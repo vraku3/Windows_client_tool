@@ -67,7 +67,11 @@ def recommended_plan(cpu: str, plans: Dict[str, str], vcache_installed: bool
     return None, "no performance plan on this PC"
 
 
-_FLAGS = ("plan", "gamebar", "vcache", "lower", "tasks", "maintenance", "visuals")
+_FLAGS = ("plan", "gamebar", "vcache", "lower", "tasks", "maintenance", "visuals", "explorer")
+
+#: How many times `enforce` stops a service Windows keeps restarting before it
+#: leaves it running -- past that, something genuinely needs it.
+MAX_RESTOPS = 3
 
 
 @dataclass
@@ -85,6 +89,9 @@ class Choices:
     maintenance: bool = True
     #: Transparency and window animations off.
     visuals: bool = False
+    #: Restart Explorer at the end of ON: a fresh shell, without the handles
+    #: a long-running one accumulates (11,273 here). Open folder windows close.
+    explorer: bool = False
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
@@ -99,7 +106,7 @@ def preset(level: str, groups: List["AppGroup"]) -> Choices:
     wanted = {catalog.REC} if level == catalog.REC else {catalog.REC, catalog.MAX}
     c = Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
                 close={a.exe for a in catalog.APPS if a.level in wanted},
-                visuals=level == catalog.MAX)
+                visuals=level == catalog.MAX, explorer=level == catalog.MAX)
     if level == catalog.MAX:
         c.close |= {g.exe for g in groups if g.spec is None}
     return c
@@ -342,9 +349,30 @@ class _On:
 
     def services(self, names: Set[str], elevated: bool) -> None:
         for spec in catalog.SERVICES:
-            if spec.name in names:
-                for name in self.s.service_names(spec.name):
-                    self._stop(name, spec, elevated)
+            if spec.name not in names:
+                continue
+            if spec.when == "no_wifi" and self.s.wifi_connected() is not False:
+                self.log(INFO, f"{spec.label}: left running -- Wi-Fi is in use (or could not be read)")
+                continue
+            for name in self.s.service_names(spec.name):
+                self._stop(name, spec, elevated)
+
+    def explorer(self, session: int) -> None:
+        """Last step of ON. Nothing to put back: Windows restarts the shell
+        itself (AutoRestartShell), and `restart_explorer` falls back to
+        starting it as the signed-in user if it does not."""
+        before = sum(p.handles for p in self.s.processes()
+                     if p.name.lower() == "explorer.exe" and p.session == session)
+        entry = self.j.record({"kind": "explorer_restart", "handles_before": before})
+        error = self.s.restart_explorer(session)
+        if error:
+            self.log(BAD, f"Explorer: {error}")
+            return
+        self.j.mark_done(entry)
+        after = sum(p.handles for p in self.s.processes()
+                    if p.name.lower() == "explorer.exe" and p.session == session)
+        self.log(OK, f"Explorer restarted fresh: {before:,} -> {after:,} handles "
+                     "(open File Explorer windows were closed)")
 
     def _stop(self, name: str, spec: catalog.ServiceSpec, elevated: bool) -> None:
         state = self.s.service(name)
@@ -434,6 +462,8 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     on.close_apps(groups, choices.close)
     if choices.lower:
         on.lower(groups, choices.close)
+    if choices.explorer:
+        on.explorer(session)
     time.sleep(1.0)
     after = system.processes()
     journal.data.update(handles_after=total_handles(after), processes_after=len(after))
@@ -442,16 +472,27 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
 
 
 def enforce(system, journal: Journal, log: Log) -> int:
-    """While ON: stop again the services Windows restarted on its own."""
+    """While ON: stop again any service Game Mode stopped that Windows has
+    started again -- at most MAX_RESTOPS times each, then it is left running
+    and said so once (something genuinely needs it)."""
     count = 0
     for entry in journal.actions:
-        spec = catalog.service_spec(entry.get("name", ""))
-        if entry.get("kind") != "service_stop" or not entry.get("done") or not (spec and spec.restop):
+        if entry.get("kind") != "service_stop" or not entry.get("done") or entry.get("gave_up"):
             continue
         state = system.service(entry["name"])
-        if state is not None and state.running and system.stop_service(entry["name"]) is None:
+        if state is None or not state.running:
+            continue
+        label = entry.get("label") or entry["name"]
+        if entry.get("restops", 0) >= MAX_RESTOPS:
+            entry["gave_up"] = True
+            journal.save()
+            log(WARN, f"{label} keeps being started by Windows -- left running from now on")
+            continue
+        if system.stop_service(entry["name"]) is None:
+            entry["restops"] = entry.get("restops", 0) + 1
+            journal.save()
             count += 1
-            log(INFO, f"{spec.label} was started again by Windows -- stopped it again")
+            log(INFO, f"{label} was started again by Windows -- stopped it again")
     return count
 
 
@@ -609,7 +650,13 @@ def _restore_plan(system, e, say, _ctx) -> None:
         say(OK, f"Power plan back to {name}")
 
 
-_RESTORE = {"priority": _restore_priority, "app_close": _restore_app,
+def _restore_explorer(_system, e, say, _ctx) -> None:
+    if e.get("done"):
+        say(OK, "Explorer was restarted fresh during Game Mode -- nothing to put back")
+
+
+_RESTORE = {"explorer_restart": _restore_explorer, "priority": _restore_priority,
+            "app_close": _restore_app,
             "service_stop": _restore_service_stop, "service_start": _restore_service_start,
             "registry": _restore_registry, "plan": _restore_plan, "task": _restore_task,
             "animations": _restore_animations}

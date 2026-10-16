@@ -202,12 +202,15 @@ class GameModeModule(BaseModule):
         self._tasks_cb = QCheckBox("Pause scheduled updater and maintenance tasks (Google, Edge, "
                                    "Brave, OneDrive, Office updates; defrag; telemetry)", page)
         self._visuals_cb = QCheckBox("Transparency and window animations off", page)
+        self._explorer_cb = QCheckBox("Restart Explorer at the end for a fresh shell (a long-running one "
+                                      "holds thousands of extra handles; open File Explorer windows "
+                                      "close)", page)
         self._lower_cb = QCheckBox("Apps left open (browsers, chat, editors) run at Below Normal "
                                    "priority while Game Mode is on", page)
         self._flag_boxes = {"plan": self._plan_cb, "gamebar": self._gamebar_cb,
                             "vcache": self._vcache_cb, "maintenance": self._maint_cb,
                             "tasks": self._tasks_cb, "visuals": self._visuals_cb,
-                            "lower": self._lower_cb}
+                            "explorer": self._explorer_cb, "lower": self._lower_cb}
         for attr, cb in self._flag_boxes.items():
             cb.setChecked(getattr(self._choices, attr))
             cb.toggled.connect(lambda on, a=attr: self._flag(a, on))
@@ -444,6 +447,7 @@ class GameModeModule(BaseModule):
                 + ("• pause Windows Automatic Maintenance\n" if self._choices.maintenance else "")
                 + ("• pause scheduled updater/maintenance tasks\n" if self._choices.tasks else "")
                 + ("• turn transparency and animations off\n" if self._choices.visuals else "")
+                + ("• restart Explorer (open folder windows close)\n" if self._choices.explorer else "")
                 + (f"• close: {', '.join(closing)}\n" if closing else "")
                 + ("• lower the priority of apps left open\n" if self._choices.lower else "")
                 + "\nSave your work in the apps that will be closed. Game Mode OFF puts everything "

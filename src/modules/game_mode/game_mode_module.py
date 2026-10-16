@@ -80,6 +80,13 @@ class GameModeModule(BaseModule):
         self._procs: list = []
         self._enforce_timer: Optional[QTimer] = None
         self._live_timer: Optional[QTimer] = None
+        # The enforce timer starts in on_start when Game Mode was left ON, so
+        # its log lines can arrive before the pane is ever built: the widgets
+        # are None until then and the lines wait in _pending_log.
+        self._log: Optional[QPlainTextEdit] = None
+        self._state = self._numbers = self._banner = None
+        self._advice = self._advice_status = self._estimate = None
+        self._pending_log: List[str] = []
 
     # ---- lifecycle ----------------------------------------------------------------------------
     def on_start(self, app) -> None:
@@ -145,6 +152,9 @@ class GameModeModule(BaseModule):
         self._log = QPlainTextEdit(w)
         self._log.setReadOnly(True)
         set_role(self._log, "iseConsole")
+        for line in self._pending_log:
+            self._log.appendPlainText(line)
+        self._pending_log = []
         self._tabs.addTab(self._log, "Log")
         lay.addWidget(self._tabs, 1)
         self._widget = w
@@ -475,12 +485,14 @@ class GameModeModule(BaseModule):
             self._banner.set_error(text)
 
     def _append(self, payload: str) -> None:
-        if not widget_is_valid(self._log):
-            return
         level, _, text = payload.partition("\t")
         mark = {session.OK: "[OK]  ", session.INFO: "[INFO]", session.WARN: "[WARN]",
                 session.BAD: "[BAD] "}.get(level, "      ")
-        self._log.appendPlainText(f"{datetime.datetime.now():%H:%M:%S} {mark} {text}")
+        line = f"{datetime.datetime.now():%H:%M:%S} {mark} {text}"
+        if not widget_is_valid(self._log):
+            self._pending_log = (self._pending_log + [line])[-500:]
+            return
+        self._log.appendPlainText(line)
 
     # ---- ON / OFF -----------------------------------------------------------------------------
     def _confirm_on(self) -> bool:

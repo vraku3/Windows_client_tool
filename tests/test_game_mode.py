@@ -508,3 +508,18 @@ def test_a_preset_follows_the_catalog_until_ticked_by_hand():
     assert back.preset == catalog.MAX and back == c
     old = session.choices_from_config({"services": ["WSearch"], "close": []})   # saved before presets
     assert old.preset == "custom"
+
+
+def test_log_lines_before_the_pane_is_built_are_kept_not_crashed(qapp, tmp_path):
+    """Game Mode left ON starts the enforce timer in on_start; its first line
+    used to hit `self._log` before create_widget made it (AttributeError)."""
+    from modules.game_mode.game_mode_module import GameModeModule
+    m = GameModeModule()
+    m._journal = Journal(str(tmp_path))
+    m._append(f"{session.INFO}\tUpdate Orchestrator was started again by Windows -- stopped it again")
+    widget = m.create_widget()
+    try:
+        assert "Update Orchestrator was started again" in m._log.toPlainText()
+        assert m._pending_log == []
+    finally:
+        widget.deleteLater()

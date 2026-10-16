@@ -21,13 +21,12 @@ from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialo
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.semantic_colors import CHROME_PALETTES, SEMANTIC_PALETTES
 from core.table_ui import set_role
 from core.widget_life import widget_is_valid
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
 
-from . import library, modules_catalog, output_style, support_bundle
+from . import console_style, library, modules_catalog, output_style, support_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -48,25 +47,26 @@ def badges(script: library.Script, elevated: bool) -> str:
     return "  ·  ".join(parts)
 
 
-#: The output pane looks like PowerShell ISE's console in every app theme: white,
-#: black Lucida Console (the `iseConsole` QSS role). So the span colours come
-#: from the LIGHT palettes whatever the app theme is -- the dark theme's amber
-#: is unreadable on white. Like ISE, ordinary text, table headers and list keys
-#: stay plain black; only verdicts, errors and warnings are coloured.
-_ISE_STYLE = {output_style.OK: ("success", False), output_style.WARN: ("warning", False),
-              output_style.BAD: ("error", False), output_style.INFO: ("info", False),
-              output_style.NA: ("text_muted", True)}
+#: The console look in force (scheme, font, size) -- PowerShell blue by default.
+#: Plain text, table headers and list keys use the scheme's text colour; only
+#: verdicts, errors, warnings and NOT AVAILABLE are coloured, errors and
+#: warnings on the scheme's span background (black in PowerShell's scheme).
+_console = console_style.ConsoleStyle()
+_SPAN_ROLE = {output_style.OK: ("ok", ""), output_style.WARN: ("warn", "warn_back"),
+              output_style.BAD: ("error", "error_back"), output_style.INFO: ("info", ""),
+              output_style.NA: ("muted", "")}
 
 
 def _format(kind: str) -> QTextCharFormat:
     fmt = QTextCharFormat()
-    style = _ISE_STYLE.get(kind)
-    if style is None:
+    role = _SPAN_ROLE.get(kind)
+    if role is None:
         return fmt
-    role, italic = style
-    palette = CHROME_PALETTES["light"] if role.startswith("text") else SEMANTIC_PALETTES["light"]
-    fmt.setForeground(QColor(palette[role]))
-    fmt.setFontItalic(italic)
+    fore, back = role
+    fmt.setForeground(QColor(_console.color(fore)))
+    if back and _console.color(back):
+        fmt.setBackground(QColor(_console.color(back)))
+    fmt.setFontItalic(kind == output_style.NA)
     return fmt
 
 
@@ -100,6 +100,8 @@ class ScriptLibraryModule(BaseModule):
     def on_start(self, app) -> None:
         self.app = app
         library.set_user_scripts_dir(self._config_get(_FOLDER_KEY, ""))
+        global _console
+        _console = console_style.from_config(self._config_get(console_style.CONFIG_KEY, None))
 
     def _config_get(self, key: str, default):
         config = getattr(getattr(self, "app", None), "config", None)
@@ -212,7 +214,8 @@ class ScriptLibraryModule(BaseModule):
         for key, label, fn in (("run", "Run", self._run), ("stop", "Stop", self._stop),
                                ("view", "View script", self._view_script),
                                ("copy", "Copy output", self._copy_output),
-                               ("save", "Save output…", self._save_output)):
+                               ("save", "Save output…", self._save_output),
+                               ("console", "Console colors…", self._console_dialog)):
             b = QPushButton(label, box)
             b.clicked.connect(fn)
             b.setEnabled(False)
@@ -220,6 +223,7 @@ class ScriptLibraryModule(BaseModule):
             row.addWidget(b)
         # A plain button with a menu, so it looks like its neighbours; the
         # first entry is the preferred editor (PowerShell ISE when present).
+        self._btn["console"].setEnabled(True)    # always available, unlike the run buttons
         self._edit = QPushButton("Edit", box)
         self._edit.setToolTip("Open the script in an editor. A built-in is copied to your scripts "
                               "folder first -- the copy is yours to change, the original stays.")
@@ -239,6 +243,8 @@ class ScriptLibraryModule(BaseModule):
         # Font and colours come from the `iseConsole` role: an application
         # stylesheet overrides setFont(), which is why columns did not line up.
         set_role(self._output, "iseConsole")
+        self._history: list = []          # (line, plain) -- redrawn when the colours change
+        self._apply_console(_console)
         self._output.setPlaceholderText("Output appears here as the script runs.")
         need_row = QHBoxLayout()
         self._need = QLabel("", box)
@@ -408,7 +414,7 @@ class ScriptLibraryModule(BaseModule):
             return
         if not script.read_only and not self._confirm_user_script(script):
             return
-        self._output.clear()
+        self._clear_output()
         self._append(library.prompt_line(script), plain=True)
         self._status.setText(f"Running {script.title}…")
         w = Worker(lambda worker: library.run(script, worker.signals.log_line.emit,
@@ -422,11 +428,39 @@ class ScriptLibraryModule(BaseModule):
         self._update_buttons()
         QThreadPool.globalInstance().start(w)
 
+    def _clear_output(self) -> None:
+        self._history = []
+        self._output.clear()
+
+    def _apply_console(self, style: console_style.ConsoleStyle) -> None:
+        """Colours on the widget (the person's scheme, theme-independent),
+        font and size through the properties the app QSS selects on; then
+        redraw what is already in the pane with the new span colours."""
+        global _console
+        _console = style
+        self._output.setStyleSheet(console_style.widget_qss(style))
+        self._output.setProperty("consoleFont", style.font)
+        self._output.setProperty("consoleSize", str(style.size))
+        self._output.style().unpolish(self._output)
+        self._output.style().polish(self._output)
+        history, self._history = self._history, []
+        self._output.clear()
+        for line, plain in history:
+            self._append(line, plain)
+
+    def _console_dialog(self) -> None:
+        from .console_dialog import ConsoleDialog
+        dlg = ConsoleDialog(_console, self._apply_console, self._widget)
+        if dlg.exec():
+            self._apply_console(dlg.style)
+            self._config_set(console_style.CONFIG_KEY, dlg.style.to_config())
+
     def _append(self, line: str, plain: bool = False) -> None:
         """Append one line, coloured. A `----` rule restyles the line above it as
         a table header -- the header is only known once its rule arrives."""
         if not widget_is_valid(self._output):
             return
+        self._history.append((line, plain))
         cursor = self._output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if output_style.is_rule(line) and not self._output.document().isEmpty():
@@ -474,7 +508,9 @@ class ScriptLibraryModule(BaseModule):
     def _view_script(self) -> None:
         if self._current is None:
             return
-        self._output.setPlainText(self._current.body)
+        self._clear_output()
+        for line in self._current.body.splitlines():
+            self._append(line, plain=True)
         self._status.setText("Showing the script itself (not output). Run it to see its output.")
         self._update_buttons()
 
@@ -610,7 +646,9 @@ class ScriptLibraryModule(BaseModule):
         self._bundle_progress.hide()
         counts = ", ".join(f"{n} {status.lower()}" for status, n in bundle.counts.items())
         self._status.setText(f"Support bundle saved: {bundle.path} ({counts}).")
-        self._output.setPlainText(bundle.manifest)
+        self._clear_output()
+        for line in bundle.manifest.splitlines():
+            self._append(line)
         self._update_buttons()
         try:
             subprocess.Popen(["explorer.exe", "/select,", bundle.path])

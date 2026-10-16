@@ -384,6 +384,8 @@ HIDDEN_IMPORTS = [
     "modules.scripts_hub.library",
     "modules.scripts_hub.support_bundle",
     "modules.scripts_hub.output_style",
+    "modules.scripts_hub.console_style",
+    "modules.scripts_hub.console_dialog",
     # Imported inside the pane's button handlers.
     "modules.scripts_hub.modules_catalog",
     "modules.scripts_hub.modules_dialog",

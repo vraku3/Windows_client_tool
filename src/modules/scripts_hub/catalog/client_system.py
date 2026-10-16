@@ -303,16 +303,27 @@ $c.CounterSamples | Where-Object InstanceName -ne '_total' | Group-Object Path |
       "Handle and thread counts per process. A process whose handle count keeps growing is "
       "leaking -- run this twice a few minutes apart.",
       T("Get-Process | Sort-Object HandleCount -Descending | Select-Object -First 20 Name, Id, HandleCount, @{n='Threads';e={$_.Threads.Count}}, @{n='WS(MB)';e={[math]::Round($_.WorkingSet64/1MB)}}")),
-    P("startup_impact", "Boot and logon duration",
-      "The last boot durations Windows measured (Diagnostics-Performance event 100) and the "
-      "slowest components it blamed (events 101-110).",
-      r"""$e = Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; Id=100} -MaxEvents 10 -ErrorAction SilentlyContinue
+    P("startup_impact", "Boot duration and what slowed it",
+      "The last boot durations Windows measured (Diagnostics-Performance 100) and the "
+      "components it blamed for slow boots (101 app, 102 driver, 103 service, 106 background "
+      "optimisation, 109 device) -- grouped by component, with how often and by how much, "
+      "named from the event's own fields (the message's first line never names it).",
+      r"""$log = 'Microsoft-Windows-Diagnostics-Performance/Operational'
+$e = Get-WinEvent -FilterHashtable @{LogName=$log; Id=100} -MaxEvents 10 -ErrorAction SilentlyContinue
 if (-not $e) { 'No boot performance records.'; return }
-$e | ForEach-Object { $x = [xml]$_.ToXml(); $d = @{}; $x.Event.EventData.Data | ForEach-Object { $d[$_.Name] = $_.'#text' }
-  '{0}  boot {1,6:N1} s  (main path {2,6:N1} s, post-boot {3,6:N1} s)' -f $_.TimeCreated, ($d.BootTime/1000), ($d.MainPathBootTime/1000), ($d.BootPostBootTime/1000) }
+$e | ForEach-Object { $d = @{}; ([xml]$_.ToXml()).Event.EventData.Data | ForEach-Object { $d[$_.Name] = $_.'#text' }
+  '{0:yyyy-MM-dd HH:mm}  boot {1,5:N1} s  (main path {2,5:N1} s, post-boot {3,5:N1} s)' -f $_.TimeCreated, ($d.BootTime/1000), ($d.MainPathBootTime/1000), ($d.BootPostBootTime/1000) }
 ''
-'Components blamed for slow boots (most recent):'
-Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Diagnostics-Performance/Operational'; Id=101,102,103,106,109} -MaxEvents 15 -ErrorAction SilentlyContinue | ForEach-Object { "[WARN] $($_.TimeCreated)  $($_.Message.Split([Environment]::NewLine)[0])" }"""),
+'Components that slowed boots (30 days, worst first):'
+$kind = @{101='app'; 102='driver'; 103='service'; 106='background'; 109='device'}
+$b = Get-WinEvent -FilterHashtable @{LogName=$log; Id=101,102,103,106,109; StartTime=(Get-Date).AddDays(-30)} -ErrorAction SilentlyContinue | ForEach-Object {
+  $d = @{}; ([xml]$_.ToXml()).Event.EventData.Data | ForEach-Object { $d[$_.Name] = $_.'#text' }
+  [pscustomobject]@{ Kind=$kind[$_.Id]; Name=$(if ($d.FriendlyName) { "$($d.FriendlyName) ($($d.Name))" } else { $d.Name }); Path=$d.Path
+    Total=[int]$d.TotalTime; Degradation=[int]$d.DegradationTime; When=$_.TimeCreated } }
+if (-not $b) { '[OK]   Windows blamed nothing for a slow boot in 30 days.'; return }
+$b | Group-Object Kind, Name | ForEach-Object { $g = $_.Group | Sort-Object Degradation -Descending; $w = $g[0]
+  [pscustomobject]@{ Kind=$w.Kind; Name=$w.Name; Times=$_.Count; MaxDelay=$w.Degradation; Last=($_.Group | Sort-Object When -Descending | Select-Object -First 1).When; Path=$w.Path } } |
+  Sort-Object MaxDelay -Descending | ForEach-Object { '[WARN] {0,-10} {1,-55} x{2,-3} slowed boot by up to {3,6:N1} s  (last {4:yyyy-MM-dd})  {5}' -f $_.Kind, $_.Name, $_.Times, ($_.MaxDelay/1000), $_.Last, $_.Path }"""),
     P("power_plan", "Power plan and processor limits",
       "The active power plan and its processor minimum/maximum state on AC and battery -- a "
       "maximum below 100% caps performance.",

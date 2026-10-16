@@ -98,6 +98,35 @@ for _name in _phosphor.PHOSPHOR_THEMES:
     CHROME_PALETTES[_name] = _chr
     PANE_BACKGROUND[_name] = _bg
 
+#: Script Library console colour schemes. Roles: background, text, selection,
+#: ok / warn / error / info / muted (span foregrounds), and warn_back /
+#: error_back -- a span BACKGROUND ("" = none). "PowerShell" is Windows
+#: PowerShell's own console: #012456 blue, #EEEDF0 text, and errors/warnings
+#: written red/yellow on black, the way the console host draws them.
+CONSOLE_PRESETS: Dict[str, Dict[str, str]] = {
+    "PowerShell": {
+        "background": "#012456", "text": "#eeedf0", "selection": "#3a6ea5",
+        "ok": "#00ff00", "warn": "#ffff00", "error": "#ff0000", "info": "#00ffff",
+        "muted": "#c0c0c0", "warn_back": "#000000", "error_back": "#000000",
+    },
+    "PowerShell ISE": {
+        "background": "#ffffff", "text": "#000000", "selection": "#add6ff",
+        "ok": "#008000", "warn": "#ff8c00", "error": "#ff0000", "info": "#0000ff",
+        "muted": "#696969", "warn_back": "", "error_back": "",
+    },
+    "Windows Terminal (Campbell)": {
+        "background": "#0c0c0c", "text": "#cccccc", "selection": "#3a3a3a",
+        "ok": "#16c60c", "warn": "#f9f1a5", "error": "#e74856", "info": "#61d6d6",
+        "muted": "#767676", "warn_back": "", "error_back": "",
+    },
+    "Dark": {
+        "background": "#1e1e1e", "text": "#d4d4d4", "selection": "#264f78",
+        "ok": "#4ec9b0", "warn": "#e5c07b", "error": "#f44747", "info": "#4fc3f7",
+        "muted": "#949494", "warn_back": "", "error_back": "",
+    },
+}
+DEFAULT_CONSOLE = "PowerShell"
+
 _current_theme = "dark"
 
 

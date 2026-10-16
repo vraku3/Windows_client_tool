@@ -109,7 +109,9 @@ SERVICES = (
                 "Adaptive brightness for built-in panels.", MAX),
     ServiceSpec("CloudBackupRestoreSvc_*", "Cloud Backup and Restore", "Windows Backup sync.", MAX),
     ServiceSpec("NPSMSvc_*", "Now Playing Session Manager", "The media flyout.", MAX),
-    ServiceSpec("RmSvc", "Radio Management", "Airplane-mode switch.", MAX),
+    ServiceSpec("RmSvc", "Radio Management",
+                "Airplane-mode switch. Left alone: it did not stop within 25 s here (measured), "
+                "which only delays Game Mode.", OPT),
     ServiceSpec("DusmSvc", "Data Usage", "Counts network data per app.", MAX),
     ServiceSpec("ShellHWDetection", "Shell Hardware Detection", "AutoPlay pop-ups.", MAX),
     ServiceSpec("whesvc", "Windows Health and Optimized Experiences", "Background health checks.",
@@ -349,18 +351,23 @@ GAME_FOLDERS = (
     "\\rockstar games\\", "\\games\\", "\\windowsapps\\microsoft.gaming",
 )
 
+#: Shared by process protection and the advice handle counts.
+ANTIVIRUS_PATTERNS = (
+    "bd*.exe", "vsserv*.exe", "seccenter.exe", "avp*.exe", "avast*.exe", "avg*.exe", "mbam*.exe",
+    "ekrn.exe", "egui.exe", "mcshield.exe", "sophos*.exe", "defender*.exe", "msmpeng.exe",
+    "nissrv.exe", "mpdefender*.exe", "securityhealth*.exe", "smartscreen.exe", "mpcmdrun.exe",
+)
+
 #: Never offered for closing, whatever is ticked: game launchers (the game
 #: needs them), the shell, input, security, Outlook/Office (their .pst/.ost
 #: data files), peripherals (mouse DPI, macros, RGB), controllers and game
 #: input, monitoring and fan tools, streaming hosts, terminals and AI agents
 #: that may be mid-task, and this app itself.
-NEVER_CLOSE = LAUNCHERS + (
+NEVER_CLOSE = LAUNCHERS + ANTIVIRUS_PATTERNS + (
     "steamwebhelper.exe", "steamservice.exe", "gameoverlayui*.exe", "epicwebhelper.exe",
     "eabackgroundservice.exe", "vgtray.exe", "gamingservices*.exe", "gamebar*.exe", "gameinput*.exe",
     "explorer.exe", "dwm.exe", "textinputhost.exe", "ctfmon.exe", "shellexperiencehost.exe",
     "startmenuexperiencehost.exe", "shellhost.exe", "sihost.exe", "msedgewebview2.exe",
-    "bd*.exe", "seccenter.exe", "vsserv*.exe", "msmpeng.exe", "securityhealth*.exe", "nissrv.exe",
-    "defender*.exe", "mpdefender*.exe", "mpcmdrun.exe", "smartscreen.exe",
     "outlook.exe", "olk.exe", "winword.exe", "excel.exe", "powerpnt.exe", "onenote*.exe",
     "msaccess.exe", "mspub.exe", "lync.exe", "officeclicktorun.exe",
     "audiodg.exe", "rtkauduservice64.exe", "amdrsserv.exe", "radeonsoftware.exe", "atieclxx.exe",

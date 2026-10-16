@@ -84,7 +84,13 @@ class WinSystem:
 
     # ---- power plans ---------------------------------------------------------------------------
     def plans(self) -> Dict[str, str]:
-        return parse_plans(run(["powercfg", "/list"], timeout=20).stdout)
+        res = run(["powercfg", "/list"], timeout=20)
+        plans = parse_plans(res.stdout)
+        if res.returncode != 0 or not plans:
+            reason = (res.stderr or res.stdout).strip() or f"powercfg exited {res.returncode}"
+            logger.warning("game mode: power plans unreadable: %s", reason)
+            raise OSError(f"power plans unreadable: {reason}")
+        return plans
 
     def active_plan(self) -> Optional[str]:
         found = parse_plans(run(["powercfg", "/getactivescheme"], timeout=20).stdout)
@@ -143,7 +149,7 @@ class WinSystem:
     def start_service(self, name: str) -> Optional[str]:
         return self._control(name, stop=False)
 
-    def _control(self, name: str, stop: bool, wait: float = 25.0) -> Optional[str]:
+    def _control(self, name: str, stop: bool, wait: float = 12.0) -> Optional[str]:
         import pywintypes
         import win32service
         want = win32service.SERVICE_STOPPED if stop else win32service.SERVICE_RUNNING
@@ -215,33 +221,51 @@ class WinSystem:
         except (psutil.Error, OSError) as error:
             return str(error) or type(error).__name__
 
-    def close(self, pids: List[int], exe_path: Optional[str], grace: float = 8.0) -> Optional[str]:
-        """Ask politely, then end what is left. None when every pid is gone."""
-        return self.close_many([(pids, exe_path)], grace)[0]
+    def close(self, identities: List[Tuple[int, int]], exe_path: Optional[str],
+              grace: float = 8.0) -> Optional[str]:
+        """Close only the recorded process instances."""
+        return self.close_many([(identities, exe_path)], grace)[0]
 
-    def close_many(self, jobs: List[Tuple[List[int], Optional[str]]],
+    def close_many(self, jobs: List[Tuple[List[Tuple[int, int]], Optional[str]]],
                    grace: float = 8.0) -> List[Optional[str]]:
-        """Close several programs AT ONCE: every one is asked politely, all of
-        them get the same `grace`, then whatever is left is ended. One at a
-        time, the first real Maximum run took 1 min 43 s for 18 programs --
-        most of it waiting 8 s on tray apps that ignore WM_CLOSE."""
-        for _pids, exe_path in jobs:
-            if exe_path and os.path.basename(exe_path).lower() == "onedrive.exe":
-                run([exe_path, "/shutdown"], timeout=20)   # OneDrive's own documented exit
-        self._post_close({pid for pids, _path in jobs for pid in pids})
-        self._wait_gone([pid for pids, _path in jobs for pid in pids], grace)
-        results = [self._end_left(pids) for pids, _path in jobs]
-        leftover = [pid for pids, _path in jobs for pid in pids]
-        self._wait_gone(leftover, 5.0)
-        import psutil
-        return [err or (None if not any(psutil.pid_exists(p) for p in pids)
-                        else "still running after it was ended")
-                for err, (pids, _path) in zip(results, jobs)]
+        """Ask every recorded process to close together, then end matching survivors."""
+        from . import shell_launch
+        for identities, exe_path in jobs:
+            if self._matching(identities) and self._trusted_onedrive(exe_path):
+                error = shell_launch.launch(exe_path, "/shutdown")
+                if error:
+                    logger.warning("game mode: OneDrive shutdown failed: %s", error)
+        identities = [identity for group, _path in jobs for identity in group]
+        self._post_close(self._matching(identities))
+        self._wait_gone(identities, grace)
+        results = [self._end_left(group) for group, _path in jobs]
+        self._wait_gone(identities, 5.0)
+        return [err or ("still running after it was ended" if self._matching(group) else None)
+                for err, (group, _path) in zip(results, jobs)]
 
     @staticmethod
-    def _end_left(pids: List[int]) -> Optional[str]:
+    def _trusted_onedrive(path: Optional[str]) -> bool:
+        if not path or os.path.basename(path).lower() != "onedrive.exe":
+            return False
+        real = os.path.normcase(os.path.realpath(path))
+        for variable, folder in (("ProgramFiles", "Microsoft OneDrive"),
+                                 ("LOCALAPPDATA", os.path.join("Microsoft", "OneDrive"))):
+            base = os.environ.get(variable)
+            if base:
+                allowed = os.path.normcase(os.path.realpath(os.path.join(base, folder)))
+                if real.startswith(allowed.rstrip(os.sep) + os.sep):
+                    return True
+        return False
+
+    def _matching(self, identities: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
+        current = {(p.pid, p.create_time) for p in self.processes()}
+        return [identity for identity in identities if identity in current]
+
+    def _end_left(self, identities: List[Tuple[int, int]]) -> Optional[str]:
         import psutil
-        for pid in pids:
+        for pid, created in identities:
+            if not self.alive(pid, created):
+                continue
             try:
                 psutil.Process(pid).kill()
             except psutil.NoSuchProcess:
@@ -250,14 +274,17 @@ class WinSystem:
                 return f"could not end process {pid}: {error}"
         return None
 
-    @staticmethod
-    def _post_close(pids) -> None:
+    def _post_close(self, identities: List[Tuple[int, int]]) -> None:
         import win32con
         import win32gui
         import win32process
+        # One process snapshot for the whole enumeration: checking alive() per
+        # window took a full NtQuerySystemInformation for each of hundreds of windows.
+        live_pids = {pid for pid, _created in self._matching(identities)}
 
         def each(hwnd, _):
-            if win32process.GetWindowThreadProcessId(hwnd)[1] in pids:
+            pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+            if pid in live_pids:
                 try:
                     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
                 except OSError as error:
@@ -265,15 +292,13 @@ class WinSystem:
             return True
         win32gui.EnumWindows(each, None)
 
-    @staticmethod
-    def _wait_gone(pids: List[int], seconds: float) -> bool:
-        import psutil
+    def _wait_gone(self, identities: List[Tuple[int, int]], seconds: float) -> bool:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if not any(psutil.pid_exists(p) for p in pids):
+            if not self._matching(identities):
                 return True
             time.sleep(0.25)
-        return not any(psutil.pid_exists(p) for p in pids)
+        return not self._matching(identities)
 
     def fullscreen_pids(self) -> set:
         """The process owning the foreground window when that window covers

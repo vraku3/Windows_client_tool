@@ -2001,7 +2001,8 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
 - **ON journals each change BEFORE making it** (`journal.py`,
   `%APPDATA%\WindowsTweaker\game_mode\session.json`, `done` False then True);
   OFF reads only that file, so it works after a crash, a closed app or a
-  reboot, and deletes it at the end (`last_restore.json` keeps the report).
+  reboot, and deletes it only after complete recovery (`last_restore.json`
+  keeps the report).
   OFF restores the recorded BEFORE state only: a service already running is
   not started twice, an app already open is not reopened, a priority someone
   changed since is left alone, an absent registry value is deleted again.
@@ -2025,17 +2026,19 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   on screen) -- so every launch has its own thread and a 15 s timeout, and
   packaged apps go as `explorer.exe shell:AppsFolder\<AUMID>` (returns in
   0.09 s). The AUMID comes from `GetApplicationUserModelId`; an app that ran
-  elevated is not reopened (and says why). OneDrive is closed with its own
-  `/shutdown`; others get WM_CLOSE, then are ended after 8 s.
+  elevated is not reopened (and says why). OneDrive uses `/shutdown` only
+  under the resolved ProgramFiles/LocalAppData OneDrive folders, launched
+  unelevated through the shell; others get WM_CLOSE, then are ended after 8 s.
 - **Two presets, Recommended and Maximum** (`session.preset`; every catalog
-  entry has a level REC / MAX / OPT). Maximum adds: every running program
-  the catalog does not know is closed (except `never_close()` patterns --
+  entry has a level REC / MAX / OPT). Maximum closes catalogued programs;
+  unknown programs are unticked until chosen by the user. Protected patterns --
   launchers, the shell, antivirus, Outlook/Office for their .pst/.ost,
   peripheral tools such as G Hub/Razer/SteelSeries, monitoring/fan tools,
-  terminals and AI agents, this app), browsers reopened with
-  `--restore-last-session`, more Windows services (AI Fabric, diagnostics,
-  sync/contacts per-user instances by pattern `OneSyncSvc_*`), transparency
-  and window animations off. Both pause Windows Automatic Maintenance
+  terminals and AI agents, this app -- are never closed. Browsers reopen with
+  `--restore-last-session`; Maximum also stops more Windows services (AI
+  Fabric, diagnostics, sync/contacts per-user instances by pattern
+  `OneSyncSvc_*`) and turns transparency and window animations off. Both
+  pause Windows Automatic Maintenance
   (HKLM `...\Schedule\Maintenance\MaintenanceDisabled` = 1; absent before
   here, deleted again by OFF) and 21 updater/maintenance scheduled tasks
   (`catalog.TASKS`, via `IRegisteredTask.Enabled`, never re-registered; a
@@ -2065,8 +2068,8 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   (REC), Display Enhancement, Cloud Backup, Now Playing, Radio Management,
   Data Usage, AutoPlay detection, Health Experiences, Devices Flow (MAX),
   WLAN AutoConfig only when `wifi_connected()` is False (NdisPhysicalMedium 9,
-  language-independent; this PC is on 2.5 GbE), and an Explorer restart as
-  the LAST step of Maximum (`restart_explorer`: Explorer here held 11,273
+  language-independent; this PC is on 2.5 GbE), and an optional Explorer restart as
+  the LAST step when explicitly ticked (`restart_explorer`: Explorer here held 11,273
   handles; AutoRestartShell=1 brings it back, a one-shot LIMITED scheduled
   task starts it as the user if not). CyberGhost (UI + 7 WebView2, ~6,700
   handles) stays OPT because of the VPN.
@@ -2094,6 +2097,29 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   (`Microsoft.XboxGamingOverlay`) NOT installed -- removed by an earlier
   debloat, and the V-Cache optimizer needs it to know a game is running --
   deluge running, three resident Snipping Tools (7,067 handles).
+
+- **Recovery safety (2026-10-17):** OFF retains only unresolved actions for
+  retry and stays ON with an explanatory banner; corrupt journals remain
+  untouched. Registry, service, task, plan, priority and app restore targets
+  are validated before use. ON/OFF/enforce share one operation lock, OFF
+  waits for an active enforce worker, and atomic writes use unique temp files.
+- **Process safety:** closing and priority changes recheck PID + creation
+  time. Shared antivirus patterns protect all catalogued vendors. Explorer
+  restart is opt-in in every preset and warns about interrupted copies and
+  closed folder windows. ON confirmation defaults to Cancel and warns that
+  programs still open after 8 seconds are ended, losing unsaved work.
+- **Long sessions and advice:** state/startup show ON duration; after six
+  hours the banner and each enforce run recommend OFF because updates,
+  maintenance and updaters remain paused. Unreadable V-Cache state is UNKNOWN;
+  HAGS describes only the Windows request, and HVCI-off wording is neutral.
+- **These came from a `/gpt` review (2026-10-17, seven Codex workers)** and were
+  implemented by Codex, then checked here: `_post_close` had called `alive()`
+  -- a full process snapshot -- once per WINDOW and now takes one snapshot;
+  `RmSvc` is OPT (it did not stop within 25 s, which made ON take 41 s) and a
+  service stop now waits 12 s at most. Elevated round trip after the fixes:
+  ON 9.5 s, OFF 12.2 s, state identical, PASS. The round-trip tool's
+  Character Map probe is gone: a copy launched from %TEMP% is now blocked with
+  a modal Explorer error on this PC, so only Paint is closed and reopened.
 
 ## Pending restart (`src/core/pending_reboot.py`)
 

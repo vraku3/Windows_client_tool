@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import time
+import threading
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
@@ -27,6 +28,9 @@ from .journal import Journal
 from .system import BELOW_NORMAL, NORMAL, PRIORITY_NAMES, Proc, split_command_line
 
 logger = logging.getLogger(__name__)
+
+OPERATION_LOCK = threading.Lock()
+LONG_SESSION_S = 6 * 3600
 
 BALANCED = "381b4222-f694-41f0-9685-ff5bb260df2e"
 HIGH_PERFORMANCE = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
@@ -105,16 +109,11 @@ class Choices:
 
 
 def preset(level: str, groups: List["AppGroup"]) -> Choices:
-    """Recommended (REC) or Maximum (MAX). Maximum also closes every running
-    program the catalog does not know -- except NEVER_CLOSE, which never
-    reaches `groups` -- and the catalog's OPT ones (voice chat, music, VPN)."""
+    """Presets select catalogued programs; Explorer always requires opt-in."""
     wanted = {catalog.REC} if level == catalog.REC else {catalog.REC, catalog.MAX}
-    c = Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
-                close={a.exe for a in catalog.APPS if a.level in wanted},
-                visuals=level == catalog.MAX, explorer=level == catalog.MAX, preset=level)
-    if level == catalog.MAX:
-        c.close |= {g.exe for g in groups if g.spec is None}
-    return c
+    return Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
+                   close={a.exe for a in catalog.APPS if a.level in wanted},
+                   visuals=level == catalog.MAX, explorer=False, preset=level)
 
 
 def choices_from_config(data) -> Choices:
@@ -286,6 +285,9 @@ class _On:
     def gamebar(self) -> None:
         changed = [self.registry("HKCU", GAMEBAR_KEY, name, 1, f"Windows Game Mode setting {name}")
                    for name in ("AutoGameModeEnabled", "AllowAutoGameMode")]
+        if any(value is None for value in changed):
+            self.log(WARN, "Windows Game Mode setting could not be fully read or applied")
+            return
         self.log(OK, "Windows Game Mode setting turned on" if any(changed)
                  else "Windows Game Mode setting was already on")
 
@@ -302,8 +304,13 @@ class _On:
     def visuals(self) -> None:
         changed = self.registry("HKCU", THEMES_KEY, "EnableTransparency", 0, "Transparency effects",
                                 broadcast="ImmersiveColorSet")
-        self.log(OK, "Transparency effects " + ("turned off" if changed else "were already off"))
-        if not self.s.animations():
+        if changed is not None:
+            self.log(OK, "Transparency effects " + ("turned off" if changed else "were already off"))
+        animations = self.s.animations()
+        if animations is None:
+            self.log(WARN, "Window animations: setting unreadable -- left alone")
+            return
+        if not animations:
             self.log(OK, "Window animations were already off")
             return
         entry = self.j.record({"kind": "animations", "before": True})
@@ -341,6 +348,9 @@ class _On:
     def vcache(self, elevated: bool) -> None:
         state = self.s.service(catalog.VCACHE_SERVICE)
         if state is None or state.running:
+            return
+        if state.running is None:
+            self.log(WARN, f"AMD 3D V-Cache optimizer: state unreadable ({state.error}) -- left alone")
             return
         if not elevated:
             self.log(WARN, "AMD 3D V-Cache optimizer is stopped; starting it needs administrator")
@@ -419,7 +429,7 @@ class _On:
                 "args": args, "cwd": os.path.dirname(path or program), "aumid": self.s.aumid(g.roots[0].pid),
                 "reopen": reopen and elevated is not True, "was_elevated": elevated,
                 "handles": g.handles, "processes": len(g.procs)}))
-            jobs.append(([p.pid for p in g.procs], path))
+            jobs.append(([(p.pid, p.create_time) for p in g.procs], path))
         if not jobs:
             return
         self.log(INFO, f"Closing {len(jobs)} program(s) together...")
@@ -440,7 +450,7 @@ class _On:
                     continue
                 entry = self.j.record({"kind": "priority", "pid": p.pid, "create_time": p.create_time,
                                        "exe": g.exe, "before": NORMAL})
-                if self.s.set_priority(p.pid, BELOW_NORMAL) is None:
+                if self.s.alive(p.pid, p.create_time) and self.s.set_priority(p.pid, BELOW_NORMAL) is None:
                     self.j.mark_done(entry)
                     lowered += 1
             if lowered:
@@ -449,6 +459,14 @@ class _On:
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             session: int) -> dict:
+    with OPERATION_LOCK:
+        if journal.active:
+            raise RuntimeError("Game Mode is already ON; use OFF to restore it first")
+        return _turn_on(system, choices, journal, log, own_pid, session)
+
+
+def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
+             session: int) -> dict:
     """Apply `choices`. Returns {handles_before, handles_after, processes_before, ...}."""
     elevated = system.is_admin()
     procs = system.processes()
@@ -483,11 +501,46 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
 
 
 def enforce(system, journal: Journal, log: Log) -> int:
+    if not OPERATION_LOCK.acquire(blocking=False):
+        return 0
+    try:
+        return _enforce(system, journal, log)
+    finally:
+        OPERATION_LOCK.release()
+
+
+def session_age(journal: Journal) -> Optional[int]:
+    started = journal.data.get("started")
+    if not isinstance(started, (int, float)) or started <= 0 or not started < float("inf"):
+        return None
+    return max(0, int(time.time() - started))
+
+
+def age_text(journal: Journal) -> str:
+    age = session_age(journal)
+    if age is None:
+        return "ON (duration unknown)"
+    return f"ON for {age // 3600} h {age % 3600 // 60} min"
+
+
+def long_session_warning(journal: Journal) -> str:
+    return (f"Game Mode is {age_text(journal)}. Windows Update, maintenance and updater tasks "
+            "are still paused. Game Mode OFF is recommended.")
+
+
+def _enforce(system, journal: Journal, log: Log) -> int:
     """While ON: stop again any service Game Mode stopped that Windows has
     started again -- at most MAX_RESTOPS times each, then it is left running
     and said so once (something genuinely needs it)."""
+    age = session_age(journal)
+    if age is not None and age > LONG_SESSION_S:
+        log(WARN, long_session_warning(journal))
     count = 0
     for entry in journal.actions:
+        if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+            continue
+        if catalog.service_spec(entry["name"]) is None:
+            continue
         if entry.get("kind") != "service_stop" or not entry.get("done") or entry.get("gave_up"):
             continue
         state = system.service(entry["name"])
@@ -509,7 +562,12 @@ def enforce(system, journal: Journal, log: Log) -> int:
 
 # ==== OFF =======================================================================================
 def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[dict]:
-    """Put back everything the journal recorded; return the report lines."""
+    """Serialize OFF after ON/enforce, retaining every unresolved change."""
+    with OPERATION_LOCK:
+        return _turn_off(system, journal, log, settle)
+
+
+def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
     report: List[dict] = []
 
     def say(level: str, text: str) -> None:
@@ -518,46 +576,100 @@ def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[d
 
     if journal.data.get("corrupt"):
         say(BAD, f"The Game Mode journal could not be read ({journal.data['corrupt']}); "
-                 "nothing could be put back automatically.")
+                 "nothing could be put back automatically. Game Mode stays ON; journal kept.")
+        return report
     ctx: dict = {"reopened": [], "priority": {}, "tasks": 0}
-    previous_kind = None
+    failed, validated = [], []
     for entry in reversed(journal.actions):
-        if previous_kind == "priority" and entry.get("kind") != "priority":
-            _say_priorities(ctx, say)
-        previous_kind = entry.get("kind")
-        handler = _RESTORE.get(entry.get("kind"))
-        if handler is None:
-            say(WARN, f"Unknown journal entry {entry.get('kind')!r} skipped")
-            continue
         try:
-            handler(system, entry, say, ctx)
-        except Exception as error:  # noqa: BLE001 -- one failed restore must not stop the rest
+            if not _valid_entry(system, entry):
+                say(BAD, f"Rejected journal entry {entry!r}: not something Game Mode changes")
+                continue
+            validated.append(entry)
+            if not _RESTORE[entry["kind"]](system, entry, say, ctx):
+                failed.append(entry)
+        except Exception as error:  # noqa: BLE001 -- keep the way back after any refusal
             logger.exception("game mode: restoring %s failed", entry)
-            say(BAD, f"{entry.get('label') or entry.get('name') or entry.get('kind')}: "
-                     f"restore failed ({error})")
+            say(BAD, f"{entry!r}: restore failed ({error})")
+            failed.append(entry)
     _say_priorities(ctx, say)
     if ctx["tasks"]:
         say(OK, f"{ctx['tasks']} scheduled task(s) enabled again")
-    _verify_reopened(system, ctx["reopened"], say, settle)
-    journal.finish(report)
+    pending = _verify_reopened(system, ctx["reopened"], say, settle)
+    failed.extend(e for e in validated if e.get("kind") == "app_close"
+                  and e.get("exe") in pending and e not in failed)
+    if failed:
+        journal.data["actions"] = [e for e in journal.actions if e in failed]
+        journal.save()
+        say(BAD, f"Recovery incomplete: {len(failed)} change(s) could not be put back -- "
+                 "Game Mode stays ON so OFF can be tried again (for example as administrator)")
+    else:
+        journal.finish(report)
     return report
 
 
-def _restore_priority(system, e, say, ctx) -> None:
-    """Counted per program in `ctx["priority"]`; only problems are said here."""
-    if not e.get("done"):
-        return
+def _valid_registry(e: dict) -> bool:
+    allowed = {("HKCU", GAMEBAR_KEY, "AutoGameModeEnabled"),
+               ("HKCU", GAMEBAR_KEY, "AllowAutoGameMode"),
+               ("HKLM", MAINTENANCE_KEY, "MaintenanceDisabled"),
+               ("HKCU", THEMES_KEY, "EnableTransparency")}
+    triple = (e.get("hive"), e.get("path"), e.get("name"))
+    if not all(isinstance(x, str) for x in triple) or triple not in allowed:
+        return False
+    if e.get("existed") is False:
+        return e.get("value") is None and e.get("type") == 0
+    return (e.get("existed") is True and type(e.get("value")) is int
+            and e.get("type") == REG_DWORD)
+
+
+def _valid_entry(system, e) -> bool:
+    """User-writable recovery data must never grant arbitrary elevated writes."""
+    if not isinstance(e, dict) or not isinstance(e.get("kind"), str):
+        return False
+    kind = e["kind"]
+    if kind == "registry":
+        return _valid_registry(e)
+    if kind == "service_stop":
+        return isinstance(e.get("name"), str) and catalog.service_spec(e["name"]) is not None
+    if kind == "service_start":
+        return e.get("name") == catalog.VCACHE_SERVICE
+    if kind == "task":
+        return isinstance(e.get("path"), str) and catalog.task_spec(e["path"]) is not None
+    if kind == "plan":
+        before = e.get("before")
+        return (isinstance(before, str) and re.fullmatch(
+            r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", before) is not None
+                and before in system.plans())
+    if kind == "priority":
+        return type(e.get("before")) is int and e["before"] in PRIORITY_NAMES
+    if kind == "app_close":
+        path, aumid = e.get("path", ""), e.get("aumid")
+        return (isinstance(path, str) and (not path or os.path.isabs(path))
+                and (aumid in (None, "") or (isinstance(aumid, str)
+                     and re.fullmatch(r"[A-Za-z0-9_.-]+![A-Za-z0-9_.-]+", aumid) is not None)))
+    return kind in ("animations", "explorer_restart")
+
+
+def _restore_priority(system, e, say, ctx) -> bool:
+    """Counted per program; exited processes and subsequent user changes resolve it."""
     if not system.alive(e["pid"], e["create_time"]):
-        return                                   # closed since: nothing to put back
-    if system.priority(e["pid"]) != BELOW_NORMAL:
+        return True
+    current = system.priority(e["pid"])
+    if current is None:
+        say(BAD, f"{e['exe']} ({e['pid']}): priority unreadable -- restore can be retried")
+        return False
+    if current != BELOW_NORMAL:
         say(INFO, f"{e['exe']} ({e['pid']}): priority changed since -- left as it is")
-        return
+        return True
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
     error = system.set_priority(e["pid"], e["before"])
     if error:
         say(BAD, f"{e['exe']} ({e['pid']}): priority not restored ({error})")
-        return
-    key = (e["exe"], PRIORITY_NAMES.get(e["before"], str(e["before"])))
+        return False
+    key = (e["exe"], PRIORITY_NAMES[e["before"]])
     ctx["priority"][key] = ctx["priority"].get(key, 0) + 1
+    return True
 
 
 def _say_priorities(ctx: dict, say) -> None:
@@ -566,104 +678,130 @@ def _say_priorities(ctx: dict, say) -> None:
     ctx["priority"].clear()
 
 
-def _restore_app(system, e, say, ctx) -> None:
+def _restore_app(system, e, say, ctx) -> bool:
     running = any(p.name.lower() == e["exe"] for p in system.processes())
     if not e.get("done") and running:
-        return                                   # the close never happened
+        return True                           # the close never happened
     if not e.get("reopen"):
         why = "it ran elevated" if e.get("was_elevated") else "Windows starts it again when needed"
         say(INFO, f"{e['label']}: not reopened ({why})")
-        return
+        return True
     if running:
         say(OK, f"{e['label']}: already running again")
-        return
+        return True
     if e.get("aumid"):
         error = system.launch_aumid(e["aumid"])
     else:
         error = system.launch(e["path"], e.get("args", ""), e.get("cwd", ""))
     if error:
         say(BAD, f"{e['label']}: could not reopen ({error})")
-    else:
-        ctx["reopened"].append((e["exe"], e["label"]))
+        return False
+    ctx["reopened"].append((e["exe"], e["label"]))
+    return True
 
 
-def _restore_service_stop(system, e, say, _ctx) -> None:
+def _restore_service_stop(system, e, say, _ctx) -> bool:
     """It WAS running (only running services are recorded): make it run."""
+    label = e.get("label") or e["name"]
     state = system.service(e["name"])
     if state is None:
-        say(WARN, f"{e['label']}: no longer installed")
-        return
+        say(WARN, f"{label}: no longer installed")
+        return True
+    if state.running is None:
+        say(BAD, f"{label}: state unreadable ({state.error})")
+        return False
     if state.running:
-        say(OK, f"{e['label']}: already running")
-        return
+        say(OK, f"{label}: already running")
+        return True
     if state.start_type == "Disabled":
-        say(WARN, f"{e['label']}: was running, but is now Disabled -- not started")
-        return
+        say(BAD, f"{label}: was running, but is now Disabled -- not started")
+        return False
     error = system.start_service(e["name"])
-    say(BAD if error else OK, f"{e['label']}: " + (f"not restarted ({error})" if error
-                                                    else "running again"))
+    say(BAD if error else OK, f"{label}: " + (f"not restarted ({error})" if error
+                                             else "running again"))
+    return not error
 
 
-def _restore_service_start(system, e, say, _ctx) -> None:
-    """It was STOPPED before Game Mode started it: stop it again -- even when
-    the start reported a failure, since a slow start may still have landed."""
+def _restore_service_start(system, e, say, _ctx) -> bool:
+    """Return the optimizer to STOPPED, including an interrupted start."""
     state = system.service(e["name"])
     if state is None or state.running is False:
-        return
+        return True
+    if state.running is None:
+        say(BAD, f"AMD 3D V-Cache optimizer: state unreadable ({state.error})")
+        return False
     error = system.stop_service(e["name"])
     say(BAD if error else OK, "AMD 3D V-Cache optimizer: " + (f"not stopped again ({error})" if error
                                                                else "stopped again, as it was"))
+    return not error
 
 
-def _restore_registry(system, e, say, _ctx) -> None:
+def _restore_registry(system, e, say, _ctx) -> bool:
     hive = e.get("hive", "HKCU")
     label = e.get("label") or f"Windows Game Mode setting {e['name']}"
+    exists, value, kind = system.reg_get(e["path"], e["name"], hive)
+    if exists is e["existed"] and (not exists or (value == e["value"] and kind == e["type"])):
+        say(OK, f"{label}: already restored")
+        return True
     if e.get("existed"):
         error = system.reg_set(e["path"], e["name"], e["value"], e["type"], hive)
     else:
         error = system.reg_delete(e["path"], e["name"], hive)
     if e.get("broadcast"):
         system.broadcast_setting_change(e["broadcast"])
-    exists, value, _kind = system.reg_get(e["path"], e["name"], hive)
-    back = exists == bool(e.get("existed")) and (not exists or value == e["value"])
+    exists, value, kind = system.reg_get(e["path"], e["name"], hive)
+    back = exists is e["existed"] and (not exists or (value == e["value"] and kind == e["type"]))
     if error or not back:
         say(BAD, f"{label}: not restored ({error or 'read-back differs'})")
     else:
         say(OK, f"{label}: back to " + (str(e["value"]) if e.get("existed") else "not set"))
+    return not error and back
 
 
-def _restore_task(system, e, say, ctx) -> None:
+def _restore_task(system, e, say, ctx) -> bool:
     """Every task recorded was ENABLED before; counted, only problems said."""
     if system.task_enabled(e["path"]) is True:
         ctx["tasks"] += 1
-        return
+        return True
     error = system.set_task_enabled(e["path"], True)
     if error:
         say(BAD, f"Scheduled task {e['path']}: not enabled again ({error})")
     else:
         ctx["tasks"] += 1
+    return not error
 
 
-def _restore_animations(system, e, say, _ctx) -> None:
+def _restore_animations(system, e, say, _ctx) -> bool:
+    if system.animations() == bool(e["before"]):
+        say(OK, "Window animations already restored")
+        return True
     error = system.set_animations(bool(e["before"]))
-    if error or system.animations() != bool(e["before"]):
+    back = system.animations() == bool(e["before"])
+    if error or not back:
         say(BAD, f"Window animations: not restored ({error or 'read-back differs'})")
     else:
         say(OK, "Window animations back on")
+    return not error and back
 
 
-def _restore_plan(system, e, say, _ctx) -> None:
+def _restore_plan(system, e, say, _ctx) -> bool:
     name = e.get("before_name") or e["before"]
+    if system.active_plan() == e["before"]:
+        say(OK, f"Power plan already back to {name}")
+        return True
     error = system.set_plan(e["before"])
-    if error or system.active_plan() != e["before"]:
+    back = system.active_plan() == e["before"]
+    if error or not back:
         say(BAD, f"Power plan: not restored to {name} ({error or 'read-back differs'})")
     else:
         say(OK, f"Power plan back to {name}")
+    return not error and back
 
 
-def _restore_explorer(_system, e, say, _ctx) -> None:
+def _restore_explorer(_system, e, say, _ctx) -> bool:
     if e.get("done"):
         say(OK, "Explorer was restarted fresh during Game Mode -- nothing to put back")
+    return True
 
 
 _RESTORE = {"explorer_restart": _restore_explorer, "priority": _restore_priority,
@@ -673,7 +811,7 @@ _RESTORE = {"explorer_restart": _restore_explorer, "priority": _restore_priority
             "animations": _restore_animations}
 
 
-def _verify_reopened(system, reopened, say, settle: float) -> None:
+def _verify_reopened(system, reopened, say, settle: float) -> Set[str]:
     deadline = time.monotonic() + settle
     pending = dict(reopened)
     while pending and time.monotonic() < deadline:
@@ -684,3 +822,4 @@ def _verify_reopened(system, reopened, say, settle: float) -> None:
             time.sleep(0.5)
     for label in pending.values():
         say(WARN, f"{label}: asked to reopen, not seen running within {int(settle)} s")
+    return set(pending)

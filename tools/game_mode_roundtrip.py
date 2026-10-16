@@ -93,23 +93,24 @@ def main() -> int:
         print("Paint is already open -- close it first (the probe closes every Paint)")
         return 2
     folder = tempfile.mkdtemp(prefix="gm_probe_")
-    probe = make_charmap_probe(folder)
-    s.launch(probe, "/probe-arg \"with space\"", folder)
+    # Only Paint: a copy of Character Map launched from %TEMP% is now blocked
+    # with a modal Explorer error on this PC (2026-10-17), which only tests
+    # the machine. Unpackaged reopen-with-arguments passed twice on 2026-10-16.
     s.launch_aumid(PAINT_AUMID)
-    ok = wait_for(s, "gmprobe.exe", True) and wait_for(s, "mspaint.exe", True)
-    print("probes running:", ok, elevation_of(s, "gmprobe.exe"))
+    ok = wait_for(s, "mspaint.exe", True)
+    print("probe running:", ok, elevation_of(s, "mspaint.exe"))
     before = snapshot(s)
     journal = Journal(os.path.join(folder, "journal"))
     # The Maximum preset in full, except that only the two probes are closed.
     choices = session.preset(catalog.MAX, [])
-    choices.close = {"gmprobe.exe", "mspaint.exe"}
+    choices.close = {"mspaint.exe"}
     log = lambda level, text: print(f"  ON  [{level}] {text}")  # noqa: E731
     t = time.monotonic()
     data = session.turn_on(s, choices, journal, log, os.getpid(), session_id())
     print(f"ON took {time.monotonic() - t:.1f} s; handles {data['handles_before']:,} -> "
           f"{data['handles_after']:,}; processes {data['processes_before']} -> {data['processes_after']}")
     during = snapshot(s)
-    gone = not any(p.name.lower() in ("gmprobe.exe", "mspaint.exe") for p in s.processes())
+    gone = not any(p.name.lower() == "mspaint.exe" for p in s.processes())
     print("during:", during["plan"], sum(1 for v in during["services"].values() if v), "services running,",
           sum(1 for v in during["tasks"].values() if v), "catalog tasks enabled, maintenance",
           during["maintenance"], "transparency", during["transparency"], "animations", during["animations"],
@@ -138,14 +139,14 @@ def main() -> int:
     failures = [k for k in before if before[k] != after[k]]
     for k in failures:
         print("DIFFERENT:", k, "\n  before:", before[k], "\n  after: ", after[k])
-    back = wait_for(s, "gmprobe.exe", True) and wait_for(s, "mspaint.exe", True)
-    probe_facts = elevation_of(s, "gmprobe.exe")
+    back = wait_for(s, "mspaint.exe", True)
+    probe_facts = elevation_of(s, "mspaint.exe")
     print("probes back:", back, probe_facts)
-    unelevated = probe_facts is not None and probe_facts[2] is False and "with space" in (probe_facts[1] or "")
+    unelevated = probe_facts is not None and probe_facts[2] is False
     bad = [r for r in report if r["level"] == session.BAD]
     for p in s.processes():
-        if p.name.lower() in ("gmprobe.exe", "mspaint.exe"):
-            s.close([p.pid], None, grace=3)
+        if p.name.lower() == "mspaint.exe":
+            s.close([(p.pid, p.create_time)], None, grace=3)
     shutil.rmtree(folder, ignore_errors=True)
     verdict = not failures and back and unelevated and not bad and gone
     print("RESULT:", "PASS" if verdict else "FAIL")

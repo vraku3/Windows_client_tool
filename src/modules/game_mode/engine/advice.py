@@ -47,7 +47,7 @@ class Display:
 @dataclass
 class Facts:
     cpu: str = ""
-    vcache: Optional[bool] = None          # running; None = not installed
+    vcache: Optional[bool] = None          # running; None = absent or unreadable
     vcache_installed: bool = False
     plan_guid: Optional[str] = None
     plan_name: str = ""
@@ -121,11 +121,6 @@ def _displays() -> List[Display]:
     return out
 
 
-_ANTIVIRUS = ("bd*.exe", "vsserv*.exe", "seccenter.exe", "msmpeng.exe", "mpdefendercoreservice.exe",
-              "nissrv.exe", "securityhealth*.exe", "avp*.exe", "avast*.exe", "avg*.exe", "mbam*.exe",
-              "ekrn.exe", "egui.exe", "ns*.exe", "mcshield.exe", "sophos*.exe")
-
-
 def _floor(f: Facts, procs) -> None:
     """Where the handles nobody may close live."""
     import fnmatch
@@ -133,7 +128,7 @@ def _floor(f: Facts, procs) -> None:
         name = p.name.lower()
         if p.pid == 4:
             f.kernel_handles += p.handles
-        elif any(fnmatch.fnmatch(name, pat) for pat in _ANTIVIRUS):
+        elif any(fnmatch.fnmatch(name, pat) for pat in catalog.ANTIVIRUS_PATTERNS):
             f.antivirus_handles += p.handles
         elif p.session == 0:
             f.windows_service_handles += p.handles
@@ -193,11 +188,14 @@ def findings(f: Facts) -> List[Finding]:
 
 
 def _cpu_and_plan(f: Facts) -> List[Finding]:
+    out = []
+    if f.vcache_installed and f.vcache is None:
+        out.append(Finding(UNKNOWN, "AMD 3D V-Cache optimizer: state could not be read",
+                           "The optimizer is installed, but its running state is unreadable."))
     if not dual_ccd_x3d(f.cpu):
-        return [Finding(INFO, f"Power plan: {f.plan_name or 'unreadable'}",
+        return out + [Finding(INFO, f"Power plan: {f.plan_name or 'unreadable'}",
                         f"{f.cpu or 'CPU unreadable'} -- Game Mode switches to the fastest plan "
                         "this PC has while you play.")]
-    out = []
     if not f.vcache_installed:
         out.append(Finding(ACT, "AMD 3D V-Cache optimizer is not installed",
                            f"{f.cpu} has the extra cache on ONE of its two CCDs. Without AMD's "
@@ -208,7 +206,7 @@ def _cpu_and_plan(f: Facts) -> List[Finding]:
         out.append(Finding(WARN, "AMD 3D V-Cache optimizer service is stopped",
                            "amd3dvcacheSvc is installed but not running.",
                            "Game Mode starts it while you play."))
-    else:
+    elif f.vcache is True:
         out.append(Finding(GOOD, "AMD 3D V-Cache optimizer is running",
                            f"{f.cpu}: amd3dvcacheSvc is running."))
     if f.plan_guid != BALANCED:
@@ -274,13 +272,13 @@ def _capture(f: Facts) -> List[Finding]:
 
 def _hags(f: Facts) -> List[Finding]:
     if f.hags == 2:
-        return [Finding(GOOD, "Hardware-accelerated GPU scheduling is on", "HwSchMode = 2.")]
+        return [Finding(INFO, "Hardware-accelerated GPU scheduling is requested in Windows "
+                        "(HwSchMode = 2); whether the GPU driver uses it depends on the driver", "")]
     if f.hags is None:
         return [Finding(UNKNOWN, "GPU scheduling: could not check", "")]
-    return [Finding(INFO, "Hardware-accelerated GPU scheduling is off",
-                    f"HwSchMode = {f.hags}. It lowers latency on recent GPUs and is required for "
-                    "frame generation.", "Settings > Display > Graphics > Default graphics "
-                    "settings -- needs a restart.")]
+    return [Finding(INFO, "Hardware-accelerated GPU scheduling: Windows setting",
+                    f"HwSchMode = {f.hags}. Windows is not explicitly requesting it with "
+                    "HwSchMode = 2; whether the GPU driver uses it depends on the driver.")]
 
 
 def _hvci(f: Facts) -> List[Finding]:
@@ -290,9 +288,8 @@ def _hvci(f: Facts) -> List[Finding]:
         return [Finding(INFO, "Memory integrity (HVCI) is on",
                         "It protects the kernel and can cost a few percent in some games. "
                         "This is a security trade-off; Game Mode does not touch it.")]
-    return [Finding(GOOD, "Memory integrity (HVCI) is off",
-                    "No virtualization-based overhead on frames. (A security trade-off -- it "
-                    "protects the kernel when on.)")]
+    return [Finding(INFO, "Memory integrity (HVCI) is off",
+                    "This kernel protection is not running. Game Mode does not change it.")]
 
 
 def _mouse(f: Facts) -> List[Finding]:

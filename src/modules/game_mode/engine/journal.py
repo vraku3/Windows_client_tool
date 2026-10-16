@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import time
+import tempfile
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,8 @@ class Journal:
         try:
             with open(self.path, encoding="utf-8") as fh:
                 data = json.load(fh)
+            if not isinstance(data, dict) or not isinstance(data.get("actions"), list):
+                raise ValueError("journal must contain an actions list")
         except FileNotFoundError:
             self.data = {}
             return False
@@ -45,8 +48,7 @@ class Journal:
             logger.error("game mode: journal %s unreadable: %s", self.path, error)
             self.data = {"version": VERSION, "started": 0, "actions": [], "corrupt": str(error)}
             return True
-        self.data = data if isinstance(data, dict) else {}
-        self.data.setdefault("actions", [])
+        self.data = data
         return True
 
     def begin(self, **facts) -> None:
@@ -89,7 +91,14 @@ class Journal:
 
     @staticmethod
     def _write(path: str, payload: dict) -> None:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, indent=1)
-        os.replace(tmp, path)
+        tmp = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path),
+                                             prefix=os.path.basename(path) + ".", suffix=".tmp",
+                                             delete=False) as fh:
+                tmp = fh.name
+                json.dump(payload, fh, indent=1)
+            os.replace(tmp, path)
+        finally:
+            if tmp is not None and os.path.exists(tmp):
+                os.remove(tmp)

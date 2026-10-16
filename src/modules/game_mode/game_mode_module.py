@@ -79,6 +79,9 @@ class GameModeModule(BaseModule):
         self._groups: List[session.AppGroup] = []
         self._procs: list = []
         self._enforce_timer: Optional[QTimer] = None
+        self._enforce_worker: Optional[Worker] = None
+        self._off_pending = False
+        self._recovery_message = ""
         self._live_timer: Optional[QTimer] = None
         # The enforce timer starts in on_start when Game Mode was left ON, so
         # its log lines can arrive before the pane is ever built: the widgets
@@ -122,7 +125,7 @@ class GameModeModule(BaseModule):
         except OSError as error:
             logger.warning("game mode: live count unreadable: %s", error)
             return
-        self._numbers.setText(self._numbers_text(session.total_handles(procs), len(procs)))
+        self._show_state(session.total_handles(procs), len(procs))
 
     def on_stop(self) -> None:
         if self._live_timer is not None:
@@ -160,10 +163,10 @@ class GameModeModule(BaseModule):
         self._widget = w
         self._show_state()
         if self._journal.active:
-            started = self._journal.data.get("started") or 0
-            when = datetime.datetime.fromtimestamp(started).strftime("%H:%M") if started else "earlier"
-            self._show_error(f"Game Mode is still ON from {when} -- this app was closed while it was on. "
-                             "Game Mode OFF puts everything back exactly as it was.")
+            age = session.session_age(self._journal)
+            if age is None or age <= session.LONG_SESSION_S:
+                self._show_error(f"Game Mode is still {session.age_text(self._journal)} -- this app "
+                                 "was closed while it was on. Game Mode OFF restores the changes.")
         return w
 
     def _build_header(self, parent: QWidget) -> QHBoxLayout:
@@ -220,11 +223,10 @@ class GameModeModule(BaseModule):
                                  "chat and editors stay open at a lower priority.")
         self._rec_btn.clicked.connect(lambda: self._apply_preset(catalog.REC))
         self._max_btn = QPushButton("Maximum", page)
-        self._max_btn.setToolTip("Everything Recommended does, plus: every program that is not a "
-                                 "game launcher, voice chat, music, VPN, Office/Outlook, a "
-                                 "peripheral tool or the antivirus is closed (and reopened after), "
-                                 "more Windows background services stopped, transparency and "
-                                 "animations off.")
+        self._max_btn.setToolTip("Everything Recommended does, plus catalogued browsers, chat and "
+                                 "work apps closed, more Windows background services stopped, "
+                                 "transparency and animations off. Unknown programs stay unticked; "
+                                 "Explorer restarts only if you tick it.")
         self._max_btn.clicked.connect(lambda: self._apply_preset(catalog.MAX))
         self._estimate = QLabel(page)
         set_role(self._estimate, "statusInfo")
@@ -241,9 +243,8 @@ class GameModeModule(BaseModule):
         self._tasks_cb = QCheckBox("Pause scheduled updater and maintenance tasks (Google, Edge, "
                                    "Brave, OneDrive, Office updates; defrag; telemetry)", page)
         self._visuals_cb = QCheckBox("Transparency and window animations off", page)
-        self._explorer_cb = QCheckBox("Restart Explorer at the end for a fresh shell (a long-running one "
-                                      "holds thousands of extra handles; open File Explorer windows "
-                                      "close)", page)
+        self._explorer_cb = QCheckBox("Restart Explorer (interrupts copies in progress in File Explorer "
+                                      "and closes folder windows)", page)
         self._lower_cb = QCheckBox("Apps left open (browsers, chat, editors) run at Below Normal "
                                    "priority while Game Mode is on", page)
         self._flag_boxes = {"plan": self._plan_cb, "gamebar": self._gamebar_cb,
@@ -452,10 +453,13 @@ class GameModeModule(BaseModule):
             return
         on = self._journal.active
         if on:
-            started = self._journal.data.get("started") or 0
-            when = datetime.datetime.fromtimestamp(started).strftime("%H:%M") if started else "earlier"
-            self._state.setText(f"Game Mode is ON (since {when}, "
-                                f"{sum(1 for a in self._journal.actions if a.get('done'))} changes)")
+            self._state.setText(f"Game Mode is {session.age_text(self._journal)} "
+                                f"({sum(1 for a in self._journal.actions if isinstance(a, dict) and a.get('done'))} changes)")
+            age = session.session_age(self._journal)
+            if self._recovery_message:
+                self._show_error(self._recovery_message)
+            elif age is not None and age > session.LONG_SESSION_S:
+                self._show_error(session.long_session_warning(self._journal))
         else:
             self._state.setText("Game Mode is OFF")
         set_role(self._state, "statusSuccess" if on else "sectionTitle")
@@ -503,14 +507,15 @@ class GameModeModule(BaseModule):
                 + ("• pause Windows Automatic Maintenance\n" if self._choices.maintenance else "")
                 + ("• pause scheduled updater/maintenance tasks\n" if self._choices.tasks else "")
                 + ("• turn transparency and animations off\n" if self._choices.visuals else "")
-                + ("• restart Explorer (open folder windows close)\n" if self._choices.explorer else "")
+                + ("• restart Explorer (interrupts File Explorer copies and closes folder windows)\n" if self._choices.explorer else "")
                 + (f"• close: {', '.join(closing)}\n" if closing else "")
                 + ("• lower the priority of apps left open\n" if self._choices.lower else "")
-                + "\nSave your work in the apps that will be closed. Game Mode OFF puts everything "
-                  "back as it was, and reopens the closed apps.")
+                + "\nPrograms that do not close within 8 seconds are ended; unsaved work in them "
+                  "is lost. Save your work before continuing. Game Mode OFF puts the settings "
+                  "back and reopens the closed apps.")
         return QMessageBox.question(self._widget, "Game Mode ON", text,
                                     QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-                                    QMessageBox.StandardButton.Ok) == QMessageBox.StandardButton.Ok
+                                    QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Ok
 
     def _turn_on(self) -> None:
         if self._busy or self._journal.active or not self._confirm_on():
@@ -533,6 +538,14 @@ class GameModeModule(BaseModule):
         self._busy = True
         self._show_state()
         self._tabs.setCurrentIndex(2)
+        if self._enforce_timer is not None:
+            self._enforce_timer.stop()
+        if self._enforce_worker is not None:
+            self._off_pending = True
+            return
+        self._start_off()
+
+    def _start_off(self) -> None:
         system, journal = self._system, self._journal
 
         def work(w):
@@ -561,12 +574,24 @@ class GameModeModule(BaseModule):
             self._enforce_timer.stop()
         _keep_awake(False)
         bad = sum(1 for r in report if r["level"] == session.BAD)
-        self._append(f"{session.BAD if bad else session.OK}\tGame Mode is OFF -- "
-                     + (f"{bad} item(s) could not be put back, see above." if bad
-                        else "everything is back as it was."))
-        if bad:
-            self._show_error(f"Game Mode OFF: {bad} item(s) could not be put back -- see the Log tab.")
-        self._show_state()
+        if self._journal.active:
+            message = next((r["text"] for r in reversed(report)
+                            if "Recovery incomplete:" in r["text"]),
+                           "Recovery incomplete: journal kept. Game Mode stays ON; OFF can be tried again.")
+            self._recovery_message = message
+            self._append(f"{session.BAD}\t{message}")
+            self._show_state()
+            self._show_error(message)
+        else:
+            self._recovery_message = ""
+            self._append(f"{session.BAD if bad else session.OK}\tGame Mode is OFF -- "
+                         + ("rejected journal entries; see the Log tab." if bad
+                            else "everything is back as it was."))
+            self._show_state()
+            if bad:
+                self._show_error("Game Mode OFF: rejected journal entries -- see the Log tab.")
+            elif widget_is_valid(self._banner):
+                self._banner.hide()
         self._refresh_all()
 
     def _failed(self, err) -> None:
@@ -584,7 +609,7 @@ class GameModeModule(BaseModule):
         self._enforce_timer.start(ENFORCE_MS)
 
     def _enforce(self) -> None:
-        if self._busy or not self._journal.active:
+        if self._busy or self._enforce_worker is not None or not self._journal.active:
             return
         system, journal = self._system, self._journal
 
@@ -594,7 +619,15 @@ class GameModeModule(BaseModule):
         w = Worker(work)
         w.signals.log_line.connect(self._append)
         w.signals.error.connect(lambda err: logger.warning("game mode: enforce failed: %s", err))
+        self._enforce_worker = w
+        w.signals.finished.connect(self._enforce_finished)
         self._start(w)
+
+    def _enforce_finished(self) -> None:
+        self._enforce_worker = None
+        if self._off_pending:
+            self._off_pending = False
+            self._start_off()
 
     def _start(self, w: Worker) -> None:
         """Track `w` until it finishes -- the enforce tick runs every minute

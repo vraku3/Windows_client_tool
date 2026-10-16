@@ -1851,6 +1851,39 @@ keep, for the same reason: it lets the engine test headless.
   dropped — the same rule Security Dashboard and the Tweak System hold
   elsewhere in this app.
 
+**Script Library catalog** (2026-10-16): 285 READ-ONLY scripts -- the 17 core
+checks below plus `scripts_hub/catalog/` (one module per area, `_base.maker`
+wraps bodies), in a three-level tree: Windows client (18 categories, 222
+scripts) / Windows Server (AD, DNS, DHCP, IIS, Hyper-V, File server, Failover
+Cluster, Roles & features -- 63) / My scripts. `tools/script_library_check.py`
+parses EVERY body with PowerShell's own parser, then runs each one and fails
+on non-zero exit, an `ERROR:` line, CLIXML, empty output or a timeout; run it
+elevated AND with `runas /trustlevel:0x20000` (both: 0 failures; 225 run, 60
+server scripts print NOT AVAILABLE here -- they were only parsed, and their
+card says what they need via `Script.requires`). What the runs found:
+- **More silently-empty reads**: `Get-Partition` returns NOTHING for a
+  standard user (now `need_admin`), like `Get-DnsClientCache`; Get-Printer &
+  co. return nothing when the spooler is stopped (Disabled here), so every
+  print check states the spooler first; `Get-WindowsOptionalFeature` THROWS
+  unelevated whatever `-ErrorAction` says (call it only elevated); PowerShell
+  2.0 is gone from Windows 11 24H2+, so "feature absent" elevated is the
+  answer, not a refusal; `query user` exits 1 on success (`quser` exits 0);
+  `wsl --list` exits 1 with no distribution and writes UTF-16 (`WSL_UTF8=1`).
+- **The antivirus (Bitdefender) refuses some launches.** A PowerShell COMMAND
+  LINE that decodes Base64, or an `-EncodedCommand` body that walks browser
+  profile folders, failed CreateProcess with "Access is denied". Built-ins
+  therefore run from a temp `.ps1` (`-File`, UTF-8 BOM, deleted after), a
+  refused launch is an `ERROR:` line rather than an exception, and there is
+  deliberately no browser-extension inventory (as a file it was held open).
+- **Colour**: `output_style.spans(line)` (Qt-free) classifies `[OK]`/`[WARN]`/
+  `[BAD]`/`[INFO]`, `ERROR:`, `NOTE:`, `NOT AVAILABLE`, `==` headings, `----`
+  rules (the line above a rule is restyled as a table header) and `Key : value`
+  lists; the pane maps kinds to `semantic()`/`chrome()` colours. Audit scripts
+  use the `CHK` helper so every verdict line carries the value it read.
+- `test_script_library.py` fails if any built-in calls a state-changing cmdlet
+  (`Verb-Noun`, so `--disable-interactivity` is not `Disable-...`; `New-Object`
+  and `Set-StrictMode` allowed) or command (`reg add`, `sc config`...).
+
 **Script Library** (2026-10-16, the hub's FIRST tab: `scripts_hub/library.py`
 + `support_bundle.py`, Qt-free; `library_module.py` is the pane). 17 built-in
 READ-ONLY checks in four categories (who restarted the PC and why, uptime +

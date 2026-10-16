@@ -55,6 +55,11 @@ class Script:
     read_only: bool = True
     timeout: float = 120.0
     path: str = ""                   # set for user scripts
+    server: bool = False             # Windows Server branch of the tree
+    #: What the script needs that THIS PC may not have ("Active Directory
+    #: module", "Hyper-V role"). Non-empty means it could only be syntax-checked
+    #: here; the script prints NOT AVAILABLE instead of failing when it is absent.
+    requires: str = ""
 
 
 def _ps(body: str, admin_note: str = "") -> str:
@@ -70,6 +75,29 @@ def _ps(body: str, admin_note: str = "") -> str:
     return (head + "& {\n" + body.strip() + "\n} 2>&1 | ForEach-Object { "
             "if ($_ -is [System.Management.Automation.ErrorRecord]) { "
             "'ERROR: ' + $_.Exception.Message } else { $_ } }\n")
+
+
+# ---- helpers the catalogs use ---------------------------------------------------------------
+
+WIDE = _WIDE
+LIST = "| Format-List | Out-String -Width 220"
+ps = _ps
+
+
+def need_cmd(cmdlet: str, what: str) -> str:
+    """A body prefix that stops with NOT AVAILABLE when `cmdlet` is missing --
+    a role, a feature or an RSAT module this PC does not have."""
+    what = what.replace("'", "''")
+    return (f"if (-not (Get-Command {cmdlet} -ErrorAction SilentlyContinue)) {{ "
+            f"'NOT AVAILABLE: {what} is not installed on this PC.'; return }}\n")
+
+
+def need_admin(why: str) -> str:
+    """A body prefix that refuses unelevated, for reads Windows answers with
+    an empty list instead of an error (Get-DnsClientCache did, measured)."""
+    why = why.replace("'", "''")
+    return (_IS_ADMIN + f"if (-not $isAdmin) {{ 'NOT AVAILABLE: needs administrator "
+            f"rights -- {why}'; return }}\n")
 
 
 BUILT_IN: List[Script] = [
@@ -255,7 +283,15 @@ $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
                + _WIDE), timeout=180),
 ]
 
-CATEGORIES = ("Troubleshooting", "Network", "Security", "Inventory", "My scripts")
+CLIENT_CATEGORIES = ("Troubleshooting", "System", "Hardware", "Storage", "Performance",
+                     "Event logs", "Network", "Security", "Users & groups",
+                     "Updates & servicing", "Services & processes", "Startup & tasks",
+                     "Applications", "Power", "Printing", "Group Policy", "Remote access",
+                     "Inventory")
+SERVER_CATEGORIES = ("Active Directory", "DNS Server", "DHCP Server", "IIS", "Hyper-V",
+                     "File server", "Failover Cluster", "Roles & features")
+USER_CATEGORY = "My scripts"
+CATEGORIES = CLIENT_CATEGORIES + SERVER_CATEGORIES + (USER_CATEGORY,)
 
 
 # ---- user scripts ----------------------------------------------------------------------------
@@ -340,20 +376,34 @@ class RunResult:
         return self.returncode == 0 and not self.cancelled and not self.timed_out
 
 
-def command_for(script: Script) -> List[str]:
-    """argv for a script. Built-ins run their body; user scripts run their file."""
+def command_for(script: Script, body_file: str = "") -> List[str]:
+    """argv for a script. User scripts run their own file; a built-in
+    PowerShell body runs from `body_file`, a temporary copy `run` writes.
+
+    Not -EncodedCommand: the antivirus here (Bitdefender) refused
+    CreateProcess outright ("Access is denied") for an encoded command line
+    that read browser profile folders, and for a command line that decoded
+    Base64 -- a file on disk is what admin tools normally run."""
     if script.kind == CMD:
         if script.path:
             return ["cmd.exe", "/d", "/c", script.path]
         return ["cmd.exe", "/d", "/c", script.body]
     base = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-OutputFormat", "Text"]
-    if script.path:
-        return base + ["-File", script.path]
-    # -EncodedCommand, not -Command: a multi-line body with double quotes does not
-    # survive the command-line quoting rules intact.
-    import base64
-    return base + ["-EncodedCommand", base64.b64encode(script.body.encode("utf-16-le")).decode()]
+    return base + ["-File", script.path or body_file]
+
+
+def _body_file(script: Script) -> str:
+    """Write a built-in's body to a private temp .ps1 (UTF-8 with BOM, which
+    Windows PowerShell needs to read non-ASCII text correctly)."""
+    import tempfile
+    folder = os.path.join(tempfile.gettempdir(), "WinClientTool-scripts")
+    os.makedirs(folder, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix=re.sub(r"\W", "_", script.id) + "-", suffix=".ps1",
+                                dir=folder)
+    with os.fdopen(fd, "w", encoding="utf-8-sig") as f:
+        f.write(script.body)
+    return path
 
 
 def _kill_tree(pid: int) -> None:
@@ -373,9 +423,21 @@ def run(script: Script, on_line: Callable[[str], None],
     import time
     start = time.monotonic()
     result = RunResult(script.id, None)
-    proc = popen(command_for(script), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                 stdin=subprocess.DEVNULL, cwd=os.path.dirname(script.path) or None,
-                 creationflags=CREATE_NO_WINDOW)
+    body_file = _body_file(script) if script.kind == POWERSHELL and not script.path else ""
+    try:
+        proc = popen(command_for(script, body_file), stdout=subprocess.PIPE,
+                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                     cwd=os.path.dirname(script.path) or None, creationflags=CREATE_NO_WINDOW)
+    except OSError as e:
+        # An antivirus refusing the launch arrives here as "Access is denied".
+        line = (f"ERROR: Windows refused to start the script: {e}. An antivirus may have "
+                "blocked it -- check its quarantine or history.")
+        logger.warning("scripts: %s could not start: %s", script.id, e)
+        result.lines.append(line)
+        on_line(line)
+        result.returncode = -1
+        _remove(body_file)
+        return result
     done = threading.Event()
 
     def watch() -> None:
@@ -404,7 +466,17 @@ def run(script: Script, on_line: Callable[[str], None],
     finally:
         done.set()
         result.seconds = time.monotonic() - start
+        _remove(body_file)
     return result
+
+
+def _remove(path: str) -> None:
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except OSError as e:
+        logger.warning("scripts: could not remove temp script %s: %s", path, e)
 
 
 def decode(raw: bytes) -> str:
@@ -421,5 +493,11 @@ def decode(raw: bytes) -> str:
             return raw.decode("mbcs", errors="replace")
 
 
+def built_in() -> List[Script]:
+    """Every shipped script: the core checks above plus the catalogs."""
+    from .catalog import CATALOG
+    return list(BUILT_IN) + list(CATALOG)
+
+
 def all_scripts(user_folder: Optional[str] = None) -> List[Script]:
-    return list(BUILT_IN) + load_user_scripts(user_folder)
+    return built_in() + load_user_scripts(user_folder)

@@ -383,6 +383,15 @@ HIDDEN_IMPORTS = [
     "modules.scripts_hub.library_module",
     "modules.scripts_hub.library",
     "modules.scripts_hub.support_bundle",
+    "modules.scripts_hub.output_style",
+    # The catalogs are imported inside library.built_in().
+    "modules.scripts_hub.catalog",
+    "modules.scripts_hub.catalog._base",
+    "modules.scripts_hub.catalog.client_system",
+    "modules.scripts_hub.catalog.client_logs_network",
+    "modules.scripts_hub.catalog.client_security",
+    "modules.scripts_hub.catalog.client_mgmt",
+    "modules.scripts_hub.catalog.server",
     # Incident Triage (2026-10-15), imported at the top of security_module.
     "modules.security_dashboard.triage_tab",
     "modules.security_dashboard.incident_triage",

@@ -14,19 +14,20 @@ import subprocess
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QThreadPool
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
                              QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from core.base_module import BaseModule
+from core.semantic_colors import chrome, semantic
 from core.module_groups import ModuleGroup
 from core.table_ui import set_role
 from core.widget_life import widget_is_valid
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
 
-from . import library, support_bundle
+from . import library, output_style, support_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,35 @@ def badges(script: library.Script, elevated: bool) -> str:
         parts.append("needs administrator for the full answer" + ("" if elevated
                                                                     else " (not elevated now)"))
     parts.append("PowerShell" if script.kind == library.POWERSHELL else "Command Prompt")
+    if script.requires:
+        parts.append(f"needs {script.requires} -- says NOT AVAILABLE where it is missing")
     return "  ·  ".join(parts)
+
+
+#: Output colour per `output_style` kind: (semantic or chrome role, bold, italic).
+_STYLE = {output_style.OK: ("success", False, False), output_style.WARN: ("warning", False, False),
+          output_style.BAD: ("error", True, False), output_style.INFO: ("info", False, False),
+          output_style.NA: ("text_muted", False, True), output_style.HEADER: ("info", True, False),
+          output_style.RULE: ("text_muted", False, False), output_style.KEY: ("match", False, False)}
+
+
+def _format(kind: str) -> QTextCharFormat:
+    fmt = QTextCharFormat()
+    style = _STYLE.get(kind)
+    if style is None:
+        return fmt
+    role, bold, italic = style
+    fmt.setForeground(QColor(chrome(role) if role.startswith("text") else semantic(role)))
+    if bold:
+        fmt.setFontWeight(QFont.Weight.Bold)
+    fmt.setFontItalic(italic)
+    return fmt
+
+
+#: Top level of the tree: (label, which scripts).
+_BRANCHES = (("Windows client", lambda s: not s.server and s.category != library.USER_CATEGORY),
+             ("Windows Server", lambda s: s.server),
+             (library.USER_CATEGORY, lambda s: s.category == library.USER_CATEGORY))
 
 
 class ScriptLibraryModule(BaseModule):
@@ -82,7 +111,7 @@ class ScriptLibraryModule(BaseModule):
         split = QSplitter(Qt.Orientation.Horizontal, w)
         self._tree = QTreeWidget(w)
         self._tree.setHeaderHidden(True)
-        self._tree.setMinimumWidth(280)
+        self._tree.setMinimumWidth(360)
         self._tree.currentItemChanged.connect(lambda *_: self._select())
         self._tree.itemDoubleClicked.connect(lambda *_: self._run())
         split.addWidget(self._tree)
@@ -175,25 +204,38 @@ class ScriptLibraryModule(BaseModule):
             return
         needle = self._search.text().strip().lower()
         self._tree.clear()
-        groups: Dict[str, QTreeWidgetItem] = {}
-        for cat in library.CATEGORIES:
-            groups[cat] = QTreeWidgetItem([cat])
-        for s in self._scripts:
-            if needle and needle not in f"{s.title}\n{s.description}".lower():
-                continue
-            item = QTreeWidgetItem([s.title])
-            item.setData(0, _SCRIPT_ROLE, s)
-            item.setToolTip(0, s.description)
-            groups.setdefault(s.category, QTreeWidgetItem([s.category])).addChild(item)
-        if not any(s.category == "My scripts" for s in self._scripts) and not needle:
-            hint = QTreeWidgetItem(["(drop .ps1/.cmd files in your scripts folder)"])
-            hint.setDisabled(True)
-            groups["My scripts"].addChild(hint)
-        for cat, group in groups.items():
-            if group.childCount():
-                group.setText(0, f"{cat} ({sum(1 for i in range(group.childCount()) if group.child(i).data(0, _SCRIPT_ROLE))})")
-                self._tree.addTopLevelItem(group)
-                group.setExpanded(True)
+        shown = [s for s in self._scripts
+                 if not needle or needle in f"{s.title}\n{s.description}\n{s.category}".lower()]
+        for label, belongs in _BRANCHES:
+            mine = [s for s in shown if belongs(s)]
+            branch = QTreeWidgetItem([f"{label} ({len(mine)})"])
+            if label == library.USER_CATEGORY:
+                for s in mine:
+                    branch.addChild(self._leaf(s))
+                if not mine and not needle:
+                    hint = QTreeWidgetItem(["(put .ps1 / .cmd files in your scripts folder)"])
+                    hint.setDisabled(True)
+                    branch.addChild(hint)
+            else:
+                for cat in library.CATEGORIES:
+                    in_cat = [s for s in mine if s.category == cat]
+                    if not in_cat:
+                        continue
+                    group = QTreeWidgetItem([f"{cat} ({len(in_cat)})"])
+                    for s in sorted(in_cat, key=lambda x: x.title.lower()):
+                        group.addChild(self._leaf(s))
+                    branch.addChild(group)
+                    group.setExpanded(bool(needle))
+            if branch.childCount():
+                self._tree.addTopLevelItem(branch)
+                branch.setExpanded(True)
+
+    @staticmethod
+    def _leaf(s: library.Script) -> QTreeWidgetItem:
+        item = QTreeWidgetItem([s.title])
+        item.setData(0, _SCRIPT_ROLE, s)
+        item.setToolTip(0, s.description)
+        return item
 
     def _select(self) -> None:
         item = self._tree.currentItem()
@@ -250,8 +292,22 @@ class ScriptLibraryModule(BaseModule):
         QThreadPool.globalInstance().start(w)
 
     def _append(self, line: str) -> None:
-        if widget_is_valid(self._output):
-            self._output.appendPlainText(line)
+        """Append one line, coloured. A `----` rule restyles the line above it as
+        a table header -- the header is only known once its rule arrives."""
+        if not widget_is_valid(self._output):
+            return
+        cursor = self._output.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if output_style.is_rule(line) and not self._output.document().isEmpty():
+            header = QTextCursor(self._output.document().lastBlock())
+            header.select(QTextCursor.SelectionType.BlockUnderCursor)
+            header.mergeCharFormat(_format(output_style.HEADER))
+        if not self._output.document().isEmpty():
+            cursor.insertBlock()
+        for text, kind in output_style.spans(line):
+            cursor.insertText(text, _format(kind))
+        self._output.setTextCursor(cursor)
+        self._output.ensureCursorVisible()
 
     def _finished(self, result: Optional[library.RunResult]) -> None:
         self._run_worker = None

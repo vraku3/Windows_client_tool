@@ -76,6 +76,7 @@ class GameModeModule(BaseModule):
         self._busy = False
         self._loaded = False
         self._groups: List[session.AppGroup] = []
+        self._procs: list = []
         self._enforce_timer: Optional[QTimer] = None
 
     # ---- lifecycle ----------------------------------------------------------------------------
@@ -174,13 +175,40 @@ class GameModeModule(BaseModule):
     def _build_choices(self, parent: QWidget) -> QWidget:
         page = QWidget(parent)
         lay = QVBoxLayout(page)
+        presets = QHBoxLayout()
+        self._rec_btn = QPushButton("Recommended", page)
+        self._rec_btn.setToolTip("Updaters, sync, indexing and telemetry stopped; your browsers, "
+                                 "chat and editors stay open at a lower priority.")
+        self._rec_btn.clicked.connect(lambda: self._apply_preset(catalog.REC))
+        self._max_btn = QPushButton("Maximum", page)
+        self._max_btn.setToolTip("Everything Recommended does, plus: every program that is not a "
+                                 "game launcher, voice chat, music, VPN, Office/Outlook, a "
+                                 "peripheral tool or the antivirus is closed (and reopened after), "
+                                 "more Windows background services stopped, transparency and "
+                                 "animations off.")
+        self._max_btn.clicked.connect(lambda: self._apply_preset(catalog.MAX))
+        self._estimate = QLabel(page)
+        set_role(self._estimate, "statusInfo")
+        presets.addWidget(QLabel("Preset:", page))
+        presets.addWidget(self._rec_btn)
+        presets.addWidget(self._max_btn)
+        presets.addWidget(self._estimate, 1)
+        lay.addLayout(presets)
         self._plan_cb = QCheckBox(page)
         self._gamebar_cb = QCheckBox("Turn on Windows' own Game Mode setting (Settings > Gaming)", page)
         self._vcache_cb = QCheckBox("Start the AMD 3D V-Cache optimizer service if it is stopped", page)
+        self._maint_cb = QCheckBox("Pause Windows Automatic Maintenance (defrag, scans, maintenance "
+                                   "updates)", page)
+        self._tasks_cb = QCheckBox("Pause scheduled updater and maintenance tasks (Google, Edge, "
+                                   "Brave, OneDrive, Office updates; defrag; telemetry)", page)
+        self._visuals_cb = QCheckBox("Transparency and window animations off", page)
         self._lower_cb = QCheckBox("Apps left open (browsers, chat, editors) run at Below Normal "
                                    "priority while Game Mode is on", page)
-        for cb, attr in ((self._plan_cb, "plan"), (self._gamebar_cb, "gamebar"),
-                         (self._vcache_cb, "vcache"), (self._lower_cb, "lower")):
+        self._flag_boxes = {"plan": self._plan_cb, "gamebar": self._gamebar_cb,
+                            "vcache": self._vcache_cb, "maintenance": self._maint_cb,
+                            "tasks": self._tasks_cb, "visuals": self._visuals_cb,
+                            "lower": self._lower_cb}
+        for attr, cb in self._flag_boxes.items():
             cb.setChecked(getattr(self._choices, attr))
             cb.toggled.connect(lambda on, a=attr: self._flag(a, on))
             lay.addWidget(cb)
@@ -225,8 +253,9 @@ class GameModeModule(BaseModule):
             procs = system.processes()
             groups = session.running_apps(procs, sid, own, lambda pid: system.details(pid)[0])
             plan = session.recommended_plan(facts.cpu, system.plans(), facts.vcache_installed)
-            states = {s.name: system.service(s.name) for s in catalog.SERVICES}
-            return facts, groups, plan, states
+            states = {spec.name: [(n, system.service(n)) for n in system.service_names(spec.name)]
+                      for spec in catalog.SERVICES}
+            return facts, groups, plan, states, procs
         w = Worker(work)
         w.signals.result.connect(self._refreshed)
         w.signals.error.connect(lambda err: self._show_error(f"Could not read this PC: {err}"))
@@ -235,8 +264,8 @@ class GameModeModule(BaseModule):
     def _refreshed(self, payload) -> None:
         if not widget_is_valid(self._advice):
             return
-        facts, groups, (plan_guid, plan_why), states = payload
-        self._groups = groups
+        facts, groups, (plan_guid, plan_why), states, procs = payload
+        self._groups, self._procs = groups, procs
         self._fill_advice(advice.findings(facts))
         self._advice_status.setText(f"{facts.cpu}  ·  read {datetime.datetime.now():%H:%M:%S}")
         self._plan_cb.setText("Power plan: " + (f"switch to the one this CPU wants -- {plan_why}"
@@ -245,6 +274,7 @@ class GameModeModule(BaseModule):
         self._fill_services(states)
         self._fill_apps(groups)
         self._show_state(facts.handles, facts.processes)
+        self._update_estimate()
 
     def _fill_advice(self, items: List[advice.Finding]) -> None:
         self._advice.clear()
@@ -259,16 +289,19 @@ class GameModeModule(BaseModule):
             row.setToolTip(2, f.fix)
             self._advice.addTopLevelItem(row)
 
-    def _fill_services(self, states: Dict[str, object]) -> None:
+    def _fill_services(self, states: Dict[str, list]) -> None:
         self._svc_tree.blockSignals(True)
         self._svc_tree.clear()
         for spec in catalog.SERVICES:
-            st = states.get(spec.name)
-            if st is None:
+            found = [(n, st) for n, st in states.get(spec.name, []) if st is not None]
+            if not found:
                 continue                                   # not installed here
+            running = [st for _n, st in found if st.running]
+            st = running[0] if running else found[0][1]
             now = "unreadable" if st.running is None else ("Running" if st.running else "Stopped")
             row = QTreeWidgetItem(["", spec.label, f"{now} ({st.start_type})" if st.start_type else now,
                                    spec.why])
+            row.setToolTip(1, ", ".join(n for n, _st in found))
             row.setData(0, Qt.ItemDataRole.UserRole, spec.name)
             row.setCheckState(0, Qt.CheckState.Checked if spec.name in self._choices.services
                               else Qt.CheckState.Unchecked)
@@ -290,10 +323,41 @@ class GameModeModule(BaseModule):
             self._app_tree.addTopLevelItem(row)
         self._app_tree.blockSignals(False)
 
+    def _apply_preset(self, level: str) -> None:
+        self._choices = session.preset(level, self._groups)
+        for attr, cb in self._flag_boxes.items():
+            cb.blockSignals(True)
+            cb.setChecked(getattr(self._choices, attr))
+            cb.blockSignals(False)
+        self._save_choices()
+        self._refill_ticks()
+
+    def _refill_ticks(self) -> None:
+        for tree, bucket in ((self._svc_tree, self._choices.services),
+                             (self._app_tree, self._choices.close)):
+            tree.blockSignals(True)
+            for i in range(tree.topLevelItemCount()):
+                item = tree.topLevelItem(i)
+                key = item.data(0, Qt.ItemDataRole.UserRole)
+                item.setCheckState(0, Qt.CheckState.Checked if key in bucket else Qt.CheckState.Unchecked)
+            tree.blockSignals(False)
+        self._fill_apps(self._groups)
+        self._update_estimate()
+
+    def _update_estimate(self) -> None:
+        if not widget_is_valid(self._estimate) or not getattr(self, "_procs", None):
+            return
+        total = session.total_handles(self._procs)
+        freed = session.freed_estimate(self._procs, self._groups, self._choices.close)
+        self._estimate.setText(f"Programs ticked to close hold ~{freed:,} handles (web-view helpers "
+                               f"included) -> about {total - freed:,} of {total:,} left")
+
     def _app_plan(self, g: session.AppGroup, ticked: bool) -> str:
         if ticked:
             reopen = g.spec.reopen if g.spec else True
-            return "closed, reopened after" if reopen else "closed (Windows starts it again when needed)"
+            if not reopen:
+                return "closed (Windows starts it again when needed)"
+            return "closed, reopened after" + (" with its tabs" if g.spec and g.spec.reopen_args else "")
         if g.spec and g.spec.lower and self._choices.lower:
             return "left open, Below Normal priority"
         if g.spec and not g.spec.close:
@@ -322,6 +386,7 @@ class GameModeModule(BaseModule):
             self._app_tree.blockSignals(True)
             item.setText(3, self._app_plan(group, group.exe in self._choices.close))
             self._app_tree.blockSignals(False)
+        self._update_estimate()
 
     def _toggle(self, bucket: set, key: str, on: bool) -> None:
         (bucket.add if on else bucket.discard)(key)
@@ -343,8 +408,8 @@ class GameModeModule(BaseModule):
         self._numbers.setText(self._numbers_text(handles, processes))
         self._on_btn.setEnabled(not on and not self._busy)
         self._off_btn.setEnabled(on and not self._busy)
-        for widget in (self._plan_cb, self._gamebar_cb, self._vcache_cb, self._lower_cb,
-                       self._svc_tree, self._app_tree):
+        for widget in (*self._flag_boxes.values(), self._svc_tree, self._app_tree,
+                       self._rec_btn, self._max_btn):
             widget.setEnabled(not on and not self._busy)
 
     def _numbers_text(self, handles: Optional[int], processes: Optional[int]) -> str:
@@ -374,7 +439,10 @@ class GameModeModule(BaseModule):
         closing = [g.label for g in self._groups if g.exe in self._choices.close]
         text = ("Game Mode ON will:\n\n"
                 + ("• switch the power plan for gaming\n" if self._choices.plan else "")
-                + f"• stop {len(self._choices.services)} background service(s) if running\n"
+                + f"• stop {len(self._choices.services)} kind(s) of background service if running\n"
+                + ("• pause Windows Automatic Maintenance\n" if self._choices.maintenance else "")
+                + ("• pause scheduled updater/maintenance tasks\n" if self._choices.tasks else "")
+                + ("• turn transparency and animations off\n" if self._choices.visuals else "")
                 + (f"• close: {', '.join(closing)}\n" if closing else "")
                 + ("• lower the priority of apps left open\n" if self._choices.lower else "")
                 + "\nSave your work in the apps that will be closed. Game Mode OFF puts everything "

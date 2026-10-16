@@ -27,7 +27,16 @@ class FakeSystem:
         self.svc = {"WSearch": ["Running", "Automatic"], "BITS": ["Running", "Automatic"],
                     "Spooler": ["Stopped", "Disabled"], "TrkWks": ["Running", "Automatic"],
                     catalog.VCACHE_SERVICE: ["Running", "Automatic"]}
-        self.reg = {(session.GAMEBAR_KEY, "AutoGameModeEnabled"): (1, 4)}
+        self.reg = {("HKCU", session.GAMEBAR_KEY, "AutoGameModeEnabled"): (1, 4),
+                    ("HKCU", session.THEMES_KEY, "EnableTransparency"): (1, 4)}
+        self.broadcasts = []
+        self.task_state = {"\\MicrosoftEdgeUpdateTaskMachineCore{X}": True,
+                           "\\Microsoft\\Windows\\Defrag\\ScheduledDefrag": True,
+                           "\\Microsoft\\Windows\\Maintenance\\WinSAT": False,
+                           "\\Microsoft\\Windows\\Feedback\\Siuf\\DmClient": True,
+                           "\\MyOwnTask": True}
+        self.protected = {"\\Microsoft\\Windows\\Feedback\\Siuf\\DmClient"}
+        self.anim = True
         self.procs = [Proc(10, 1, "OneDrive.exe", 3000, 1, 100), Proc(11, 1, "chrome.exe", 5000, 1, 101),
                       Proc(12, 11, "chrome.exe", 900, 1, 102), Proc(13, 1, "explorer.exe", 9000, 1, 103),
                       Proc(14, 1, "deluge.exe", 1900, 1, 104), Proc(20, 1, "svchost.exe", 800, 0, 105)]
@@ -96,22 +105,48 @@ class FakeSystem:
     def launch_aumid(self, aumid): return self.launch(aumid)
 
     # registry
-    def reg_get(self, path, name):
-        if (path, name) in self.reg:
-            value, kind = self.reg[(path, name)]
+    def reg_get(self, path, name, hive="HKCU"):
+        if (hive, path, name) in self.reg:
+            value, kind = self.reg[(hive, path, name)]
             return True, value, kind
         return False, None, 0
 
-    def reg_set(self, path, name, value, kind):
-        self.reg[(path, name)] = (value, kind)
+    def reg_set(self, path, name, value, kind, hive="HKCU"):
+        self.reg[(hive, path, name)] = (value, kind)
 
-    def reg_delete(self, path, name):
-        self.reg.pop((path, name), None)
+    def reg_delete(self, path, name, hive="HKCU"):
+        self.reg.pop((hive, path, name), None)
+
+    def broadcast_setting_change(self, area):
+        self.broadcasts.append(area)
+
+    # services by pattern, tasks, animations
+    def service_names(self, pattern):
+        import fnmatch
+        return sorted(n for n in self.svc if fnmatch.fnmatch(n.lower(), pattern.lower()))
+
+    def tasks(self):
+        return list(self.task_state.items())
+
+    def task_enabled(self, path):
+        return self.task_state.get(path)
+
+    def set_task_enabled(self, path, enabled):
+        if path in self.protected:
+            return "access denied"
+        self.task_state[path] = enabled
+
+    def animations(self):
+        return self.anim
+
+    def set_animations(self, on):
+        self.anim = on
 
     def state(self):
         names = sorted(p.name.lower() for p in self.procs)
         return (self.plan, copy.deepcopy(self.svc), dict(self.reg), names,
-                {k: v for k, v in self.prio.items() if self.alive(k, k + 90)})
+                {k: v for k, v in self.prio.items() if self.alive(k, k + 90)},
+                dict(self.task_state), self.anim)
 
 
 def _quiet(_level, _text):
@@ -140,13 +175,19 @@ def test_on_then_off_is_exactly_the_starting_state(journal):
     assert sys_.svc["Spooler"] == ["Stopped", "Disabled"]       # already stopped: untouched
     assert {p.name for p in sys_.procs} == {"chrome.exe", "explorer.exe", "svchost.exe"}
     assert sys_.prio == {11: BELOW_NORMAL, 12: BELOW_NORMAL}
-    assert sys_.reg[(session.GAMEBAR_KEY, "AllowAutoGameMode")] == (1, 4)
+    assert sys_.reg[("HKCU", session.GAMEBAR_KEY, "AllowAutoGameMode")] == (1, 4)
+    assert sys_.reg[("HKLM", session.MAINTENANCE_KEY, "MaintenanceDisabled")] == (1, 4)
+    assert sys_.task_state["\\Microsoft\\Windows\\Defrag\\ScheduledDefrag"] is False
+    assert sys_.task_state["\\MyOwnTask"] is True           # not in the catalog: untouched
     assert data["handles_before"] > data["handles_after"]
     report = session.turn_off(FakeSystemProxy(sys_), journal, _quiet, settle=0.5)
     assert not [r for r in report if r["level"] == session.BAD], report
     assert sys_.plan == ULTIMATE
     assert sys_.svc == before[1]
-    assert (session.GAMEBAR_KEY, "AllowAutoGameMode") not in sys_.reg   # was absent: deleted
+    assert ("HKCU", session.GAMEBAR_KEY, "AllowAutoGameMode") not in sys_.reg   # was absent
+    assert ("HKLM", session.MAINTENANCE_KEY, "MaintenanceDisabled") not in sys_.reg
+    assert sys_.task_state == before[5]
+    assert sys_.state()[:3] == before[:3]
     assert sys_.prio == {11: NORMAL, 12: NORMAL}
     assert sorted(n for n, _a in sys_.launched) == [r"C:\Program Files\Deluge\deluge.exe",
                                                    r"C:\Program Files\Microsoft OneDrive\OneDrive.exe"]
@@ -286,4 +327,63 @@ def test_security_software_is_never_in_either_list():
     for forbidden in ("windefend", "mpssvc", "wscsvc", "sense", "bdservicehost.exe", "msmpeng.exe",
                       "vsserv", "bdagent.exe"):
         assert forbidden not in names
-    assert "bdservicehost.exe" in catalog.NEVER_CLOSE and "battle.net.exe" in catalog.NEVER_CLOSE
+    assert catalog.never_close("bdservicehost.exe") and catalog.never_close("battle.net.exe")
+    for spec in catalog.SERVICES:
+        assert not any(av in spec.name.lower() for av in ("windefend", "mpssvc", "wscsvc", "bdredline",
+                                                           "vsserv", "bdappsrv", "bdauxsrv"))
+
+
+def test_maximum_closes_unknown_programs_and_restores_visuals(journal):
+    sys_ = FakeSystem()
+    sys_.procs.append(Proc(40, 1, "AppControl.exe", 4900, 1, 130))
+    sys_.paths[40] = r"C:\Program Files\AppControl\ui\AppControl.exe"
+    groups = session.running_apps(sys_.procs, 1, 999, lambda pid: sys_.paths.get(pid))
+    maximum = session.preset(catalog.MAX, groups)
+    recommended = session.preset(catalog.REC, groups)
+    assert "appcontrol.exe" in maximum.close and "appcontrol.exe" not in recommended.close
+    assert "chrome.exe" in maximum.close and "chrome.exe" not in recommended.close
+    assert maximum.visuals and not recommended.visuals
+    assert recommended.services < maximum.services
+    before = sys_.state()
+    session.turn_on(sys_, maximum, journal, _quiet, own_pid=999, session=1)
+    assert sys_.anim is False and sys_.reg[("HKCU", session.THEMES_KEY, "EnableTransparency")][0] == 0
+    assert "ImmersiveColorSet" in sys_.broadcasts
+    chrome_launch = None
+    session.turn_off(sys_, journal, _quiet, settle=0.5)
+    chrome_launch = [a for n, a in sys_.launched if n.endswith("chrome.exe")]
+    assert chrome_launch and "--restore-last-session" in chrome_launch[0]
+    assert sys_.anim is True and sys_.reg[("HKCU", session.THEMES_KEY, "EnableTransparency")][0] == 1
+    assert sys_.state()[:3] == before[:3] and sys_.state()[5:] == before[5:]
+
+
+def test_a_protected_task_is_reported_and_never_journaled(journal):
+    sys_ = FakeSystem()
+    lines = []
+    session.turn_on(sys_, _choices(), journal, lambda lvl, t: lines.append((lvl, t)), 999, 1)
+    assert sys_.task_state["\\Microsoft\\Windows\\Feedback\\Siuf\\DmClient"] is True
+    assert any("Feedback surveys" in t for _l, t in lines)
+    assert not any(e.get("path", "").endswith("DmClient") and e.get("done") for e in journal.actions)
+
+
+def test_peripherals_office_terminals_and_agents_are_never_closed():
+    for exe in ("OUTLOOK.EXE", "lghub_agent.exe", "SteelSeriesGG.exe", "RazerAppEngine.exe",
+                "claude.exe", "WindowsTerminal.exe", "bdservicehost.exe", "Battle.net.exe",
+                "WINWORD.EXE", "pwsh.exe"):
+        assert catalog.never_close(exe), exe
+    for exe in ("chrome.exe", "onedrive.exe", "AppControl.exe"):
+        assert not catalog.never_close(exe), exe
+
+
+def test_freed_estimate_counts_the_web_views_of_closed_apps():
+    procs = [Proc(10, 1, "WhatsApp.Root.exe", 4000, 1, 1), Proc(11, 10, "msedgewebview2.exe", 2000, 1, 2),
+             Proc(12, 11, "msedgewebview2.exe", 900, 1, 3), Proc(20, 1, "Widgets.exe", 100, 1, 4),
+             Proc(21, 1, "msedgewebview2.exe", 700, 1, 5)]
+    groups = session.running_apps(procs, 1, 999, lambda pid: "C:\\Program Files\\x\\" + str(pid))
+    assert session.freed_estimate(procs, groups, {"whatsapp.root.exe"}) == 4000 + 2000 + 900
+    assert session.freed_estimate(procs, groups, set()) == 0
+
+
+def test_service_patterns_resolve_to_installed_instances():
+    assert catalog.service_spec("OneSyncSvc_103c87").label == "Sync Host"
+    assert catalog.service_spec("GoogleUpdaterService157.0.8089.0").label == "Google Updater"
+    assert catalog.service_spec("WinDefend") is None

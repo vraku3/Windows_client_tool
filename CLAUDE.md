@@ -2027,6 +2027,38 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   0.09 s). The AUMID comes from `GetApplicationUserModelId`; an app that ran
   elevated is not reopened (and says why). OneDrive is closed with its own
   `/shutdown`; others get WM_CLOSE, then are ended after 8 s.
+- **Two presets, Recommended and Maximum** (`session.preset`; every catalog
+  entry has a level REC / MAX / OPT). Maximum adds: every running program
+  the catalog does not know is closed (except `never_close()` patterns --
+  launchers, the shell, antivirus, Outlook/Office for their .pst/.ost,
+  peripheral tools such as G Hub/Razer/SteelSeries, monitoring/fan tools,
+  terminals and AI agents, this app), browsers reopened with
+  `--restore-last-session`, more Windows services (AI Fabric, diagnostics,
+  sync/contacts per-user instances by pattern `OneSyncSvc_*`), transparency
+  and window animations off. Both pause Windows Automatic Maintenance
+  (HKLM `...\Schedule\Maintenance\MaintenanceDisabled` = 1; absent before
+  here, deleted again by OFF) and 21 updater/maintenance scheduled tasks
+  (`catalog.TASKS`, via `IRegisteredTask.Enabled`, never re-registered; a
+  protected task is reported and not journaled).
+- **4,000 handles is not reachable, and the pane says so with numbers**
+  (measured 2026-10-16: 227,720 total; kernel System ~8,400, session-0
+  Windows services ~46,000, Bitdefender ~13,000; `msedgewebview2` x40 =
+  28,212 belonging to host apps). Maximum's estimate here: ~95,600 freed,
+  ~130,000 left. `session.freed_estimate` walks each WebView2/conhost up to
+  its host, because those helpers go when the host goes.
+- **A service stopped before and running after was not necessarily touched.**
+  The elevated round trip saw `wuauserv` and `WdiSystemHost` go from stopped
+  to running: Update Orchestrator and the Diagnostic Policy Service start
+  them when THEY are started again. OFF never stops a service it did not
+  stop; the tool reports such services as "started by Windows on its own".
+  Transparency and animations were already off on this PC, so Maximum had
+  nothing to change there and said so.
+- **Packaged apps are reopened only after `package_installed()`** (the
+  family folder under `%LOCALAPPDATA%\Packages`), then as the
+  `shell:AppsFolder\<AUMID>` item through the desktop shell (0.06 s) -- the
+  earlier `explorer.exe <item>` form left an extra explorer process.
+  Closing/reopening was round-tripped with the two probes only; the
+  user's own Chrome/WhatsApp/Code were never closed by a test.
 - **Advice states what it read** (`advice.collect` ~0.6 s). Found here on
   day one: the active display at 60 Hz where it offers 144 Hz, Xbox Game Bar
   (`Microsoft.XboxGamingOverlay`) NOT installed -- removed by an earlier

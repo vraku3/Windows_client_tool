@@ -15,12 +15,13 @@ Two things measured the hard way, the same day:
   explorer shows a modal "not found" box and the call does not return until
   someone dismisses it. So every launch runs on its own thread with a
   timeout: a launch can fail, it can never hang Game Mode OFF.
-- A packaged app is opened as `explorer.exe shell:AppsFolder\\<AUMID>` --
-  the shell starts a new explorer for it and returns at once (0.09 s).
+- A packaged app is opened as the `shell:AppsFolder\\<AUMID>` item, after
+  checking the package is still installed (see `launch_packaged`).
 """
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import List, Optional
 
@@ -75,5 +76,19 @@ def launch(program: str, args: str = "", cwd: str = "", timeout: float = TIMEOUT
     return out[0] if out else "the launch ended without a result"
 
 
+def package_installed(aumid: str) -> bool:
+    """Every installed package has its data folder under %LOCALAPPDATA%\\Packages
+    named by its family -- the part of the AUMID before '!'."""
+    family = aumid.split("!", 1)[0]
+    base = os.environ.get("LOCALAPPDATA", "")
+    return bool(family and base and os.path.isdir(os.path.join(base, "Packages", family)))
+
+
 def launch_packaged(aumid: str, timeout: float = TIMEOUT_S) -> Optional[str]:
-    return launch("explorer.exe", "shell:AppsFolder\\" + aumid, "", timeout)
+    """Checked first, because asking the shell for a package that is not there
+    is exactly what raises explorer's modal box. Then the AppsFolder item is
+    opened directly by the desktop shell (0.06 s, measured) -- not through
+    `explorer.exe <item>`, which leaves an extra explorer process running."""
+    if not package_installed(aumid):
+        return f"{aumid.split('!', 1)[0]} is not installed any more"
+    return launch("shell:AppsFolder\\" + aumid, "", "", timeout)

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from . import catalog
-from .session import BALANCED, dual_ccd_x3d, running_apps
+from .session import BALANCED, dual_ccd_x3d, freed_estimate, preset, running_apps
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,11 @@ class Facts:
     ram_total_gb: Optional[float] = None
     handles: int = 0
     processes: int = 0
+    #: What the Maximum preset would leave, and what nothing can touch.
+    max_after: Optional[int] = None
+    kernel_handles: int = 0
+    windows_service_handles: int = 0
+    antivirus_handles: int = 0
     heavy_apps: List[tuple] = field(default_factory=list)   # (label, exe, instances, handles)
     torrents: List[str] = field(default_factory=list)
     vpn_up: List[str] = field(default_factory=list)
@@ -116,6 +121,24 @@ def _displays() -> List[Display]:
     return out
 
 
+_ANTIVIRUS = ("bd*.exe", "vsserv*.exe", "seccenter.exe", "msmpeng.exe", "mpdefendercoreservice.exe",
+              "nissrv.exe", "securityhealth*.exe", "avp*.exe", "avast*.exe", "avg*.exe", "mbam*.exe",
+              "ekrn.exe", "egui.exe", "ns*.exe", "mcshield.exe", "sophos*.exe")
+
+
+def _floor(f: Facts, procs) -> None:
+    """Where the handles nobody may close live."""
+    import fnmatch
+    for p in procs:
+        name = p.name.lower()
+        if p.pid == 4:
+            f.kernel_handles += p.handles
+        elif any(fnmatch.fnmatch(name, pat) for pat in _ANTIVIRUS):
+            f.antivirus_handles += p.handles
+        elif p.session == 0:
+            f.windows_service_handles += p.handles
+
+
 def _reg_value(system, path: str, name: str):
     exists, value, _ = system.reg_get(path, name)
     if exists is None:
@@ -150,6 +173,8 @@ def collect(system, own_pid: int, session: int) -> Facts:
     f.handles, f.processes = sum(p.handles for p in procs), len(procs)
     groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0])
     f.heavy_apps = [(g.label, g.exe, len(g.roots), g.handles) for g in groups[:12]]
+    f.max_after = f.handles - freed_estimate(procs, groups, preset(catalog.MAX, groups).close)
+    _floor(f, procs)
     names = {p.name.lower() for p in procs}
     f.torrents = [n for n in _TORRENT if n in names]
     f.bitdefender = "bdservicehost.exe" in names
@@ -299,6 +324,15 @@ def _memory(f: Facts) -> List[Finding]:
 def _apps(f: Facts) -> List[Finding]:
     out = [Finding(INFO, f"{f.handles:,} handles in {f.processes} processes right now",
                    "Game Mode shows how many it frees when you turn it on.")]
+    if f.max_after is not None:
+        out.append(Finding(
+            INFO, f"Maximum leaves about {f.max_after:,} handles -- 4,000 is not reachable on Windows",
+            f"The kernel alone (System) holds {f.kernel_handles:,}, Windows' own services "
+            f"{f.windows_service_handles:,}, the antivirus {f.antivirus_handles:,} -- none of which "
+            "anything may close -- plus the desktop (Explorer, DWM, input), your game launcher and "
+            "the game itself. Handles cost almost nothing on their own; what Game Mode removes is "
+            "what WAKES UP during a game: syncs, updaters, indexers, web views.",
+            "Use the Maximum preset on 'What Game Mode changes'."))
     for label, exe, instances, handles in f.heavy_apps:
         if instances > 1 and exe in catalog.APP_BY_EXE and not catalog.APP_BY_EXE[exe].lower:
             out.append(Finding(WARN, f"{instances} copies of {label} are running ({handles:,} handles)",

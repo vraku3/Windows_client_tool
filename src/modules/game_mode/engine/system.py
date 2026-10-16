@@ -272,33 +272,128 @@ class WinSystem:
         from . import shell_launch
         return shell_launch.launch_packaged(aumid)
 
-    # ---- registry (HKCU only) ------------------------------------------------------------------
-    def reg_get(self, path: str, name: str) -> Tuple[Optional[bool], object, int]:
+    # ---- registry ------------------------------------------------------------------------------
+    def reg_get(self, path: str, name: str, hive: str = "HKCU") -> Tuple[Optional[bool], object, int]:
         """(exists, value, type); exists None = refused."""
         try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+            with winreg.OpenKey(_HIVES[hive], path) as key:
                 value, kind = winreg.QueryValueEx(key, name)
                 return True, value, kind
         except FileNotFoundError:
             return False, None, 0
         except OSError as error:
-            logger.warning("game mode: HKCU\\%s\\%s unreadable: %s", path, name, error)
+            logger.warning("game mode: %s\\%s\\%s unreadable: %s", hive, path, name, error)
             return None, None, 0
 
-    def reg_set(self, path: str, name: str, value, kind: int) -> Optional[str]:
+    def reg_set(self, path: str, name: str, value, kind: int, hive: str = "HKCU") -> Optional[str]:
         try:
-            with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+            with winreg.CreateKeyEx(_HIVES[hive], path, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.SetValueEx(key, name, 0, kind, value)
             return None
         except OSError as error:
             return str(error)
 
-    def reg_delete(self, path: str, name: str) -> Optional[str]:
+    def reg_delete(self, path: str, name: str, hive: str = "HKCU") -> Optional[str]:
         try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+            with winreg.OpenKey(_HIVES[hive], path, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.DeleteValue(key, name)
             return None
         except FileNotFoundError:
             return None
         except OSError as error:
             return str(error)
+
+    def broadcast_setting_change(self, area: str) -> None:
+        """Tell running programs a setting changed (transparency takes effect
+        at once). Bounded: a hung window costs at most a second."""
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        result = ctypes.c_size_t()
+        user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, ctypes.c_wchar_p(area), 0x0002, 1000,
+                                   ctypes.byref(result))
+
+    # ---- window animations ---------------------------------------------------------------------
+    def animations(self) -> Optional[bool]:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        on = wintypes.BOOL()
+        if not user32.SystemParametersInfoW(_SPI_GETCLIENTAREAANIMATION, 0, ctypes.byref(on), 0):
+            logger.warning("game mode: animation setting unreadable (%s)", ctypes.get_last_error())
+            return None
+        return bool(on.value)
+
+    def set_animations(self, on: bool) -> Optional[str]:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        if not user32.SystemParametersInfoW(_SPI_SETCLIENTAREAANIMATION, 0, ctypes.c_void_p(int(on)),
+                                            _SPIF_UPDATEINIFILE | _SPIF_SENDCHANGE):
+            return f"SystemParametersInfo refused ({ctypes.get_last_error()})"
+        return None
+
+    # ---- service names (patterns) --------------------------------------------------------------
+    def service_names(self, pattern: str) -> List[str]:
+        """Installed services matching `pattern` (fnmatch, any case)."""
+        if "*" not in pattern:
+            return [pattern] if self.service(pattern) is not None else []
+        import fnmatch
+        import pywintypes
+        import win32service
+        try:
+            scm = win32service.OpenSCManager(None, None, win32service.SC_MANAGER_ENUMERATE_SERVICE)
+            try:
+                found = win32service.EnumServicesStatusEx(scm, 0x3FF, win32service.SERVICE_STATE_ALL)
+            finally:
+                win32service.CloseServiceHandle(scm)
+        except pywintypes.error as error:
+            logger.warning("game mode: services could not be listed: %s", error)
+            return []
+        low = pattern.lower()
+        return sorted(s["ServiceName"] for s in found if fnmatch.fnmatch(s["ServiceName"].lower(), low))
+
+    # ---- scheduled tasks -----------------------------------------------------------------------
+    def tasks(self) -> List[Tuple[str, bool]]:
+        """Every scheduled task as (path, enabled), hidden ones included."""
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        service = win32com.client.Dispatch("Schedule.Service")
+        service.Connect()
+        out: List[Tuple[str, bool]] = []
+        stack = [service.GetFolder("\\")]
+        while stack:
+            folder = stack.pop()
+            out.extend((t.Path, bool(t.Enabled)) for t in folder.GetTasks(1))
+            stack.extend(folder.GetFolders(0))
+        return out
+
+    def task_enabled(self, path: str) -> Optional[bool]:
+        task = self._task(path)
+        return None if task is None else bool(task.Enabled)
+
+    def set_task_enabled(self, path: str, enabled: bool) -> Optional[str]:
+        """Flip IRegisteredTask.Enabled -- never re-register, which rewrites
+        the principal and breaks SYSTEM/password tasks."""
+        task = self._task(path)
+        if task is None:
+            return "task not found"
+        try:
+            task.Enabled = enabled
+        except Exception as error:  # noqa: BLE001 -- COM refusals arrive as com_error
+            return f"refused ({getattr(error, 'excepinfo', None) or error})"
+        return None if bool(self._task(path).Enabled) == enabled else "read-back differs"
+
+    @staticmethod
+    def _task(path: str):
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        service = win32com.client.Dispatch("Schedule.Service")
+        service.Connect()
+        folder, _, name = path.rpartition("\\")
+        try:
+            return service.GetFolder(folder or "\\").GetTask(name)
+        except Exception as error:  # noqa: BLE001
+            logger.warning("game mode: task %s not readable: %s", path, error)
+            return None
+
+
+_HIVES = {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE}
+_SPI_GETCLIENTAREAANIMATION, _SPI_SETCLIENTAREAANIMATION = 0x1042, 0x1043
+_SPIF_UPDATEINIFILE, _SPIF_SENDCHANGE = 0x01, 0x02

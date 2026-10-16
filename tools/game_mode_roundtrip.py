@@ -27,7 +27,8 @@ from modules.game_mode.engine.journal import Journal  # noqa: E402
 from modules.game_mode.engine.system import WinSystem  # noqa: E402
 
 PAINT_AUMID = "Microsoft.Paint_8wekyb3d8bbwe!App"
-SERVICES = {"WSearch", "BITS", "DoSvc", "UsoSvc", "wuauserv", "TrkWks", "stisvc", "MapsBroker"}
+#: Every service the Maximum preset stops (patterns included).
+SERVICES = {s.name for s in catalog.SERVICES if s.level in (catalog.REC, catalog.MAX)}
 
 
 def session_id() -> int:
@@ -39,9 +40,14 @@ def session_id() -> int:
 def snapshot(s: WinSystem) -> dict:
     lowered = {a.exe for a in catalog.APPS if a.lower}
     procs = s.processes()
+    names = sorted(n for pattern in SERVICES for n in s.service_names(pattern))
     return {
         "plan": s.active_plan(),
-        "services": {n: (s.service(n).running if s.service(n) else None) for n in sorted(SERVICES)},
+        "services": {n: (s.service(n).running if s.service(n) else None) for n in names},
+        "tasks": {p: e for p, e in s.tasks() if catalog.task_spec(p)},
+        "maintenance": s.reg_get(session.MAINTENANCE_KEY, "MaintenanceDisabled", "HKLM")[:2],
+        "transparency": s.reg_get(session.THEMES_KEY, "EnableTransparency")[:2],
+        "animations": s.animations(),
         "gamebar": {n: s.reg_get(session.GAMEBAR_KEY, n)[:2]
                     for n in ("AutoGameModeEnabled", "AllowAutoGameMode")},
         "priority": {(p.pid, p.create_time): s.priority(p.pid) for p in procs
@@ -94,7 +100,9 @@ def main() -> int:
     print("probes running:", ok, elevation_of(s, "gmprobe.exe"))
     before = snapshot(s)
     journal = Journal(os.path.join(folder, "journal"))
-    choices = session.Choices(services=set(SERVICES), close={"gmprobe.exe", "mspaint.exe"})
+    # The Maximum preset in full, except that only the two probes are closed.
+    choices = session.preset(catalog.MAX, [])
+    choices.close = {"gmprobe.exe", "mspaint.exe"}
     log = lambda level, text: print(f"  ON  [{level}] {text}")  # noqa: E731
     t = time.monotonic()
     data = session.turn_on(s, choices, journal, log, os.getpid(), session_id())
@@ -102,12 +110,31 @@ def main() -> int:
           f"{data['handles_after']:,}; processes {data['processes_before']} -> {data['processes_after']}")
     during = snapshot(s)
     gone = not any(p.name.lower() in ("gmprobe.exe", "mspaint.exe") for p in s.processes())
-    print("during:", during["plan"], during["services"], "probes closed:", gone)
+    print("during:", during["plan"], sum(1 for v in during["services"].values() if v), "services running,",
+          sum(1 for v in during["tasks"].values() if v), "catalog tasks enabled, maintenance",
+          during["maintenance"], "transparency", during["transparency"], "animations", during["animations"],
+          "probes closed:", gone)
     time.sleep(3)
+    touched = {e["name"] for e in journal.actions if e.get("kind") == "service_stop"}
     t = time.monotonic()
     report = session.turn_off(s, journal, lambda level, text: print(f"  OFF [{level}] {text}"))
     print(f"OFF took {time.monotonic() - t:.1f} s")
     after = snapshot(s)
+    # A service Game Mode never touched that was stopped before and runs now
+    # was started by WINDOWS (a trigger: Update Orchestrator starts Windows
+    # Update, the Diagnostic Policy Service starts its hosts) -- noted, not a
+    # difference Game Mode made.
+    woke = [n for n, was in before["services"].items()
+            if was is False and after["services"].get(n) and n not in touched]
+    for n in woke:
+        after["services"][n] = False
+    if woke:
+        print("NOTE: started by Windows on its own, not touched by Game Mode:", ", ".join(woke))
+    # Processes started or ended meanwhile (a browser opens tabs) are not
+    # something to restore: compare the priority of those present both times.
+    common = set(before["priority"]) & set(after["priority"])
+    before["priority"] = {k: v for k, v in before["priority"].items() if k in common}
+    after["priority"] = {k: v for k, v in after["priority"].items() if k in common}
     failures = [k for k in before if before[k] != after[k]]
     for k in failures:
         print("DIFFERENT:", k, "\n  before:", before[k], "\n  after: ", after[k])

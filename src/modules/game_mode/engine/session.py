@@ -31,6 +31,8 @@ logger = logging.getLogger(__name__)
 BALANCED = "381b4222-f694-41f0-9685-ff5bb260df2e"
 HIGH_PERFORMANCE = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
 GAMEBAR_KEY = r"Software\Microsoft\GameBar"
+MAINTENANCE_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance"
+THEMES_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 REG_DWORD = 4
 
 OK, INFO, WARN, BAD = "ok", "info", "warn", "bad"
@@ -65,6 +67,9 @@ def recommended_plan(cpu: str, plans: Dict[str, str], vcache_installed: bool
     return None, "no performance plan on this PC"
 
 
+_FLAGS = ("plan", "gamebar", "vcache", "lower", "tasks", "maintenance", "visuals")
+
+
 @dataclass
 class Choices:
     plan: bool = True
@@ -74,18 +79,37 @@ class Choices:
                                                          if s.default})
     close: Set[str] = field(default_factory=lambda: {a.exe for a in catalog.APPS if a.close})
     lower: bool = True
+    #: Pause the updater/maintenance scheduled tasks in `catalog.TASKS`.
+    tasks: bool = True
+    #: Pause Windows' Automatic Maintenance (one HKLM value).
+    maintenance: bool = True
+    #: Transparency and window animations off.
+    visuals: bool = False
 
     def to_config(self) -> dict:
-        return {"plan": self.plan, "gamebar": self.gamebar, "vcache": self.vcache,
-                "services": sorted(self.services), "close": sorted(self.close),
-                "lower": self.lower}
+        out = {flag: getattr(self, flag) for flag in _FLAGS}
+        out.update(services=sorted(self.services), close=sorted(self.close))
+        return out
+
+
+def preset(level: str, groups: List["AppGroup"]) -> Choices:
+    """Recommended (REC) or Maximum (MAX). Maximum also closes every running
+    program the catalog does not know -- except NEVER_CLOSE, which never
+    reaches `groups` -- and the catalog's OPT ones (voice chat, music, VPN)."""
+    wanted = {catalog.REC} if level == catalog.REC else {catalog.REC, catalog.MAX}
+    c = Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
+                close={a.exe for a in catalog.APPS if a.level in wanted},
+                visuals=level == catalog.MAX)
+    if level == catalog.MAX:
+        c.close |= {g.exe for g in groups if g.spec is None}
+    return c
 
 
 def choices_from_config(data) -> Choices:
     c = Choices()
     if not isinstance(data, dict):
         return c
-    for flag in ("plan", "gamebar", "vcache", "lower"):
+    for flag in _FLAGS:
         if isinstance(data.get(flag), bool):
             setattr(c, flag, data[flag])
     if isinstance(data.get("services"), list):
@@ -112,7 +136,8 @@ class AppGroup:
 def running_apps(procs: List[Proc], session: int, own_pid: int,
                  path_of: Callable[[int], Optional[str]]) -> List[AppGroup]:
     """Programs in `session` that Game Mode could close, biggest first.
-    Windows' own (anything under %SystemRoot%) and NEVER_CLOSE are left out."""
+    Windows' own (anything under %SystemRoot%) and NEVER_CLOSE are left out,
+    except the few Windows starts again on demand (WINDOWS_ON_DEMAND)."""
     windir = os.path.normcase(os.environ.get("SystemRoot") or os.environ.get("windir") or "\\Windows")
     by_name: Dict[str, List[Proc]] = {}
     for p in procs:
@@ -121,11 +146,12 @@ def running_apps(procs: List[Proc], session: int, own_pid: int,
     pids_by_name = {n: {p.pid for p in ps} for n, ps in by_name.items()}
     groups = []
     for name, ps in by_name.items():
-        if name in catalog.NEVER_CLOSE or any(p.pid == own_pid for p in ps):
+        if catalog.never_close(name) or any(p.pid == own_pid for p in ps):
             continue
         roots = [p for p in ps if p.ppid not in pids_by_name[name]] or ps[:1]
         path = path_of(roots[0].pid) or ""
-        if not path or os.path.normcase(path).startswith(windir):
+        if not path or (os.path.normcase(path).startswith(windir)
+                        and name not in catalog.WINDOWS_ON_DEMAND):
             continue
         spec = catalog.spec_for(name)
         groups.append(AppGroup(name, spec.label if spec else os.path.basename(path), spec,
@@ -135,6 +161,28 @@ def running_apps(procs: List[Proc], session: int, own_pid: int,
 
 def total_handles(procs: List[Proc]) -> int:
     return sum(p.handles for p in procs)
+
+
+_HELPERS = frozenset({"msedgewebview2.exe", "conhost.exe"})
+
+
+def freed_estimate(procs: List[Proc], groups: List[AppGroup], close: Set[str]) -> int:
+    """Handles held by the programs in `close` PLUS the helper processes they
+    own -- WebView2 is a separate process tree under its host app (40 of them,
+    28,212 handles, measured here) and goes when the host goes."""
+    owners = {p.pid for g in groups if g.exe in close for p in g.procs}
+    by_pid = {p.pid: p for p in procs}
+    total = sum(g.handles for g in groups if g.exe in close)
+    for p in procs:
+        if p.name.lower() not in _HELPERS:
+            continue
+        seen, cur = set(), p
+        while cur is not None and cur.name.lower() in _HELPERS and cur.pid not in seen:
+            seen.add(cur.pid)
+            cur = by_pid.get(cur.ppid)
+        if cur is not None and cur.pid in owners:
+            total += p.handles
+    return total
 
 
 # ==== ON ========================================================================================
@@ -161,26 +209,81 @@ class _On:
         self.j.mark_done(entry)
         self.log(OK, f"Power plan {plans.get(before, before)} -> {plans.get(target, target)} ({why})")
 
+    def registry(self, hive: str, path: str, name: str, value: int, label: str,
+                 broadcast: str = "") -> Optional[bool]:
+        """Set one DWORD, journaled. True = changed, False = already so, None = not done."""
+        exists, before, kind = self.s.reg_get(path, name, hive)
+        if exists is None:
+            self.log(WARN, f"{label}: unreadable -- left alone")
+            return None
+        if exists and before == value:
+            return False
+        entry = self.j.record({"kind": "registry", "hive": hive, "path": path, "name": name,
+                               "label": label, "existed": exists, "value": before, "type": kind,
+                               "broadcast": broadcast})
+        error = self.s.reg_set(path, name, value, REG_DWORD, hive)
+        if error:
+            self.log(BAD, f"{label}: not set ({error})")
+            return None
+        if broadcast:
+            self.s.broadcast_setting_change(broadcast)
+        self.j.mark_done(entry)
+        return True
+
     def gamebar(self) -> None:
-        changed = 0
-        for name in ("AutoGameModeEnabled", "AllowAutoGameMode"):
-            exists, value, kind = self.s.reg_get(GAMEBAR_KEY, name)
-            if exists is None:
-                self.log(WARN, f"Game Mode setting {name} unreadable -- left alone")
+        changed = [self.registry("HKCU", GAMEBAR_KEY, name, 1, f"Windows Game Mode setting {name}")
+                   for name in ("AutoGameModeEnabled", "AllowAutoGameMode")]
+        self.log(OK, "Windows Game Mode setting turned on" if any(changed)
+                 else "Windows Game Mode setting was already on")
+
+    def maintenance(self, elevated: bool) -> None:
+        if not elevated:
+            self.log(WARN, "Automatic Maintenance: pausing it needs administrator")
+            return
+        done = self.registry("HKLM", MAINTENANCE_KEY, "MaintenanceDisabled", 1,
+                             "Windows Automatic Maintenance")
+        if done is not None:
+            self.log(OK, "Windows Automatic Maintenance paused (no defrag, scans or updates "
+                         "started by the maintenance window)")
+
+    def visuals(self) -> None:
+        changed = self.registry("HKCU", THEMES_KEY, "EnableTransparency", 0, "Transparency effects",
+                                broadcast="ImmersiveColorSet")
+        self.log(OK, "Transparency effects " + ("turned off" if changed else "were already off"))
+        if not self.s.animations():
+            self.log(OK, "Window animations were already off")
+            return
+        entry = self.j.record({"kind": "animations", "before": True})
+        error = self.s.set_animations(False)
+        if error:
+            self.log(BAD, f"Window animations: not turned off ({error})")
+            return
+        self.j.mark_done(entry)
+        self.log(OK, "Window animations turned off")
+
+    def tasks(self, elevated: bool) -> None:
+        try:
+            found = self.s.tasks()
+        except Exception as error:  # noqa: BLE001 -- the Task Scheduler COM API raises com_error
+            self.log(WARN, f"Scheduled tasks could not be listed ({error}) -- left alone")
+            return
+        paused, refused = 0, []
+        for path, enabled in found:
+            spec = catalog.task_spec(path)
+            if spec is None or not enabled:
                 continue
-            if exists and value == 1:
-                continue
-            entry = self.j.record({"kind": "registry", "path": GAMEBAR_KEY, "name": name,
-                                   "existed": exists, "value": value, "type": kind})
-            error = self.s.reg_set(GAMEBAR_KEY, name, 1, REG_DWORD)
+            entry = self.j.record({"kind": "task", "path": path, "label": spec.label})
+            error = self.s.set_task_enabled(path, False)
             if error:
-                self.log(BAD, f"Windows Game Mode setting {name} not set: {error}")
+                refused.append(f"{spec.label} ({error})")
                 continue
             self.j.mark_done(entry)
-            changed += 1
-            self.log(OK, f"Windows Game Mode setting {name} turned on")
-        if not changed:
-            self.log(OK, "Windows Game Mode setting was already on")
+            paused += 1
+        self.log(OK, f"{paused} scheduled updater/maintenance task(s) paused")
+        if refused:
+            self.log(INFO if not elevated else WARN,
+                     "Left alone (Windows protects them" + ("" if elevated else ", or needs administrator")
+                     + "): " + "; ".join(refused[:6]) + (" ..." if len(refused) > 6 else ""))
 
     def vcache(self, elevated: bool) -> None:
         state = self.s.service(catalog.VCACHE_SERVICE)
@@ -199,29 +302,32 @@ class _On:
 
     def services(self, names: Set[str], elevated: bool) -> None:
         for spec in catalog.SERVICES:
-            if spec.name not in names:
-                continue
-            state = self.s.service(spec.name)
-            if state is None or state.running is False:
-                continue
-            if state.running is None:
-                self.log(WARN, f"{spec.label}: state unreadable ({state.error}) -- left alone")
-                continue
-            if not elevated:
-                self.log(WARN, f"{spec.label}: running; stopping it needs administrator")
-                continue
-            deps = self.s.running_dependents(spec.name)
-            if deps:
-                self.log(INFO, f"{spec.label}: left running, {', '.join(deps)} depends on it")
-                continue
-            entry = self.j.record({"kind": "service_stop", "name": spec.name, "label": spec.label,
-                                   "start_type": state.start_type})
-            error = self.s.stop_service(spec.name)
-            if error:
-                self.log(BAD, f"{spec.label}: not stopped ({error})")
-                continue
-            self.j.mark_done(entry)
-            self.log(OK, f"{spec.label}: stopped")
+            if spec.name in names:
+                for name in self.s.service_names(spec.name):
+                    self._stop(name, spec, elevated)
+
+    def _stop(self, name: str, spec: catalog.ServiceSpec, elevated: bool) -> None:
+        state = self.s.service(name)
+        if state is None or state.running is False:
+            return
+        if state.running is None:
+            self.log(WARN, f"{spec.label}: state unreadable ({state.error}) -- left alone")
+            return
+        if not elevated:
+            self.log(WARN, f"{spec.label}: running; stopping it needs administrator")
+            return
+        deps = self.s.running_dependents(name)
+        if deps:
+            self.log(INFO, f"{spec.label}: left running, {', '.join(deps)} depends on it")
+            return
+        entry = self.j.record({"kind": "service_stop", "name": name, "label": spec.label,
+                               "start_type": state.start_type})
+        error = self.s.stop_service(name)
+        if error:
+            self.log(BAD, f"{spec.label}: not stopped ({error})")
+            return
+        self.j.mark_done(entry)
+        self.log(OK, f"{spec.label}: stopped")
 
     def close_apps(self, groups: List[AppGroup], wanted: Set[str]) -> None:
         for g in groups:
@@ -229,6 +335,9 @@ class _On:
                 continue
             path, cmdline, elevated = self.s.details(g.roots[0].pid)
             program, args = split_command_line(cmdline or "")
+            extra = g.spec.reopen_args if g.spec else ""
+            if extra and extra not in args:
+                args = f"{args} {extra}".strip()
             reopen = g.spec.reopen if g.spec else True
             entry = self.j.record({
                 "kind": "app_close", "exe": g.exe, "label": g.label, "path": path or program,
@@ -273,6 +382,12 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
         on.gamebar()
     if choices.vcache:
         on.vcache(elevated)
+    if choices.maintenance:
+        on.maintenance(elevated)
+    if choices.tasks:
+        on.tasks(elevated)
+    if choices.visuals:
+        on.visuals()
     on.services(choices.services, elevated)
     groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0])
     on.close_apps(groups, choices.close)
@@ -289,7 +404,7 @@ def enforce(system, journal: Journal, log: Log) -> int:
     """While ON: stop again the services Windows restarted on its own."""
     count = 0
     for entry in journal.actions:
-        spec = catalog.SERVICE_BY_NAME.get(entry.get("name", "").lower())
+        spec = catalog.service_spec(entry.get("name", ""))
         if entry.get("kind") != "service_stop" or not entry.get("done") or not (spec and spec.restop):
             continue
         state = system.service(entry["name"])
@@ -311,7 +426,7 @@ def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[d
     if journal.data.get("corrupt"):
         say(BAD, f"The Game Mode journal could not be read ({journal.data['corrupt']}); "
                  "nothing could be put back automatically.")
-    ctx: dict = {"reopened": [], "priority": {}}
+    ctx: dict = {"reopened": [], "priority": {}, "tasks": 0}
     previous_kind = None
     for entry in reversed(journal.actions):
         if previous_kind == "priority" and entry.get("kind") != "priority":
@@ -328,6 +443,8 @@ def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[d
             say(BAD, f"{entry.get('label') or entry.get('name') or entry.get('kind')}: "
                      f"restore failed ({error})")
     _say_priorities(ctx, say)
+    if ctx["tasks"]:
+        say(OK, f"{ctx['tasks']} scheduled task(s) enabled again")
     _verify_reopened(system, ctx["reopened"], say, settle)
     journal.finish(report)
     return report
@@ -406,17 +523,40 @@ def _restore_service_start(system, e, say, _ctx) -> None:
 
 
 def _restore_registry(system, e, say, _ctx) -> None:
+    hive = e.get("hive", "HKCU")
+    label = e.get("label") or f"Windows Game Mode setting {e['name']}"
     if e.get("existed"):
-        error = system.reg_set(e["path"], e["name"], e["value"], e["type"])
+        error = system.reg_set(e["path"], e["name"], e["value"], e["type"], hive)
     else:
-        error = system.reg_delete(e["path"], e["name"])
-    exists, value, _kind = system.reg_get(e["path"], e["name"])
+        error = system.reg_delete(e["path"], e["name"], hive)
+    if e.get("broadcast"):
+        system.broadcast_setting_change(e["broadcast"])
+    exists, value, _kind = system.reg_get(e["path"], e["name"], hive)
     back = exists == bool(e.get("existed")) and (not exists or value == e["value"])
     if error or not back:
-        say(BAD, f"Game Mode setting {e['name']}: not restored ({error or 'read-back differs'})")
+        say(BAD, f"{label}: not restored ({error or 'read-back differs'})")
     else:
-        say(OK, f"Windows Game Mode setting {e['name']}: back to "
-                + (str(e["value"]) if e.get("existed") else "not set"))
+        say(OK, f"{label}: back to " + (str(e["value"]) if e.get("existed") else "not set"))
+
+
+def _restore_task(system, e, say, ctx) -> None:
+    """Every task recorded was ENABLED before; counted, only problems said."""
+    if system.task_enabled(e["path"]) is True:
+        ctx["tasks"] += 1
+        return
+    error = system.set_task_enabled(e["path"], True)
+    if error:
+        say(BAD, f"Scheduled task {e['path']}: not enabled again ({error})")
+    else:
+        ctx["tasks"] += 1
+
+
+def _restore_animations(system, e, say, _ctx) -> None:
+    error = system.set_animations(bool(e["before"]))
+    if error or system.animations() != bool(e["before"]):
+        say(BAD, f"Window animations: not restored ({error or 'read-back differs'})")
+    else:
+        say(OK, "Window animations back on")
 
 
 def _restore_plan(system, e, say, _ctx) -> None:
@@ -430,7 +570,8 @@ def _restore_plan(system, e, say, _ctx) -> None:
 
 _RESTORE = {"priority": _restore_priority, "app_close": _restore_app,
             "service_stop": _restore_service_stop, "service_start": _restore_service_start,
-            "registry": _restore_registry, "plan": _restore_plan}
+            "registry": _restore_registry, "plan": _restore_plan, "task": _restore_task,
+            "animations": _restore_animations}
 
 
 def _verify_reopened(system, reopened, say, settle: float) -> None:

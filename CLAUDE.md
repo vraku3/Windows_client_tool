@@ -1986,6 +1986,53 @@ before it shipped; what that found:
   + 2 SKIPPED (Security log, `powercfg /requests`), and the manifest notes
   that unelevated `gpresult` holds only the user half.
 
+### Game Mode (`src/modules/game_mode/`)
+
+Sidebar entry (`ModuleGroup.OPTIMIZE`, 2026-10-16): gaming
+recommendations for THIS PC plus a reversible Game Mode ON / OFF. Qt-free
+`engine/` (`catalog`, `system`, `shell_launch`, `journal`, `session`,
+`advice`); only `game_mode_module.py` imports Qt. `tests/test_game_mode.py`
+drives ON/OFF against a stateful fake; `tools/game_mode_roundtrip.py` is the
+REAL round trip (elevated; snapshots plan, services, Game Bar values and
+priorities, closes only two probes it starts itself -- Paint and a copy of
+Character Map with arguments -- and exits 1 on any difference). Passed here
+twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
+
+- **ON journals each change BEFORE making it** (`journal.py`,
+  `%APPDATA%\WindowsTweaker\game_mode\session.json`, `done` False then True);
+  OFF reads only that file, so it works after a crash, a closed app or a
+  reboot, and deletes it at the end (`last_restore.json` keeps the report).
+  OFF restores the recorded BEFORE state only: a service already running is
+  not started twice, an app already open is not reopened, a priority someone
+  changed since is left alone, an absent registry value is deleted again.
+- **Services are only STOPPED, never reconfigured** (start type untouched,
+  so a reboot alone brings them back). Unelevated they are skipped and said
+  so. While ON and the app is open, `enforce()` re-stops every minute the
+  ones Windows restarts by itself (`restop`: Search, Update, Orchestrator,
+  BITS, Delivery Optimization) and the PC is kept awake
+  (`SetThreadExecutionState`). Security software is on no list and in
+  `NEVER_CLOSE`, with game launchers and the shell.
+- **The power plan follows the CPU.** A dual-CCD X3D (Ryzen 9 x900X3D /
+  x950X3D, this PC's 9950X3D) with AMD's `amd3dvcacheSvc` gets BALANCED --
+  AMD's guidance: it is the plan under which Windows parks the CCD without
+  the cache while a game runs; High/Ultimate keep both awake. Everything
+  else gets Ultimate/High performance. This PC sat on Ultimate.
+- **Closed apps are reopened UNELEVATED through the shell**
+  (`shell_launch.py`: ShellWindows -> desktop folder view -> IShellDispatch2
+  .ShellExecute, measured Medium integrity). That ShellExecute runs inside
+  explorer and BLOCKS while explorer shows a modal "not found" box -- found
+  by asking for Calculator, which is not installed here (it left two dialogs
+  on screen) -- so every launch has its own thread and a 15 s timeout, and
+  packaged apps go as `explorer.exe shell:AppsFolder\<AUMID>` (returns in
+  0.09 s). The AUMID comes from `GetApplicationUserModelId`; an app that ran
+  elevated is not reopened (and says why). OneDrive is closed with its own
+  `/shutdown`; others get WM_CLOSE, then are ended after 8 s.
+- **Advice states what it read** (`advice.collect` ~0.6 s). Found here on
+  day one: the active display at 60 Hz where it offers 144 Hz, Xbox Game Bar
+  (`Microsoft.XboxGamingOverlay`) NOT installed -- removed by an earlier
+  debloat, and the V-Cache optimizer needs it to know a game is running --
+  deluge running, three resident Snipping Tools (7,067 handles).
+
 ## Pending restart (`src/core/pending_reboot.py`)
 
 One answer for the whole app; `windows_utils.is_reboot_pending`, the

@@ -108,6 +108,7 @@ def register_all_modules(app) -> None:
     from modules.debloat.debloat_module import DebloatModule
     from modules.treesize.treesize_module import TreeSizeModule
     from modules.quick_fix.quick_fix_module import QuickFixModule
+    from modules.game_mode.game_mode_module import GameModeModule
     from modules.updates.updates_module import UpdatesModule
     # Batch B — System group
     from modules.hardware_inventory.hardware_module import HardwareModule
@@ -146,6 +147,7 @@ def register_all_modules(app) -> None:
     app.module_registry.register(DebloatModule())
     app.module_registry.register(TreeSizeModule())
     app.module_registry.register(QuickFixModule())
+    app.module_registry.register(GameModeModule())
     app.module_registry.register(UpdatesModule())
     app.module_registry.register(HardwareModule())
     app.module_registry.register(MonitorControlModule())

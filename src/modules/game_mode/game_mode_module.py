@@ -1,0 +1,475 @@
+"""Game Mode -- the Qt side of `engine/`.
+
+Two buttons: Game Mode ON applies what is ticked under "What it changes"
+(journaled first, see `engine/journal.py`); Game Mode OFF puts back exactly
+what the journal recorded and reads it back. "Recommendations" is advice
+for this PC, computed from what was read. While Game Mode is on and this app
+is open, the PC is kept awake and the background-download services Windows
+restarts on its own are stopped again every minute. The module owns that
+timer, so it runs whichever tab is on screen.
+"""
+from __future__ import annotations
+
+import ctypes
+import datetime
+import logging
+import os
+import textwrap
+from typing import Dict, List, Optional
+
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+                             QPlainTextEdit, QPushButton, QTabWidget, QTreeWidget, QTreeWidgetItem,
+                             QVBoxLayout, QWidget)
+
+from core.base_module import BaseModule
+from core.module_groups import ModuleGroup
+from core.semantic_colors import chrome, semantic
+from core.table_ui import set_role
+from core.widget_life import widget_is_valid
+from core.worker import Worker
+from ui.error_banner import ErrorBanner
+
+from .engine import advice, catalog, session
+from .engine.journal import Journal
+from .engine.system import WinSystem
+
+logger = logging.getLogger(__name__)
+
+CONFIG_KEY = "modules.game_mode.choices"
+ENFORCE_MS = 60_000
+_ES_CONTINUOUS, _ES_SYSTEM, _ES_DISPLAY = 0x80000000, 0x00000001, 0x00000002
+_LEVEL_COLOR = {session.OK: "success", session.INFO: "info", session.WARN: "warning",
+                session.BAD: "error", advice.GOOD: "success", advice.ACT: "error",
+                advice.UNKNOWN: "warning"}
+_LEVEL_WORD = {advice.ACT: "Do this", advice.WARN: "Check", advice.UNKNOWN: "Unknown",
+               advice.INFO: "Note", advice.GOOD: "OK"}
+
+
+def _session_id() -> int:
+    sid = ctypes.c_uint(0)
+    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid))
+    return int(sid.value)
+
+
+def _keep_awake(on: bool) -> None:
+    """While Game Mode is on: no sleep, no screen-off (a controller game sends
+    no keyboard input). Cleared on OFF, and by Windows when this app exits."""
+    flags = _ES_CONTINUOUS | (_ES_SYSTEM | _ES_DISPLAY if on else 0)
+    ctypes.windll.kernel32.SetThreadExecutionState(flags)
+
+
+class GameModeModule(BaseModule):
+    name = "Game Mode"
+    icon = "🎮"
+    description = "Recommendations for gaming on this PC, and a reversible Game Mode ON / OFF"
+    group = ModuleGroup.OPTIMIZE
+    requires_admin = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._widget: Optional[QWidget] = None
+        self._system = WinSystem()
+        self._journal = Journal()
+        self._choices = session.Choices()
+        self._busy = False
+        self._loaded = False
+        self._groups: List[session.AppGroup] = []
+        self._enforce_timer: Optional[QTimer] = None
+
+    # ---- lifecycle ----------------------------------------------------------------------------
+    def on_start(self, app) -> None:
+        self.app = app
+        config = getattr(app, "config", None)
+        self._choices = session.choices_from_config(config.get(CONFIG_KEY, None) if config else None)
+        if self._journal.load():
+            self._start_enforcing()
+
+    def get_refresh_interval(self):
+        return None
+
+    def on_activate(self) -> None:
+        if not self._loaded:
+            self._loaded = True
+            self._refresh_all()
+
+    def on_stop(self) -> None:
+        if self._enforce_timer is not None:
+            self._enforce_timer.stop()
+        _keep_awake(False)
+        self.cancel_all_workers()
+
+    def _save_choices(self) -> None:
+        config = getattr(getattr(self, "app", None), "config", None)
+        if config is not None:
+            config.set(CONFIG_KEY, self._choices.to_config())
+
+    # ---- layout -------------------------------------------------------------------------------
+    def create_widget(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.addLayout(self._build_header(w))
+        self._banner = ErrorBanner("", w)
+        self._banner.hide()
+        lay.addWidget(self._banner)
+        self._tabs = QTabWidget(w)
+        self._tabs.addTab(self._build_advice(w), "Recommendations")
+        self._tabs.addTab(self._build_choices(w), "What Game Mode changes")
+        self._log = QPlainTextEdit(w)
+        self._log.setReadOnly(True)
+        set_role(self._log, "iseConsole")
+        self._tabs.addTab(self._log, "Log")
+        lay.addWidget(self._tabs, 1)
+        self._widget = w
+        self._show_state()
+        return w
+
+    def _build_header(self, parent: QWidget) -> QHBoxLayout:
+        row = QHBoxLayout()
+        col = QVBoxLayout()
+        self._state = QLabel(parent)
+        set_role(self._state, "sectionTitle")
+        self._numbers = QLabel(parent)
+        set_role(self._numbers, "statusInfo")
+        col.addWidget(self._state)
+        col.addWidget(self._numbers)
+        row.addLayout(col, 1)
+        self._on_btn = QPushButton("Game Mode ON", parent)
+        set_role(self._on_btn, "accentButton")
+        self._on_btn.setMinimumSize(170, 40)
+        self._on_btn.clicked.connect(self._turn_on)
+        self._off_btn = QPushButton("Game Mode OFF", parent)
+        self._off_btn.setMinimumSize(170, 40)
+        self._off_btn.clicked.connect(self._turn_off)
+        row.addWidget(self._on_btn)
+        row.addWidget(self._off_btn)
+        return row
+
+    def _build_advice(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        lay = QVBoxLayout(page)
+        top = QHBoxLayout()
+        self._advice_status = QLabel("Reading this PC…", page)
+        set_role(self._advice_status, "statusInfo")
+        refresh = QPushButton("Refresh", page)
+        refresh.clicked.connect(self._refresh_all)
+        top.addWidget(self._advice_status, 1)
+        top.addWidget(refresh)
+        lay.addLayout(top)
+        self._advice = QTreeWidget(page)
+        self._advice.setHeaderLabels(["", "Finding", "What to do"])
+        self._advice.setRootIsDecorated(False)
+        self._advice.setWordWrap(True)
+        self._advice.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self._advice.setAlternatingRowColors(True)
+        head = self._advice.header()
+        head.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        head.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        head.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        lay.addWidget(self._advice, 1)
+        return page
+
+    def _build_choices(self, parent: QWidget) -> QWidget:
+        page = QWidget(parent)
+        lay = QVBoxLayout(page)
+        self._plan_cb = QCheckBox(page)
+        self._gamebar_cb = QCheckBox("Turn on Windows' own Game Mode setting (Settings > Gaming)", page)
+        self._vcache_cb = QCheckBox("Start the AMD 3D V-Cache optimizer service if it is stopped", page)
+        self._lower_cb = QCheckBox("Apps left open (browsers, chat, editors) run at Below Normal "
+                                   "priority while Game Mode is on", page)
+        for cb, attr in ((self._plan_cb, "plan"), (self._gamebar_cb, "gamebar"),
+                         (self._vcache_cb, "vcache"), (self._lower_cb, "lower")):
+            cb.setChecked(getattr(self._choices, attr))
+            cb.toggled.connect(lambda on, a=attr: self._flag(a, on))
+            lay.addWidget(cb)
+        note = QLabel("Services are only STOPPED -- their startup type is never changed, so a "
+                      "restart brings them back by itself. Apps are closed politely and ended "
+                      "after 8 s if they do not close; Game Mode OFF reopens them as you, not as "
+                      "administrator. Security software is never touched.", page)
+        note.setWordWrap(True)
+        set_role(note, "muted")
+        lay.addWidget(note)
+        self._svc_tree = self._checked_tree(page, ["Stop", "Service", "Now", "Why"])
+        self._svc_tree.itemChanged.connect(self._svc_toggled)
+        lay.addWidget(QLabel("Background services", page))
+        lay.addWidget(self._svc_tree, 1)
+        self._app_tree = self._checked_tree(page, ["Close", "Program", "Handles", "While playing"])
+        self._app_tree.itemChanged.connect(self._app_toggled)
+        lay.addWidget(QLabel("Programs running now", page))
+        lay.addWidget(self._app_tree, 2)
+        return page
+
+    @staticmethod
+    def _checked_tree(parent: QWidget, headers: List[str]) -> QTreeWidget:
+        tree = QTreeWidget(parent)
+        tree.setHeaderLabels(headers)
+        tree.setRootIsDecorated(False)
+        tree.setAlternatingRowColors(True)
+        head = tree.header()
+        for i in range(len(headers) - 1):
+            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        head.setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeMode.Stretch)
+        return tree
+
+    # ---- reading ------------------------------------------------------------------------------
+    def _refresh_all(self) -> None:
+        if not widget_is_valid(self._advice_status):
+            return
+        self._advice_status.setText("Reading this PC…")
+        own, sid, system = os.getpid(), _session_id(), self._system
+
+        def work(_w):
+            facts = advice.collect(system, own, sid)
+            procs = system.processes()
+            groups = session.running_apps(procs, sid, own, lambda pid: system.details(pid)[0])
+            plan = session.recommended_plan(facts.cpu, system.plans(), facts.vcache_installed)
+            states = {s.name: system.service(s.name) for s in catalog.SERVICES}
+            return facts, groups, plan, states
+        w = Worker(work)
+        w.signals.result.connect(self._refreshed)
+        w.signals.error.connect(lambda err: self._show_error(f"Could not read this PC: {err}"))
+        self._start(w)
+
+    def _refreshed(self, payload) -> None:
+        if not widget_is_valid(self._advice):
+            return
+        facts, groups, (plan_guid, plan_why), states = payload
+        self._groups = groups
+        self._fill_advice(advice.findings(facts))
+        self._advice_status.setText(f"{facts.cpu}  ·  read {datetime.datetime.now():%H:%M:%S}")
+        self._plan_cb.setText("Power plan: " + (f"switch to the one this CPU wants -- {plan_why}"
+                                                if plan_guid else f"left alone ({plan_why})"))
+        self._vcache_cb.setVisible(facts.vcache_installed)
+        self._fill_services(states)
+        self._fill_apps(groups)
+        self._show_state(facts.handles, facts.processes)
+
+    def _fill_advice(self, items: List[advice.Finding]) -> None:
+        self._advice.clear()
+        for f in items:
+            # Wrapped here: QTreeWidget sizes a row from its line breaks, not
+            # from wrapping at the column width, and cut the detail with "...".
+            row = QTreeWidgetItem([_LEVEL_WORD.get(f.level, f.level),
+                                   f.title + ("\n" + textwrap.fill(f.detail, 100) if f.detail else ""),
+                                   textwrap.fill(f.fix, 90)])
+            row.setForeground(0, QColor(semantic(_LEVEL_COLOR.get(f.level, "info"))))
+            row.setToolTip(1, f"{f.title}\n\n{f.detail}")
+            row.setToolTip(2, f.fix)
+            self._advice.addTopLevelItem(row)
+
+    def _fill_services(self, states: Dict[str, object]) -> None:
+        self._svc_tree.blockSignals(True)
+        self._svc_tree.clear()
+        for spec in catalog.SERVICES:
+            st = states.get(spec.name)
+            if st is None:
+                continue                                   # not installed here
+            now = "unreadable" if st.running is None else ("Running" if st.running else "Stopped")
+            row = QTreeWidgetItem(["", spec.label, f"{now} ({st.start_type})" if st.start_type else now,
+                                   spec.why])
+            row.setData(0, Qt.ItemDataRole.UserRole, spec.name)
+            row.setCheckState(0, Qt.CheckState.Checked if spec.name in self._choices.services
+                              else Qt.CheckState.Unchecked)
+            if not st.running:
+                row.setForeground(2, QColor(chrome("text_muted")))
+            self._svc_tree.addTopLevelItem(row)
+        self._svc_tree.blockSignals(False)
+
+    def _fill_apps(self, groups: List[session.AppGroup]) -> None:
+        self._app_tree.blockSignals(True)
+        self._app_tree.clear()
+        for g in groups:
+            ticked = g.exe in self._choices.close
+            row = QTreeWidgetItem(["", g.label + (f"  ×{len(g.roots)}" if len(g.roots) > 1 else ""),
+                                   f"{g.handles:,}", self._app_plan(g, ticked)])
+            row.setData(0, Qt.ItemDataRole.UserRole, g.exe)
+            row.setToolTip(1, g.exe + (f"\n{g.spec.why}" if g.spec else ""))
+            row.setCheckState(0, Qt.CheckState.Checked if ticked else Qt.CheckState.Unchecked)
+            self._app_tree.addTopLevelItem(row)
+        self._app_tree.blockSignals(False)
+
+    def _app_plan(self, g: session.AppGroup, ticked: bool) -> str:
+        if ticked:
+            reopen = g.spec.reopen if g.spec else True
+            return "closed, reopened after" if reopen else "closed (Windows starts it again when needed)"
+        if g.spec and g.spec.lower and self._choices.lower:
+            return "left open, Below Normal priority"
+        if g.spec and not g.spec.close:
+            return g.spec.why
+        return "left open (tick it to close it while you play)"
+
+    # ---- choices ------------------------------------------------------------------------------
+    def _flag(self, attr: str, on: bool) -> None:
+        setattr(self._choices, attr, on)
+        self._save_choices()
+        if attr == "lower":
+            self._fill_apps(self._groups)
+
+    def _svc_toggled(self, item: QTreeWidgetItem, column: int) -> None:
+        if column == 0:
+            self._toggle(self._choices.services, item.data(0, Qt.ItemDataRole.UserRole),
+                         item.checkState(0) == Qt.CheckState.Checked)
+
+    def _app_toggled(self, item: QTreeWidgetItem, column: int) -> None:
+        if column != 0:
+            return
+        self._toggle(self._choices.close, item.data(0, Qt.ItemDataRole.UserRole),
+                     item.checkState(0) == Qt.CheckState.Checked)
+        group = next((g for g in self._groups if g.exe == item.data(0, Qt.ItemDataRole.UserRole)), None)
+        if group is not None:
+            self._app_tree.blockSignals(True)
+            item.setText(3, self._app_plan(group, group.exe in self._choices.close))
+            self._app_tree.blockSignals(False)
+
+    def _toggle(self, bucket: set, key: str, on: bool) -> None:
+        (bucket.add if on else bucket.discard)(key)
+        self._save_choices()
+
+    # ---- state --------------------------------------------------------------------------------
+    def _show_state(self, handles: Optional[int] = None, processes: Optional[int] = None) -> None:
+        if not widget_is_valid(self._state):
+            return
+        on = self._journal.active
+        if on:
+            started = self._journal.data.get("started") or 0
+            when = datetime.datetime.fromtimestamp(started).strftime("%H:%M") if started else "earlier"
+            self._state.setText(f"Game Mode is ON (since {when}, "
+                                f"{sum(1 for a in self._journal.actions if a.get('done'))} changes)")
+        else:
+            self._state.setText("Game Mode is OFF")
+        set_role(self._state, "statusSuccess" if on else "sectionTitle")
+        self._numbers.setText(self._numbers_text(handles, processes))
+        self._on_btn.setEnabled(not on and not self._busy)
+        self._off_btn.setEnabled(on and not self._busy)
+        for widget in (self._plan_cb, self._gamebar_cb, self._vcache_cb, self._lower_cb,
+                       self._svc_tree, self._app_tree):
+            widget.setEnabled(not on and not self._busy)
+
+    def _numbers_text(self, handles: Optional[int], processes: Optional[int]) -> str:
+        d = self._journal.data
+        if self._journal.active and d.get("handles_after") is not None:
+            freed = d.get("handles_before", 0) - d["handles_after"]
+            return (f"Handles {d['handles_before']:,} -> {d['handles_after']:,} ({freed:+,} freed)  ·  "
+                    f"processes {d.get('processes_before')} -> {d.get('processes_after')}")
+        if handles is not None:
+            return f"Now: {handles:,} handles in {processes} processes"
+        return ""
+
+    def _show_error(self, text: str) -> None:
+        if widget_is_valid(self._banner):
+            self._banner.set_error(text)
+
+    def _append(self, payload: str) -> None:
+        if not widget_is_valid(self._log):
+            return
+        level, _, text = payload.partition("\t")
+        mark = {session.OK: "[OK]  ", session.INFO: "[INFO]", session.WARN: "[WARN]",
+                session.BAD: "[BAD] "}.get(level, "      ")
+        self._log.appendPlainText(f"{datetime.datetime.now():%H:%M:%S} {mark} {text}")
+
+    # ---- ON / OFF -----------------------------------------------------------------------------
+    def _confirm_on(self) -> bool:
+        closing = [g.label for g in self._groups if g.exe in self._choices.close]
+        text = ("Game Mode ON will:\n\n"
+                + ("• switch the power plan for gaming\n" if self._choices.plan else "")
+                + f"• stop {len(self._choices.services)} background service(s) if running\n"
+                + (f"• close: {', '.join(closing)}\n" if closing else "")
+                + ("• lower the priority of apps left open\n" if self._choices.lower else "")
+                + "\nSave your work in the apps that will be closed. Game Mode OFF puts everything "
+                  "back as it was, and reopens the closed apps.")
+        return QMessageBox.question(self._widget, "Game Mode ON", text,
+                                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                                    QMessageBox.StandardButton.Ok) == QMessageBox.StandardButton.Ok
+
+    def _turn_on(self) -> None:
+        if self._busy or self._journal.active or not self._confirm_on():
+            return
+        self._busy = True
+        self._show_state()
+        self._log.clear()
+        self._tabs.setCurrentIndex(2)
+        own, sid, system, journal = os.getpid(), _session_id(), self._system, self._journal
+        choices = session.choices_from_config(self._choices.to_config())
+
+        def work(w):
+            log = lambda level, text: w.signals.log_line.emit(f"{level}\t{text}")  # noqa: E731
+            return session.turn_on(system, choices, journal, log, own, sid)
+        self._run(work, self._on_done)
+
+    def _turn_off(self) -> None:
+        if self._busy or not self._journal.active:
+            return
+        self._busy = True
+        self._show_state()
+        self._tabs.setCurrentIndex(2)
+        system, journal = self._system, self._journal
+
+        def work(w):
+            log = lambda level, text: w.signals.log_line.emit(f"{level}\t{text}")  # noqa: E731
+            return session.turn_off(system, journal, log)
+        self._run(work, self._off_done)
+
+    def _run(self, work, done) -> None:
+        w = Worker(work)
+        w.signals.log_line.connect(self._append)
+        w.signals.result.connect(done)
+        w.signals.error.connect(self._failed)
+        self._start(w)
+
+    def _on_done(self, data: dict) -> None:
+        self._busy = False
+        self._start_enforcing()
+        self._append(f"{session.OK}\tGame Mode is ON. Handles {data.get('handles_before', 0):,} -> "
+                     f"{data.get('handles_after', 0):,}, processes {data.get('processes_before')} -> "
+                     f"{data.get('processes_after')}. Leave this app open to keep it tight.")
+        self._show_state()
+
+    def _off_done(self, report: List[dict]) -> None:
+        self._busy = False
+        if self._enforce_timer is not None:
+            self._enforce_timer.stop()
+        _keep_awake(False)
+        bad = sum(1 for r in report if r["level"] == session.BAD)
+        self._append(f"{session.BAD if bad else session.OK}\tGame Mode is OFF -- "
+                     + (f"{bad} item(s) could not be put back, see above." if bad
+                        else "everything is back as it was."))
+        if bad:
+            self._show_error(f"Game Mode OFF: {bad} item(s) could not be put back -- see the Log tab.")
+        self._show_state()
+        self._refresh_all()
+
+    def _failed(self, err) -> None:
+        self._busy = False
+        self._show_error(f"Game Mode stopped with an error: {err}. Whatever was changed is in the "
+                         "journal -- Game Mode OFF puts it back.")
+        self._journal.load()
+        self._show_state()
+
+    def _start_enforcing(self) -> None:
+        _keep_awake(True)
+        if self._enforce_timer is None:
+            self._enforce_timer = QTimer()
+            self._enforce_timer.timeout.connect(self._enforce)
+        self._enforce_timer.start(ENFORCE_MS)
+
+    def _enforce(self) -> None:
+        if self._busy or not self._journal.active:
+            return
+        system, journal = self._system, self._journal
+
+        def work(w):
+            return session.enforce(system, journal,
+                                   lambda level, text: w.signals.log_line.emit(f"{level}\t{text}"))
+        w = Worker(work)
+        w.signals.log_line.connect(self._append)
+        w.signals.error.connect(lambda err: logger.warning("game mode: enforce failed: %s", err))
+        self._start(w)
+
+    def _start(self, w: Worker) -> None:
+        """Track `w` until it finishes -- the enforce tick runs every minute
+        for as long as Game Mode is on, so finished workers must not pile up."""
+        self._workers.append(w)
+        w.signals.finished.connect(lambda: w in self._workers and self._workers.remove(w))
+        self.app.thread_pool.start(w)

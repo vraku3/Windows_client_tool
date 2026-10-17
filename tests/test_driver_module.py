@@ -22,6 +22,13 @@ def _isolated_update_history(tmp_path, monkeypatch):
     monkeypatch.setattr(uh, "_history_path", lambda: str(tmp_path / "update_history.json"))
 
 
+@pytest.fixture(autouse=True)
+def _no_modal_warnings(monkeypatch):
+    """An unconfirmed install/rollback now says so in a QMessageBox.warning;
+    a real modal dialog would hang the run. Tests that care record it."""
+    monkeypatch.setattr(dmod.QMessageBox, "warning", lambda *a, **k: None)
+
+
 def _drivers():
     return [
         DriverInfo(device_name="Real NIC", driver_class="Net", version="1.0",
@@ -1296,6 +1303,7 @@ def test_undo_this_update_rolls_back_the_devices_own_token(monkeypatch):
     called = []
     monkeypatch.setattr(dmod, "rollback_one", lambda token: called.append(token) or
                         dmod.InstallResult(ok=True, reason="", restore_point_taken=True))
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_inf", lambda self, d: "oem12.inf")
     pool = _RecordingPool()
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance", staticmethod(lambda: pool))
     monkeypatch.setattr(dmod.QMessageBox, "question",
@@ -1346,6 +1354,7 @@ def test_undo_this_update_does_not_raise_if_the_token_is_already_gone_when_the_r
         return dmod.InstallResult(ok=True, reason="", restore_point_taken=True)
 
     monkeypatch.setattr(dmod, "rollback_one", fake_rollback)
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_inf", lambda self, d: "oem12.inf")
     monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
                         staticmethod(lambda: _RecordingPool()))
     monkeypatch.setattr(dmod.QMessageBox, "question",
@@ -1356,6 +1365,36 @@ def test_undo_this_update_does_not_raise_if_the_token_is_already_gone_when_the_r
     mod._undo_this_update(driver)  # must not raise KeyError
     assert mod._applied_update_tokens == {}
     assert shown
+
+
+def test_undo_this_update_accepted_by_pnputil_but_not_applied_keeps_the_token(monkeypatch):
+    """pnputil exits 0 while Windows keeps the newer, better-ranked driver:
+    that is not a rollback, and the undo must stay available."""
+    mod = _module()
+    driver = DriverInfo(device_name="A", driver_class="Net", version="1.0",
+                        date="", publisher="V", signed=True, error_code=0,
+                        flags="", inf_name="oem12.inf", device_id="PCI\\DEV1")
+    mod._applied_update_tokens["PCI\\DEV1"] = "oem12.inf"
+    monkeypatch.setattr(dmod, "rollback_one", lambda token:
+                        dmod.InstallResult(ok=True, reason="", restore_point_taken=True))
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_inf", lambda self, d: "oem77.inf")
+    monkeypatch.setattr(dmod.QThreadPool, "globalInstance",
+                        staticmethod(lambda: _RecordingPool()))
+    monkeypatch.setattr(dmod.QMessageBox, "question",
+                        lambda *a, **k: dmod.QMessageBox.StandardButton.Yes)
+    warned, shown = [], []
+    monkeypatch.setattr(dmod.QMessageBox, "warning", lambda *a, **k: warned.append(a[2]))
+    monkeypatch.setattr(dmod.QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    mod._undo_this_update(driver)
+    assert not shown
+    assert warned and "still uses oem77.inf" in warned[0]
+    assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
+
+
+def test_install_verdict_needs_a_changed_version_read_back():
+    assert dmod._install_verdict("1.0", "2.0")[0] is True
+    assert dmod._install_verdict("1.0", "1.0")[0] is False
+    assert dmod._install_verdict("1.0", None)[0] is False
 
 
 def test_undo_this_update_reports_a_rollback_failure(monkeypatch):
@@ -1395,9 +1434,22 @@ def test_undo_this_update_does_nothing_if_the_user_declines_the_confirm(monkeypa
     assert mod._applied_update_tokens == {"PCI\\DEV1": "oem12.inf"}
 
 
+def _rolled_back_drivers(mod, monkeypatch, now_inf_by_id):
+    """Known drivers for these device ids, and the INF each uses after the
+    rollback (the read-back that decides whether it really went back)."""
+    mod._drivers_ref[0] = [
+        DriverInfo(device_name=dev, driver_class="Net", version="2.0", date="",
+                   publisher="V", signed=True, error_code=0, flags="",
+                   inf_name="oem50.inf", device_id=dev)
+        for dev in now_inf_by_id]
+    monkeypatch.setattr(dmod.DriverModule, "_reread_driver_inf",
+                        lambda self, d: now_inf_by_id.get(d.device_id))
+
+
 def test_undo_all_updates_this_session_reports_every_result(monkeypatch):
     mod = _module()
     mod._applied_update_tokens.update({"PCI\\DEV1": "oem1.inf", "PCI\\DEV2": "oem2.inf"})
+    _rolled_back_drivers(mod, monkeypatch, {"PCI\\DEV1": "oem1.inf", "PCI\\DEV2": "oem9.inf"})
     monkeypatch.setattr(dmod, "bulk_rollback_all", lambda tokens: [
         dmod.InstallResult(ok=True, reason="", restore_point_taken=True),
         dmod.InstallResult(ok=False, reason="not found", restore_point_taken=True),
@@ -1454,6 +1506,7 @@ def test_undo_all_updates_this_session_keeps_the_failed_token_only(monkeypatch):
     device_id's token remains afterward, not an empty dict."""
     mod = _module()
     mod._applied_update_tokens.update({"PCI\\OK": "oem1.inf", "PCI\\FAIL": "oem2.inf"})
+    _rolled_back_drivers(mod, monkeypatch, {"PCI\\OK": "oem1.inf", "PCI\\FAIL": "oem9.inf"})
 
     def fake_bulk(tokens):
         # Positionally aligned with the input token list.

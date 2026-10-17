@@ -133,6 +133,16 @@ def test_cancelling_the_bundle_still_zips_what_was_collected(tmp_path, monkeypat
     assert os.path.isfile(bundle.path)
 
 
+def test_a_library_check_that_printed_errors_is_not_ok_even_at_exit_0(tmp_path, monkeypatch):
+    """Built-ins print each ErrorRecord as `ERROR:` and exit 0."""
+    script = sb.library.BUILT_IN[0]
+    monkeypatch.setattr(sb.library, "run", lambda *a, **k: sb.library.RunResult(
+        script_id=script.id, returncode=0, lines=["Name : x", "ERROR: Access is denied"]))
+    res = sb._run_step(sb.Step("Check", "check.txt", script=script),
+                       str(tmp_path / "check.txt"), elevated=True, is_cancelled=lambda: False)
+    assert res.status == sb.FAILED and "Access is denied" in res.detail
+
+
 def test_the_bundle_plan_skips_library_checks_it_already_exports():
     names = {s.filename for s in sb.steps()}
     assert "checks/ipconfig.txt" not in names and "ipconfig_all.txt" in names

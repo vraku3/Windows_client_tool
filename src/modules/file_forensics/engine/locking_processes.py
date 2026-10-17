@@ -34,6 +34,16 @@ def find_locking_processes(path: str) -> Tuple[List[LockingProcess], str]:
     procs = [
         LockingProcess(pid=m.pid, process=m.process, type_name=m.type_name)
         for m in report.matches
-        if m.type_name == "File"
+        if m.type_name == "File" and is_same_file(m.detail, device_path)
     ]
     return procs, report.summary()
+
+
+def is_same_file(handle_name: str, device_path: str) -> bool:
+    """`find()` matches a SUBSTRING, so `report.log` also finds handles on
+    `report.log.old` and `report.log.bak\\x` -- and this answer feeds "Kill
+    locking process". Only the file itself, or one of its NTFS streams
+    (`file:stream`), counts. NT names compare case-insensitively."""
+    name = (handle_name or "").lower()
+    target = device_path.lower()
+    return name == target or name.startswith(target + ":")

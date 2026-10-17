@@ -346,13 +346,18 @@ class QuickFixModule(BaseModule):
             hdr.setVisible(visible_by_category[cat_name])
 
     def on_deactivate(self) -> None:
-        for card in self._cards:
-            card.cancel()
-        self._workers.clear()
+        # Leaving the pane does NOT cancel a running fix. `action.fn` never
+        # reads the cancel flag, so sfc/DISM/netsh keep running whatever the
+        # card says -- marking it "Cancelled" re-enabled Run and let a second
+        # DISM start on top of the first. The cards outlive the pane being
+        # hidden, so the run finishes and records its real outcome.
+        pass
 
     def on_start(self, app) -> None:
         self.app = app
 
     def on_stop(self) -> None:
-        self.on_deactivate()
+        for card in self._cards:
+            card.cancel()
+        self._workers.clear()
         self.cancel_all_workers()

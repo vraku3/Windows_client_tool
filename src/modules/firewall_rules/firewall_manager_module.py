@@ -167,8 +167,22 @@ def fetch_firewall_rules() -> List[FirewallRule]:
         capture_output=True, text=True, timeout=120,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
-    raw = proc.stdout
-    return _parse_rules(raw)
+    raw = proc.stdout or ""
+    rules = _parse_rules(raw)
+    # A read that yields no rules is never "no rules": every Windows install
+    # ships hundreds. An empty list here is a refusal, a failed call or output
+    # we cannot parse (field names are localised -- a non-English Windows
+    # prints no "Rule Name:"), and callers verify deletions against this list,
+    # so an empty one would confirm a delete that never happened.
+    if not rules:
+        detail = ((raw or "") + (proc.stderr or "")).strip()[:300]
+        raise RuntimeError(
+            "could not read the firewall rules (netsh exit %d)%s" % (
+                proc.returncode,
+                ": " + detail if detail else "")
+            + ("" if proc.returncode else
+               " -- the output could not be parsed; only English netsh output is understood"))
+    return rules
 
 
 def _parse_rules(raw: str) -> List[FirewallRule]:

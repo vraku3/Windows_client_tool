@@ -2149,6 +2149,30 @@ ChatGPT usage limit; these six leads were verified and fixed by Claude):
   created -- Checkpoint-Computer can warn and exit 0. Measured: confirmed
   point #39 in 9.8 s.
 
+Second batch (2026-10-17 afternoon, leads from the rerun that hit the
+ChatGPT limit again; each verified in the code, then fixed):
+
+- **Firewall reads**: `fetch_firewall_rules` RAISES when it parses no rules
+  (refusal, failed call, or localised netsh field names) -- deletes and
+  toggles are verified against that list, and an empty one "confirmed" them.
+- **Driver installs and rollbacks are judged by read-back**:
+  `_install_verdict` (version changed after install) and `_rollback_verdict`
+  (the device's INF is the token again). `pnputil /add-driver old.inf
+  /install` exits 0 while Windows keeps the newer, better-ranked driver, so
+  an unconfirmed rollback keeps its undo token and points to Device Manager.
+- **Quick Fix: leaving the pane no longer "cancels" a fix.** `action.fn`
+  never reads the flag, so sfc/DISM kept running while the card said
+  Cancelled and Run was enabled again. Only `on_stop` cancels.
+- **Thermal**: a header is written into the marker BEFORE its first write
+  (values follow once LHM has captured them), and `recover()` keeps the
+  record of any header it could not hand back.
+- **File Forensics**: `findref.find` matches substrings; a lock now counts
+  only for the exact device path or one of its `:streams`.
+- **Support bundle**: a library check that printed `ERROR:` is FAILED even
+  at exit 0.
+- **Sidebar**: `read_only_unelevated` modules are no longer greyed out
+  unelevated (the registry already starts them).
+
 ## Pending restart (`src/core/pending_reboot.py`)
 
 One answer for the whole app; `windows_utils.is_reboot_pending`, the

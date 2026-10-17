@@ -170,6 +170,22 @@ def test_the_fetch_command_asks_for_verbose(monkeypatch):
     assert "name=all" in captured["args"]
 
 
+@pytest.mark.parametrize("rc, out", [
+    (1, "The requested operation requires elevation.\n"),
+    (0, "Nom de la règle:   Foo\nActivé:   Oui\n"),   # localised field names
+    (0, ""),
+])
+def test_a_read_with_no_rules_raises_instead_of_returning_empty(monkeypatch, rc, out):
+    """Deletes are verified against this list: an empty one would confirm a
+    delete that never happened."""
+    class _Proc:
+        returncode, stdout, stderr = rc, out, ""
+
+    monkeypatch.setattr(fw.subprocess, "run", lambda *a, **k: _Proc())
+    with pytest.raises(RuntimeError, match="could not read the firewall rules"):
+        fw.fetch_firewall_rules()
+
+
 def test_plain_non_verbose_output_yields_no_program(monkeypatch):
     """Documents the failure this fixes: the same rule, without verbose, has
     no Program line at all — so nothing is ever unblockable."""

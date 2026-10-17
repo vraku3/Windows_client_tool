@@ -160,9 +160,17 @@ def _run_step(step: Step, out_path: str, elevated: bool,
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(f"# {step.script.title}\n# {step.script.description}\n\n")
             f.write("\n".join(res.lines) + "\n")
+        # A built-in prints every ErrorRecord as an `ERROR:` line and still
+        # exits 0, so the exit code alone would list a refused read as OK.
+        errors = [ln for ln in res.lines if ln.lstrip().startswith("ERROR:")]
         status = (CANCELLED if res.cancelled else TIMED_OUT if res.timed_out
-                  else OK if res.returncode == 0 else FAILED)
-        detail = "" if status == OK else f"exit {res.returncode}: {_tail(chr(10).join(res.lines))}"
+                  else FAILED if res.returncode != 0 or errors else OK)
+        if status == OK:
+            detail = ""
+        elif res.returncode == 0 and errors and status == FAILED:
+            detail = f"exit 0 but {len(errors)} error line(s): {_tail(errors[0])}"
+        else:
+            detail = f"exit {res.returncode}: {_tail(chr(10).join(res.lines))}"
         return StepResult(step, status, time.monotonic() - start, detail)
     argv = [a.replace("{out}", out_path) for a in step.argv]
     try:

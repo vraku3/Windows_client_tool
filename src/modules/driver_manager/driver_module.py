@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 from html import escape as _html_escape
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -120,6 +120,42 @@ def _date_sort_value(date_str: str) -> float:
         # _populate() (which runs on every refresh, filter keystroke,
         # checkbox toggle and flag-combo change).
         return 0.0
+
+
+def _install_verdict(old_version: str, fresh_version: Optional[str]) -> Tuple[bool, str]:
+    """(confirmed, sentence) for an install the installer called a success.
+
+    The installer's exit code is not evidence: pnputil and Windows Update both
+    succeed when Windows keeps a better-ranked driver it already had. Only the
+    version Windows reports AFTERWARDS, read back and different from before,
+    confirms the device moved. A read that failed is said, never guessed.
+    """
+    if not fresh_version:
+        return False, ("the installer reported success, but the installed version "
+                       "could not be read back -- click Refresh to check")
+    if (old_version or "").strip() == fresh_version.strip():
+        return False, (f"the installer reported success, but Windows still reports "
+                       f"version {fresh_version} -- it may have kept the driver it "
+                       f"already had, or need a restart")
+    return True, f"Windows now reports version {fresh_version}"
+
+
+def _rollback_verdict(token: str, now_inf: Optional[str]) -> Tuple[bool, str]:
+    """(confirmed, sentence) for a rollback pnputil accepted.
+
+    `pnputil /add-driver <old.inf> /install` exits 0 while Windows keeps the
+    device on the NEWER package: it installs the best-ranked driver, and a
+    newer date wins over an older one of the same rank. Only the package the
+    device uses afterwards says whether it moved back.
+    """
+    if not now_inf:
+        return False, ("pnputil accepted the old package, but the driver the device "
+                       "uses now could not be read back -- click Refresh to check")
+    if now_inf.strip().lower() == token.strip().lower():
+        return True, f"the device is back on {token}"
+    return False, (f"pnputil accepted {token}, but the device still uses {now_inf}: "
+                   f"Windows ranks the newer driver higher. Use Device Manager > "
+                   f"Properties > Driver > Roll Back Driver instead")
 
 
 def _ask_baseline_name(parent) -> Optional[str]:
@@ -883,6 +919,21 @@ class DriverModule(BaseModule):
                 return d.version
         return None
 
+    def _reread_driver_inf(self, driver: DriverInfo) -> Optional[str]:
+        """The published INF (oemNN.inf) the device uses NOW, or None when it
+        could not be read. Worker thread only, like _reread_driver_version."""
+        from modules.driver_manager.driver_reader import _fetch_drivers_for_class, DriverReadError
+        try:
+            fresh = _fetch_drivers_for_class(driver.driver_class, old_threshold_days=730)
+        except DriverReadError as exc:
+            logger.warning("driver_module: could not re-read the driver of %s "
+                           "after a rollback: %s", driver.device_name, exc)
+            return None
+        for d in fresh:
+            if d.device_id == driver.device_id:
+                return d.inf_name or None
+        return None
+
     def _ask_install_mode(self, driver: DriverInfo, update) -> Optional[str]:
         """"light", "full", or None (cancelled) -- a separate method
         (rather than an inlined QMessageBox call) so tests can
@@ -1085,10 +1136,14 @@ class DriverModule(BaseModule):
                 driver.device_id, driver.device_name, update.vendor,
                 update.latest_version, fresh_version, mode)
             self._refresh_status_cell_for_device(driver.device_id, driver)
-            QMessageBox.information(self._widget, "Check for Vendor Update",
-                                   f"{driver.device_name} updated to "
-                                   f"{update.latest_version}. Click Refresh "
-                                   f"to see the change.")
+            confirmed, verdict = _install_verdict(driver.version, fresh_version)
+            if confirmed:
+                QMessageBox.information(self._widget, "Check for Vendor Update",
+                                        f"{driver.device_name}: {verdict} "
+                                        f"(offered {update.latest_version}).")
+            else:
+                QMessageBox.warning(self._widget, "Check for Vendor Update",
+                                    f"{driver.device_name}: {verdict}.")
 
         def on_error(err_str: str) -> None:
             if not widget_is_valid(self._widget):
@@ -1207,10 +1262,14 @@ class DriverModule(BaseModule):
                 f"Windows Update ({match.manufacturer})",
                 match.title, fresh_version, "windows_update")
             self._refresh_status_cell_for_device(driver.device_id, driver)
-            QMessageBox.information(
-                self._widget, "Check Windows Update",
-                f"{driver.device_name} updated via Windows Update. Click "
-                f"Refresh to see the change.")
+            confirmed, verdict = _install_verdict(driver.version, fresh_version)
+            if confirmed:
+                QMessageBox.information(
+                    self._widget, "Check Windows Update",
+                    f"{driver.device_name} updated via Windows Update: {verdict}.")
+            else:
+                QMessageBox.warning(self._widget, "Check Windows Update",
+                                    f"{driver.device_name}: {verdict}.")
 
         def on_error(err_str: str) -> None:
             if not widget_is_valid(self._widget):
@@ -1475,6 +1534,7 @@ class DriverModule(BaseModule):
             device_ids, results, fresh_versions = payload
             succeeded_devices = []
             failed_lines = []
+            unconfirmed_lines = []
             for device_id, result in zip(device_ids, results):
                 driver = id_to_driver.get(device_id)
                 if driver is None:
@@ -1487,8 +1547,15 @@ class DriverModule(BaseModule):
                     f"Windows Update ({wu_found[device_id].manufacturer})",
                     wu_found[device_id].title, fresh_versions.get(device_id), "windows_update")
                 succeeded_devices.append(driver)
+                confirmed, verdict = _install_verdict(driver.version, fresh_versions.get(device_id))
+                if not confirmed:
+                    unconfirmed_lines.append(f"- {driver.device_name}: {verdict}")
             self._refresh_status_cells_for_devices(succeeded_devices)
-            summary = f"Installed {len(succeeded_devices)} of {len(results)} update(s) via Windows Update."
+            summary = (f"Installed {len(succeeded_devices)} of {len(results)} update(s) via "
+                       f"Windows Update, {len(succeeded_devices) - len(unconfirmed_lines)} "
+                       f"confirmed by the version Windows now reports.")
+            if unconfirmed_lines:
+                summary += "\n\nNot confirmed:\n" + "\n".join(unconfirmed_lines)
             if failed_lines:
                 summary += "\n\nNot installed:\n" + "\n".join(failed_lines)
             QMessageBox.information(self._widget, "Check All for Updates", summary)
@@ -1575,6 +1642,7 @@ class DriverModule(BaseModule):
                 self._status_lbl.setText("Click Refresh to load drivers.")
             succeeded = 0
             failed_lines = []
+            unconfirmed_lines = []
             updated_devices = []
             for driver, provider, update, install_result, token, fresh_version, dl_reason in results:
                 if install_result is None:
@@ -1584,6 +1652,9 @@ class DriverModule(BaseModule):
                     failed_lines.append(f"- {driver.device_name}: {install_result.reason}")
                     continue
                 succeeded += 1
+                confirmed, verdict = _install_verdict(driver.version, fresh_version)
+                if not confirmed:
+                    unconfirmed_lines.append(f"- {driver.device_name}: {verdict}")
                 if token and driver.device_id:
                     self._applied_update_tokens[driver.device_id] = token
                 update_history.record_applied(
@@ -1596,7 +1667,11 @@ class DriverModule(BaseModule):
             self._refresh_status_cells_for_devices(updated_devices)
             if self._applied_update_tokens:
                 self._refresh_undo_all_button_state()
-            summary = f"Installed {succeeded} of {len(results)} update(s)."
+            summary = (f"Installed {succeeded} of {len(results)} update(s), "
+                       f"{succeeded - len(unconfirmed_lines)} confirmed by the "
+                       f"version Windows now reports.")
+            if unconfirmed_lines:
+                summary += "\n\nNot confirmed:\n" + "\n".join(unconfirmed_lines)
             if failed_lines:
                 summary += "\n\nNot installed:\n" + "\n".join(failed_lines)
             QMessageBox.information(self._widget, "Check All for Updates", summary)
@@ -1638,16 +1713,25 @@ class DriverModule(BaseModule):
             self._status_lbl.setText(f"Rolling back {driver.device_name}...")
 
         def do_undo(worker):
-            return rollback_one(token)
+            result = rollback_one(token)
+            now_inf = self._reread_driver_inf(driver) if result.ok else None
+            return result, now_inf
 
         worker = Worker(do_undo)
 
-        def on_result(result) -> None:
+        def on_result(payload) -> None:
             if not widget_is_valid(self._widget):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            if result.ok:
+            result, now_inf = payload
+            confirmed, verdict = _rollback_verdict(token, now_inf) if result.ok else (False, "")
+            if result.ok and not confirmed:
+                # Keep the token: nothing was undone, and the row's undo
+                # action must not vanish as if it had been.
+                QMessageBox.warning(self._widget, "Undo This Update",
+                                    f"{driver.device_name}: {verdict}.")
+            elif result.ok:
                 # Guarded, not a bare del: a concurrent "Undo All Updates
                 # This Session" can finish first and clear the whole dict
                 # (or, less exotically, this same row's undo can be
@@ -1663,7 +1747,7 @@ class DriverModule(BaseModule):
                 if driver.device_id in self._applied_update_tokens:
                     del self._applied_update_tokens[driver.device_id]
                 QMessageBox.information(self._widget, "Undo This Update",
-                                       f"{driver.device_name} was rolled back.")
+                                       f"{driver.device_name}: {verdict}.")
             else:
                 self._error_banner.set_error(f"Could not roll back: {result.reason}")
             self._refresh_undo_all_button_state()
@@ -1703,22 +1787,34 @@ class DriverModule(BaseModule):
         if self._status_lbl:
             self._status_lbl.setText(f"Rolling back {len(tokens)} update(s)...")
 
+        by_id = {d.device_id: d for d in self._drivers_ref[0] if d.device_id}
+
         def do_undo_all(worker):
-            return bulk_rollback_all(tokens)
+            results = bulk_rollback_all(tokens)
+            verdicts = []
+            for (device_id, token), result in zip(device_ids_and_tokens, results):
+                if not result.ok:
+                    verdicts.append((False, result.reason))
+                    continue
+                d = by_id.get(device_id)
+                now_inf = self._reread_driver_inf(d) if d is not None else None
+                verdicts.append(_rollback_verdict(token, now_inf))
+            return verdicts
 
         worker = Worker(do_undo_all)
 
-        def on_result(results) -> None:
+        def on_result(verdicts) -> None:
             if not widget_is_valid(self._widget):
                 return
             if self._status_lbl:
                 self._status_lbl.setText("Click Refresh to load drivers.")
-            succeeded = sum(1 for r in results if r.ok)
-            failures = [r.reason for r in results if not r.ok]
-            # Only drop the device_ids whose rollback actually succeeded --
-            # a failed one stays in the dict, retryable.
-            for (device_id, _token), result in zip(device_ids_and_tokens, results):
-                if result.ok:
+            succeeded = sum(1 for ok, _ in verdicts if ok)
+            failures = [why for ok, why in verdicts if not ok]
+            results = verdicts
+            # Only drop the device_ids whose rollback was confirmed by the
+            # driver the device uses now -- any other stays, retryable.
+            for (device_id, _token), (ok, _why) in zip(device_ids_and_tokens, verdicts):
+                if ok:
                     self._applied_update_tokens.pop(device_id, None)
             message = f"{succeeded} of {len(results)} rolled back successfully."
             if failures:

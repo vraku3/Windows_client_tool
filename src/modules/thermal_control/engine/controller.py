@@ -50,6 +50,7 @@ class FanController:
             return []
         self.bridge.read()                       # learn the controls before releasing them
         released = []
+        failed: Dict[str, Optional[dict]] = {}
         for control_id, values in saved.items():
             try:
                 if values:
@@ -62,8 +63,12 @@ class FanController:
             except Exception as e:  # a .NET exception from the driver path
                 logger.error("could not hand %s back to the BIOS after a crash: %s", control_id, e)
                 self.last_errors.append(f"{control_id}: {e}")
-        self._defaults.clear()
-        self._write_marker([])
+                failed[control_id] = values
+        # A header that could not be handed back keeps its record (and its
+        # BIOS values): deleting it would make the next start believe the
+        # fan is fine while it is still stuck at its last duty.
+        self._defaults = dict(failed)
+        self._write_marker(list(failed))
         if released:
             logger.warning("a previous run did not release %s; handed back to the BIOS", released)
         return released
@@ -85,8 +90,13 @@ class FanController:
     def _write_marker(self, ids: List[str]) -> None:
         try:
             if ids:
+                touched = set(getattr(self.bridge, "touched", ()) or ())
                 for cid in ids:
-                    if cid not in self._defaults:
+                    # The BIOS mode exists only once the library has taken the
+                    # header over (it captures it on the first write), so a
+                    # header about to be written is listed without values and
+                    # captured on the write after.
+                    if cid not in self._defaults and cid in touched:
                         self._defaults[cid] = self._capture_default(cid)
                 os.makedirs(os.path.dirname(self.marker_path) or ".", exist_ok=True)
                 with open(self.marker_path, "w", encoding="utf-8") as f:
@@ -129,6 +139,9 @@ class FanController:
             if self.closed:
                 return sensors, []
             decisions = cv.step(self.curves, temps, self._states)
+            # Record BEFORE the first write: a crash between a takeover and
+            # its record would leave a fan stuck with nothing to recover it.
+            self._mark_before_write([d.control_id for d in decisions])
             for d in decisions:
                 try:
                     self.bridge.set_percent(d.control_id, d.percent)
@@ -145,8 +158,15 @@ class FanController:
         with self._apply_lock:
             if self.closed:
                 return
+            self._mark_before_write([control_id])
             self.bridge.set_percent(control_id, 100.0)
             self._write_marker(self.bridge.touched)
+
+    def _mark_before_write(self, control_ids: List[str]) -> None:
+        touched = list(self.bridge.touched)
+        new = [cid for cid in control_ids if cid not in touched]
+        if new:
+            self._write_marker(touched + new)
 
     def end_boost(self, control_id: str) -> None:
         """Back to the curve if the header has one, else to the BIOS."""

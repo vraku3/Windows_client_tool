@@ -287,7 +287,10 @@ class MainWindow(QMainWindow):
             name=module.name,
             icon=getattr(module, "icon", ""),
             display=module.name,
-            requires_admin=module.requires_admin,
+            # A module that opens read-only unelevated is not greyed out: the
+            # registry already lets it start, and the pane says what it cannot do.
+            requires_admin=(module.requires_admin
+                            and not getattr(module, "read_only_unelevated", False)),
         )
 
         # Auto-select first enabled module. Both the build and the

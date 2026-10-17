@@ -60,3 +60,23 @@ def test_only_file_type_matches_are_kept(monkeypatch):
     procs, _ = lp.find_locking_processes(r"C:\f.txt")
     assert len(procs) == 1
     assert procs[0].process == "notepad"
+
+
+def test_a_handle_on_a_longer_name_is_not_a_lock_on_this_file(monkeypatch):
+    """find() matches substrings; this answer feeds "Kill locking process"."""
+    target = r"\Device\HarddiskVolume3\logs\report.log"
+    monkeypatch.setattr(lp, "to_device_path", lambda p: target)
+
+    def match(pid, detail):
+        return type("M", (), {"pid": pid, "process": f"p{pid}", "kind": "Handle",
+                              "type_name": "File", "detail": detail})()
+
+    class _FakeReport:
+        matches = [match(1, target + ".old"), match(2, target + r".bak\x"),
+                   match(3, target.upper()), match(4, target + ":Zone.Identifier")]
+        def summary(self):
+            return "ok"
+
+    monkeypatch.setattr(lp, "find", lambda *a, **k: _FakeReport())
+    procs, _ = lp.find_locking_processes(r"C:\logs\report.log")
+    assert [p.pid for p in procs] == [3, 4]

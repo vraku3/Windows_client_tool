@@ -213,6 +213,41 @@ def test_the_marker_carries_the_bios_mode_and_recovery_puts_it_back(tmp_path):
     assert second_bridge.restored == [(FAN1, 0x40, 97)] and second_bridge.released == []
 
 
+def test_the_header_is_recorded_before_the_first_write(tmp_path):
+    """A crash between the takeover and its record left a fan stuck with
+    nothing for the next start to recover."""
+    marker = tmp_path / "active.json"
+    seen = []
+
+    class _Watching(SavingBridge):
+        def set_percent(self, cid, pct):
+            seen.append(json.load(open(marker))["controls"] if marker.exists() else None)
+            super().set_percent(cid, pct)
+
+    ctl = FanController(_Watching(), str(marker))
+    ctl.curves.upsert(_curve())
+    ctl.tick()
+    assert seen == [{FAN1: None}]                       # listed, values come after the write
+    assert json.load(open(marker))["controls"][FAN1] == {"mode": 0x40, "pwm": 97}
+
+
+def test_a_header_recovery_could_not_hand_back_keeps_its_record(tmp_path):
+    marker = tmp_path / "active.json"
+    marker.write_text(json.dumps({"controls": {FAN1: {"mode": 0x40, "pwm": 97},
+                                               PUMP: {"mode": 0x40, "pwm": 255}}}),
+                      encoding="utf-8")
+
+    class _Refusing(SavingBridge):
+        def restore_saved_default(self, cid, mode, pwm):
+            if cid == PUMP:
+                raise RuntimeError("driver said no")
+            super().restore_saved_default(cid, mode, pwm)
+
+    ctl = FanController(_Refusing(), str(marker))
+    assert ctl.recover() == [FAN1]
+    assert json.load(open(marker))["controls"] == {PUMP: {"mode": 0x40, "pwm": 255}}
+
+
 def test_an_old_style_marker_without_values_is_released_and_flagged(tmp_path):
     marker = tmp_path / "active.json"
     marker.write_text(json.dumps({"controls": [FAN1]}), encoding="utf-8")

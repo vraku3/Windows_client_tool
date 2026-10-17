@@ -311,6 +311,11 @@ class ProcessesTab(QWidget):
         for worker in self._workers:
             worker.cancel()
         self._workers.clear()
+        # A cancelled Worker emits `cancelled`, never `result`/`error`, so the
+        # flags its handlers would have cleared stayed True: leaving the tab
+        # mid-refresh froze the process list for the life of the app.
+        self._busy = False
+        self._services_busy = False
 
     # ---- reading --------------------------------------------------------
 

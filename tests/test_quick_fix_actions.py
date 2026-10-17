@@ -105,6 +105,40 @@ def test_print_queue_restarts_the_spooler_even_if_a_delete_fails(monkeypatch, ou
     assert ("start", "Spooler") in calls, "spooler was not restarted after a failed delete"
 
 
+def test_a_failed_command_is_tracked_as_a_failed_step(output):
+    """The card recorded "ok" for any fix that returned, refused or not."""
+    _lines, cb = output
+    fix_actions.begin_tracking()
+    fix_actions._run_cmd(["definitely-not-a-real-exe-9f3a"], cb)
+    fix_actions._run_cmd(["definitely-not-a-real-exe-9f3a"], cb, tolerate_failure=True)
+    failed = fix_actions.end_tracking()
+    assert len(failed) == 1 and "exited with code -1" in failed[0]
+
+
+def test_wu_reset_renames_nothing_unless_every_service_stopped(monkeypatch, output):
+    _lines, cb = output
+    renamed, started = [], []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, _cb: name != "bits")
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, _cb: started.append(name))
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "rename", lambda a, b: renamed.append((a, b)))
+    fix_actions.reset_windows_update(cb)
+    assert renamed == []
+    assert started == ["wuauserv", "cryptsvc", "bits", "msiserver"]
+
+
+def test_wu_reset_renames_rather_than_deletes(monkeypatch, output):
+    _lines, cb = output
+    renamed = []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, _cb: True)
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, _cb: None)
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "rename", lambda a, b: renamed.append((a, b)))
+    fix_actions.reset_windows_update(cb)
+    assert [a.lower().endswith(("softwaredistribution", "catroot2")) for a, _ in renamed] == [True, True]
+    assert all(".old-" in b for _, b in renamed)
+
+
 # ── every action is wired up ───────────────────────────────────────────
 
 def test_every_declared_fix_has_a_callable_behind_it():

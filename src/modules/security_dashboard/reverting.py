@@ -74,6 +74,13 @@ def _verify(control: Optional[SecurityControl], control_id: str,
                    f"{observed!r}, not the {expected!r} it had before the "
                    "change")
 
+    if observed is None:
+        # A refused read differs from every value, so without this check
+        # "could not look" was reported as "verified reverted".
+        return ControlResult(
+            control_id, ControlState.APPLIED_UNVERIFIED, None, None,
+            reason="the revert reported success, but the setting could not be "
+                   "read back to confirm it")
     if observed != before:
         return ControlResult(control_id, ControlState.APPLIED_VERIFIED,
                              None, observed)

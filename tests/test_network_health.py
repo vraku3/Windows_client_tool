@@ -51,6 +51,19 @@ def test_no_default_route_is_error():
     assert by_id(f)["gateway"].severity == h.ERROR
 
 
+def test_a_refused_route_read_is_unknown_not_no_gateway():
+    """Try-Get turned every failure into an empty list; a refused
+    Get-NetRoute read as "No default gateway on any connected adapter"."""
+    parsed = h.parse_snapshot_json(
+        '{"adapters":[],"routes":[],"failed":["routes: Access is denied"]}')
+    assert parsed["unread"] == ["routes"]
+    s = snap(routes=[], unread=["routes"],
+             errors=["Could not read routes: Access is denied"])
+    f = by_id(h.evaluate(s, {}))
+    assert "gateway" not in f
+    assert f["read"].severity == h.UNKNOWN
+
+
 def test_apipa_only_counts_on_connected_adapters():
     disconnected = snap(adapters=[adapter(1, "Ethernet"), adapter(2, "Wi-Fi", status="Disconnected")],
                         addresses=[{"InterfaceIndex": 2, "IPAddress": "169.254.1.1", "AddressFamily": 2}])

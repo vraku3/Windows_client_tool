@@ -1,7 +1,7 @@
 import glob as _glob
 import os
-import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
@@ -36,9 +36,44 @@ class FixAction:
     # long-running DISM calls from everything else's worker pool.
 
 
+_tracking = threading.local()
+
+
+def begin_tracking() -> None:
+    """Start collecting failed steps for the fix running on this thread.
+
+    The card used to record "ok" whenever the function returned, while most
+    fixes ignored their commands' exit codes -- a refused `netsh` or `DISM`
+    run was logged as a success. `_run_cmd` and the service helpers now note
+    every failure here, and the card fails the run when there are any."""
+    _tracking.failures = []
+
+
+def end_tracking() -> List[str]:
+    failures = list(getattr(_tracking, "failures", None) or [])
+    _tracking.failures = None
+    return failures
+
+
+def _note_failure(message: str) -> None:
+    failures = getattr(_tracking, "failures", None)
+    if failures is not None:
+        failures.append(message)
+
+
 def _run_cmd(cmd: List[str], output_cb: Callable[[str], None],
-             input_bytes: bytes = None) -> int:
-    """Run a command, streaming output line by line via output_cb. Returns exit code."""
+             input_bytes: bytes = None, tolerate_failure: bool = False) -> int:
+    """Run a command, streaming output line by line via output_cb. Returns
+    exit code; a non-zero one is noted as a failed step unless the caller
+    reports it itself (`tolerate_failure`)."""
+    rc = _run_cmd_raw(cmd, output_cb, input_bytes)
+    if rc != 0 and not tolerate_failure:
+        _note_failure(f"{os.path.basename(cmd[0])} exited with code {rc}")
+    return rc
+
+
+def _run_cmd_raw(cmd: List[str], output_cb: Callable[[str], None],
+                 input_bytes: bytes = None) -> int:
     try:
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -58,24 +93,42 @@ def _run_cmd(cmd: List[str], output_cb: Callable[[str], None],
         return -1
 
 
-def _stop_service(name: str, output_cb: Callable[[str], None]) -> None:
+_SERVICE_WAIT_S = 30
+
+
+def _stop_service(name: str, output_cb: Callable[[str], None]) -> bool:
+    """Stop a service and WAIT until it is stopped. True once it is.
+
+    `StopService` only sends the control: the service is often still
+    STOP_PENDING when it returns, so whatever ran next (deleting its cache)
+    raced it. A service that was already stopped is fine."""
     output_cb(f"Stopping {name}...")
     try:
+        import win32service
         import win32serviceutil
-        win32serviceutil.StopService(name)
+        if win32serviceutil.QueryServiceStatus(name)[1] != win32service.SERVICE_STOPPED:
+            win32serviceutil.StopService(name)
+            win32serviceutil.WaitForServiceStatus(name, win32service.SERVICE_STOPPED,
+                                                  _SERVICE_WAIT_S)
         output_cb(f"{name} stopped.")
+        return True
     except Exception as e:
         output_cb(f"Could not stop {name}: {e}")
+        _note_failure(f"could not stop {name}: {e}")
+        return False
 
 
 def _start_service(name: str, output_cb: Callable[[str], None]) -> None:
     output_cb(f"Starting {name}...")
     try:
+        import win32service
         import win32serviceutil
-        win32serviceutil.StartService(name)
+        if win32serviceutil.QueryServiceStatus(name)[1] != win32service.SERVICE_RUNNING:
+            win32serviceutil.StartService(name)
         output_cb(f"{name} started.")
     except Exception as e:
         output_cb(f"Could not start {name}: {e}")
+        _note_failure(f"could not start {name}: {e}")
 
 
 def rebuild_icon_cache(output_cb: Callable[[str], None]) -> None:
@@ -159,23 +212,32 @@ def ip_release_renew(output_cb: Callable[[str], None]) -> None:
 
 
 def reset_windows_update(output_cb: Callable[[str], None]) -> None:
+    """Microsoft's documented reset: stop the services, RENAME
+    SoftwareDistribution and catroot2 (Windows recreates both), start them
+    again. Renaming, not deleting, so the old folders stay as the way back,
+    and only once every service has actually stopped -- deleting while one
+    was still STOP_PENDING left half-removed folders."""
     services = ["wuauserv", "cryptsvc", "bits", "msiserver"]
-    for svc in services:
-        _stop_service(svc, output_cb)
-    dirs_to_clear = [
-        r"C:\Windows\SoftwareDistribution",
-        r"C:\Windows\System32\catroot2",
-    ]
-    for d in dirs_to_clear:
-        if os.path.isdir(d):
+    stopped = [_stop_service(svc, output_cb) for svc in services]
+    if all(stopped):
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        windir = os.environ.get("SystemRoot", r"C:\Windows")
+        for d in (os.path.join(windir, "SoftwareDistribution"),
+                  os.path.join(windir, "System32", "catroot2")):
+            if not os.path.isdir(d):
+                continue
+            target = f"{d}.old-{stamp}"
             try:
-                shutil.rmtree(d)
-                output_cb(f"Deleted: {d}")
+                os.rename(d, target)
+                output_cb(f"Renamed {d} -> {target} (delete it once updates work again)")
             except OSError as e:
-                output_cb(f"Error deleting {d}: {e}")
+                output_cb(f"Could not rename {d}: {e}")
+                _note_failure(f"could not rename {d}: {e}")
+    else:
+        output_cb("Not every service stopped, so nothing was renamed.")
     for svc in services:
         _start_service(svc, output_cb)
-    output_cb("Windows Update reset complete.")
+    output_cb("Windows Update reset finished.")
 
 
 def reregister_wu_dlls(output_cb: Callable[[str], None]) -> None:
@@ -188,7 +250,9 @@ def reregister_wu_dlls(output_cb: Callable[[str], None]) -> None:
         "wuaueng.dll", "wuaueng1.dll", "wucltui.dll", "wups.dll", "wups2.dll", "wuweb.dll",
     ]
     for dll in dlls:
-        rc = _run_cmd(["regsvr32", "/s", dll], output_cb)
+        # Several of these DLLs no longer exist on Windows 10/11; a failure
+        # is reported per DLL below, not as a failed fix.
+        rc = _run_cmd(["regsvr32", "/s", dll], output_cb, tolerate_failure=True)
         output_cb(f"regsvr32 {dll}: {'OK' if rc == 0 else 'Failed'}")
     output_cb("Done.")
 

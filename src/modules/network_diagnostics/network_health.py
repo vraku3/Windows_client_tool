@@ -54,16 +54,27 @@ WELL_KNOWN_SUFFIXES = (
 
 _PS_SNAPSHOT = r"""
 $ErrorActionPreference='Stop'
-function Try-Get($b){ try { & $b } catch { $null } }
+$global:failed=@()
+function Try-Get($n,$b){ try { & $b } catch { $global:failed += ,($n + ': ' + $_.Exception.Message); $null } }
 $o=[ordered]@{}
-$o.adapters=@(Try-Get { Get-NetAdapter -IncludeHidden:$false | Select-Object Name,InterfaceDescription,Status,MacAddress,LinkSpeed,InterfaceIndex,MediaType,FullDuplex,DriverVersionString,DriverProvider,@{n='DriverDate';e={if($_.DriverDate){$_.DriverDate.ToString('yyyy-MM-dd')}}} })
-$o.addresses=@(Try-Get { Get-NetIPAddress | Select-Object InterfaceIndex,IPAddress,AddressFamily,PrefixLength,PrefixOrigin,AddressState })
-$o.routes=@(Try-Get { Get-NetRoute | Where-Object { $_.DestinationPrefix -in '0.0.0.0/0','::/0' } | Select-Object InterfaceIndex,DestinationPrefix,NextHop,RouteMetric,InterfaceMetric })
-$o.dns=@(Try-Get { Get-DnsClientServerAddress | Select-Object InterfaceIndex,AddressFamily,ServerAddresses })
-$o.ifaces=@(Try-Get { Get-NetIPInterface | Select-Object InterfaceIndex,AddressFamily,Dhcp,InterfaceMetric,NlMtu })
-$o.dhcp=@(Try-Get { Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'DHCPEnabled=True' | Select-Object InterfaceIndex,DHCPServer,@{n='LeaseObtained';e={if($_.DHCPLeaseObtained){$_.DHCPLeaseObtained.ToString('o')}}},@{n='LeaseExpires';e={if($_.DHCPLeaseExpires){$_.DHCPLeaseExpires.ToString('o')}}} })
+$o.adapters=@(Try-Get adapters { Get-NetAdapter -IncludeHidden:$false | Select-Object Name,InterfaceDescription,Status,MacAddress,LinkSpeed,InterfaceIndex,MediaType,FullDuplex,DriverVersionString,DriverProvider,@{n='DriverDate';e={if($_.DriverDate){$_.DriverDate.ToString('yyyy-MM-dd')}}} })
+$o.addresses=@(Try-Get addresses { Get-NetIPAddress | Select-Object InterfaceIndex,IPAddress,AddressFamily,PrefixLength,PrefixOrigin,AddressState })
+$o.routes=@(Try-Get routes { Get-NetRoute | Where-Object { $_.DestinationPrefix -in '0.0.0.0/0','::/0' } | Select-Object InterfaceIndex,DestinationPrefix,NextHop,RouteMetric,InterfaceMetric })
+$o.dns=@(Try-Get dns { Get-DnsClientServerAddress | Select-Object InterfaceIndex,AddressFamily,ServerAddresses })
+$o.ifaces=@(Try-Get ifaces { Get-NetIPInterface | Select-Object InterfaceIndex,AddressFamily,Dhcp,InterfaceMetric,NlMtu })
+$o.dhcp=@(Try-Get dhcp { Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'DHCPEnabled=True' | Select-Object InterfaceIndex,DHCPServer,@{n='LeaseObtained';e={if($_.DHCPLeaseObtained){$_.DHCPLeaseObtained.ToString('o')}}},@{n='LeaseExpires';e={if($_.DHCPLeaseExpires){$_.DHCPLeaseExpires.ToString('o')}}} })
+$o.failed=@($global:failed)
 $o | ConvertTo-Json -Depth 4 -Compress
 """
+
+# Sections a failed query left empty. An empty list there is "could not
+# read", never "none configured": a refused Get-NetRoute had read as "No
+# default gateway on any connected adapter".
+_SECTIONS = ("adapters", "addresses", "routes", "dns", "ifaces", "dhcp")
+
+
+def _unread(snap: Dict[str, Any], *keys: str) -> bool:
+    return any(k in snap.get("unread", ()) for k in keys)
 
 
 def _run(cmd: List[str], timeout: int) -> subprocess.CompletedProcess:
@@ -80,11 +91,14 @@ def _as_list(v: Any) -> list:
 def parse_snapshot_json(text: str) -> Dict[str, list]:
     """PowerShell's ConvertTo-Json collapses 1-element arrays; normalise."""
     raw = json.loads(text)
-    out: Dict[str, list] = {}
+    out: Dict[str, Any] = {}
     for key, val in raw.items():
         out[key] = [x for x in _as_list(val) if x is not None]
     for row in out.get("dns", []):
         row["ServerAddresses"] = _as_list(row.get("ServerAddresses"))
+    failed = [str(f) for f in out.pop("failed", [])]
+    out["unread"] = sorted({f.split(":", 1)[0].strip() for f in failed} & set(_SECTIONS))
+    out["read_errors"] = failed
     return out
 
 
@@ -150,6 +164,7 @@ def collect_snapshot() -> Dict[str, Any]:
         if r.returncode != 0 or not r.stdout.strip():
             raise RuntimeError((r.stderr or "no output").strip()[:200])
         snap.update(parse_snapshot_json(r.stdout))
+        snap["errors"].extend(f"Could not read {e}" for e in snap.pop("read_errors", []))
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError) as e:
         logger.warning("network snapshot failed: %s", e)
         snap["errors"].append(f"Adapter/route/DNS configuration could not be read: {e}")
@@ -356,6 +371,8 @@ class Finding:
 def _f_gateway(snap: Dict[str, Any], probes: Dict[str, Any]) -> List[Finding]:
     if not snap.get("routes") and not snap.get("adapters"):
         return []
+    if _unread(snap, "routes", "adapters"):
+        return []                          # the "read" UNKNOWN finding says why
     routes = default_routes(snap, 2)
     if not routes:
         return [Finding("gateway", ERROR, "No default gateway on any connected adapter",
@@ -376,6 +393,8 @@ def _f_gateway(snap: Dict[str, Any], probes: Dict[str, Any]) -> List[Finding]:
 
 
 def _f_multi_route(snap: Dict[str, Any]) -> List[Finding]:
+    if _unread(snap, "routes", "adapters"):
+        return []
     routes = default_routes(snap, 2)
     ifaces = list(dict.fromkeys(r["InterfaceIndex"] for r in routes))
     if len(ifaces) < 2:
@@ -389,6 +408,8 @@ def _f_multi_route(snap: Dict[str, Any]) -> List[Finding]:
 
 
 def _f_apipa(snap: Dict[str, Any]) -> List[Finding]:
+    if _unread(snap, "addresses", "adapters"):
+        return []
     up = up_indexes(snap)
     bad = [adapter_name(snap, a["InterfaceIndex"]) + " " + a["IPAddress"] for a in snap.get("addresses", [])
            if a.get("InterfaceIndex") in up and _family(a.get("AddressFamily")) == 2 and is_apipa(a.get("IPAddress", ""))]
@@ -401,7 +422,7 @@ def _f_apipa(snap: Dict[str, Any]) -> List[Finding]:
 
 def _f_dns(snap: Dict[str, Any], probes: Dict[str, Any]) -> List[Finding]:
     servers = dns_servers_in_use(snap)
-    if not snap.get("dns"):
+    if not snap.get("dns") or _unread(snap, "dns", "adapters"):
         return []
     if not servers:
         return [Finding("dns", ERROR, "No DNS server configured on any connected adapter")]

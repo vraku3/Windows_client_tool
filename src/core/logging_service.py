@@ -8,6 +8,16 @@ import sys
 from logging.handlers import RotatingFileHandler
 from typing import Optional
 
+_D = "[0-9]"
+
+
+def session_log_glob(computer_name: str) -> str:
+    """Exactly `{COMPUTERNAME}_YYYY-MM-DD_HH-MM-SS.log`, nothing broader.
+    The name is already sanitised to letters, digits, - and _, so it holds
+    no glob metacharacters."""
+    date = f"{_D * 4}-{_D * 2}-{_D * 2}"
+    time_ = f"{_D * 2}-{_D * 2}-{_D * 2}"
+    return f"{computer_name}_{date}_{time_}.log"
 
 
 class ApplicationLogger(logging.Logger):
@@ -90,6 +100,7 @@ class LoggingService:
         self._backup_count = backup_count
         self._handlers: list[logging.Handler] = []
         self.session_log_dir: str = ""
+        self.session_log_glob: str = ""
 
     def setup(self) -> None:
         """Configure logging with rotation and dual output."""
@@ -180,6 +191,10 @@ class LoggingService:
         )
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         log_path = os.path.join(out_dir, f"{computer_name}_{timestamp}.log")
+        # Retention must match ONLY these files: the folder is wherever the
+        # portable exe sits (a shared Apps folder), and "*.log" there deleted
+        # other programs' logs.
+        self.session_log_glob = session_log_glob(computer_name)
 
         formatter = logging.Formatter(self.LOG_FORMAT, datefmt=self.DATE_FORMAT)
         try:

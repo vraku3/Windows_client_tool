@@ -142,8 +142,17 @@ class _FixCard(QFrame):
             self._line.emit(line)
 
         def do_work(_w):
+            from modules.quick_fix import fix_actions
             self._worker = _w
-            action.fn(append)
+            fix_actions.begin_tracking()
+            try:
+                action.fn(append)
+            finally:
+                failed = fix_actions.end_tracking()
+            if failed:
+                # Raising sends the run to _on_error: "error" in the history,
+                # never "ok" for a fix whose commands were refused.
+                raise RuntimeError(f"{len(failed)} step(s) failed: " + "; ".join(failed[:3]))
 
         self._worker = Worker(do_work)
         w = self._worker

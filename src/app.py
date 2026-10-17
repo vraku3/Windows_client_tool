@@ -75,17 +75,20 @@ class App:
             from core.log_rotation import keep_newest, rotate_old_files
 
             retention_days = self.config.get("app.log_retention_days", 30)
-            rotate_old_files(self.logger.session_log_dir, "*.log", retention_days)
+            session_glob = self.logger.session_log_glob
+            if session_glob:
+                rotate_old_files(self.logger.session_log_dir, session_glob, retention_days)
             rotate_old_files(
                 os.path.join(self._app_data_dir, "updates"), "report-*.html", retention_days
             )
             # The session log gets one file per launch, so the age rule alone
             # never catches a busy day — 101 files piled up here in two.
-            keep_newest(
-                self.logger.session_log_dir,
-                "*.log",
-                self.config.get("app.log_retention_count", 20),
-            )
+            if session_glob:
+                keep_newest(
+                    self.logger.session_log_dir,
+                    session_glob,
+                    self.config.get("app.log_retention_count", 20),
+                )
         except Exception:
             import logging as _logging
 
@@ -125,10 +128,13 @@ class App:
         self._shut_down = True
 
         self.module_registry.stop_all()
-        self.backup.close()
-        self.config.save()
-        self.logger.shutdown()
+        # Workers first, THEN the backup database: a tweak still applying
+        # records each step's before-value as it goes, and a closed database
+        # would leave the change made with no record to revert it from.
         self.thread_pool.waitForDone(5000)
         from core.long_op_pool import get_long_op_pool
         get_long_op_pool().waitForDone(5000)  # same best-effort grace period as thread_pool above
+        self.backup.close()
+        self.config.save()
+        self.logger.shutdown()
         App.instance = None

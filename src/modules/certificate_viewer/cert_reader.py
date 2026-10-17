@@ -59,7 +59,7 @@ def _build_ps_script(store_path: str) -> str:
     """The PowerShell enumeration script for one certificate store path."""
     return f"""
 $ErrorActionPreference = 'SilentlyContinue'
-$certs = Get-ChildItem -Path '{store_path}'
+$certs = Get-ChildItem -Path '{store_path}' -ErrorAction Stop
 if (-not $certs) {{ Write-Output '[]'; exit 0 }}
 $result = @()
 foreach ($cert in $certs) {{
@@ -166,6 +166,9 @@ def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]
     )
     ps = _build_ps_script(store_path)
 
+    # A store we could not read is never an empty one: an admin checking
+    # Root or Disallowed must not read "no certificates" off a refusal or a
+    # timeout. Failures RAISE; the pane runs this on a Worker and shows them.
     try:
         proc = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
@@ -173,20 +176,27 @@ def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=60,
         )
-        raw = proc.stdout.strip()
-        if not raw or raw == "[]":
-            return []
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            data = [data]
-    except Exception as e:
-        # `store` never existed — the parameter is `store_name`. The handler
-        # meant to report a failed enumeration raised NameError instead, and
-        # since the pane runs this on a Worker, what reached the user was
-        # "name 'store' is not defined" with the real reason discarded.
+    except (OSError, subprocess.SubprocessError) as e:
         logger.warning("Certificate enumeration failed for %s (%s): %s",
                        store_name, store_location, e)
+        raise RuntimeError(f"could not read the {store_name} store: {e}") from e
+    if proc.returncode != 0:
+        why = ((proc.stderr or "") + (proc.stdout or "")).strip()[-300:]
+        logger.warning("Certificate enumeration failed for %s (%s), exit %s: %s",
+                       store_name, store_location, proc.returncode, why)
+        raise RuntimeError(f"could not read the {store_name} store "
+                           f"(PowerShell exit {proc.returncode}): {why}")
+    raw = (proc.stdout or "").strip()
+    if not raw or raw == "[]":
         return []
+    try:
+        data = json.loads(raw)
+    except ValueError as e:
+        logger.warning("Certificate enumeration for %s returned unreadable output: %s",
+                       store_name, e)
+        raise RuntimeError(f"could not read the {store_name} store: unreadable output") from e
+    if isinstance(data, dict):
+        data = [data]
 
     today = datetime.datetime.utcnow()
     certs: List[CertInfo] = []

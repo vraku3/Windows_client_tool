@@ -59,6 +59,23 @@ def test_a_missing_directory_is_not_an_error(tmp_path):
     assert keep_newest(str(tmp_path / "nope"), "*.log", 5) == 0
 
 
+def test_the_session_glob_never_matches_other_programs_logs(tmp_path):
+    """The session log sits beside the portable exe, in a folder shared with
+    other programs; "*.log" there deleted their logs too."""
+    from core.logging_service import session_log_glob
+
+    ours = [_write(tmp_path, f"VRK_2026-09-{d:02d}_10-00-00.log", age_days=60) for d in range(1, 4)]
+    theirs = [_write(tmp_path, n, age_days=60) for n in
+              ("install.log", "OTHER_2026-09-01_10-00-00.log", "VRK_notes.log",
+               "VRK_2026-09-01_10-00-00.log.bak")]
+
+    rotate_old_files(str(tmp_path), session_log_glob("VRK"), 30)
+    keep_newest(str(tmp_path), session_log_glob("VRK"), 0)
+
+    assert not any(p.exists() for p in ours)
+    assert all(p.exists() for p in theirs)
+
+
 def test_the_two_rules_compose(tmp_path):
     """Old AND within the newest N still goes: either rule may delete."""
     for i in range(30):

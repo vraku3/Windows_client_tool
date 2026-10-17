@@ -543,7 +543,28 @@ class ProcessExplorerModule(BaseModule):
     def _action_kill_tree(self):
         if not self._selected_node:
             return
-        ok, errors = kill_tree(self._selected_node.pid)
+        pid, name = self._selected_node.pid, self._selected_node.name
+        # Kill asked first; Kill Tree, which takes every descendant with it
+        # (a browser's tabs, a shell's whole session), did not.
+        try:
+            import psutil
+            children = psutil.Process(pid).children(recursive=True)
+            names = [f"{c.name()} ({c.pid})" for c in children[:8]]
+        except Exception as e:
+            self._error_banner.set_error(f"Could not list the processes under {name}: {e}")
+            return
+        more = f"\n… and {len(children) - 8} more" if len(children) > 8 else ""
+        listed = ("\n\nIt also ends:\n" + "\n".join(names) + more) if names else ""
+        reply = QMessageBox.question(
+            self._widget, "Kill Process Tree",
+            f"Kill {name} (PID {pid}) and its {len(children)} descendant "
+            f"process(es)? Unsaved work in any of them is lost.{listed}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        ok, errors = kill_tree(pid)
         if not ok:
             self._error_banner.set_error(
                 "Kill tree partially failed: " + "; ".join(errors))

@@ -175,7 +175,6 @@ class TweakEngine:
                 on_error(msg)
             return False
 
-        steps_applied: List[StepRecord] = []
         success = True
         for step in tweak.get("steps", []):
             if self._step_is_moot(step):
@@ -183,7 +182,10 @@ class TweakEngine:
             try:
                 record = self._apply_step(step, rp_id)
                 if record:
-                    steps_applied.append(record)
+                    # Recorded as soon as it is made, not after the whole
+                    # tweak: a crash, power loss or failed later step must
+                    # not leave a change on the machine with no way back.
+                    self._backup.record_steps(tweak["id"], [record], rp_id)
             except Exception as e:
                 # A `script` step keeps its command under "command", not
                 # "cmd" -- looking only for the latter produced "Step failed
@@ -198,9 +200,6 @@ class TweakEngine:
                 if on_error:
                     on_error(msg)
                 success = False
-
-        if steps_applied:
-            self._backup.record_steps(tweak["id"], steps_applied, rp_id)
         return success
 
     def _step_is_moot(self, step: Dict) -> bool:
@@ -449,15 +448,45 @@ class TweakEngine:
     def _apply_appx(self, step: Dict, rp_id: str) -> StepRecord:
         pkg = step["package"]
         self._backup.backup_appx_package(pkg, rp_id)
-        subprocess.run(
+        proc = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              f"Get-AppxPackage '{ps_quote(pkg)}' | Remove-AppxPackage"],
-            check=False, capture_output=True,
+            check=False, capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=120,
         )
         self._os.invalidate_appx_cache()
+        # `Get-AppxPackage X | Remove-AppxPackage` exits 0 while removing
+        # nothing (CLAUDE.md, Apps tab), so only a read-back decides -- of the
+        # CURRENT user's registrations, the scope the removal acted on (the
+        # shared cached list is -AllUsers when elevated).
+        still = self._appx_count_for_current_user(pkg)
+        if still != 0:
+            detail = ((proc.stdout or "") + (proc.stderr or "")).strip()[-300:]
+            raise RuntimeError(
+                (f"'{pkg}' is still installed" if still else
+                 f"could not confirm '{pkg}' was removed (the package list could not be read)")
+                + (f": {detail}" if detail else ""))
         return StepRecord("appx", pkg, pkg, None)
+
+    @staticmethod
+    def _appx_count_for_current_user(pkg: str) -> Optional[int]:
+        """How many of this user's packages match `pkg`; None if unreadable."""
+        try:
+            proc = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 f"@(Get-AppxPackage '{ps_quote(pkg)}' -ErrorAction Stop).Count"],
+                check=False, capture_output=True, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            logger.warning("could not re-read appx package %s: %s", pkg, e)
+            return None
+        text = (proc.stdout or "").strip()
+        if proc.returncode != 0 or not text.isdigit():
+            logger.warning("could not re-read appx package %s (rc=%s): %s",
+                           pkg, proc.returncode, (proc.stderr or text)[-200:])
+            return None
+        return int(text)
 
     def _apply_scheduled_task(self, step: Dict, rp_id: str) -> StepRecord:
         """Disable a scheduled task. Records the current state for revert."""
@@ -476,12 +505,17 @@ class TweakEngine:
                     break
         except Exception as e:
             logger.debug("Could not query scheduled task status for %s: %s", task_name, e)
-        subprocess.run(
+        proc = subprocess.run(
             ["schtasks", "/change", "/tn", task_name, "/disable"],
-            check=False, capture_output=True,
+            check=False, capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=30,
         )
+        if proc.returncode != 0:
+            # Protected tasks (UpdateOrchestrator and co.) refuse even an
+            # elevated admin; nothing changed, so nothing is recorded.
+            raise RuntimeError(((proc.stdout or "") + (proc.stderr or "")).strip()
+                               or f"schtasks exited with code {proc.returncode}")
         return StepRecord("scheduled_task", task_name, before, "Disabled")
 
     # ==================================================================

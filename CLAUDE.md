@@ -2173,6 +2173,38 @@ ChatGPT limit again; each verified in the code, then fixed):
 - **Sidebar**: `read_only_unelevated` modules are no longer greyed out
   unelevated (the registry already starts them).
 
+Third batch (2026-10-17 evening, the limit was hit a third time):
+
+- **Session-log retention matched `*.log`** in the folder the portable exe
+  sits in (a shared Apps folder): any other program's log older than 30
+  days, and every `.log` beyond the newest 20, was deleted at each start.
+  Both rules now use `logging_service.session_log_glob(COMPUTERNAME)`.
+- **Shutdown waits for workers BEFORE closing the backup database**; a tweak
+  in flight lost its revert records.
+- **Tweaks record each step as soon as it is applied** (`record_steps` per
+  step), not after the whole tweak. `appx` steps are confirmed by a
+  current-user `@(Get-AppxPackage X).Count` (the cached list is -AllUsers
+  elevated, and an unreadable one used to read as removed);
+  `scheduled_task` steps check `schtasks /change` exit codes.
+- **Certificates**: `fetch_certs` RAISES on a refused/failed/unparseable
+  read (`Get-ChildItem -ErrorAction Stop`); an empty store is still `[]`.
+- **Security revert**: a read-back of `None` is APPLIED_UNVERIFIED, never
+  VERIFIED (it differed from the changed value).
+- **Quick Fix**: `fix_actions.begin_tracking`/`end_tracking` collect failed
+  commands and service stops/starts; the card fails the run when any did.
+  The WU reset waits for each service to be STOPPED, renames nothing unless
+  all stopped, and RENAMES SoftwareDistribution/catroot2 to `.old-<stamp>`
+  (Microsoft's documented reset) instead of deleting them.
+- **Process Explorer Kill Tree** confirms, listing the descendants.
+- **Processes tab**: `cancel_all` resets `_busy`/`_services_busy` (a
+  cancelled Worker emits only `cancelled`).
+- **Network Health**: each snapshot query that fails is named in
+  `snap["unread"]` and an UNKNOWN finding; gateway/route/APIPA/DNS checks
+  skip a section that was not read instead of reporting "none configured".
+- Not changed, on purpose: the GPU curve write does not compare its
+  read-back to the request (firmware may quantise; the pane already shows
+  the curve read back afterwards).
+
 ## Pending restart (`src/core/pending_reboot.py`)
 
 One answer for the whole app; `windows_utils.is_reboot_pending`, the

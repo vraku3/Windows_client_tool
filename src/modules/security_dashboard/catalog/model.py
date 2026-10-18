@@ -60,6 +60,21 @@ class SecurityControl:
     #: `from_value`; each step's `revert_pattern` must match the token.
     revert_probe: Optional[Callable[[], Optional[str]]] = None
 
+    #: Validated dynamic targets (e.g. an exact cached-logon count).
+    steps_builder: Optional[Callable[[Any], Tuple[Dict, ...]]] = None
+
+    def validate_target(self, value: Any) -> None:
+        if self.steps_builder is not None:
+            self.steps_builder(value)
+        elif self.desired is not None and not isinstance(self.desired, bool):
+            if type(value) is not type(self.desired) or value != self.desired:
+                raise ValueError(
+                    f"control {self.id!r}: unsupported target {value!r}; "
+                    f"only {self.desired!r} is implemented")
+        elif (self.desired is not None or self.read_value is not None) and not isinstance(value, bool):
+            raise ValueError(f"control {self.id!r}: unsupported target {value!r}; "
+                             "expected a boolean")
+
     def __post_init__(self):
         has_reason = bool(self.read_only_reason and self.read_only_reason.strip())
         if not self.on_steps and not self.off_steps and not has_reason:
@@ -100,4 +115,9 @@ class SecurityControl:
             raise ValueError(
                 f"control {self.id!r} has no desired value: cannot ask a "
                 "control with no opinion for its steps")
+        if self.steps_builder is not None:
+            return self.steps_builder(desired_value)
+        if self.desired is not None and not isinstance(self.desired, bool):
+            self.validate_target(desired_value)
+            return self.on_steps
         return self.on_steps if desired_value else self.off_steps

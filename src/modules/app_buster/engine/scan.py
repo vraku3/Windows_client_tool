@@ -45,8 +45,14 @@ def scan(progress: Optional[Callable[[int, str], None]] = None) -> ScanResult:
         out.problems.append(f"Desktop apps could not be read: {e}")
     say(len(out.rows), "desktop apps")
     installed = windows_apps.families_installed(out.rows)
-    if out.store is not None:
+    if out.store is not None and out.store.readable:
         out.rows += orphans.find_orphaned_data(installed, store)
+    elif out.store is not None:
+        # Orphans are judged against the provisioned and staged lists; an
+        # unread list is not an empty one, and its apps' data would be
+        # offered for deletion.
+        out.problems.append("Orphaned app data is not listed: the all-users app store "
+                            "could not be read completely.")
     recommend.apply(out.rows)
     app_info.apply(out.rows)
     say(len(out.rows), "done")

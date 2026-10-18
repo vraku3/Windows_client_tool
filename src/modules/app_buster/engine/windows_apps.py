@@ -221,6 +221,19 @@ def _subkeys(path: str) -> Optional[List[str]]:
         return None
 
 
+def _subkeys_or_absent(path: str) -> Optional[List[str]]:
+    """Like `_subkeys`, but a key that does not exist is an empty list (read,
+    nothing there) and only a refused read is None."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
+            return [winreg.EnumKey(key, i) for i in range(winreg.QueryInfoKey(key)[0])]
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        logger.warning("cannot read %s: %s", path, e)
+        return None
+
+
 def _key_time(path: str) -> Optional[datetime]:
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as key:
@@ -258,7 +271,8 @@ class StoreView:
 
 def read_store() -> StoreView:
     apps = _subkeys(STORE_KEY + r"\Applications")
-    staged = _subkeys(STORE_KEY + r"\Staged") or []
+    staged_raw = _subkeys_or_absent(STORE_KEY + r"\Staged")
+    staged = staged_raw or []
     provisioned: Dict[str, str] = {}
     when: Dict[str, Optional[datetime]] = {}
     for full in apps or []:
@@ -271,7 +285,8 @@ def read_store() -> StoreView:
         if sid.startswith("S-1-5-21-"):
             per_user[sid] = {family_of(f).lower() for f in (_subkeys(STORE_KEY + "\\" + sid) or [])}
     staged_fams = {s.lower() for s in staged}
-    return StoreView(provisioned, staged_fams, per_user, when, readable=apps is not None)
+    return StoreView(provisioned, staged_fams, per_user, when,
+                     readable=apps is not None and staged_raw is not None)
 
 
 # ---- the package list ----------------------------------------------------------------------

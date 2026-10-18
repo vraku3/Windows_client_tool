@@ -15,7 +15,12 @@ Two things recur here and are stated once:
   then read the user's hive and correctly report that nothing changed. WPAD is
   read-only here for exactly that reason.
 """
+import json
+import re
+
 from typing import Any, Dict, Tuple
+
+from .. import security_reader, snapshots
 
 from ..security_reader import (
     check_admin_shares, check_firewall, check_firewall_logging,
@@ -50,22 +55,54 @@ def _service(name: str, start_type: str) -> Dict[str, Any]:
     return {"type": "service", "name": name, "start_type": start_type}
 
 
-#: Set-NetFirewallProfile takes the profile state by name.
-_REVERT_TRUE_FALSE = {"True": "True", "False": "False"}
-#: `firewall_inbound_blocked` reads True when nothing is explicitly allowed,
-#: so reverting means putting the profiles back to NotConfigured -- which is
-#: what they were, and which Windows treats as block.
-_REVERT_INBOUND = {"True": "NotConfigured", "False": "Allow"}
+_PROFILE_NAMES = ("Domain", "Private", "Public")
+_PROFILE_VALUES = {
+    "Enabled": {"0": "False", "1": "True", "2": "NotConfigured",
+                "False": "False", "True": "True", "NotConfigured": "NotConfigured"},
+    "DefaultInboundAction": {"0": "NotConfigured", "2": "Allow", "4": "Block",
+                             "NotConfigured": "NotConfigured", "Allow": "Allow", "Block": "Block"},
+    "DefaultOutboundAction": {"0": "NotConfigured", "2": "Allow", "4": "Block",
+                              "NotConfigured": "NotConfigured", "Allow": "Allow", "Block": "Block"},
+}
 
 
-def _profile_step(assignment: str, revert_assignment: str,
-                  revert_values: Dict[str, str]) -> Dict[str, Any]:
-    """One Set-NetFirewallProfile script step, with its way back."""
+def _profile_pattern(field: str) -> str:
+    values = "(?:" + "|".join(sorted(set(_PROFILE_VALUES[field].values()))) + ")"
+    return "; ".join(re.escape(f"Set-NetFirewallProfile -Profile {name} -{field} ")
+                     + values for name in _PROFILE_NAMES)
+
+
+def _profile_probe(field: str):
+    def probe():
+        rc, out, err = security_reader._ps(
+            f"Get-NetFirewallProfile -ErrorAction Stop | Select Name,{field} | "
+            "ConvertTo-Json -Compress", timeout=15)
+        if snapshots._looks_refused(rc, out, err):
+            return None
+        rows = json.loads(out)
+        if not isinstance(rows, list) or len(rows) != 3:
+            return None
+        states = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                return None
+            name = row.get("Name")
+            value = _PROFILE_VALUES[field].get(str(row.get(field)))
+            if name not in _PROFILE_NAMES or name in states or value is None:
+                return None
+            states[name] = value
+        token = "; ".join(f"Set-NetFirewallProfile -Profile {name} -{field} {states[name]}"
+                          for name in _PROFILE_NAMES)
+        return token if re.fullmatch(_profile_pattern(field), token) else None
+    return probe
+
+
+def _profile_step(field: str, value: str) -> Dict[str, Any]:
+    """Undo the exact per-profile configuration, never an aggregate bool."""
     return {"type": "script",
-            "command": _PS + "Set-NetFirewallProfile -All " + assignment,
-            "revert_template": _PS + "Set-NetFirewallProfile -All "
-                                     + revert_assignment,
-            "revert_values": revert_values}
+            "command": _PS + f"Set-NetFirewallProfile -All -{field} {value}",
+            "revert_template": _PS + '"${old}"',
+            "revert_pattern": _profile_pattern(field)}
 
 
 CONTROLS: Tuple[SecurityControl, ...] = (
@@ -84,10 +121,9 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         # three must be on for this to count as applied.
         read_value=lambda d: (all(d["profiles"].values())
                               if d.get("profiles") else None),
-        on_steps=(_profile_step("-Enabled True", "-Enabled ${old}",
-                                _REVERT_TRUE_FALSE),),
-        off_steps=(_profile_step("-Enabled False", "-Enabled ${old}",
-                                 _REVERT_TRUE_FALSE),),
+        on_steps=(_profile_step("Enabled", "True"),),
+        off_steps=(_profile_step("Enabled", "False"),),
+        revert_probe=_profile_probe("Enabled"),
         desired=True,
         risk=Risk.MEDIUM,
     ),
@@ -102,12 +138,9 @@ CONTROLS: Tuple[SecurityControl, ...] = (
                        "service invisible until someone deliberately opens a "
                        "hole for it.",
         reader=check_firewall_stealth,
-        on_steps=(_profile_step("-DefaultInboundAction Block",
-                                "-DefaultInboundAction ${old}",
-                                _REVERT_INBOUND),),
-        off_steps=(_profile_step("-DefaultInboundAction NotConfigured",
-                                 "-DefaultInboundAction ${old}",
-                                 _REVERT_INBOUND),),
+        on_steps=(_profile_step("DefaultInboundAction", "Block"),),
+        off_steps=(_profile_step("DefaultInboundAction", "NotConfigured"),),
+        revert_probe=_profile_probe("DefaultInboundAction"),
         desired=True,
         risk=Risk.MEDIUM,
     ),
@@ -125,12 +158,9 @@ CONTROLS: Tuple[SecurityControl, ...] = (
                        "environments skip, because every legitimate program "
                        "then needs its own allow rule.",
         reader=check_firewall_outbound,
-        on_steps=(_profile_step("-DefaultOutboundAction Block",
-                                "-DefaultOutboundAction ${old}",
-                                _REVERT_INBOUND),),
-        off_steps=(_profile_step("-DefaultOutboundAction NotConfigured",
-                                 "-DefaultOutboundAction ${old}",
-                                 _REVERT_INBOUND),),
+        on_steps=(_profile_step("DefaultOutboundAction", "Block"),),
+        off_steps=(_profile_step("DefaultOutboundAction", "NotConfigured"),),
+        revert_probe=_profile_probe("DefaultOutboundAction"),
         # False, unlike its inbound sibling: blocking ALL outbound traffic by
         # default breaks anything without its own allow rule, which is most
         # software -- too disruptive to recommend to an ordinary user by
@@ -200,10 +230,11 @@ CONTROLS: Tuple[SecurityControl, ...] = (
 
     SecurityControl(
         id="netbios_over_tcpip",
-        title="NetBIOS over TCP/IP",
+        title="NetBIOS broadcast name resolution",
         category=Category.FIREWALL_NETWORK,
         description="NodeType 2 (P-node) stops NetBIOS name broadcasts "
-                    "entirely; the default H-node broadcasts.",
+                    "entirely and uses WINS; it does not disable NetBIOS over "
+                    "TCP/IP on adapters. The default H-node broadcasts.",
         why_it_matters="NBT-NS is the third protocol in the Responder set, "
                        "and it leaks the same credentials LLMNR does.",
         reader=check_netbios_tcpip,

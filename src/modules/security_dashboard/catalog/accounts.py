@@ -14,6 +14,7 @@ setting, so most entries revert exactly. Three conventions:
 """
 from typing import Any, Dict, Tuple
 
+from ..security_reader import _windows_build
 from ..security_reader import (
     check_account_lockout, check_anonymous_restrict, check_audit_policy,
     check_autologon, check_cached_logons, check_credential_guard,
@@ -62,6 +63,22 @@ def _execution_policy_step(policy: str) -> Dict[str, Any]:
             "command": f"{prefix}{policy} -Scope LocalMachine -Force",
             "revert_template": prefix + "${old} -Scope LocalMachine -Force",
             "revert_values": _EXECUTION_POLICIES}
+
+
+def _cached_logon_steps(value: Any) -> Tuple[Dict, ...]:
+    if type(value) is not int or not 0 <= value <= 50:
+        raise ValueError("cached_logons target must be an integer in 0..50")
+    return (_sz(_WINLOGON, "CachedLogonsCount", str(value)),)
+
+
+def _lsa_steps(enabled: Any) -> Tuple[Dict, ...]:
+    if not isinstance(enabled, bool):
+        raise ValueError("lsass_protection target must be a boolean")
+    build = _windows_build()
+    if enabled and build is None:
+        raise ValueError("lsass_protection target requires a known Windows build")
+    value = (2 if build >= 22621 else 1) if enabled else 0
+    return (_dword(_LSA, "RunAsPPL", value),)
 
 
 CONTROLS: Tuple[SecurityControl, ...] = (
@@ -123,8 +140,8 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         why_it_matters="A displayed username is half of a credential, handed "
                        "to anyone who walks past the machine.",
         reader=check_last_username_hidden,
-        on_steps=(_dword(_WINLOGON, "DontDisplayLastUserName", 1),),
-        off_steps=(_dword(_WINLOGON, "DontDisplayLastUserName", 0),),
+        on_steps=(_dword(_POLICIES_SYSTEM, "DontDisplayLastUserName", 1),),
+        off_steps=(_dword(_POLICIES_SYSTEM, "DontDisplayLastUserName", 0),),
         desired=True,
         risk=Risk.LOW,
     ),
@@ -179,7 +196,7 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         title="Cached domain logons",
         category=Category.ACCOUNTS,
         description="How many previous sign-ins are cached so a user can log "
-                    "in with the network unreachable.",
+                    "in with the network unreachable (0..50 cached sign-ins).",
         why_it_matters="Each cached logon is a credential verifier sitting on "
                        "disk for an offline attack. A machine that is never "
                        "off-network needs none; a laptop needs at least one.",
@@ -188,6 +205,7 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         on_steps=(_sz(_WINLOGON, "CachedLogonsCount", "4"),),
         off_steps=(_sz(_WINLOGON, "CachedLogonsCount", "10"),),
         desired=4,
+        steps_builder=_cached_logon_steps,
         risk=Risk.MEDIUM,
     ),
 
@@ -213,12 +231,16 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         title="LSASS run as a protected process",
         category=Category.ACCOUNTS,
         description="RunAsPPL: only Microsoft-signed code may open the "
-                    "process that holds every credential on the machine.",
+                    "process that holds every credential on the machine. "
+                    "Uses 2 without a UEFI lock on Windows 11 22H2+; "
+                    "otherwise 1 creates a firmware lock on Secure Boot/UEFI "
+                    "machines that a registry revert does not remove.",
         why_it_matters="It is the single control that stops a credential "
                        "dumper from reading LSASS even as SYSTEM. It can also "
                        "block a debugger or an antivirus plug-in that expects "
                        "to inject there.",
         reader=check_lsass_protection,
+        steps_builder=_lsa_steps,
         on_steps=(_dword(_LSA, "RunAsPPL", 1),),
         off_steps=(_dword(_LSA, "RunAsPPL", 0),),
         desired=True,

@@ -224,6 +224,7 @@ class ChangeSet:
         if current == to_value:
             self._changes.pop(control.id, None)
             return
+        control.validate_target(to_value)
         token = _probe(control) if control.revert_probe is not None else None
         self._changes[control.id] = PendingChange(
             control_id=control.id, control=control,

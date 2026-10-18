@@ -165,8 +165,20 @@ _HIVES = {
 }
 
 
+class RegistryReadError(OSError):
+    """The value could not be read; this is not an absent value."""
+
+
+def _registry_unavailable(exc: RegistryReadError) -> Dict[str, Any]:
+    logger.warning("Security registry read failed: %s", exc)
+    return {"status": "Unknown", "color": "amber", "available": False,
+            "details": [("Registry", f"Could not read: {exc}")]}
+
+
 def _reg_read(key: str, value: str, kind: str = "REG_DWORD") -> Optional[Any]:
-    """Read a registry value. Returns None if key or value is absent.
+    """Read a registry value. Returns None only if key or value is absent.
+
+    Other OS errors raise RegistryReadError so readers cannot infer defaults.
 
     Was `reg query` in a subprocess at 21.1 ms a call, measured; winreg reads
     the same value in 0.015 ms. With ~150 controls to read that is the
@@ -179,8 +191,10 @@ def _reg_read(key: str, value: str, kind: str = "REG_DWORD") -> Optional[Any]:
     try:
         with winreg.OpenKey(hive, sub) as handle:
             raw, _ = winreg.QueryValueEx(handle, value)
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError as exc:
+        raise RegistryReadError(f"{key} [{value}]: {exc}") from exc
     if kind == "REG_DWORD" and isinstance(raw, str):
         try:
             return int(raw, 16) if raw.startswith("0x") else int(raw)
@@ -394,6 +408,8 @@ def check_uac() -> Dict[str, Any]:
         else:
             color, status = "amber", "Unknown"
         return {"status": status, "color": color, "details": details, "enabled": lua_on}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception as e:
         return {"status": f"Error: {e}", "color": "amber", "details": []}
 
@@ -412,6 +428,8 @@ def check_smartscreen() -> Dict[str, Any]:
             return {"status": val2, "color": "green" if "off" not in str(val2).lower() else "red",
                     "details": [("SmartScreen", val2)], "enabled": "off" not in str(val2).lower()}
         return {"status": "Not Configured", "color": "amber", "details": [("SmartScreen", "Not configured via policy")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception as e:
         return {"status": f"Error: {e}", "color": "amber", "details": []}
 
@@ -477,8 +495,8 @@ def check_credential_guard() -> Dict[str, Any]:
         data = json.loads(out)
         sec_conf = data.get("SecurityServicesConfigured", 0)
         sec_run = data.get("SecurityServicesRunning", 0)
-        cg_configured = bool(int(sec_conf) & 1) if isinstance(sec_conf, int) else False
-        cg_running = bool(int(sec_run) & 1) if isinstance(sec_run, int) else False
+        cg_configured = 1 in (sec_conf if isinstance(sec_conf, list) else [sec_conf])
+        cg_running = 1 in (sec_run if isinstance(sec_run, list) else [sec_run])
 
         if cg_running:
             return {"status": "Running", "color": "green",
@@ -502,15 +520,17 @@ def check_lsass_protection() -> Dict[str, Any]:
         val = _reg_read(key, "RunAsPPL")
         if val == 1:
             return {"status": "Protected", "color": "green",
-                    "details": [("LSASS Protection", "On (RunAsPPL=1)")], "enabled": True}
+                    "details": [("LSASS Protection", "On with UEFI lock on Secure Boot/UEFI (RunAsPPL=1)")], "enabled": True}
         elif val == 2:
-            return {"status": "Protected (UEFI Lock)", "color": "green",
-                    "details": [("LSASS Protection", "On with UEFI lock (RunAsPPL=2)")], "enabled": True}
+            return {"status": "Protected (without UEFI lock)", "color": "green",
+                    "details": [("LSASS Protection", "On without UEFI lock (RunAsPPL=2)")], "enabled": True}
         elif val == 0:
             return {"status": "Not Protected", "color": "red",
                     "details": [("LSASS Protection", "Off (RunAsPPL=0)")], "enabled": False}
         return {"status": "Not Configured", "color": "amber",
                 "details": [("LSASS Protection", "Not set")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception as e:
         return {"status": f"Error: {e}", "color": "amber", "details": []}
 
@@ -676,6 +696,8 @@ def check_rdp() -> Dict[str, Any]:
             return {"status": "Enabled", "color": "red",
                     "details": [("RDP", "On (allow connections)")], "enabled": True}
         return {"status": "Not Configured", "color": "amber", "details": [("RDP", "Unknown")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception as e:
         return {"status": f"Error: {e}", "color": "amber", "details": []}
 
@@ -1115,6 +1137,8 @@ def check_applocker() -> Dict[str, Any]:
                     "details": [("AppLocker", "Service running, no rules detected")]}
         return {"status": "Not Configured", "color": "amber",
                 "details": [("AppLocker", "Not configured")], "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Unknown", "color": "amber", "details": [("AppLocker", "Check failed")]}
 
@@ -1145,6 +1169,8 @@ def check_windows_hello() -> Dict[str, Any]:
                     "enabled": True}
         return {"status": "Not Configured", "color": "amber",
                 "details": [("Windows Hello", "Not set up")], "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Unknown", "color": "amber",
                 "details": [("Windows Hello", "Check failed")]}
@@ -1572,6 +1598,8 @@ def check_llmnr() -> Dict[str, Any]:
                 "color": "green" if disabled else "red",
                 "details": [("LLMNR", "Off" if disabled else "On (MitM risk)")],
                 "enabled": not disabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1583,13 +1611,17 @@ def check_netbios_tcpip() -> Dict[str, Any]:
             return {"status": "Not Configured", "color": "amber",
                     "available": True, "enabled": True,
                     "details": [("NetBIOS", "No NodeType — default H-node")]}
-        labels = {1: "B-node (broadcast)", 2: "P-node (NetBIOS disabled)", 4: "M-node", 8: "H-node (default)"}
+        labels = {1: "B-node (broadcast)", 2: "P-node: no broadcast name resolution", 4: "M-node", 8: "H-node (default)"}
         label = labels.get(val, f"Unknown ({val})")
         disabled = val == 2
         return {"status": label, "available": True, "node_type": val,
                 "color": "green" if disabled else ("amber" if val == 8 else "red"),
-                "details": [("NetBIOS NodeType", label)],
+                "details": [("NetBIOS NodeType", label),
+                            ("Scope", "P-node uses WINS; NetBIOS over TCP/IP "
+                             "remains controlled per adapter")],
                 "enabled": not disabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1632,6 +1664,8 @@ def check_wpad() -> Dict[str, Any]:
                              if enabled else "Off"),
                             ("Connection flags", f"0x{raw[8]:02X}")],
                 "enabled": enabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1649,6 +1683,8 @@ def check_mdns() -> Dict[str, Any]:
                 "color": "green" if disabled else "red",
                 "details": [("mDNS", "Off" if disabled else "On")],
                 "enabled": not disabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1756,6 +1792,8 @@ def check_smb_signing() -> Dict[str, Any]:
         return {"status": "Required" if required else "Not Required",
                 "color": "green" if required else "red",
                 "details": [("SMB Signing Required", "Yes" if required else "No")], "enabled": required}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1774,6 +1812,8 @@ def check_ntlm_level() -> Dict[str, Any]:
         return {"available": True, "level": val,
                 "status": f"Level {val} — {label}", "color": color,
                 "details": [("LM Compatibility Level", f"Level {val} — {label}")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1930,6 +1970,8 @@ def check_firewall_logging() -> Dict[str, Any]:
                            else "Not logging on " + ", ".join(off_profiles)),
                 "color": "green" if all_on else "amber",
                 "available": True, "enabled": all_on, "details": details}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1958,6 +2000,8 @@ def check_rdp_nla() -> Dict[str, Any]:
             return {"status": "NLA Not Required", "color": "red",
                     "details": [("RDP NLA", "Off — MitM risk")], "enabled": False}
         return {"status": "Not Configured", "color": "amber", "details": [("RDP NLA", "Not set")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1974,6 +2018,8 @@ def check_anonymous_restrict() -> Dict[str, Any]:
         return {"status": "Partially Restricted" if (ra == 1 or ras == 1) else "Not Restricted",
                 "color": "amber" if (ra == 1 or ras == 1) else "red",
                 "available": True, "enabled": False, "details": details}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -1985,6 +2031,8 @@ def check_admin_shares() -> Dict[str, Any]:
                     "details": [("Admin Shares (C$, ADMIN$)", "Off")], "enabled": False}
         return {"status": "Enabled", "color": "red",
                 "details": [("Admin Shares (C$, ADMIN$)", "On — lateral movement risk")], "enabled": True}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2009,6 +2057,8 @@ def check_autorun() -> Dict[str, Any]:
         return {"status": "Not Configured", "color": "red",
                 "available": True, "enabled": True,
                 "details": [("AutoRun", "No policy set, so AutoRun can run")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "available": False,
                 "details": []}
@@ -2133,6 +2183,8 @@ def check_ps_script_block_logging() -> Dict[str, Any]:
                     "details": [("Script Block Logging", "On")], "enabled": True}
         return {"status": "Disabled", "color": "red",
                 "details": [("Script Block Logging", "Off")], "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2144,6 +2196,8 @@ def check_ps_transcription() -> Dict[str, Any]:
                     "details": [("PS Transcription", "On")], "enabled": True}
         return {"status": "Disabled", "color": "amber",
                 "details": [("PS Transcription", "Off (not configured)")], "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2164,6 +2218,8 @@ def check_wdigest() -> Dict[str, Any]:
         return {"status": "Enabled (insecure)", "color": "red",
                 "available": True,
                 "details": [("WDigest Caching", "On — credentials cached")], "enabled": True}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2179,6 +2235,8 @@ def check_cached_logons() -> Dict[str, Any]:
         return {"status": f"{count} cached logons", "color": color,
                 "available": True, "count": count,
                 "details": [("Cached Logon Count", str(count))]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2226,6 +2284,8 @@ def check_pagefile_clear() -> Dict[str, Any]:
                     "details": [("Pagefile Clear", "On — wiped on restart")], "enabled": True}
         return {"status": "Disabled", "color": "amber",
                 "details": [("Pagefile Clear", "Off — data may persist")], "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2243,6 +2303,8 @@ def check_ctrl_alt_del() -> Dict[str, Any]:
         return {"status": "Not Configured", "color": "amber",
                 "available": True, "enabled": False,
                 "details": [("Ctrl+Alt+Del", "Not configured")]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2468,6 +2530,8 @@ def check_wu_auto_update() -> Dict[str, Any]:
         label = labels.get(val, f"Unknown ({val})")
         return {"status": label, "color": "green" if val in (3, 4) else "amber",
                 "details": [("Auto Update Policy", label)]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2480,6 +2544,8 @@ def check_dump_encryption() -> Dict[str, Any]:
         return {"status": "Enabled" if val == 1 else "Disabled",
                 "color": "green" if val == 1 else "amber",
                 "details": [("Crash Dump Encryption", "On" if val == 1 else "Off")], "enabled": val == 1}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -2904,6 +2970,8 @@ def check_disk_cleanup_state() -> Dict[str, Any]:
         if cleanmgr_available:
             return {"status": "Available", "color": "green", "details": details, "enabled": True}
         return {"status": "Limited", "color": "amber", "details": details, "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("Disk Cleanup", "Check failed")]}
 
@@ -2963,6 +3031,8 @@ def check_fast_startup() -> Dict[str, Any]:
         return {"status": "Enabled" if enabled else "Disabled",
                 "color": "green" if not enabled else "amber",
                 "details": [("Fast Startup", "On" if enabled else "Off")], "enabled": enabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("Fast Startup", "Check failed")]}
 
@@ -2977,6 +3047,8 @@ def check_core_isolation_summary() -> Dict[str, Any]:
         return {"status": "Enabled" if enabled else "Disabled",
                 "color": "green" if enabled else "red",
                 "details": [("Core Isolation / Memory Integrity", "On" if enabled else "Off")], "enabled": enabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("Core Isolation", "Check failed")]}
 
@@ -2991,6 +3063,8 @@ def check_memory_integrity_registry() -> Dict[str, Any]:
         return {"status": "Enabled" if enabled else "Disabled",
                 "color": "green" if enabled else "red",
                 "details": [("HypervisorEnforcedCodeIntegrity\\Enabled", str(val))], "enabled": enabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("Memory Integrity", "Check failed")]}
 
@@ -3112,6 +3186,8 @@ def check_exploit_protection_dep() -> Dict[str, Any]:
             dep_enabled = True
         return {"status": "Enabled" if dep_enabled else "Disabled",
                 "color": "green" if dep_enabled else "red", "details": details, "enabled": dep_enabled}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("DEP", "Check failed")]}
 
@@ -3149,6 +3225,8 @@ def check_exploit_protection_aslr() -> Dict[str, Any]:
         return {"status": "Active" if on else "Partly off",
                 "color": "green" if on else "amber",
                 "details": details, "enabled": on}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("ASLR", "Check failed")]}
 
@@ -3334,15 +3412,19 @@ def check_autologon() -> Dict[str, Any]:
         return {"status": "Enabled" if active else "Disabled", "color": "red" if active else "green",
                 "details": [("Auto Logon", "On (security risk)" if active else "Off")],
                 "available": True, "enabled": active}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("AutoLogon", "Check failed")]}
 
 def check_last_username_hidden() -> Dict[str, Any]:
     try:
-        val = _reg_read(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "DontDisplayLastUserName")
+        val = _reg_read(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "DontDisplayLastUserName")
         hidden = val == 1
         return {"status": "Hidden" if hidden else "Shown", "color": "green" if hidden else "amber",
                 "details": [("Last Username", "Hidden on logon" if hidden else "Shown (less secure)")], "enabled": hidden}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -3354,6 +3436,8 @@ def check_screensaver_secure() -> Dict[str, Any]:
                 "details": [("Screen Saver Lock",
                              "On" if secure else "Off (no lock on resume)")],
                 "available": True, "enabled": secure}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -3367,6 +3451,8 @@ def check_screensaver_active() -> Dict[str, Any]:
         return {"status": "Not Configured", "color": "amber",
                 "available": True,
                 "details": [("Screen Saver", "None")], "enabled": False}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": []}
 
@@ -3601,8 +3687,8 @@ def set_screensaver_secure(enabled: bool) -> Dict[str, Any]:
             "action": "enable" if enabled else "disable"}
 
 def set_last_username_hidden(enabled: bool) -> Dict[str, Any]:
-    before = _reg_read(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "DontDisplayLastUserName")
-    ok = _reg_write(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "DontDisplayLastUserName", 1 if enabled else 0)
+    before = _reg_read(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "DontDisplayLastUserName")
+    ok = _reg_write(r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "DontDisplayLastUserName", 1 if enabled else 0)
     return {"success": ok, "message": f"Last username {'hidden' if enabled else 'shown'}",
             "before_value": before, "after_value": 1 if enabled else 0,
             "action": "enable" if enabled else "disable"}
@@ -4004,92 +4090,113 @@ def check_rfds() -> Dict[str, Any]:
 
 def check_printnightmare() -> Dict[str, Any]:
     """PrintNightmare (CVE-2021-34527, CVE-2021-36958)."""
-    key = r"HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint"
-    restrict = _reg_read(key, "RestrictDriverInstallationToAdministrators")
-    no_warn = _reg_read(key, "NoWarningNoElevationOnInstall")
-    update_pr = _reg_read(key, "UpdatePromptSettings")
-    protected = restrict == 1
-    details = [
-        ("Restrict Drivers to Admins", "Yes" if protected else "No (vulnerable)"),
-        ("No Warning on Install", "Disabled" if no_warn == 0 else "Enabled" if no_warn == 1 else "Not set"),
-        ("Update Prompt", "On" if update_pr == 1 else "Off" if update_pr == 0 else "Not set"),
-    ]
-    return {"status": "Mitigated" if protected else "Not Mitigated",
-            "color": "green" if protected else "red",
-            "details": details, "enabled": protected}
+    try:
+        key = r"HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Printers\PointAndPrint"
+        restrict = _reg_read(key, "RestrictDriverInstallationToAdministrators")
+        no_warn = _reg_read(key, "NoWarningNoElevationOnInstall")
+        update_pr = _reg_read(key, "UpdatePromptSettings")
+        protected = restrict == 1
+        details = [
+            ("Restrict Drivers to Admins", "Yes" if protected else "No (vulnerable)"),
+            ("No Warning on Install", "Disabled" if no_warn == 0 else "Enabled" if no_warn == 1 else "Not set"),
+            ("Update Prompt", "On" if update_pr == 1 else "Off" if update_pr == 0 else "Not set"),
+        ]
+        return {"status": "Mitigated" if protected else "Not Mitigated",
+                "color": "green" if protected else "red",
+                "details": details, "enabled": protected}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 def check_zerologon() -> Dict[str, Any]:
     """Zerologon (CVE-2020-1472) — Netlogon secure channel."""
-    key = r"HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters"
-    full_secure = _reg_read(key, "FullSecureChannelProtection")
-    seal_secure = _reg_read(key, "SealSecureChannel")
-    sign_secure = _reg_read(key, "SignSecureChannel")
-    protected = full_secure == 1
-    details = [
-        ("Full Secure Channel", "On" if full_secure == 1 else "Off" if full_secure == 0 else "Not set"),
-        ("Seal Secure", "Yes" if seal_secure == 1 else "No" if seal_secure == 0 else "Not set"),
-        ("Sign Secure", "Yes" if sign_secure == 1 else "No" if sign_secure == 0 else "Not set"),
-    ]
-    return {"status": "Mitigated" if protected else "Not Mitigated",
-            "color": "green" if protected else "red",
-            "details": details, "enabled": protected}
+    try:
+        key = r"HKLM\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters"
+        full_secure = _reg_read(key, "FullSecureChannelProtection")
+        seal_secure = _reg_read(key, "SealSecureChannel")
+        sign_secure = _reg_read(key, "SignSecureChannel")
+        protected = full_secure == 1
+        details = [
+            ("Full Secure Channel", "On" if full_secure == 1 else "Off" if full_secure == 0 else "Not set"),
+            ("Seal Secure", "Yes" if seal_secure == 1 else "No" if seal_secure == 0 else "Not set"),
+            ("Sign Secure", "Yes" if sign_secure == 1 else "No" if sign_secure == 0 else "Not set"),
+        ]
+        return {"status": "Mitigated" if protected else "Not Mitigated",
+                "color": "green" if protected else "red",
+                "details": details, "enabled": protected}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 def check_petitpotam() -> Dict[str, Any]:
     """PetitPotam (CVE-2021-36942) — NTLM relay via EPA."""
-    wk_key = r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
-    sv_key = r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
-    wk_epa = _reg_read(wk_key, "RequireExtendedProtection")
-    sv_epa = _reg_read(sv_key, "RequireExtendedProtection")
-    protected = (wk_epa == 1) or (sv_epa == 1)
-    details = [
-        ("Workstation EPA", "On" if wk_epa == 1 else "Off" if wk_epa == 0 else "Not set"),
-        ("Server EPA", "On" if sv_epa == 1 else "Off" if sv_epa == 0 else "Not set"),
-    ]
-    return {"status": "Mitigated" if protected else "Not Mitigated",
-            "color": "green" if protected else "red",
-            "details": details, "enabled": protected}
+    try:
+        wk_key = r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters"
+        sv_key = r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters"
+        wk_epa = _reg_read(wk_key, "RequireExtendedProtection")
+        sv_epa = _reg_read(sv_key, "RequireExtendedProtection")
+        protected = (wk_epa == 1) or (sv_epa == 1)
+        details = [
+            ("Workstation EPA", "On" if wk_epa == 1 else "Off" if wk_epa == 0 else "Not set"),
+            ("Server EPA", "On" if sv_epa == 1 else "Off" if sv_epa == 0 else "Not set"),
+        ]
+        return {"status": "Mitigated" if protected else "Not Mitigated",
+                "color": "green" if protected else "red",
+                "details": details, "enabled": protected}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 def check_follina() -> Dict[str, Any]:
     """Follina (CVE-2022-30190) — MSDT URL protocol."""
-    key = r"HKLM\SOFTWARE\Policies\Microsoft\Windows\ScriptedDiagnosticsProvider\Policy"
-    disabled = _reg_read(key, "DisableQueryRemoteServer")
-    protected = disabled == 1
-    return {"status": "Protected" if protected else "Not Protected",
-            "color": "green" if protected else "red",
-            "details": [("MSDT Remote Query", "Disabled" if disabled == 1 else "Enabled" if disabled == 0 else "Not set")],
-            "enabled": protected}
+    try:
+        key = r"HKLM\SOFTWARE\Policies\Microsoft\Windows\ScriptedDiagnosticsProvider\Policy"
+        disabled = _reg_read(key, "DisableQueryRemoteServer")
+        protected = disabled == 1
+        return {"status": "Protected" if protected else "Not Protected",
+                "color": "green" if protected else "red",
+                "details": [("MSDT Remote Query", "Disabled" if disabled == 1 else "Enabled" if disabled == 0 else "Not set")],
+                "enabled": protected}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 def check_blacklotus() -> Dict[str, Any]:
     """BlackLotus (CVE-2023-24932) — Secure Boot bypass."""
-    key = r"HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot"
-    updates = _reg_read(key, "AvailableUpdates")
-    applied = _reg_read(key, "AppliedUpdates")
-    details = [("Available Updates", f"0x{updates:X}" if updates else "None"),
-               ("Applied Updates", f"0x{applied:X}" if applied else "None")]
-    ok = (updates is not None and applied is not None and applied >= updates) or (applied and applied > 0)
-    return {"status": "Patched" if ok else "May need updates",
-            "color": "green" if ok else "amber",
-            "details": details, "enabled": ok}
+    try:
+        key = r"HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot"
+        updates = _reg_read(key, "AvailableUpdates")
+        applied = _reg_read(key, "AppliedUpdates")
+        details = [("Available Updates", f"0x{updates:X}" if updates else "None"),
+                   ("Applied Updates", f"0x{applied:X}" if applied else "None")]
+        ok = (updates is not None and applied is not None and applied >= updates) or (applied and applied > 0)
+        return {"status": "Patched" if ok else "May need updates",
+                "color": "green" if ok else "amber",
+                "details": details, "enabled": ok}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 def check_kerberos_armoring() -> Dict[str, Any]:
     """Kerberos PAC armoring (CVE-2022-33679, CVE-2022-33647)."""
-    key = r"HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
-    pac = _reg_read(key, "KrbtgtFullPacSignature")
-    details = [("Full PAC Signature", "On" if pac == 1 else "Off" if pac == 0 else "Not set")]
-    return {"status": "ARMORED" if pac == 1 else "Not Armored",
-            "color": "green" if pac == 1 else "amber",
-            "details": details, "enabled": pac == 1}
+    try:
+        key = r"HKLM\SYSTEM\CurrentControlSet\Control\Lsa\Kerberos\Parameters"
+        pac = _reg_read(key, "KrbtgtFullPacSignature")
+        details = [("Full PAC Signature", "On" if pac == 1 else "Off" if pac == 0 else "Not set")]
+        return {"status": "ARMORED" if pac == 1 else "Not Armored",
+                "color": "green" if pac == 1 else "amber",
+                "details": details, "enabled": pac == 1}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 def check_credential_guard_vbs() -> Dict[str, Any]:
     """VBS-based Credential Guard (CVE-2022-22047, CVE-2021-36934)."""
-    key = r"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard"
-    vbs = _reg_read(key, "EnableVirtualizationBasedSecurity")
-    req = _reg_read(key, "RequirePlatformSecurityFeatures")
-    details = [("VBS Enabled", "Yes" if vbs == 1 else "No" if vbs == 0 else "Not configured"),
-               ("Platform Security", "Required" if req and req > 0 else "Not required")]
-    return {"status": "VBS Active" if vbs == 1 else "VBS Off",
-            "color": "green" if vbs == 1 else "red",
-            "details": details, "enabled": vbs == 1}
+    try:
+        key = r"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard"
+        vbs = _reg_read(key, "EnableVirtualizationBasedSecurity")
+        req = _reg_read(key, "RequirePlatformSecurityFeatures")
+        details = [("VBS Enabled", "Yes" if vbs == 1 else "No" if vbs == 0 else "Not configured"),
+                   ("Platform Security", "Required" if req and req > 0 else "Not required")]
+        return {"status": "VBS Active" if vbs == 1 else "VBS Off",
+                "color": "green" if vbs == 1 else "red",
+                "details": details, "enabled": vbs == 1}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 #: Windows 10 1903 and 1909. No other build shipped SMBv3.1.1 compression.
 _SMBGHOST_AFFECTED_BUILDS = (18362, 18363)
@@ -4141,6 +4248,8 @@ def check_smb_ghost() -> Dict[str, Any]:
                 "details": [("SMBv3 compression",
                              "Disabled" if mitigated else "Enabled"),
                             ("Windows build", str(build))]}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
     except Exception:
         return {"status": "Unknown", "color": "amber", "available": False,
                 "details": [("SMBGhost", "Check failed")]}
@@ -4194,17 +4303,20 @@ def check_sam_hive_permissions() -> Dict[str, Any]:
 
 def check_ntlm_relay_protection() -> Dict[str, Any]:
     """NTLM relay attack mitigations (PetitPotam, DFSCoerce, etc.)."""
-    key = r"HKLM\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0"
-    restrict_out = _reg_read(key, "RestrictSendingNTLMTraffic")
-    restrict_in = _reg_read(key, "RestrictReceivingNTLMTraffic")
-    details = [
-        ("Outgoing NTLM Restricted", "Yes" if restrict_out == 2 else "Partial" if restrict_out == 1 else "No"),
-        ("Incoming NTLM Restricted", "Yes" if restrict_in == 2 else "Partial" if restrict_in == 1 else "No"),
-    ]
-    ok = restrict_out == 2 and restrict_in == 2
-    return {"status": "Hardened" if ok else "Not Hardened",
-            "color": "green" if ok else "amber",
-            "details": details, "enabled": ok}
+    try:
+        key = r"HKLM\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0"
+        restrict_out = _reg_read(key, "RestrictSendingNTLMTraffic")
+        restrict_in = _reg_read(key, "RestrictReceivingNTLMTraffic")
+        details = [
+            ("Outgoing NTLM Restricted", "Yes" if restrict_out == 2 else "Partial" if restrict_out == 1 else "No"),
+            ("Incoming NTLM Restricted", "Yes" if restrict_in == 2 else "Partial" if restrict_in == 1 else "No"),
+        ]
+        ok = restrict_out == 2 and restrict_in == 2
+        return {"status": "Hardened" if ok else "Not Hardened",
+                "color": "green" if ok else "amber",
+                "details": details, "enabled": ok}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
 
 #: id (the reader's own function name) -> (display label, reader function).
 #: The id is what a caller's `readings` mapping keys on -- see

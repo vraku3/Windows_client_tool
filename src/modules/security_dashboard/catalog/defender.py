@@ -21,6 +21,8 @@ pass reports them as REFUSED rather than as applied (Task 11). The machine this
 was written on has Tamper Protection ON and Defender in Passive Mode, so no
 Defender write here has been verified end-to-end against a live Defender.
 """
+import re
+
 from typing import Any, Dict, Tuple
 
 from .. import asr_rules, snapshots
@@ -145,29 +147,47 @@ def _threat_control(suffix: str, severity: str, param: str) -> SecurityControl:
     )
 
 
-#: A control's comparable value is a bool (blocking or not), so a revert can
-#: only put the rule back to Enabled or Disabled -- it cannot know whether the
-#: machine had the rule in Audit, Warn or NotConfigured before.
-_ASR_REVERT = {"True": "Enabled", "False": "Disabled"}
+def _asr_revert_pattern(rule: asr_rules.Rule) -> str:
+    ids = f"-AttackSurfaceReductionRules_Ids '{rule.guid}'"
+    return (re.escape(f"Remove-MpPreference {ids}") + "|"
+            + re.escape(f"Add-MpPreference {ids} -AttackSurfaceReductionRules_Actions ")
+            + "[01256]")
+
+
+def _asr_probe(rule: asr_rules.Rule):
+    def probe():
+        prefs = snapshots.mp_preference()
+        if snapshots.unavailable("mp_preference") is not None or not isinstance(prefs, dict):
+            return None
+        keys = ("AttackSurfaceReductionRules_Ids", "AttackSurfaceReductionRules_Actions")
+        if any(key not in prefs for key in keys):
+            return None
+        ids, values = (prefs[key] for key in keys)
+        ids = ids if isinstance(ids, list) else ([] if ids is None else [ids])
+        values = values if isinstance(values, list) else ([] if values is None else [values])
+        if len(ids) != len(values) or len(set(str(i).lower() for i in ids)) != len(ids):
+            return None
+        if any(str(v) not in ("0", "1", "2", "5", "6") for v in values):
+            return None
+        actions = asr_rules.read_actions(prefs)
+        if actions is None:
+            return None
+        action = actions.get(rule.guid.lower())
+        target = f"-AttackSurfaceReductionRules_Ids '{rule.guid}'"
+        token = (f"Remove-MpPreference {target}" if action is None else
+                 f"Add-MpPreference {target} -AttackSurfaceReductionRules_Actions {action}")
+        return token if re.fullmatch(_asr_revert_pattern(rule), token) else None
+    return probe
 
 
 def _asr_step(rule: asr_rules.Rule, enable: bool) -> Dict[str, Any]:
-    """One ASR rule, set or cleared by GUID.
-
-    `Add-MpPreference`/`Remove-MpPreference` address a SINGLE rule, which is
-    exactly what a per-rule control needs -- `Set-MpPreference` on the whole
-    Ids/Actions array would rewrite every other rule. The GUID is single-quoted
-    so the braces are not read as a PowerShell scriptblock.
-    """
+    """Set or clear only this GUID; undo preserves its action or absence."""
     ids = f"-AttackSurfaceReductionRules_Ids '{rule.guid}'"
-    actions = "-AttackSurfaceReductionRules_Actions"
-    revert = f"{_PS}Add-MpPreference {ids} {actions} ${{old}}"
-    if enable:
-        command = f"{_PS}Add-MpPreference {ids} {actions} Enabled"
-    else:
-        command = f"{_PS}Remove-MpPreference {ids}"
+    command = (f"{_PS}Add-MpPreference {ids} -AttackSurfaceReductionRules_Actions Enabled"
+               if enable else f"{_PS}Remove-MpPreference {ids}")
     return {"type": "script", "command": command,
-            "revert_template": revert, "revert_values": _ASR_REVERT}
+            "revert_template": _PS + '"${old}"',
+            "revert_pattern": _asr_revert_pattern(rule)}
 
 
 def _asr_reader(rule: asr_rules.Rule):
@@ -214,6 +234,7 @@ def _asr_control(rule: asr_rules.Rule) -> SecurityControl:
         description=rule.why,
         why_it_matters=why,
         reader=_asr_reader(rule),
+        revert_probe=_asr_probe(rule),
         on_steps=(_asr_step(rule, True),),
         off_steps=(_asr_step(rule, False),),
         desired=True if rule.standard else None,

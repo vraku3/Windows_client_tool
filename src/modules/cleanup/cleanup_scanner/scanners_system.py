@@ -2115,9 +2115,16 @@ def delete_items_report(items: List[ScanItem],
     # reached the walk and took the excluded folder with it. The walk checks
     # every entry against the exclusions read at delete time.
     exclusions = list_exclusions()
+    # The refusal check covers an item INSIDE the app's own folders; a
+    # selected PARENT (%TEMP%, holding the running portable's _MEI runtime)
+    # reached them through the walk. Files older than the temp age floor --
+    # an app left open over a day -- were deletable there.
+    own_dirs = protected_app_dirs()
 
     def _skip(path: str, is_dir: bool) -> bool:
-        return _protected_entry(path, is_dir) or (bool(exclusions) and is_excluded(path, exclusions))
+        return (_protected_entry(path, is_dir)
+                or (bool(own_dirs) and any(_is_inside(path, d) for d in own_dirs))
+                or (bool(exclusions) and is_excluded(path, exclusions)))
 
     def _do_delete():
         report, refused, per_item = DeleteReport(), [], []

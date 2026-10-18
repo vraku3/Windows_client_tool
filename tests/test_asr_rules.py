@@ -1,4 +1,5 @@
 """Attack Surface Reduction rules: per-rule, by GUID, with an honest refusal."""
+import re
 import pytest
 
 from modules.security_dashboard import asr_rules, snapshots
@@ -98,21 +99,38 @@ def test_every_rule_is_set_and_cleared_by_its_own_guid():
         assert "Remove-MpPreference" in off["command"]
         for step in (on, off):
             assert "revert_template" in step and "${old}" in step["revert_template"]
-            assert step["revert_values"] == {"True": "Enabled", "False": "Disabled"}
+            assert "revert_pattern" in step and re.escape(rule.guid) in step["revert_pattern"]
             assert rule.guid in step["command"]
 
 
-def test_a_turned_on_rule_reverts_with_its_previous_action():
-    """The control's value is a bool, so the revert puts the rule back to
-    Enabled (it was blocking) or Disabled (it was not)."""
+def test_a_turned_on_rule_reverts_with_its_previous_action(monkeypatch):
+    """The revert puts back the rule's exact previous action (Audit here),
+    read by the control's revert probe -- not a lossy Enabled/Disabled."""
     from modules.security_dashboard.staging import ChangeSet
     rule = asr_rules.RULES[0]
+    monkeypatch.setattr(snapshots, "mp_preference", lambda: _prefs([rule.guid], [2]))
+    monkeypatch.setattr(snapshots, "unavailable", lambda *a: None)
     control = _controls()[f"asr_{rule.slug}"]
     cs = ChangeSet()
     cs.add(control, True, from_value=False)
     resolved = cs.changes[0].resolved_steps()[0]
     assert "Enabled" in resolved["command"]
-    assert resolved["revert_command"].endswith("Disabled")
+    assert resolved["revert_command"].endswith(
+        f"Add-MpPreference -AttackSurfaceReductionRules_Ids '{rule.guid}' "
+        "-AttackSurfaceReductionRules_Actions 2\"")
+
+
+def test_a_rule_that_was_not_configured_reverts_by_removal(monkeypatch):
+    from modules.security_dashboard.staging import ChangeSet
+    rule = asr_rules.RULES[0]
+    monkeypatch.setattr(snapshots, "mp_preference", lambda: _prefs([], []))
+    monkeypatch.setattr(snapshots, "unavailable", lambda *a: None)
+    control = _controls()[f"asr_{rule.slug}"]
+    cs = ChangeSet()
+    cs.add(control, True, from_value=False)
+    resolved = cs.changes[0].resolved_steps()[0]
+    assert resolved["revert_command"].endswith(
+        f"Remove-MpPreference -AttackSurfaceReductionRules_Ids '{rule.guid}'\"")
 
 
 def test_a_block_rule_reads_true(monkeypatch):

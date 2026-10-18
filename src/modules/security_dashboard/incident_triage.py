@@ -562,7 +562,7 @@ def triage(days: int = 30, run: Optional[Run] = None) -> Triage:
     f += check_logons(sec)
     f += check_powershell(ps)
     f += check_tasks(tasks, task_status.enabled)
-    for q in result.sources[:-1]:
+    for q in result.sources:
         cov = _coverage(q)
         if cov is not None and cov.key not in {x.key for x in f}:
             f.append(cov)

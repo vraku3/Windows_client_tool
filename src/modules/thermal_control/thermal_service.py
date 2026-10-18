@@ -80,27 +80,40 @@ class ThermalService(QObject):
 
     def start(self) -> None:
         """Open the hardware off the UI thread; GPU-only if it cannot be."""
-        self._check_gpu_fans()
         if self.reason:
+            self._check_gpu_fans()
             self.state_changed.emit(f"GPU only: {self.reason}.")
             self._reschedule()
             return
         self._run(self._open, self._opened)
 
     def _open(self, _worker):
+        # ADLX first, in this same job: LibreHardwareMonitor's GPU support
+        # loads System32's atiadlxx.dll (the iGPU's newer driver), and once
+        # that is in the process the old driver's ADLX copy binds to it and
+        # cannot see the RX 7900 XTX. Run side by side, LHM won the race.
+        try:
+            gpu_fans = self._read_gpu_fans()
+        except Exception as e:  # AdlxError, or the library failing outright
+            logger.warning("GPU fan check failed before opening the hardware: %s", e)
+            gpu_fans = e
         bridge = lhm_bridge.LhmBridge()
         bridge.open()
         controller = FanController(bridge, self.marker_path, extra_sensors=gpu_kmt.read_gpus)
         recovered = controller.recover()
         controller.curves = cv.CurveSet.from_list(self._config_get(CURVES_KEY, []))
-        return controller, recovered
+        return controller, recovered, gpu_fans
 
     def _opened(self, result) -> None:
         self._busy = False
         if self._stopped:
             result[0].shutdown()
             return
-        self.controller, self.recovered = result
+        self.controller, self.recovered, gpu_fans = result
+        if isinstance(gpu_fans, Exception):
+            self._gpu_failed(str(gpu_fans))
+        else:
+            self._gpu_fans_read(gpu_fans)
         self.errors = list(self.controller.last_errors)
         logger.info("thermal: hardware opened; %d curve(s) saved, %d active, recovered %s",
                     len(self.controller.curves.curves), len(self.controller.curves.enabled()),

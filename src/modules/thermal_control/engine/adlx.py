@@ -111,12 +111,35 @@ def choose_copy(windows_gpus: List[Tuple[str, str, str]], copies: List[Tuple[str
     return SYSTEM_COPY
 
 
+def _loaded_module_path(name: str) -> Optional[str]:
+    """Full path of a DLL already loaded into this process, or None."""
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetModuleHandleW.restype = c_void_p
+        k32.GetModuleHandleW.argtypes = [ctypes.c_wchar_p]
+        k32.GetModuleFileNameW.argtypes = [c_void_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        handle = k32.GetModuleHandleW(name)
+        if not handle:
+            return None
+        buf = ctypes.create_unicode_buffer(1024)
+        return buf.value if k32.GetModuleFileNameW(handle, buf, len(buf)) else None
+    except (OSError, AttributeError) as e:
+        logger.warning("could not check for an already loaded %s: %s", name, e)
+        return None
+
+
 def _load(directory: str):
     global _loaded
     if _loaded is not None:
         if os.path.normcase(_loaded[0]) != os.path.normcase(directory):
             logger.warning("ADLX already loaded from %s; not mixing in %s", _loaded[0], directory)
         return _loaded[1]
+    foreign = _loaded_module_path("atiadlxx.dll")
+    if foreign and os.path.normcase(os.path.dirname(foreign)) != os.path.normcase(directory):
+        # amdadlx64.dll imports atiadlxx.dll by name, so it would bind to
+        # this one -- another driver's ADL, which cannot see every GPU.
+        raise OSError(f"another copy of AMD's ADL ({foreign}) was loaded into this process "
+                      "first; restart the app")
     os.add_dll_directory(directory)
     adl = os.path.join(directory, "atiadlxx.dll")
     if os.path.exists(adl):

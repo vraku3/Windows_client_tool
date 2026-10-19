@@ -111,8 +111,10 @@ class Choices:
 def preset(level: str, groups: List["AppGroup"]) -> Choices:
     """Presets select catalogued programs; Explorer always requires opt-in."""
     wanted = {catalog.REC} if level == catalog.REC else {catalog.REC, catalog.MAX}
+    # A program an AI agent runs inside is never ticked by a preset.
+    hosting = {g.exe for g in groups if g.hosts}
     return Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
-                   close={a.exe for a in catalog.APPS if a.level in wanted},
+                   close={a.exe for a in catalog.APPS if a.level in wanted and a.exe not in hosting},
                    visuals=level == catalog.MAX, explorer=False, preset=level)
 
 
@@ -139,6 +141,9 @@ class AppGroup:
     spec: Optional[catalog.AppSpec]
     procs: List[Proc]
     roots: List[Proc]
+    #: AI agents running under this program (closing it ends them). Presets
+    #: never tick such a program; the person may.
+    hosts: Tuple[str, ...] = ()
 
     @property
     def handles(self) -> int:
@@ -165,21 +170,62 @@ def running_apps(procs: List[Proc], session: int, own_pid: int,
         if p.session == session and p.pid != own_pid and p.session != 0:
             by_name.setdefault(p.name.lower(), []).append(p)
     pids_by_name = {n: {p.pid for p in ps} for n, ps in by_name.items()}
+    hosting = _hosts_of_work_in_progress(procs, session, by_pid)
+    children: Dict[int, List[Proc]] = {}
+    for p in procs:
+        children.setdefault(p.ppid, []).append(p)
     groups = []
     for name, ps in by_name.items():
-        if catalog.never_close(name) or any(p.pid == own_pid or p.pid in protect for p in ps):
+        closable_launcher = (catalog.is_idle_closable_launcher(name)
+                             and not any(_runs_a_game(p, children) for p in ps))
+        if (catalog.never_close(name) and not closable_launcher) or \
+                any(p.pid == own_pid or p.pid in protect for p in ps):
             continue
         roots = [p for p in ps if p.ppid not in pids_by_name[name]] or ps[:1]
-        if any(_started_by_launcher(r, by_pid) for r in roots):
+        if not closable_launcher and any(_started_by_launcher(r, by_pid) for r in roots):
             continue
         path = path_of(roots[0].pid) or ""
         if not path or catalog.in_game_folder(path) or (
                 os.path.normcase(path).startswith(windir) and name not in catalog.WINDOWS_ON_DEMAND):
             continue
         spec = catalog.spec_for(name)
-        groups.append(AppGroup(name, spec.label if spec else os.path.basename(path), spec,
-                               ps, roots))
+        hosted = sorted({hosting[p.pid] for p in ps if p.pid in hosting})
+        label = spec.label if spec else os.path.basename(path)
+        if hosted:
+            label += f"  [runs {', '.join(hosted)} -- closing it ends that]"
+        groups.append(AppGroup(name, label, spec, ps, roots, tuple(hosted)))
     return sorted(_fold_helpers(groups), key=lambda g: -g.handles)
+
+
+def _hosts_of_work_in_progress(procs: List[Proc], session: int,
+                               by_pid: Dict[int, Proc]) -> Dict[int, str]:
+    """{pid: agent exe} for every ancestor of an AI agent in `session`.
+    A parent only counts while it is OLDER than its child (PIDs are reused)."""
+    hosts: Dict[int, str] = {}
+    for p in procs:
+        if p.session != session or not catalog.is_work_in_progress(p.name):
+            continue
+        seen, child, cur = set(), p, by_pid.get(p.ppid)
+        while cur is not None and cur.pid not in seen and cur.create_time <= child.create_time:
+            hosts.setdefault(cur.pid, p.name.lower())
+            seen.add(cur.pid)
+            child, cur = cur, by_pid.get(cur.ppid)
+    return hosts
+
+
+def _runs_a_game(launcher: Proc, children: Dict[int, List[Proc]]) -> bool:
+    """Is anything that is not the launcher's own helper running under it? That
+    is a game (or something it started that the user is using): not idle."""
+    stack, seen = list(children.get(launcher.pid, ())), set()
+    while stack:
+        p = stack.pop()
+        if p.pid in seen or p.create_time < launcher.create_time:
+            continue
+        seen.add(p.pid)
+        if not catalog.is_launcher_helper(p.name):
+            return True
+        stack.extend(children.get(p.pid, ()))
+    return False
 
 
 def _started_by_launcher(proc: Proc, by_pid: Dict[int, Proc]) -> bool:
@@ -225,11 +271,15 @@ def freed_estimate(procs: List[Proc], groups: List[AppGroup], close: Set[str]) -
     owners = {p.pid for g in groups if g.exe in close for p in g.procs}
     by_pid = {p.pid: p for p in procs}
     total = sum(g.handles for g in groups if g.exe in close)
+    def helper(name: str) -> bool:      # WebView2/conhost, and a launcher's own helpers
+        low = name.lower()
+        return low in _HELPERS or (catalog.is_launcher_helper(low) and not catalog.is_launcher(low))
+
     for p in procs:
-        if p.name.lower() not in _HELPERS:
+        if not helper(p.name):
             continue
         seen, cur = set(), p
-        while cur is not None and cur.name.lower() in _HELPERS and cur.pid not in seen:
+        while cur is not None and helper(cur.name) and cur.pid not in seen:
             seen.add(cur.pid)
             cur = by_pid.get(cur.ppid)
         if cur is not None and cur.pid in owners:
@@ -424,11 +474,12 @@ class _On:
             if extra and extra not in args:
                 args = f"{args} {extra}".strip()
             reopen = g.spec.reopen if g.spec else True
+            state = getattr(self.s, "window_state", lambda _pids: "normal")([p.pid for p in g.procs])
             entries.append(self.j.record({
                 "kind": "app_close", "exe": g.exe, "label": g.label, "path": path or program,
                 "args": args, "cwd": os.path.dirname(path or program), "aumid": self.s.aumid(g.roots[0].pid),
                 "reopen": reopen and elevated is not True, "was_elevated": elevated,
-                "handles": g.handles, "processes": len(g.procs)}))
+                "handles": g.handles, "processes": len(g.procs), "window": state}))
             jobs.append(([(p.pid, p.create_time) for p in g.procs], path))
         if not jobs:
             return
@@ -593,6 +644,10 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
             say(BAD, f"{entry!r}: restore failed ({error})")
             failed.append(entry)
     _say_priorities(ctx, say)
+    if ctx.get("quiet") and hasattr(system, "keep_minimized"):
+        # On its own thread: OFF does not wait the 15 s it watches for.
+        threading.Thread(target=system.keep_minimized, args=(list(ctx["quiet"]),),
+                         daemon=True, name="game-mode-keep-minimized").start()
     if ctx["tasks"]:
         say(OK, f"{ctx['tasks']} scheduled task(s) enabled again")
     pending = _verify_reopened(system, ctx["reopened"], say, settle)
@@ -689,14 +744,20 @@ def _restore_app(system, e, say, ctx) -> bool:
     if running:
         say(OK, f"{e['label']}: already running again")
         return True
+    # Minimized or in the tray before Game Mode: back the same way, not in front.
+    quiet = e.get("window") in ("minimized", "hidden")
     if e.get("aumid"):
-        error = system.launch_aumid(e["aumid"])
+        error = system.launch_aumid(e["aumid"], quiet=True) if quiet else system.launch_aumid(e["aumid"])
+    elif quiet:
+        error = system.launch(e["path"], e.get("args", ""), e.get("cwd", ""), quiet=True)
     else:
         error = system.launch(e["path"], e.get("args", ""), e.get("cwd", ""))
     if error:
         say(BAD, f"{e['label']}: could not reopen ({error})")
         return False
     ctx["reopened"].append((e["exe"], e["label"]))
+    if quiet:
+        ctx.setdefault("quiet", []).append(e["exe"])
     return True
 
 

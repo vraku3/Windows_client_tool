@@ -90,6 +90,11 @@ SERVICES = (
     ServiceSpec("PimIndexMaintenanceSvc_*", "Contact Data indexing", "Indexes contacts for Mail/People.",
                 MAX),
     ServiceSpec("OneSyncSvc_*", "Sync Host", "Syncs mail, contacts and calendar.", MAX),
+    ServiceSpec("WpnUserService_*", "Windows notifications (user)",
+                "Toast notifications; they arrive after Game Mode is off (566 handles measured).", MAX),
+    ServiceSpec("AppXSvc", "AppX Deployment",
+                "Installs and updates Store apps; Windows starts it again on demand (784 handles "
+                "measured).", MAX),
     ServiceSpec("MessagingService_*", "Messaging Service", "Text messaging sync.", MAX),
     ServiceSpec("CDPUserSvc_*", "Connected Devices Platform (user)", "Phone Link and nearby devices.", MAX),
     ServiceSpec("NcdAutoSetup", "Network Connected Devices Auto-Setup",
@@ -270,6 +275,17 @@ APPS = (
     _a("wallpaper64.exe", "Wallpaper Engine", "Animated wallpaper: GPU time behind the game.", REC),
     _a("lively.exe", "Lively Wallpaper", "Animated wallpaper: GPU time behind the game.", REC),
     # -- Windows' own on-demand helpers (Maximum) ------------------------------------------------
+    # -- idle game launchers (Maximum; only while they run no game) -------------------------------
+    _a("steam.exe", "Steam (no game running)",
+       "Steam and its web helpers (~6,000 handles measured) with no game started from it; "
+       "quit with steam -shutdown, reopened to the tray.", MAX, reopen_args="-silent"),
+    _a("epicgameslauncher.exe", "Epic Games Launcher (no game running)",
+       "Closed only while no game it started is running; reopened.", MAX, reopen_args="-silent"),
+    _a("eadesktop.exe", "EA app (no game running)",
+       "Closed only while no game it started is running; reopened.", MAX),
+    _a("shellexperiencehost.exe", "Notification and clock flyouts",
+       "Windows starts it again only when the notification centre or the clock flyout is "
+       "opened (measured: not back within 15 s), ~1,700 handles.", MAX, reopen=False),
     _a("crossdeviceresume.exe", "Cross-device resume",
        "Phone-to-PC handoff; Windows starts it again when needed.", MAX, reopen=False),
     _a("searchhost.exe", "Windows Search box",
@@ -333,7 +349,7 @@ APP_BY_EXE: Dict[str, AppSpec] = {a.exe: a for a in APPS}
 
 #: Windows' own programs (under %SystemRoot%) that MAY be closed, because
 #: Windows starts them again when they are next needed.
-WINDOWS_ON_DEMAND = frozenset({"searchhost.exe", "crossdeviceresume.exe"})
+WINDOWS_ON_DEMAND = frozenset({"searchhost.exe", "crossdeviceresume.exe", "shellexperiencehost.exe"})
 
 #: Game launchers. Anything they started -- the game itself -- is never
 #: closed, however it is named (see `session.running_apps`).
@@ -366,7 +382,7 @@ ANTIVIRUS_PATTERNS = (
 NEVER_CLOSE = LAUNCHERS + ANTIVIRUS_PATTERNS + (
     "steamwebhelper.exe", "steamservice.exe", "gameoverlayui*.exe", "epicwebhelper.exe",
     "eabackgroundservice.exe", "vgtray.exe", "gamingservices*.exe", "gamebar*.exe", "gameinput*.exe",
-    "explorer.exe", "dwm.exe", "textinputhost.exe", "ctfmon.exe", "shellexperiencehost.exe",
+    "explorer.exe", "dwm.exe", "textinputhost.exe", "ctfmon.exe",
     "startmenuexperiencehost.exe", "shellhost.exe", "sihost.exe", "msedgewebview2.exe",
     "outlook.exe", "olk.exe", "winword.exe", "excel.exe", "powerpnt.exe", "onenote*.exe",
     "msaccess.exe", "mspub.exe", "lync.exe", "officeclicktorun.exe",
@@ -382,6 +398,44 @@ NEVER_CLOSE = LAUNCHERS + ANTIVIRUS_PATTERNS + (
     "bash.exe", "sh.exe", "mintty.exe", "git.exe", "ssh.exe",
     "winclienttool*.exe",
 )
+
+
+#: Launchers Maximum may close when they are IDLE -- no game started from them
+#: is running (Battle.net stays: WoW needs it; a game it started is never
+#: closed either way, see `session.running_apps`).
+IDLE_CLOSABLE_LAUNCHERS = frozenset({"steam.exe", "epicgameslauncher.exe", "eadesktop.exe"})
+
+#: A launcher's own processes. A descendant NOT matching these (or a launcher)
+#: is a game, and the launcher is not idle.
+LAUNCHER_HELPERS = (
+    "steamwebhelper.exe", "steamservice.exe", "steamerrorreporter*.exe", "gameoverlayui*.exe",
+    "epicwebhelper.exe", "eabackgroundservice.exe", "eadesktop*.exe", "crashpad_handler.exe",
+    "conhost.exe", "msedgewebview2.exe", "werfault.exe",
+)
+
+#: AI agents that may be mid-task. Closing the program that HOSTS one (VS Code
+#: running Claude Code, the ChatGPT app running Codex) ends it too, so such a
+#: program is offered but never ticked by a preset, and is labelled with what
+#: runs inside it.
+WORK_IN_PROGRESS = ("claude.exe", "codex.exe")
+
+#: A clean quit for programs that only hide on WM_CLOSE: (argument), run from
+#: the program's own path, unelevated through the shell.
+QUIT_ARGS = {"steam.exe": "-shutdown"}
+
+
+def is_idle_closable_launcher(exe: str) -> bool:
+    return exe.lower() in IDLE_CLOSABLE_LAUNCHERS
+
+
+def is_launcher_helper(exe: str) -> bool:
+    low = exe.lower()
+    return is_launcher(low) or any(fnmatch.fnmatch(low, pattern) for pattern in LAUNCHER_HELPERS)
+
+
+def is_work_in_progress(exe: str) -> bool:
+    low = exe.lower()
+    return any(fnmatch.fnmatch(low, pattern) for pattern in WORK_IN_PROGRESS)
 
 
 def is_launcher(exe: str) -> bool:

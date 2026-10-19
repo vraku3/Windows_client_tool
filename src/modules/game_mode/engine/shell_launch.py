@@ -47,12 +47,18 @@ def _desktop_shell():
     return win32com.client.Dispatch(folder_view).Application
 
 
-def _call(program: str, args: str, cwd: str, out: List[Optional[str]]) -> None:
+#: ShellExecute show commands: normal, and minimized without taking focus.
+SHOW_NORMAL = 1
+SHOW_MIN_NO_ACTIVE = 7
+
+
+def _call(program: str, args: str, cwd: str, out: List[Optional[str]],
+          show: int = SHOW_NORMAL) -> None:
     import pythoncom
     pythoncom.CoInitialize()
     try:
         app = _desktop_shell()
-        app.ShellExecute(program, args, cwd, "", 1)
+        app.ShellExecute(program, args, cwd, "", show)
         app = None
         out.append(None)
     except Exception as error:  # noqa: BLE001 -- COM raises several unrelated types
@@ -62,10 +68,11 @@ def _call(program: str, args: str, cwd: str, out: List[Optional[str]]) -> None:
         pythoncom.CoUninitialize()
 
 
-def launch(program: str, args: str = "", cwd: str = "", timeout: float = TIMEOUT_S) -> Optional[str]:
+def launch(program: str, args: str = "", cwd: str = "", timeout: float = TIMEOUT_S,
+           show: int = SHOW_NORMAL) -> Optional[str]:
     """None on success, else why it could not be started."""
     out: List[Optional[str]] = []
-    worker = threading.Thread(target=_call, args=(program, args, cwd, out), daemon=True,
+    worker = threading.Thread(target=_call, args=(program, args, cwd, out, show), daemon=True,
                               name="game-mode-launch")
     worker.start()
     worker.join(timeout)
@@ -84,11 +91,11 @@ def package_installed(aumid: str) -> bool:
     return bool(family and base and os.path.isdir(os.path.join(base, "Packages", family)))
 
 
-def launch_packaged(aumid: str, timeout: float = TIMEOUT_S) -> Optional[str]:
+def launch_packaged(aumid: str, timeout: float = TIMEOUT_S, show: int = SHOW_NORMAL) -> Optional[str]:
     """Checked first, because asking the shell for a package that is not there
     is exactly what raises explorer's modal box. Then the AppsFolder item is
     opened directly by the desktop shell (0.06 s, measured) -- not through
     `explorer.exe <item>`, which leaves an extra explorer process running."""
     if not package_installed(aumid):
         return f"{aumid.split('!', 1)[0]} is not installed any more"
-    return launch("shell:AppsFolder\\" + aumid, "", "", timeout)
+    return launch("shell:AppsFolder\\" + aumid, "", "", timeout, show)

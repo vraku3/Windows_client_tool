@@ -230,11 +230,22 @@ class WinSystem:
                    grace: float = 8.0) -> List[Optional[str]]:
         """Ask every recorded process to close together, then end matching survivors."""
         from . import shell_launch
+        from . import catalog
         for identities, exe_path in jobs:
-            if self._matching(identities) and self._trusted_onedrive(exe_path):
+            if not self._matching(identities) or not exe_path:
+                continue
+            if self._trusted_onedrive(exe_path):
                 error = shell_launch.launch(exe_path, "/shutdown")
                 if error:
                     logger.warning("game mode: OneDrive shutdown failed: %s", error)
+                continue
+            # Programs that only hide on WM_CLOSE (Steam) are asked to quit by
+            # their own command, unelevated, from the path they are running from.
+            quit_args = catalog.QUIT_ARGS.get(os.path.basename(exe_path).lower())
+            if quit_args:
+                error = shell_launch.launch(exe_path, quit_args)
+                if error:
+                    logger.warning("game mode: %s %s failed: %s", exe_path, quit_args, error)
         identities = [identity for group, _path in jobs for identity in group]
         self._post_close(self._matching(identities))
         self._wait_gone(identities, grace)
@@ -282,13 +293,18 @@ class WinSystem:
         # window took a full NtQuerySystemInformation for each of hundreds of windows.
         live_pids = {pid for pid, _created in self._matching(identities)}
 
+        import pywintypes
+
         def each(hwnd, _):
-            pid = win32process.GetWindowThreadProcessId(hwnd)[1]
-            if pid in live_pids:
-                try:
+            # A window can close between EnumWindows listing it and the
+            # PostMessage (error 1400, measured 2026-10-19). pywintypes.error is
+            # NOT an OSError, so it escaped and aborted Game Mode ON halfway.
+            try:
+                pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+                if pid in live_pids:
                     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-                except OSError as error:
-                    logger.warning("game mode: WM_CLOSE to %s refused: %s", hwnd, error)
+            except (pywintypes.error, OSError) as error:
+                logger.debug("game mode: WM_CLOSE to %s skipped: %s", hwnd, error)
             return True
         win32gui.EnumWindows(each, None)
 
@@ -390,16 +406,79 @@ class WinSystem:
     def alive(self, pid: int, create_time: int) -> bool:
         return any(p.pid == pid and p.create_time == create_time for p in self.processes())
 
-    def launch(self, program: str, args: str = "", cwd: str = "") -> Optional[str]:
+    def launch(self, program: str, args: str = "", cwd: str = "", quiet: bool = False) -> Optional[str]:
         """Start `program` as the signed-in user, NOT elevated, through the
         shell's own desktop window -- an elevated app's children would be
-        elevated too, and OneDrive refuses to run elevated."""
+        elevated too, and OneDrive refuses to run elevated. `quiet`: minimized,
+        without taking focus (it was minimized or in the tray before)."""
         from . import shell_launch
-        return shell_launch.launch(program, args, cwd)
+        show = shell_launch.SHOW_MIN_NO_ACTIVE if quiet else shell_launch.SHOW_NORMAL
+        return shell_launch.launch(program, args, cwd, show=show)
 
-    def launch_aumid(self, aumid: str) -> Optional[str]:
+    def launch_aumid(self, aumid: str, quiet: bool = False) -> Optional[str]:
         from . import shell_launch
-        return shell_launch.launch_packaged(aumid)
+        show = shell_launch.SHOW_MIN_NO_ACTIVE if quiet else shell_launch.SHOW_NORMAL
+        return shell_launch.launch_packaged(aumid, show=show)
+
+    @staticmethod
+    def _main_windows(pids):
+        """Visible, unowned top-level windows of `pids`: [(hwnd, pid)]."""
+        import pywintypes
+        import win32con
+        import win32gui
+        import win32process
+        found = []
+
+        def each(hwnd, _):
+            try:
+                if not win32gui.IsWindowVisible(hwnd) or win32gui.GetWindow(hwnd, win32con.GW_OWNER):
+                    return True
+                pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+                if pid in pids and win32gui.GetWindowText(hwnd):
+                    found.append((hwnd, pid))
+            except (pywintypes.error, OSError) as error:
+                logger.debug("game mode: window %s skipped: %s", hwnd, error)
+            return True
+        win32gui.EnumWindows(each, None)
+        return found
+
+    def window_state(self, pids) -> str:
+        """How the program looked before it was closed: "normal" (a window on
+        screen), "minimized" (only minimized windows) or "hidden" (tray only)."""
+        import win32gui
+        try:
+            windows = self._main_windows(set(pids))
+        except Exception as error:  # noqa: BLE001 -- never block closing over this
+            logger.warning("game mode: window state unreadable: %s", error)
+            return "normal"
+        if not windows:
+            return "hidden"
+        return "minimized" if all(win32gui.IsIconic(h) for h, _p in windows) else "normal"
+
+    def keep_minimized(self, exes, seconds: float = 15.0) -> None:
+        """For `seconds`, minimize -- without activating -- each new main window
+        of a program in `exes`. Teams/WhatsApp ignore the show command they are
+        launched with, so a quiet reopen alone still brings them to the front."""
+        import pywintypes
+        import win32con
+        import win32gui
+        names = {e.lower() for e in exes}
+        if not names:
+            return
+        handled = set()
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            pids = {p.pid for p in self.processes() if p.name.lower() in names}
+            for hwnd, _pid in self._main_windows(pids):
+                if hwnd in handled:
+                    continue
+                handled.add(hwnd)
+                try:
+                    if not win32gui.IsIconic(hwnd):
+                        win32gui.ShowWindow(hwnd, win32con.SW_SHOWMINNOACTIVE)
+                except pywintypes.error as error:
+                    logger.debug("game mode: could not minimize %s: %s", hwnd, error)
+            time.sleep(0.5)
 
     # ---- registry ------------------------------------------------------------------------------
     def reg_get(self, path: str, name: str, hive: str = "HKCU") -> Tuple[Optional[bool], object, int]:

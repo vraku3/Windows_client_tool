@@ -68,9 +68,13 @@ def dns_cache_count() -> Optional[int]:
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("displaydns failed: %s", e)
         return None
-    if r.returncode != 0:
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode != 0 or refused(out):
         return None
-    return len(re.findall(r"Record Name", r.stdout))
+    # Each cached entry is underlined with a dashed line in every display
+    # language; "Record Name" is the English label only, so a localized
+    # Windows counted 0 and a flush read as verified.
+    return len(re.findall(r"^\s*-{10,}\s*$", r.stdout or "", re.M))
 
 
 def flush_dns(run: Callable = _run, count: Callable = dns_cache_count) -> FixResult:
@@ -82,6 +86,9 @@ def flush_dns(run: Callable = _run, count: Callable = dns_cache_count) -> FixRes
     out = (r.stdout or "") + (r.stderr or "")
     if refused(out):
         return FixResult(False, "Refused: " + out.strip().splitlines()[0])
+    if r.returncode != 0:
+        first = (out.strip().splitlines() or [f"exit {r.returncode}"])[0]
+        return FixResult(False, f"ipconfig /flushdns failed: {first}", False)
     after = count()
     if before is None or after is None:
         return FixResult(r.returncode == 0, "Flush command ran; the cache could not be read back to confirm.", None)

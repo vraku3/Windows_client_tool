@@ -18,6 +18,7 @@ from ..store.node_store import (
 from .mft_reader import BATCH_INTERVAL
 
 INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+ERROR_NO_MORE_FILES = 18
 # Unix epoch expressed in the FILETIME epoch (1601-01-01), and its tick rate.
 # Every timestamp in the store is a FILETIME; os.stat is the one place a Unix
 # timestamp gets in, so it converts here rather than anywhere downstream.
@@ -154,6 +155,13 @@ def list_directory(path: str, on_error=None) -> list[DirEntry]:
                     atime=data.ftLastAccessTime.value,
                 ))
             if not _kernel32.FindNextFileW(handle, ctypes.byref(data)):
+                # 18 (ERROR_NO_MORE_FILES) is the end; anything else -- a share
+                # dropping, an I/O error -- cut the listing short, and a total
+                # built on it must not look complete.
+                err = ctypes.get_last_error()
+                if err != ERROR_NO_MORE_FILES and on_error is not None:
+                    on_error(path, "listing stopped early: "
+                             + ctypes.FormatError(err).strip())
                 break
     finally:
         _kernel32.FindClose(handle)

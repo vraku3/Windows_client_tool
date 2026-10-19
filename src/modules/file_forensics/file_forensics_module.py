@@ -454,13 +454,32 @@ class FileForensicsModule(BaseModule):
         if not analysis or not analysis.locking_processes:
             return
         proc = analysis.locking_processes[0]
+        import psutil
+        try:
+            # A PID alone is not an identity: Windows can hand it to another
+            # program while this dialog is open. Checked again before ending.
+            created = psutil.Process(proc.pid).create_time()
+        except psutil.Error:
+            created = None
         reply = QMessageBox.question(
             self._widget, "Kill Locking Process",
             f"Kill '{proc.process}' (PID {proc.pid})?\n\n"
             "This ends the process immediately and cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            try:
+                same = created is None or abs(psutil.Process(proc.pid).create_time() - created) < 0.5
+            except psutil.NoSuchProcess:
+                same = False
+            except psutil.Error:
+                same = True          # unreadable now: end_process reports its own refusal
+            if not same:
+                self._pending_banner_message = (f"'{proc.process}' (PID {proc.pid}) had already "
+                                                "exited -- nothing was ended.")
+                self._on_search_clicked()
+                return
             result = end_process(proc.pid)
             # The refresh now runs on a Worker (search is no longer
             # synchronous), so there is no "call refresh, then overwrite its

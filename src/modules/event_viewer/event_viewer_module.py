@@ -44,6 +44,10 @@ class EventViewerModule(LogReaderModule):
         super().__init__()
         self._notes: list = []
         self._range_label = "last 24 hours"
+        #: The "how far back" choice, copied on the GUI thread whenever it
+        #: changes: load_entries runs on LogPane's worker and must not touch
+        #: the combo itself.
+        self._hours_text = ""
 
     # -- pane wiring ------------------------------------------------------
     def pane_options(self) -> dict:
@@ -63,6 +67,8 @@ class EventViewerModule(LogReaderModule):
         combo.setToolTip("How far back to read. Changing it needs a Refresh.")
         toolbar.addWidget(combo)
         extra["hours_combo"] = combo
+        self._hours_text = combo.currentText()
+        combo.currentTextChanged.connect(self._remember_hours)
 
         toolbar.addWidget(QLabel("Show:"))
         presets = QComboBox()
@@ -96,6 +102,9 @@ class EventViewerModule(LogReaderModule):
         text.textChanged.connect(self._apply_view)
         group.toggled.connect(self._apply_view)
 
+    def _remember_hours(self, text: str) -> None:
+        self._hours_text = text
+
     def _control(self, key: str):
         if self._pane is None:
             return None
@@ -103,13 +112,13 @@ class EventViewerModule(LogReaderModule):
 
     # -- loading ----------------------------------------------------------
     def load_entries(self, worker):
-        # The combo is read here, on the way in, so the worker never touches a
-        # widget from its own thread.
+        # Runs on LogPane's worker thread: it reads the copy the GUI thread
+        # keeps (`_remember_hours`), never the combo.
         hours_back = 24
-        combo = self._control("hours_combo")
-        if combo is not None:
-            hours_back = HOURS_MAP.get(combo.currentText(), 24)
-            self._range_label = combo.currentText().replace("1 hour", "last hour")
+        text = self._hours_text
+        if text:
+            hours_back = HOURS_MAP.get(text, 24)
+            self._range_label = text.replace("1 hour", "last hour")
             if not self._range_label.startswith("last"):
                 self._range_label = "last " + self._range_label
         entries, notes = read_logs(

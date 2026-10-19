@@ -121,20 +121,38 @@ def collect_rsop(timeout: int = DEFAULT_TIMEOUT,
 
 
 def export_html_report(path: str, timeout: int = DEFAULT_TIMEOUT) -> Tuple[bool, str]:
-    """Write Microsoft's own HTML RSOP report to `path`."""
-    try:
-        proc = subprocess.run(["gpresult", "/h", path, "/f"],
-                              capture_output=True, text=True,
-                              creationflags=_no_window(), timeout=timeout)
-    except FileNotFoundError:
-        return False, "gpresult.exe was not found on this system."
-    except subprocess.TimeoutExpired:
-        return False, "gpresult did not finish within %ds." % timeout
+    """Write Microsoft's own HTML RSOP report to `path`.
 
-    if os.path.exists(path) and os.path.getsize(path) > 0:
-        return True, ""
-    complaint = (proc.stdout or "").strip() or (proc.stderr or "").strip()
-    return False, complaint or "gpresult wrote no report."
+    gpresult writes into a fresh temp file beside `path`, which replaces
+    `path` only once it exists and is non-empty: judged by the destination
+    alone, a failed run over an EARLIER report announced that stale report
+    as the new one."""
+    folder = os.path.dirname(os.path.abspath(path))
+    tmp = os.path.join(folder, ".gpresult-%d-%s.html" % (os.getpid(), os.urandom(4).hex()))
+    try:
+        try:
+            proc = subprocess.run(["gpresult", "/h", tmp, "/f"],
+                                  capture_output=True, text=True,
+                                  creationflags=_no_window(), timeout=timeout)
+        except FileNotFoundError:
+            return False, "gpresult.exe was not found on this system."
+        except subprocess.TimeoutExpired:
+            return False, "gpresult did not finish within %ds." % timeout
+
+        if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+            try:
+                os.replace(tmp, path)
+            except OSError as exc:
+                return False, "The report was written but could not be saved as %s: %s" % (path, exc)
+            return True, ""
+        complaint = (proc.stdout or "").strip() or (proc.stderr or "").strip()
+        return False, complaint or "gpresult wrote no report."
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError as exc:
+                logger.warning("could not remove %s: %s", tmp, exc)
 
 
 def mmc_console_path(name: str) -> Optional[str]:

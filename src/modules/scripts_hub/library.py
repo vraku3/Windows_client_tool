@@ -110,8 +110,13 @@ BUILT_IN: List[Script] = [
            "question after 'it rebooted overnight'.",
            _ps(r"""
 $since = (Get-Date).AddDays(-30)
-$events = Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6008,41,6005,6006; StartTime=$since} -ErrorAction SilentlyContinue
-if (-not $events) { 'No shutdown or restart events in the last 30 days.'; return }
+try {
+  $events = Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6008,41,6005,6006; StartTime=$since} -ErrorAction Stop
+} catch {
+  # "No events match" is an answer; a refused or failed read is not.
+  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { 'No shutdown or restart events in the last 30 days.'; return }
+  "ERROR: the System log could not be read: $($_.Exception.Message)"; return
+}
 $events | ForEach-Object {
   $what = switch ($_.Id) {
     1074 { 'Planned shutdown/restart' } 6008 { 'UNEXPECTED shutdown' }

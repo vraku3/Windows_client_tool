@@ -443,7 +443,10 @@ class DriverModule(BaseModule):
                                 int(header.sortIndicatorOrder().value))
         if self._table is not None and self.app and getattr(self.app, "config", None):
             save_column_widths(self._table, self.app.config.set, self._CONFIG_PREFIX)
-        self.cancel_all_workers()
+        # Nothing is cancelled on leaving the pane: a driver install keeps
+        # running in pnputil either way, and a cancelled Worker never emits
+        # its result -- which is where the undo token and history are saved.
+        # The page is permanent, so a worker finishing later still lands.
 
     def on_stop(self) -> None:
         self.cancel_all_workers()

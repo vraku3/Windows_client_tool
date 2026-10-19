@@ -99,15 +99,17 @@ def find_windows_update_driver(driver: DriverInfo) -> Optional[WindowsUpdateDriv
     matching driver's hardware_id. Must run in a COMWorker
     (CoInitialize already done) -- this is a real network+service round
     trip, the same reason every other check in this package backgrounds
-    itself off the UI thread. Never raises -- see _search_pending_driver_updates
-    and _match_hardware_id, which this composes. For checking many
+    itself off the UI thread. Raises RuntimeError when the search itself
+    fails (no WU service, no network, policy): "could not check" must not
+    read as "no driver found". None means searched, nothing matches. For checking many
     devices at once, use find_windows_update_drivers_for_many instead --
     calling this once per device means one full WU search per device."""
     if not driver.hardware_id:
         return None
     candidates = _search_pending_driver_updates()
     if candidates is None:
-        return None
+        raise RuntimeError("Windows Update's driver search failed (see the log for the "
+                           "COM error) -- the device was not checked")
     return _match_hardware_id(candidates, driver.hardware_id)
 
 

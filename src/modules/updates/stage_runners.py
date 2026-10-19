@@ -25,7 +25,7 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
 
     patterns = app.config.get("updates.blocklist_patterns", [])
     include_hidden = app.config.get("updates.wu_include_hidden", False)
-    include_drivers = app.config.get("updates.wu_include_drivers", True)
+    include_drivers = app.config.get("updates.wu_include_drivers", False)
     log("Windows Update: scanning...")
     updates = fetch_pending_updates(
         include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
@@ -45,7 +45,14 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         from core.system_restore import create_restore_point
         log("Creating a System Restore point before installing updates...")
         ok, _out = create_restore_point("Windows Client Tool — before WU install")
-        log("Restore point created." if ok else "Restore point creation failed or was skipped.")
+        if not ok:
+            # The safeguard was asked for and is missing: installing anyway
+            # would leave no way back. Turn the setting off to proceed without.
+            log("Windows Update: NOT installed -- the System Restore point that Settings asks "
+                "for could not be created (System Restore off or blocked by policy?).")
+            return {"results": [], "reboot_required": False, "installed_count": 0,
+                    "error": "restore point could not be created"}
+        log("Restore point created.")
 
     def _progress(done, total, title):
         if title:
@@ -170,7 +177,24 @@ def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     )
     output = (proc.stdout or "") + (proc.stderr or "")
     log(output or "(no output)")
-    return {"output": output}
+    if proc.returncode != 0:
+        log(f"DISM: FAILED (exit {proc.returncode}).")
+    return {"output": output, "returncode": proc.returncode,
+            **({"error": f"DISM exited {proc.returncode}"} if proc.returncode != 0 else {})}
+
+
+def stage_failures(stage: str, result: dict) -> list:
+    """What went wrong in one stage's result, for the run's exit code and log.
+    A stage that ran and reported failures is a failed run, not exit 0."""
+    if not isinstance(result, dict):
+        return [f"{stage}: no result"]
+    problems = [f"{stage}: {result['error']}"] if result.get("error") else []
+    for r in result.get("results", []) or []:
+        if stage == "wu" and not r.get("success", True):
+            problems.append(f"wu: {r.get('kb') or r.get('title')}: {r.get('message', 'failed')}")
+        elif stage in ("winget", "store") and r.get("state") == "FAILED":
+            problems.append(f"{stage}: {r.get('id') or r.get('name')}: failed")
+    return problems
 
 
 def run_health_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:

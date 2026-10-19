@@ -497,7 +497,7 @@ class _WinUpdatesTab(QWidget):
 
         include_hidden = self._chk_hidden.isChecked()
         patterns = self._patterns()
-        include_drivers = self.app.config.get("updates.wu_include_drivers", True) if self.app else True
+        include_drivers = self.app.config.get("updates.wu_include_drivers", False) if self.app else False
 
         def _fetch(worker):
             return fetch_pending_updates(
@@ -586,9 +586,12 @@ class _WinUpdatesTab(QWidget):
                 from core.system_restore import create_restore_point
                 worker.signals.log_line.emit("Creating a System Restore point before installing…")
                 ok, _out = create_restore_point("Windows Client Tool — before WU install")
-                worker.signals.log_line.emit(
-                    "Restore point created." if ok else "Restore point creation failed or was skipped."
-                )
+                if not ok:
+                    raise RuntimeError(
+                        "Nothing was installed: the System Restore point could not be created "
+                        "(System Restore off or blocked by policy?). Turn off 'Create a System Restore "
+                        "point before installing Windows updates' in Settings to install without one.")
+                worker.signals.log_line.emit("Restore point created.")
 
             def _progress(done, total, title):
                 worker.signals.progress.emit(done)
@@ -635,7 +638,7 @@ class _WinUpdatesTab(QWidget):
     def _verify_after(self, results: List[InstallResult]) -> None:
         include_hidden = self._chk_hidden.isChecked()
         patterns = self._patterns()
-        include_drivers = self.app.config.get("updates.wu_include_drivers", True) if self.app else True
+        include_drivers = self.app.config.get("updates.wu_include_drivers", False) if self.app else False
 
         def _fetch(worker):
             return fetch_pending_updates(
@@ -917,7 +920,7 @@ class _UpdateSettingsTab(QWidget):
             return
         self._chk_verify.setChecked(self.app.config.get("updates.verify_after_update", True))
         self._chk_restore.setChecked(self.app.config.get("updates.restore_point_before_install", True))
-        self._chk_drivers.setChecked(self.app.config.get("updates.wu_include_drivers", True))
+        self._chk_drivers.setChecked(self.app.config.get("updates.wu_include_drivers", False))
 
         patterns = self.app.config.get("updates.blocklist_patterns", [])
         self._block_edit.setPlainText("\n".join(patterns))
@@ -1182,9 +1185,10 @@ class UpdatesModule(BaseModule):
             self._settings_tab._refresh_task_health()
 
     def on_deactivate(self) -> None:
-        for tab in (self._app_tab, self._win_tab, self._store_tab, self._runall_tab):
-            if tab is not None:
-                tab._cancel_all()
+        # Leaving the pane cancels nothing: a cancel used to reach winget as
+        # `taskkill /T /F` in the middle of an install. Scans and installs run
+        # on; each tab's own Cancel button and app exit (on_stop) stop them.
+        pass
 
     def on_start(self, app) -> None:
         self.app = app

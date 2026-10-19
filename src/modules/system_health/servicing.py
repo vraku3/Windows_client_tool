@@ -1,5 +1,6 @@
 """DISM component-store servicing actions. No Qt -- callers (the module's
 UI, and the --unattended stage) both drive this the same way."""
+import os
 import subprocess
 from dataclasses import dataclass
 from typing import Optional
@@ -50,11 +51,37 @@ def run_restore_health(timeout: int = 1800) -> DismResult:
                       (proc.stdout or "") + (proc.stderr or ""))
 
 
+def system_drive() -> str:
+    """The Windows volume ("C:"), from %SystemDrive% -- never assumed."""
+    drive = (os.environ.get("SystemDrive") or "C:").rstrip("\\")
+    return drive if len(drive) == 2 and drive[1] == ":" else "C:"
+
+
+def chkdsk_scheduled(drive: str) -> Optional[bool]:
+    """Is a boot-time check queued for `drive`? Read back from Session
+    Manager's BootExecute, where scheduling one adds an `autocheck autochk
+    ... \\??\\C:` entry. None when the value could not be read."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Control\Session Manager") as key:
+            entries, _kind = winreg.QueryValueEx(key, "BootExecute")
+    except OSError:
+        return None
+    if isinstance(entries, str):
+        entries = [entries]
+    target = ("\\??\\" + drive).lower()
+    return any(target in (e or "").lower() for e in entries)
+
+
 def run_chkdsk_schedule(timeout: int = 60) -> DismResult:
-    """Schedules CHKDSK C: /f /r /x for next reboot by answering the
-    Y/N prompt. Moved from Quick Fix (fix_actions.run_chkdsk) -- same
-    command and same answered-prompt trick, relocated."""
-    cmd = ["chkdsk", "C:", "/f", "/r", "/x"]
+    """Schedules CHKDSK /f /r /x on the system drive for next reboot by
+    answering its Y/N prompt. The answer is English, so on another display
+    language the prompt may refuse it: success is decided by reading
+    BootExecute back (`chkdsk_scheduled`), never by the exit code or text.
+    Moved from Quick Fix (fix_actions.run_chkdsk)."""
+    drive = system_drive()
+    cmd = ["chkdsk", drive, "/f", "/r", "/x"]
     proc = subprocess.run(cmd, input="Y\n", capture_output=True, text=True,
                           timeout=timeout, creationflags=CREATE_NO_WINDOW)
     return DismResult(" ".join(cmd), proc.returncode,

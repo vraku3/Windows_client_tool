@@ -90,6 +90,7 @@ def test_print_queue_restarts_the_spooler_even_if_a_delete_fails(monkeypatch, ou
 
     def fake_stop(name, output_cb):
         calls.append(("stop", name))
+        return True
 
     def fake_start(name, output_cb):
         calls.append(("start", name))
@@ -103,6 +104,41 @@ def test_print_queue_restarts_the_spooler_even_if_a_delete_fails(monkeypatch, ou
     fix_actions.clear_print_queue(cb)
 
     assert ("start", "Spooler") in calls, "spooler was not restarted after a failed delete"
+
+
+def test_print_queue_deletes_nothing_when_the_spooler_did_not_stop(monkeypatch, output):
+    lines, cb = output
+    removed = []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, output_cb: False)
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, output_cb: removed.append("start"))
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "listdir", lambda p: ["job.spl"])
+    monkeypatch.setattr(os, "remove", lambda p: removed.append(p))
+    fix_actions.clear_print_queue(cb)
+    assert removed == []
+    assert any("NOT cleared" in line for line in lines)
+
+
+def test_print_queue_restarts_the_spooler_when_the_folder_cannot_be_read(monkeypatch, output):
+    lines, cb = output
+    calls = []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, output_cb: True)
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, output_cb: calls.append("start"))
+    monkeypatch.setattr(os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(os, "listdir", lambda p: (_ for _ in ()).throw(PermissionError("denied")))
+    fix_actions.clear_print_queue(cb)
+    assert calls == ["start"]
+
+
+def test_the_explorer_fixes_ask_first_and_spare_other_sessions():
+    by_fn = {a.fn.__name__: a for a in fix_actions.FIX_ACTIONS if a.fn is not None} \
+        if hasattr(fix_actions, "FIX_ACTIONS") else {}
+    for name in ("rebuild_icon_cache", "clear_thumbnail_cache", "restart_explorer"):
+        if by_fn:
+            assert "restarts Windows Explorer" in (by_fn[name].confirm_text or "")
+    import inspect
+    src = inspect.getsource(fix_actions)
+    assert '"taskkill", "/f", "/im", "explorer.exe"' not in src
 
 
 def test_a_failed_command_is_tracked_as_a_failed_step(output):

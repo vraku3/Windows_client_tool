@@ -88,11 +88,12 @@ def test_returns_none_for_an_empty_hardware_id():
     assert wudc.find_windows_update_driver(_driver(hardware_id="")) is None
 
 
-def test_returns_none_and_logs_when_the_search_itself_raises(monkeypatch, caplog):
+def test_a_failed_search_is_an_error_not_no_driver(monkeypatch, caplog):
+    """"Could not check" must not read as "no driver found"."""
+    import pytest
     _install_fake_search(monkeypatch, [], raise_on_search=OSError("WU service unavailable"))
-    with caplog.at_level("WARNING"):
-        result = wudc.find_windows_update_driver(_driver())
-    assert result is None
+    with caplog.at_level("WARNING"), pytest.raises(RuntimeError):
+        wudc.find_windows_update_driver(_driver())
     assert any("windows_update_driver_check" in r.name for r in caplog.records)
 
 

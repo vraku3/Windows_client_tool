@@ -131,15 +131,45 @@ def _start_service(name: str, output_cb: Callable[[str], None]) -> None:
         _note_failure(f"could not start {name}: {e}")
 
 
+def _own_session() -> int:
+    import ctypes
+    sid = ctypes.c_uint32()
+    if not ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid)):
+        raise OSError("could not read the session id of this process")
+    return sid.value
+
+
+def _end_explorer(output_cb: Callable[[str], None]):
+    """End Explorer in THIS session only -- never another signed-in user's
+    shell (taskkill /im explorer.exe from an elevated process ended them all).
+    Returns (system, session, old pids) for `_bring_explorer_back`."""
+    from modules.game_mode.engine.system import WinSystem
+    system, session = WinSystem(), _own_session()
+    old = system.end_explorer(session)
+    if isinstance(old, str):
+        output_cb(f"Could not stop Explorer: {old}")
+        _note_failure(old)
+        old = set()
+    return system, session, old
+
+
+def _bring_explorer_back(shell, output_cb: Callable[[str], None]) -> None:
+    """Windows restarts the shell itself (AutoRestartShell); if it does not,
+    it is started UNELEVATED -- an explorer.exe started by this elevated app
+    would run elevated."""
+    system, session, old = shell
+    output_cb("Waiting for Explorer to come back...")
+    problem = system.ensure_shell(old, session)
+    if problem:
+        output_cb(f"Explorer: {problem}")
+        _note_failure(problem)
+    else:
+        output_cb("Done.")
+
+
 def rebuild_icon_cache(output_cb: Callable[[str], None]) -> None:
     output_cb("Stopping Explorer...")
-    subprocess.run(
-        ["taskkill", "/f", "/im", "explorer.exe"],
-        capture_output=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-        timeout=30,
-    )
-    time.sleep(1)
+    shell = _end_explorer(output_cb)
     local = os.environ.get("LOCALAPPDATA", "")
     targets = [
         os.path.join(local, "IconCache.db"),
@@ -151,20 +181,12 @@ def rebuild_icon_cache(output_cb: Callable[[str], None]) -> None:
             output_cb(f"Deleted: {t}")
         except OSError as e:
             output_cb(f"Could not delete {t}: {e}")
-    output_cb("Restarting Explorer...")
-    subprocess.Popen(["explorer.exe"], creationflags=subprocess.CREATE_NO_WINDOW)
-    output_cb("Done.")
+    _bring_explorer_back(shell, output_cb)
 
 
 def clear_thumbnail_cache(output_cb: Callable[[str], None]) -> None:
     output_cb("Stopping Explorer...")
-    subprocess.run(
-        ["taskkill", "/f", "/im", "explorer.exe"],
-        capture_output=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-        timeout=30,
-    )
-    time.sleep(1)
+    shell = _end_explorer(output_cb)
     local = os.environ.get("LOCALAPPDATA", "")
     pattern = os.path.join(local, r"Microsoft\Windows\Explorer\thumbcache_*.db")
     for f in _glob.glob(pattern):
@@ -173,23 +195,13 @@ def clear_thumbnail_cache(output_cb: Callable[[str], None]) -> None:
             output_cb(f"Deleted: {f}")
         except OSError as e:
             output_cb(f"Skip {f}: {e}")
-    output_cb("Restarting Explorer...")
-    subprocess.Popen(["explorer.exe"], creationflags=subprocess.CREATE_NO_WINDOW)
-    output_cb("Done.")
+    _bring_explorer_back(shell, output_cb)
 
 
 def restart_explorer(output_cb: Callable[[str], None]) -> None:
     output_cb("Killing Explorer...")
-    subprocess.run(
-        ["taskkill", "/f", "/im", "explorer.exe"],
-        capture_output=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-        timeout=30,
-    )
-    time.sleep(1)
-    output_cb("Starting Explorer...")
-    subprocess.Popen(["explorer.exe"], creationflags=subprocess.CREATE_NO_WINDOW)
-    output_cb("Done.")
+    shell = _end_explorer(output_cb)
+    _bring_explorer_back(shell, output_cb)
 
 
 def flush_dns(output_cb: Callable[[str], None]) -> None:
@@ -266,17 +278,27 @@ def clear_print_queue(output_cb: Callable[[str], None]) -> None:
     needed a similar fix later (commit f954f63, 2026-09-14) after shipping
     with an all-`&&` chain that could leave the spooler stopped on a
     failed delete."""
-    _stop_service("Spooler", output_cb)
-    spool_dir = r"C:\Windows\System32\spool\PRINTERS"
-    if os.path.isdir(spool_dir):
-        for f in os.listdir(spool_dir):
-            fpath = os.path.join(spool_dir, f)
-            try:
-                os.remove(fpath)
-                output_cb(f"Deleted: {f}")
-            except OSError as e:
-                output_cb(f"Skip {f}: {e}")
-    _start_service("Spooler", output_cb)
+    if not _stop_service("Spooler", output_cb):
+        # Deleting spool files under a running spooler races it; nothing
+        # was stopped, so there is nothing to restart either.
+        output_cb("Print queue NOT cleared: the Print Spooler did not stop.")
+        return
+    try:
+        spool_dir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                                 r"System32\spool\PRINTERS")
+        if os.path.isdir(spool_dir):
+            for f in os.listdir(spool_dir):
+                fpath = os.path.join(spool_dir, f)
+                try:
+                    os.remove(fpath)
+                    output_cb(f"Deleted: {f}")
+                except OSError as e:
+                    output_cb(f"Skip {f}: {e}")
+    except OSError as e:
+        output_cb(f"Could not read the spool folder: {e}")
+        _note_failure(f"could not read the spool folder: {e}")
+    finally:
+        _start_service("Spooler", output_cb)
     output_cb("Print queue cleared.")
 
 
@@ -457,11 +479,14 @@ ALL_ACTIONS: List[FixAction] = [
               "System Repairs", reboot_required=False, fn=reset_perf_counters),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
-              "Cache & UI", fn=rebuild_icon_cache),
+              "Cache & UI", fn=rebuild_icon_cache,
+              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds."),
     FixAction("thumb_cache", "Clear Thumbnail Cache", "Delete Windows thumbnail cache files",
-              "Cache & UI", fn=clear_thumbnail_cache),
+              "Cache & UI", fn=clear_thumbnail_cache,
+              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds."),
     FixAction("explorer", "Restart Explorer", "Kill and restart Windows Explorer",
-              "Cache & UI", fn=restart_explorer),
+              "Cache & UI", fn=restart_explorer,
+              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds."),
     FixAction("prefetch_clear", "Clear Prefetch", "Clear the Windows Prefetch cache",
               "Cache & UI", reboot_required=False, fn=clear_prefetch),
     FixAction("recent_clear", "Clear Recent Files", "Clear recent documents and jump lists",

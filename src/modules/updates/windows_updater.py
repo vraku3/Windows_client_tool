@@ -159,6 +159,11 @@ def fetch_pending_updates(
 
             if patterns and is_blocked(u.Title, kb, patterns):
                 continue
+            if is_held_amd_display_driver(u):
+                logger.warning("Windows Update: held back %r -- AMD display drivers are never "
+                               "installed by this app (the RX 7900 XTX stays on its 2022 driver)",
+                               u.Title)
+                continue
 
             updates.append(WindowsUpdate(
                 kb=kb, title=u.Title, classification=classification,
@@ -169,6 +174,32 @@ def fetch_pending_updates(
     except Exception as e:
         raise RuntimeError(f"Failed to query Windows Updates: {_explain(e)}") from e
     return updates
+
+
+_AMD_NAMES = ("advanced micro devices", "amd", "ati technologies")
+
+
+def is_held_amd_display_driver(u) -> bool:
+    """A Windows Update DRIVER offer for an AMD display adapter. These are
+    never installed: the owner keeps the RX 7900 XTX on a 2022 driver on
+    purpose (newer ones crash games here), and one AMD display package can
+    replace another's components. Judged from the IWindowsDriverUpdate
+    fields when the object exposes them, else from the title Windows Update
+    gives drivers ("Advanced Micro Devices, Inc. - Display - 31.0...")."""
+    try:
+        if int(getattr(u, "Type", 0) or 0) != 2:          # utDriver
+            return False
+    except (TypeError, ValueError):
+        return False
+    try:
+        cls = str(getattr(u, "DriverClass", "") or "").lower()
+        maker = str(getattr(u, "DriverManufacturer", "") or "").lower()
+    except Exception:                                    # late-bound COM refused the field
+        cls = maker = ""
+    title = str(getattr(u, "Title", "") or "").lower()
+    if cls or maker:
+        return cls == "display" and any(n in maker.split() or maker.startswith(n) for n in _AMD_NAMES)
+    return "display" in title and any(title.startswith(n) or f"{n} " in title for n in _AMD_NAMES)
 
 
 def _explain(exc: Exception) -> str:

@@ -4,8 +4,9 @@ then writes run history and an HTML maintenance report.
 
 Cancellation is checked between AND within stages — stage_runners.py's per-
 item loops (e.g. installing updates one at a time) take the same
-`worker.is_cancelled` check, so Stop is responsive mid-install, not just
-between stages.
+`worker.is_cancelled` check, so Stop takes effect before the next package,
+not only between stages. A package already installing is allowed to finish:
+killing an installer mid-write can leave an application half-installed.
 """
 import logging
 import os
@@ -116,9 +117,12 @@ class _RunAllTab(QWidget):
 
         app = self.app
 
+        # A cancelled Worker emits `cancelled`, never `result`: the stages
+        # already run live here so Stop still records and reports them.
+        data = {}
+
         def _run(worker):
             from modules.updates.stage_runners import STAGE_LABELS, STAGE_RUNNERS
-            data = {}
             for stage in stages:
                 if worker.is_cancelled:
                     worker.signals.log_line.emit("Cancelled.")
@@ -135,12 +139,17 @@ class _RunAllTab(QWidget):
                     logger.exception("Stage %s failed", stage)
                     worker.signals.log_line.emit(f"Stage {stage} failed: {e}")
                     data[stage] = {}
-            return data
+            return dict(data)
 
         w = COMWorker(_run)
         w.signals.log_line.connect(self._log.appendPlainText)
         w.signals.result.connect(self._on_run_done)
         w.signals.error.connect(self._on_run_error)
+        def _cancelled():
+            from core.widget_life import widget_is_valid
+            if widget_is_valid(self):       # a closure: Qt cannot auto-disconnect it
+                self._on_run_done(dict(data), cancelled=True)
+        w.signals.cancelled.connect(_cancelled)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
 
@@ -149,11 +158,12 @@ class _RunAllTab(QWidget):
             w.cancel()
         self._stop_btn.setEnabled(False)
 
-    def _on_run_done(self, data: dict) -> None:
+    def _on_run_done(self, data: dict, cancelled: bool = False) -> None:
         self._run_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._report_btn.setEnabled(True)
-        self._status_lbl.setText("Run complete.")
+        self._status_lbl.setText("Stopped -- the stages already run are reported."
+                                 if cancelled else "Run complete.")
         self._last_data = self._normalize_data(data)
 
         from modules.updates.history_writer import append_run

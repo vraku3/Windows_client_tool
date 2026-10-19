@@ -20,6 +20,7 @@ def _run_winget(
     args: List[str],
     output_cb: Optional[Callable[[str], None]] = None,
     is_cancelled: Callable[[], bool] = lambda: False,
+    returncode_out: Optional[List[Optional[int]]] = None,
 ) -> str:
     """Run winget, stream output via output_cb, return full output.
 
@@ -93,7 +94,14 @@ def fetch_updates(patterns: Optional[List[str]] = None) -> List[AppUpdate]:
     patterns: optional blocklist patterns (id/name/source-agnostic) — matching
     packages are excluded from the result.
     """
-    output = _run_winget(["upgrade", "--include-unknown", "--accept-source-agreements"])
+    rc: List[Optional[int]] = []
+    output = _run_winget(["upgrade", "--include-unknown", "--accept-source-agreements"],
+                         returncode_out=rc)
+    if not rc or rc[0] != 0:
+        # winget missing, failed to start, or refused: a failed scan, never
+        # "everything is up to date" (measured: a working listing exits 0).
+        tail = " ".join(output.strip().splitlines()[-2:])[:300]
+        raise RuntimeError(f"winget could not list upgrades (exit {rc[0] if rc else 'n/a'}): {tail}")
     updates = _parse_upgrade_output(output)
     if patterns:
         updates = [u for u in updates if not is_blocked(u.name, u.winget_id, patterns)]
@@ -193,14 +201,14 @@ def install_update(
     installed" while nothing changed and "No applicable upgrade found" for a
     package it still lists as upgradable.
     """
+    # A running installer is never killed: a cancel stops the batch BEFORE
+    # the next package (the caller checks between packages). Killing winget's
+    # tree mid-install can leave an application half-written.
     output = _run_winget(
         ["upgrade", "--id", winget_id, "--exact", "--silent", "--include-unknown",
          "--accept-source-agreements", "--accept-package-agreements"],
-        output_cb=output_cb, is_cancelled=is_cancelled,
+        output_cb=output_cb,
     )
-    if is_cancelled():
-        return UpdateOutcome(winget_id, winget_list.UNCONFIRMED,
-                             "Cancelled before the installed version could be read back.")
     refused = winget_list.refusal(output)
     if refused:
         return UpdateOutcome(winget_id, *refused)
@@ -208,11 +216,7 @@ def install_update(
         return UpdateOutcome(winget_id, winget_list.UNCONFIRMED,
                              "Not checked: verification after update is turned off in Settings.")
     listed = _run_winget(["list", "--id", winget_id, "--exact",
-                          "--accept-source-agreements", "--disable-interactivity"],
-                         is_cancelled=is_cancelled)
-    if is_cancelled():
-        return UpdateOutcome(winget_id, winget_list.UNCONFIRMED,
-                             "Cancelled before the installed version could be read back.")
+                          "--accept-source-agreements", "--disable-interactivity"])
     state, detail = winget_list.verdict(0, listed, winget_id, target_version,
                                         before=before_version, upgrade_output=output)
     return UpdateOutcome(winget_id, state, detail)

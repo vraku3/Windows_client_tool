@@ -41,7 +41,8 @@ def run_unattended(stages: List[str]) -> int:
     try:
         from modules.updates.history_writer import append_run, load_history
         from modules.updates.report_generator import render_update_report_html, write_report
-        from modules.updates.stage_runners import STAGE_LABELS, STAGE_RUNNERS, normalize_stage_data
+        from modules.updates.stage_runners import (STAGE_LABELS, STAGE_RUNNERS,
+                                                   normalize_stage_data, stage_failures)
 
         data = {}
         for stage in valid_stages:
@@ -49,6 +50,9 @@ def run_unattended(stages: List[str]) -> int:
             fn = STAGE_RUNNERS[stage]
             try:
                 data[stage] = fn(app, logger.info, lambda: False)
+                for problem in stage_failures(stage, data[stage]):
+                    logger.error("Unattended stage failure -- %s", problem)
+                    exit_code = 1
             except Exception:
                 logger.exception("Unattended stage %s failed", stage)
                 data[stage] = {}

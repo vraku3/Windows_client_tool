@@ -447,8 +447,16 @@ class SystemHealthModule(BaseModule):
             if not widget_is_valid(self._chkdsk_btn):
                 return
             self._chkdsk_btn.setEnabled(True)
+            from modules.system_health import servicing
+            scheduled = servicing.chkdsk_scheduled(servicing.system_drive())
             self._servicing_out.setText(
-                f"CHKDSK scheduled (exit {result.returncode}). Reboot to run.\n{result.output[:500]}")
+                (f"CHKDSK scheduled for {servicing.system_drive()} -- confirmed in BootExecute. "
+                 "Reboot to run it." if scheduled else
+                 f"CHKDSK was NOT confirmed as scheduled (exit {result.returncode}); "
+                 "BootExecute shows no check queued"
+                 + (" -- it could not be read." if scheduled is None else ".")
+                 + " Run 'chkdsk /f /r' yourself in an elevated prompt.")
+                + f"\n{result.output[:500]}")
             from modules.system_health import history
             history.append_run(self.app.app_data_dir, action="chkdsk_schedule",
                                command=result.command, returncode=result.returncode)

@@ -336,6 +336,14 @@ class WinSystem:
         """End every explorer.exe in `session`; Windows restarts the shell
         (AutoRestartShell=1). If it has not within `wait`, start it as the
         signed-in user through a one-shot scheduled task (never elevated)."""
+        old = self.end_explorer(session)
+        if isinstance(old, str):
+            return old
+        return self.ensure_shell(old, session, wait)
+
+    def end_explorer(self, session: int):
+        """End every explorer.exe in `session` (never another user's). The
+        set of pids ended, or the error text."""
         import psutil
         old = {p.pid for p in self.processes() if p.name.lower() == "explorer.exe" and p.session == session}
         for pid in old:
@@ -345,6 +353,10 @@ class WinSystem:
                 logger.debug("game mode: explorer %s already gone", pid)
             except (psutil.Error, OSError) as error:
                 return f"could not end explorer {pid}: {error}"
+        return old
+
+    def ensure_shell(self, old: set, session: int, wait: float = 15.0) -> Optional[str]:
+        """Wait for Windows to restart the shell; start it unelevated if not."""
         if self._shell_back(old, session, wait):
             time.sleep(3.0)                      # let the taskbar and tray settle
             return None

@@ -110,16 +110,31 @@ def test_verification_off_skips_the_read_back(monkeypatch):
     assert outcome.state == wl.UNCONFIRMED and len(calls) == 1
 
 
-def test_the_read_back_honours_cancel(monkeypatch):
+def test_a_cancel_never_kills_a_running_install(monkeypatch):
+    """Cancel stops the batch before the next package; the install that is
+    running finishes and is still read back (winget's tree used to be
+    taskkill'ed mid-install)."""
     seen = []
     def run(args, output_cb=None, is_cancelled=lambda: False):
-        seen.append(is_cancelled)
+        seen.append(is_cancelled())
         return "Successfully installed" if args[0] == "upgrade" else _listed("2.0")
     monkeypatch.setattr(wu, "_run_winget", run)
-    flag = {"cancel": False}
-    wu.install_update("Acme.App", lambda line: None, is_cancelled=lambda: flag["cancel"], target_version="2.0")
-    flag["cancel"] = True
-    assert len(seen) == 2 and seen[1]() is True
+    outcome = wu.install_update("Acme.App", lambda line: None, is_cancelled=lambda: True,
+                                target_version="2.0", before_version="1.0")
+    assert seen == [False, False]
+    assert outcome.state == wl.UPDATED
+
+
+def test_a_failed_listing_is_not_up_to_date(monkeypatch):
+    import pytest
+
+    def run(args, output_cb=None, is_cancelled=lambda: False, returncode_out=None):
+        if returncode_out is not None:
+            returncode_out.append(None)
+        return "winget not found."
+    monkeypatch.setattr(wu, "_run_winget", run)
+    with pytest.raises(RuntimeError):
+        wu.fetch_updates()
 
 
 def test_a_version_that_went_down_is_not_an_update(monkeypatch):

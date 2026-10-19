@@ -192,3 +192,26 @@ def test_the_flag_is_not_added_twice(monkeypatch):
     monkeypatch.setattr(wu.subprocess, "Popen", fake_popen)
     wu._run_winget(["list", "--disable-interactivity"])
     assert captured["args"].count("--disable-interactivity") == 1
+
+
+def test_a_working_listing_is_parsed(monkeypatch):
+    """The success path through the REAL _run_winget: the exit code must
+    reach fetch_updates (it once never did, and every scan raised)."""
+    import io
+
+    class _Proc:
+        returncode = 0
+        pid = 1
+
+        def __init__(self, *a, **k):
+            self.stdout = io.StringIO(
+                "Name   Id          Version Available Source\n"
+                "-----------------------------------------------\n"
+                "OCCT   OCBase.OCCT 17.1.3  17.1.9    winget\n"
+                "1 upgrades available.\n")
+
+        def wait(self):
+            return 0
+    monkeypatch.setattr(wu.subprocess, "Popen", _Proc)
+    updates = wu.fetch_updates()
+    assert [u.winget_id for u in updates] == ["OCBase.OCCT"]

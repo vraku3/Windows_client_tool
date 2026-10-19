@@ -75,13 +75,19 @@ def _run_winget(
             proc.wait()
         finally:
             stop_watching.set()
+        if returncode_out is not None:
+            returncode_out.append(proc.returncode)
         return "\n".join(lines)
     except FileNotFoundError:
+        if returncode_out is not None:
+            returncode_out.append(None)
         msg = "winget not found. Please install App Installer from the Microsoft Store."
         if output_cb:
             output_cb(msg)
         return msg
     except Exception as e:
+        if returncode_out is not None:
+            returncode_out.append(None)
         msg = f"Error running winget: {e}"
         if output_cb:
             output_cb(msg)

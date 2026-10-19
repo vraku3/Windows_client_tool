@@ -108,14 +108,16 @@ def test_print_queue_restarts_the_spooler_even_if_a_delete_fails(monkeypatch, ou
 
 def test_print_queue_deletes_nothing_when_the_spooler_did_not_stop(monkeypatch, output):
     lines, cb = output
-    removed = []
+    removed, started = [], []
     monkeypatch.setattr(fix_actions, "_stop_service", lambda name, output_cb: False)
-    monkeypatch.setattr(fix_actions, "_start_service", lambda name, output_cb: removed.append("start"))
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, output_cb: started.append(name))
     monkeypatch.setattr(os.path, "isdir", lambda p: True)
     monkeypatch.setattr(os, "listdir", lambda p: ["job.spl"])
     monkeypatch.setattr(os, "remove", lambda p: removed.append(p))
     fix_actions.clear_print_queue(cb)
     assert removed == []
+    # A stop that timed out may still land: the spooler is started again.
+    assert started == ["Spooler"]
     assert any("NOT cleared" in line for line in lines)
 
 

@@ -279,9 +279,11 @@ def clear_print_queue(output_cb: Callable[[str], None]) -> None:
     with an all-`&&` chain that could leave the spooler stopped on a
     failed delete."""
     if not _stop_service("Spooler", output_cb):
-        # Deleting spool files under a running spooler races it; nothing
-        # was stopped, so there is nothing to restart either.
+        # Deleting spool files under a running spooler races it. The stop may
+        # still land after the wait timed out (STOP_PENDING), so the spooler
+        # is started again if it is not running -- never left stopped.
         output_cb("Print queue NOT cleared: the Print Spooler did not stop.")
+        _start_service("Spooler", output_cb)
         return
     try:
         spool_dir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),

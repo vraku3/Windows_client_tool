@@ -736,7 +736,9 @@ class DebloatToolsModule(BaseModule):
 
         def cancelled():
             logger.info("Debloat: cancelled after %d app(s)", outcome["success"])
-            self._on_apps_applied(dict(outcome, cancelled=True))
+            from core.widget_life import widget_is_valid
+            if widget_is_valid(self._widget):     # a closure: Qt cannot auto-disconnect it
+                self._on_apps_applied(dict(outcome, cancelled=True))
 
         w = Worker(work)
         w.signals.progress.connect(self._apps_progress.setValue)

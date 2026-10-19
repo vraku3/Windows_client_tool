@@ -282,9 +282,13 @@ class OSContext:
         try:
             # Shared core.appx_service enumeration: one query, cached briefly,
             # with the -AllUsers fallback for unelevated runs.
-            from core.appx_service import installed_names
-            names = {line.strip().lower()
-                     for line in installed_names() if line.strip()}
+            from core.appx_service import installed_names_or_none
+            listed = installed_names_or_none()
+            if listed is None:     # refused / failed: unknown, never "none installed"
+                self._appx_failed = True
+                logger.warning("Get-AppxPackage enumeration could not be completed")
+                return None
+            names = {line.strip().lower() for line in listed if line.strip()}
             self._appx_names = frozenset(names)
             return self._appx_names
         except Exception as e:

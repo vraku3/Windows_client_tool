@@ -716,6 +716,10 @@ class DebloatToolsModule(BaseModule):
         self._cancel_apply_btn.setVisible(True)
         self._cancel_apply_btn.setEnabled(True)
 
+        # A cancelled Worker emits `cancelled`, never `result`, so the outcome
+        # lives here, outside it: what was already removed is still reported.
+        outcome: Dict = {"success": 0, "total": len(entry_ids), "targeted": []}
+
         def work(w: Worker):
             backup = self.app.backup
             engine = TweakEngine(backup)
@@ -726,13 +730,19 @@ class DebloatToolsModule(BaseModule):
                 entry_ids, rp_id, entries, engine,
                 is_cancelled=lambda: w.is_cancelled,
                 on_progress=lambda done: w.signals.progress.emit(done))
+            outcome.update(success=success, targeted=targeted)
             logger.info("Debloat: removed %d/%d app(s)", success, len(entry_ids))
-            return {"success": success, "total": len(entry_ids), "targeted": targeted}
+            return dict(outcome)
+
+        def cancelled():
+            logger.info("Debloat: cancelled after %d app(s)", outcome["success"])
+            self._on_apps_applied(dict(outcome, cancelled=True))
 
         w = Worker(work)
         w.signals.progress.connect(self._apps_progress.setValue)
         w.signals.result.connect(self._on_apps_applied)
         w.signals.error.connect(self._on_apply_error)
+        w.signals.cancelled.connect(cancelled)
         self._workers.append(w)
         self._apply_worker = w
         self.app.thread_pool.start(w)
@@ -757,9 +767,13 @@ class DebloatToolsModule(BaseModule):
         # same way Store Apps' own _load_apps forces a fresh read "right
         # before an uninstall decision" (see CLAUDE.md's Apps tab section).
         invalidate_cache()
-        now_installed = set(debloat_scanner.get_installed_packages())
-        confirmed_removed = [pkg for pkg in result.get("targeted", [])
-                             if pkg not in now_installed]
+        # An enumeration that failed is not "nothing installed": that would
+        # count every targeted app as removed.
+        now_installed = debloat_scanner.get_installed_packages_or_none()
+        unconfirmed = now_installed is None
+        confirmed_removed = ([] if unconfirmed else
+                             [pkg for pkg in result.get("targeted", [])
+                              if pkg not in now_installed])
         actually_gone = len(confirmed_removed)
         logger.info(
             "Debloat complete: confirmed %d/%d app(s) removed",
@@ -772,8 +786,13 @@ class DebloatToolsModule(BaseModule):
         reinstall_tracker.record_removed(confirmed_removed)
         box = QMessageBox(self._widget)
         box.setWindowTitle("Debloat Complete")
-        box.setText(f"{actually_gone} of {result['total']} app(s) confirmed "
-                    f"removed.\nA restore point has been created.")
+        text = f"{actually_gone} of {result['total']} app(s) confirmed removed."
+        if unconfirmed:
+            text = ("The removal could not be confirmed: the list of installed apps "
+                    "could not be read afterwards. Scan again to see what is left.")
+        if result.get("cancelled"):
+            text += "\nCancelled before every app was processed."
+        box.setText(text + "\nA restore point has been created.")
         restore_btn = box.addButton("Open Restore Manager…",
                                     QMessageBox.ButtonRole.ActionRole)
         box.addButton(QMessageBox.StandardButton.Ok)
@@ -782,6 +801,7 @@ class DebloatToolsModule(BaseModule):
             from ui.restore_manager import RestoreManagerDialog
             RestoreManagerDialog(self.app, self._widget).exec()
         self._apps_status.setText(
+            "Removal could not be confirmed -- scan again" if unconfirmed else
             f"{actually_gone} of {result['total']} app(s) confirmed removed")
         debloat_history.record("Apps", success=actually_gone, total=result["total"])
         if result.get("targeted"):

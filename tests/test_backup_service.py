@@ -39,7 +39,8 @@ def test_backup_appx_records_a_store_link(svc, tmp_path):
 
 def test_appx_revert_with_store_link_opens_the_store(monkeypatch, tmp_path):
     """A step whose revert_command is a Store link launches the page rather
-    than gambling on winget knowing the package name."""
+    than gambling on winget knowing the package name -- and stays pending:
+    opening a page restores nothing."""
     import core.backup_service as bs
 
     started = []
@@ -56,7 +57,8 @@ def test_appx_revert_with_store_link_opens_the_store(monkeypatch, tmp_path):
             rp_id,
         )
         result = s.restore_point(rp_id)
-        assert result.success
+        assert not result.success
+        assert any("Store page was opened" in e for e in result.errors)
         assert started == ["ms-windows-store://pdp/?PFN=X"]
     finally:
         s.close()

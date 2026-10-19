@@ -586,16 +586,22 @@ class BackupService:
                 if revert_cmd and revert_cmd.startswith("ms-windows-store://"):
                     # winget rarely knows a Store app by its AppX name; open
                     # its Store page so the user can reinstall it from there.
+                    # Opening a page restores nothing, so the step stays
+                    # pending (with this reason) rather than "reverted".
                     os.startfile(revert_cmd)
-                else:
-                    subprocess.run(
-                        ["winget", "install", target, "--silent",
-                         "--accept-package-agreements",
-                         "--disable-interactivity"],
-                        check=False, capture_output=True,
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        timeout=120,
-                    )
+                    raise RuntimeError(f"{target}: its Store page was opened -- reinstall it "
+                                       "there; not restored yet")
+                result = subprocess.run(
+                    ["winget", "install", target, "--silent",
+                     "--accept-package-agreements",
+                     "--disable-interactivity"],
+                    check=False, capture_output=True, text=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=120,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"winget install {target} failed (exit {result.returncode}): "
+                                       f"{(result.stdout or result.stderr or '').strip()[-300:]}")
             elif step_type == "scheduled_task":
                 self._revert_scheduled_task(target, before)
             elif step_type == "file":
@@ -606,8 +612,8 @@ class BackupService:
                 logger.warning("command steps are not revertible: %s", target)
                 # not a failure — mark as reverted
             elif step_type == "script" and revert_cmd:
-                subprocess.run(
-                    revert_cmd, shell=True, check=False, capture_output=True,
+                result = subprocess.run(
+                    revert_cmd, shell=True, check=False, capture_output=True, text=True,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     # A revert command is the mirror of a tweak's `script`
                     # step, so it gets the same budget: long enough that a
@@ -615,6 +621,9 @@ class BackupService:
                     # strand the revert.
                     timeout=300,
                 )
+                if result.returncode != 0:
+                    raise RuntimeError(f"revert command failed (exit {result.returncode}): "
+                                       f"{(result.stderr or result.stdout or '').strip()[-300:]}")
             now = datetime.now().isoformat()
             self._conn.execute(
                 "UPDATE tweak_steps SET reverted_at=? WHERE id=?", (now, step_id))

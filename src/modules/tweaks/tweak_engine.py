@@ -277,11 +277,18 @@ class TweakEngine:
         hive, sub = _parse_key(full_key)
 
         before = None
+        before_kind = None
         try:
             with winreg.OpenKey(hive, sub) as k:
-                before, _ = winreg.QueryValueEx(k, value_name)
-        except OSError:
-            logger.debug("Ignored OSError", exc_info=True)
+                before, before_kind = winreg.QueryValueEx(k, value_name)
+        except FileNotFoundError:
+            pass  # absent: the revert deletes the value again
+        except OSError as e:
+            # Refused, not absent: recording None would make the revert
+            # DELETE a value that was there. No way back, so no change.
+            raise PermissionError(
+                f"{full_key} [{value_name}]: its current value could not be read ({e}); "
+                "not changed, because it could not be put back") from e
 
         outcome = self._backup.backup_registry_key(full_key, rp_id)
         if not outcome.ok:
@@ -310,8 +317,11 @@ class TweakEngine:
                 "write it. Try the equivalent Settings app toggle instead if one exists."
             ) from e
 
+        # reg_kind is what the revert writes before_value back with, so it is
+        # the ORIGINAL type whenever there was a value to put back.
         return StepRecord("registry", full_key, before, data,
-                          value_name=value_name, reg_kind=kind,
+                          value_name=value_name,
+                          reg_kind=before_kind if before is not None else kind,
                           # `ok` with nothing exported means the key was not
                           # there to export -- so CreateKeyEx above made it,
                           # and the revert has a key to remove as well as a
@@ -330,8 +340,11 @@ class TweakEngine:
         try:
             with winreg.OpenKey(hive, sub) as k:
                 before, kind = winreg.QueryValueEx(k, value_name)
-        except OSError:
+        except FileNotFoundError:
             return None  # already gone — nothing to record, nothing to undo
+        except OSError as e:
+            raise PermissionError(
+                f"{full_key} [{value_name}]: could not be read ({e}); not deleted") from e
 
         outcome = self._backup.backup_registry_key(full_key, rp_id)
         if not outcome.ok:
@@ -491,20 +504,7 @@ class TweakEngine:
     def _apply_scheduled_task(self, step: Dict, rp_id: str) -> StepRecord:
         """Disable a scheduled task. Records the current state for revert."""
         task_name = step["task_name"]
-        before = "Unknown"
-        try:
-            result = subprocess.run(
-                ["schtasks", "/query", "/tn", task_name, "/fo", "LIST"],
-                capture_output=True, text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                timeout=30,
-            )
-            for line in result.stdout.splitlines():
-                if line.startswith("Status:"):
-                    before = line.split(":", 1)[1].strip()
-                    break
-        except Exception as e:
-            logger.debug("Could not query scheduled task status for %s: %s", task_name, e)
+        before = _task_enabled_state(task_name)
         proc = subprocess.run(
             ["schtasks", "/change", "/tn", task_name, "/disable"],
             check=False, capture_output=True, text=True,
@@ -872,3 +872,31 @@ def _fmt(value: Any) -> str:
         return text if len(text) <= 40 else text[:37] + "..."
     text = str(value)
     return text if len(text) <= 60 else text[:57] + "..."
+
+def _task_enabled_state(task_name: str) -> str:
+    """'Disabled' or 'Enabled', read from the task's XML definition -- the
+    `<Settings><Enabled>` element is the same in every display language,
+    where `schtasks /fo LIST`'s "Status:" label is not. Raises when it cannot
+    be read: a task disabled with no recorded prior state can never be put
+    back, so it is not disabled at all."""
+    import xml.etree.ElementTree as ET
+    result = subprocess.run(
+        ["schtasks", "/query", "/tn", task_name, "/xml"],
+        capture_output=True, text=True,
+        creationflags=subprocess.CREATE_NO_WINDOW, timeout=30,
+    )
+    text = (result.stdout or "").strip()
+    if result.returncode != 0 or not text:
+        raise RuntimeError(f"{task_name}: its current state could not be read "
+                           f"({(result.stderr or result.stdout or '').strip() or result.returncode}); "
+                           "not changed, because it could not be put back")
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as e:
+        raise RuntimeError(f"{task_name}: unreadable task definition ({e}); not changed") from e
+    ns = root.tag[:root.tag.index("}") + 1] if root.tag.startswith("{") else ""
+    enabled = root.find(f"{ns}Settings/{ns}Enabled")
+    # The element is optional and defaults to true.
+    if enabled is not None and (enabled.text or "").strip().lower() == "false":
+        return "Disabled"
+    return "Enabled"

@@ -29,15 +29,53 @@ def create_restore_point(description: str, timeout: int = 60) -> Tuple[bool, str
     except Exception:
         logger.warning("Enable-ComputerRestore failed", exc_info=True)
 
+    throttle = _bypass_frequency_throttle()
     try:
-        import winreg
+        return _checkpoint(description, timeout)
+    finally:
+        _restore_frequency_throttle(throttle)
 
-        key_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore"
-        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
-            winreg.SetValueEx(key, "SystemRestorePointCreationFrequency", 0, winreg.REG_DWORD, 0)
-    except Exception:
+
+_FREQ_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore"
+_FREQ_VALUE = "SystemRestorePointCreationFrequency"
+
+
+def _bypass_frequency_throttle():
+    """Set the 24 h creation throttle to 0 for this one call. Returns what to
+    put back: ("value", data, kind), ("absent",), or None when nothing was
+    changed (the before-state could not be read, so it is left alone)."""
+    import winreg
+    try:
+        with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, _FREQ_KEY, 0,
+                                winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE) as key:
+            try:
+                data, kind = winreg.QueryValueEx(key, _FREQ_VALUE)
+                before = ("value", data, kind)
+            except FileNotFoundError:
+                before = ("absent",)
+            winreg.SetValueEx(key, _FREQ_VALUE, 0, winreg.REG_DWORD, 0)
+            return before
+    except OSError:
         logger.warning("Could not bypass restore-point frequency throttle", exc_info=True)
+        return None
 
+
+def _restore_frequency_throttle(before) -> None:
+    if before is None:
+        return
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _FREQ_KEY, 0, winreg.KEY_SET_VALUE) as key:
+            if before[0] == "absent":
+                winreg.DeleteValue(key, _FREQ_VALUE)
+            else:
+                winreg.SetValueEx(key, _FREQ_VALUE, 0, before[2], before[1])
+    except OSError:
+        logger.error("Could not put %s back after the restore point; it is left at 0 "
+                     "(no 24 h throttle)", _FREQ_VALUE, exc_info=True)
+
+
+def _checkpoint(description: str, timeout: int):
     try:
         safe_desc = description.replace("'", "''")
         # Read back, never trust the exit code: Checkpoint-Computer can print a

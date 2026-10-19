@@ -282,7 +282,8 @@ class TweakEngine:
             with winreg.OpenKey(hive, sub) as k:
                 before, before_kind = winreg.QueryValueEx(k, value_name)
         except FileNotFoundError:
-            pass  # absent: the revert deletes the value again
+            # absent: the revert deletes the value again
+            logger.debug("%s [%s] is absent before the tweak", full_key, value_name)
         except OSError as e:
             # Refused, not absent: recording None would make the revert
             # DELETE a value that was there. No way back, so no change.

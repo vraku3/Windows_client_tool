@@ -928,7 +928,7 @@ Measured here (2026-10-15), each of which shaped the code:
 
 **Unattended mode**: `python src/main.py --unattended --stages wu,winget,cleanup` — headless, no `QApplication`/`MainWindow`; calls `pythoncom.CoInitialize()` explicitly since there's no `COMWorker`/Qt event loop available. Requires admin — exits 1 immediately if not elevated. The Settings tab's "Create/Update Task" button wires this into Task Scheduler as `WinClientTool_UnattendedMaintenance` (`/rl HIGHEST`, `/sc DAILY /mo <N>`). The older winget-only `WinClientTool_UpdateCheck` task (`_save_legacy`) is kept as-is for existing users — don't merge it into the new one.
 
-**Worker tracking**: every tab here is a `QWidget` (not `BaseModule`) with its own `self._workers: list` and `_cancel_all()`, per the general widget-subclass rule below. `UpdatesModule.on_deactivate()` / `on_stop()` call `_cancel_all()` on all four stateful tabs explicitly — `BaseModule.cancel_all_workers()` only covers workers created directly on the module itself, not on child tab widgets.
+**Worker tracking**: every tab here is a `QWidget` (not `BaseModule`) with its own `self._workers: list` and `_cancel_all()`, per the general widget-subclass rule below. `UpdatesModule.on_stop()` calls `_cancel_all()` on all four stateful tabs explicitly — `BaseModule.cancel_all_workers()` only covers workers created directly on the module itself, not on child tab widgets. **`on_deactivate()` cancels nothing** (2026-10-19): a cancel reached winget as `taskkill /T /F` mid-install. `install_update` never kills a running upgrade; Stop takes effect before the next package. Driver Manager's `on_deactivate` is the same, so a driver install's result (undo token, history) still lands.
 
 ### Monitor Control (`src/modules/monitor_control/`)
 
@@ -2204,6 +2204,44 @@ Third batch (2026-10-17 evening, the limit was hit a third time):
 - Not changed, on purpose: the GPU curve write does not compare its
   read-back to the request (firmware may quantise; the pane already shows
   the curve read back afterwards).
+
+Fourth batch (2026-10-18/19, a COMPLETE six-area review; batches A-F,
+commits a26eb92..c350d3e). Facts worth keeping:
+
+- **Windows Update never installs an AMD display driver**
+  (`windows_updater.is_held_amd_display_driver`: Type 2 + Display class +
+  AMD/ATI maker, or the driver title), in the tab, Run All and the
+  unattended task; `updates.wu_include_drivers` now defaults to False.
+- **Registry tweak reverts write the ORIGINAL type** (`reg_kind` is the
+  before-type), and a refused before-read stops the step -- recording None
+  made the revert DELETE an existing value. Scheduled-task prior state comes
+  from `schtasks /query /xml` (`<Settings><Enabled>`), never the English
+  "Status:" label; unreadable = not disabled.
+- **Restore keeps AppX/script steps pending** when the undo did not happen
+  (failed winget/revert command, Store page only opened).
+- `create_restore_point` puts `SystemRestorePointCreationFrequency` back.
+- Security Dashboard: RunAsPPL **1 = UEFI-locked, 2 = not locked** (22H2+
+  writes 2); "hide last user name" is `Policies\System`; firewall and ASR
+  reverts restore exact per-profile / per-rule values; a refused registry
+  read is `RegistryReadError` -> Unknown.
+- Explorer restarts (Quick Fix) end only THIS session's explorer.exe and the
+  shell comes back UNELEVATED (`WinSystem.end_explorer` / `ensure_shell`);
+  an `explorer.exe` started by the elevated app would run elevated.
+- PID identity: Process Explorer, File Forensics and App Buster check the
+  process creation time captured before the confirmation.
+- `app.log` rotates at 5 MB (`max_bytes` defaulted to -1 = never).
+- F5 calls `refresh_now()` (composites, unthrottled) / `refresh_data()`.
+- Thermal: the first ADLX read runs in the open job BEFORE LibreHardwareMonitor
+  (LHM's GPU support loads System32's atiadlxx.dll, and ADLX from the old
+  driver then binds to it and cannot see the RX 7900 XTX); `adlx._load`
+  refuses when a foreign atiadlxx.dll is already loaded. "Back to factory"
+  never calls ResetToFactory without a recorded baseline.
+- Bitdefender blocked a Script Library body that read
+  `HKLM\SYSTEM\CurrentControlSet\Control\CI\Policy` (CMD:Heur.BZC.ZFV.Boxter);
+  `os_install_media` no longer reads it.
+- Codex's ELEVATED Windows sandbox broke ("helper_unknown_error: setup refresh
+  had errors", even in a fresh `codex exec`); `-c windows.sandbox="unelevated"`
+  worked. Batches B-F were done by Claude at the user's choice.
 
 ## Pending restart (`src/core/pending_reboot.py`)
 

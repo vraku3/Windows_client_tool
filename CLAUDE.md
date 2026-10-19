@@ -2112,6 +2112,23 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   hours the banner and each enforce run recommend OFF because updates,
   maintenance and updaters remain paused. Unreadable V-Cache state is UNKNOWN;
   HAGS describes only the Windows request, and HVCI-off wording is neutral.
+- **Handle work (2026-10-19), measured live with Maximum ON/OFF:** 174,697 ->
+  117,004 handles with VS Code + ChatGPT kept open (they run the agents);
+  without dev tools ~95k, ~88k with CyberGhost ticked. The floor is Windows:
+  kernel 5-7k, session-0 services ~40k, Bitdefender ~9k, shell ~15k, WoW +
+  Battle.net ~6.5k -- a total near 7-8k is not reachable on Windows 11.
+  A program an agent runs in (`catalog.WORK_IN_PROGRESS`: claude.exe,
+  codex.exe) is offered but never ticked by a preset, and labelled. Idle
+  launchers (`IDLE_CLOSABLE_LAUNCHERS`: Steam/Epic/EA with no game under them)
+  are closed; Steam quits via `-shutdown` (`QUIT_ARGS`). TextInputHost,
+  SearchHost and StartMenuExperienceHost come back within 3 s at the same
+  handle count (measured), so closing them is pointless; ShellExperienceHost
+  does not (until a flyout is opened) and is MAX. `_post_close` catches
+  `pywintypes.error` -- it is NOT an OSError, and a window closing mid-
+  enumeration aborted ON halfway. An app minimized or in the tray before ON
+  comes back minimized at OFF (`window` in the journal, SW_SHOWMINNOACTIVE,
+  then `keep_minimized` for 15 s -- Teams/WhatsApp ignore the launch show
+  command); verified live.
 - **These came from a `/gpt` review (2026-10-17, seven Codex workers)** and were
   implemented by Codex, then checked here: `_post_close` had called `alive()`
   -- a full process snapshot -- once per WINDOW and now takes one snapshot;

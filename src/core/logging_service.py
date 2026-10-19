@@ -83,10 +83,15 @@ class _SafeRotatingFileHandler(RotatingFileHandler):
     def doRollover(self) -> None:
         try:
             super().doRollover()
-        except OSError:
+        except OSError as exc:
             self.maxBytes = 0                      # 0 = do not rotate again
             if self.stream is None:
                 self.stream = self._open()
+            # Said once, in the log itself: with maxBytes 0 this record does
+            # not re-enter doRollover (the handler lock is re-entrant).
+            logging.getLogger(__name__).warning(
+                "app.log could not be rotated (%s); rotation is off until the app restarts",
+                exc)
 
 class LoggingService:
     """Configure Python logging for Windows Client Tool application.

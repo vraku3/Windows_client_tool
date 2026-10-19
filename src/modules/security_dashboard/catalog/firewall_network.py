@@ -101,7 +101,9 @@ def _profile_step(field: str, value: str) -> Dict[str, Any]:
     """Undo the exact per-profile configuration, never an aggregate bool."""
     return {"type": "script",
             "command": _PS + f"Set-NetFirewallProfile -All -{field} {value}",
-            "revert_template": _PS + '"${old}"',
+            # Stop on the first failing profile: three statements joined by
+            # ';' otherwise exit 0 when only an earlier one failed.
+            "revert_template": _PS + '"$ErrorActionPreference=\'Stop\'; ${old}"',
             "revert_pattern": _profile_pattern(field)}
 
 

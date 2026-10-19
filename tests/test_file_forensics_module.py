@@ -311,6 +311,8 @@ def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch, qapp):
     "no longer running") must never be collapsed into silence -- the same
     "a refusal is never dropped" rule this task's other pieces already
     follow. Regression test for the reviewer's Important #1 finding."""
+    import psutil as _ps
+    monkeypatch.setattr(_ps, "Process", lambda pid: type("_P", (), {"create_time": lambda self: 1.0})())
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     from modules.file_forensics.engine.locking_processes import LockingProcess
@@ -782,6 +784,8 @@ def test_kill_failure_survives_a_refresh_that_also_fails(module, monkeypatch, qa
     fails -- the same "never collapse a refusal" rule this file already
     applies to skipped files. Both messages must show, not just the last
     one to arrive."""
+    import psutil as _ps
+    monkeypatch.setattr(_ps, "Process", lambda pid: type("_P", (), {"create_time": lambda self: 1.0})())
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     from modules.file_forensics.engine.locking_processes import LockingProcess
@@ -902,3 +906,24 @@ def test_csv_export_includes_the_signature_column(module, tmp_path, monkeypatch)
     assert "File Signature" in content
     assert "Unsigned" in content
     assert module._pending_banner_message is None  # displayed, not left dangling
+
+
+def test_an_unidentifiable_locking_process_is_not_killed(module, monkeypatch, qapp):
+    """No creation time = no identity: nothing is ended."""
+    import psutil as _ps
+    import modules.file_forensics.file_forensics_module as ffm
+    from PyQt6.QtWidgets import QMessageBox
+
+    def gone(pid):
+        raise _ps.NoSuchProcess(pid)
+    monkeypatch.setattr(_ps, "Process", gone)
+    ended = []
+    monkeypatch.setattr(ffm, "end_process", lambda pid: ended.append(pid))
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    proc = type("_L", (), {"pid": 4242, "process": "x.exe"})()
+    analysis = type("_A", (), {"locking_processes": [proc]})()
+    monkeypatch.setattr(module, "_selected_analysis", lambda: analysis)
+    monkeypatch.setattr(module, "_on_search_clicked", lambda: None)
+    module._on_kill_locking_clicked()
+    assert ended == []
+    assert "could not be identified" in module._pending_banner_message

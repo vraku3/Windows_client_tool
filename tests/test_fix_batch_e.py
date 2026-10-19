@@ -145,3 +145,39 @@ def test_a_failed_rollover_keeps_logging(tmp_path, monkeypatch):
     h.close()
     assert h.maxBytes == 0
     assert "line 2" in (tmp_path / "app.log").read_text(encoding="utf-8")
+
+
+def test_a_failed_rollover_is_logged_once(tmp_path, monkeypatch, caplog):
+    h = ls._SafeRotatingFileHandler(str(tmp_path / "app.log"), maxBytes=10, backupCount=2,
+                                    encoding="utf-8")
+
+    def refuse(*a):
+        raise PermissionError(32, "being used by another process")
+    monkeypatch.setattr(h, "rotate", refuse)
+    with caplog.at_level(logging.WARNING, logger=ls.__name__):
+        h.doRollover()
+    h.close()
+    assert any("could not be rotated" in r.getMessage() for r in caplog.records)
+
+
+def test_the_gpu_is_published_when_the_hardware_library_fails(monkeypatch):
+    from modules.thermal_control import thermal_service as ts
+    svc = ts.ThermalService.__new__(ts.ThermalService)
+    seen = {}
+    svc._read_gpu_fans = lambda _w=None: ["gpu-status"]
+    svc._config_get = lambda k, d=None: d
+    svc._gpu_fans_read = lambda st: seen.setdefault("gpu", st)
+    svc._failed = lambda msg: seen.setdefault("failed", msg)
+
+    class _Bridge:
+        def open(self):
+            raise RuntimeError("PawnIO not installed")
+    monkeypatch.setattr(ts.lhm_bridge, "LhmBridge", _Bridge)
+    svc._opened(svc._open(None))
+    assert seen == {"gpu": ["gpu-status"], "failed": "PawnIO not installed"}
+
+
+def test_a_firewall_revert_stops_at_the_first_failing_profile():
+    from modules.security_dashboard.catalog import firewall_network as fn
+    step = fn._profile_step("Enabled", "True")
+    assert step["revert_template"].startswith(fn._PS + '"$ErrorActionPreference=\'Stop\'; ')

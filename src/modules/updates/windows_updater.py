@@ -197,9 +197,13 @@ def is_held_amd_display_driver(u) -> bool:
     except Exception:                                    # late-bound COM refused the field
         cls = maker = ""
     title = str(getattr(u, "Title", "") or "").lower()
-    if cls or maker:
-        return cls == "display" and any(n in maker.split() or maker.startswith(n) for n in _AMD_NAMES)
-    return "display" in title and any(title.startswith(n) or f"{n} " in title for n in _AMD_NAMES)
+    # Either source is enough: metadata can be partial (a class with no
+    # maker), and a hold missed here installs the driver the user refuses.
+    by_metadata = cls == "display" and any(n in maker.split() or maker.startswith(n)
+                                           for n in _AMD_NAMES)
+    by_title = "display" in title and any(title.startswith(n) or f"{n} " in title
+                                          for n in _AMD_NAMES)
+    return by_metadata or by_title
 
 
 def _explain(exc: Exception) -> str:

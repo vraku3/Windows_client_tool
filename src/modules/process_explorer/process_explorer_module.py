@@ -447,6 +447,10 @@ class ProcessExplorerModule(BaseModule):
             return
         pid, name = self._selected_node.pid, self._selected_node.name
         created = created_at(pid)       # identity, checked again after the dialog
+        if created is None:
+            self._error_banner.set_error(
+                f"{name} (PID {pid}) has exited or could not be identified -- not killed.")
+            return
         reply = QMessageBox.question(
             self._widget, "Kill Process",
             f"Kill {name} (PID {pid})?",
@@ -548,6 +552,10 @@ class ProcessExplorerModule(BaseModule):
         # Kill asked first; Kill Tree, which takes every descendant with it
         # (a browser's tabs, a shell's whole session), did not.
         created = created_at(pid)
+        if created is None:
+            self._error_banner.set_error(
+                f"{name} (PID {pid}) has exited or could not be identified -- not killed.")
+            return
         try:
             import psutil
             children = psutil.Process(pid).children(recursive=True)

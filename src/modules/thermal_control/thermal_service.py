@@ -97,23 +97,33 @@ class ThermalService(QObject):
         except Exception as e:  # AdlxError, or the library failing outright
             logger.warning("GPU fan check failed before opening the hardware: %s", e)
             gpu_fans = e
-        bridge = lhm_bridge.LhmBridge()
-        bridge.open()
-        controller = FanController(bridge, self.marker_path, extra_sensors=gpu_kmt.read_gpus)
-        recovered = controller.recover()
-        controller.curves = cv.CurveSet.from_list(self._config_get(CURVES_KEY, []))
+        try:
+            bridge = lhm_bridge.LhmBridge()
+            bridge.open()
+            controller = FanController(bridge, self.marker_path, extra_sensors=gpu_kmt.read_gpus)
+            recovered = controller.recover()
+            controller.curves = cv.CurveSet.from_list(self._config_get(CURVES_KEY, []))
+        except Exception as e:  # PawnIO missing, a .NET failure: GPU-only, never GPU-less
+            logger.exception("thermal: the hardware library could not be opened")
+            return None, str(e), gpu_fans
         return controller, recovered, gpu_fans
 
     def _opened(self, result) -> None:
-        self._busy = False
-        if self._stopped:
-            result[0].shutdown()
-            return
-        self.controller, self.recovered, gpu_fans = result
+        controller, recovered, gpu_fans = result
+        # The GPU was read first and does not depend on the library: publish it
+        # whether or not the library opened.
         if isinstance(gpu_fans, Exception):
             self._gpu_failed(str(gpu_fans))
         else:
             self._gpu_fans_read(gpu_fans)
+        if controller is None:
+            self._failed(recovered)                 # the open's error text; GPU-only
+            return
+        self._busy = False
+        if self._stopped:
+            controller.shutdown()
+            return
+        self.controller, self.recovered = controller, recovered
         self.errors = list(self.controller.last_errors)
         logger.info("thermal: hardware opened; %d curve(s) saved, %d active, recovered %s",
                     len(self.controller.curves.curves), len(self.controller.curves.enabled()),

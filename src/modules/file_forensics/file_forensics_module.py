@@ -469,15 +469,16 @@ class FileForensicsModule(BaseModule):
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            # An identity that could not be read is not a match: nothing is
+            # ended unless this is provably the process named in the dialog.
             try:
-                same = created is None or abs(psutil.Process(proc.pid).create_time() - created) < 0.5
-            except psutil.NoSuchProcess:
-                same = False
+                same = (created is not None
+                        and abs(psutil.Process(proc.pid).create_time() - created) < 0.5)
             except psutil.Error:
-                same = True          # unreadable now: end_process reports its own refusal
+                same = False
             if not same:
-                self._pending_banner_message = (f"'{proc.process}' (PID {proc.pid}) had already "
-                                                "exited -- nothing was ended.")
+                self._pending_banner_message = (f"'{proc.process}' (PID {proc.pid}) has exited or "
+                                                "could not be identified -- nothing was ended.")
                 self._on_search_clicked()
                 return
             result = end_process(proc.pid)

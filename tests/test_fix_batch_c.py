@@ -30,3 +30,9 @@ def test_stage_failures_count_what_failed():
     assert stage_failures("dism", {"error": "DISM exited 87"})
     assert not stage_failures("winget", {"results": [{"id": "A.B", "state": "UNCONFIRMED"}]})
     assert not stage_failures("wu", {"results": [], "installed_count": 0})
+
+
+def test_partial_metadata_still_holds_an_amd_display_driver():
+    """Class without a maker: the title must still decide (a Codex finding)."""
+    assert is_held_amd_display_driver(_u(DriverClass="Display", DriverManufacturer="",
+                                         Title="Advanced Micro Devices, Inc. - Display - 32.0"))

@@ -148,11 +148,14 @@ def test_find_many_searches_once_and_matches_multiple_devices(monkeypatch):
     assert result["PCI\\D2"].manufacturer == "Realtek"
 
 
-def test_find_many_returns_empty_dict_when_search_fails(monkeypatch):
+def test_find_many_raises_when_search_fails(monkeypatch):
+    """A failed search is "could not check", never "no updates found"."""
+    import pytest
     _install_fake_search(monkeypatch, [], raise_on_search=OSError("no WU service"))
     d1 = _driver()
     d1.device_id = "PCI\\D1"
-    assert wudc.find_windows_update_drivers_for_many([d1]) == {}
+    with pytest.raises(RuntimeError):
+        wudc.find_windows_update_drivers_for_many([d1])
 
 
 def test_find_many_skips_devices_with_no_hardware_id_or_device_id(monkeypatch):

@@ -485,6 +485,11 @@ class ThermalService(QObject):
             return ("Nothing to put back: this app never changed this GPU's fan curve. Its "
                     "current curve (and any other tuning) is left as it is; use AMD Software "
                     "to reset it.")
+        # Used once: the baseline described the GPU before THIS app's first
+        # write. Kept, it would later reset tuning done in AMD Software since.
+        baselines = dict(self._config_get(GPU_FACTORY_KEY, {}) or {})
+        baselines.pop(name, None)
+        self._config_set(GPU_FACTORY_KEY, baselines)
 
         def work(_w):
             if before.get("factory", True):

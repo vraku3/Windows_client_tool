@@ -16,7 +16,7 @@ def _listed(version, available=""):
 
 
 def _fake_winget(monkeypatch, upgrade_out, list_out, calls=None):
-    def run(args, output_cb=None, is_cancelled=lambda: False):
+    def run(args, output_cb=None, is_cancelled=lambda: False, **_kw):
         if calls is not None:
             calls.append(args)
         return upgrade_out if args[0] == "upgrade" else list_out
@@ -115,7 +115,7 @@ def test_a_cancel_never_kills_a_running_install(monkeypatch):
     running finishes and is still read back (winget's tree used to be
     taskkill'ed mid-install)."""
     seen = []
-    def run(args, output_cb=None, is_cancelled=lambda: False):
+    def run(args, output_cb=None, is_cancelled=lambda: False, **_kw):
         seen.append(is_cancelled())
         return "Successfully installed" if args[0] == "upgrade" else _listed("2.0")
     monkeypatch.setattr(wu, "_run_winget", run)

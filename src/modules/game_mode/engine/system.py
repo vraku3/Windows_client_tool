@@ -353,6 +353,15 @@ class WinSystem:
                 logger.debug("game mode: explorer %s already gone", pid)
             except (psutil.Error, OSError) as error:
                 return f"could not end explorer {pid}: {error}"
+        # TerminateProcess is asynchronous: wait until they are really gone,
+        # or a caller deleting Explorer's caches races the dying process.
+        procs = []
+        for pid in old:
+            try:
+                procs.append(psutil.Process(pid))
+            except psutil.NoSuchProcess:
+                logger.debug("game mode: explorer %s already exited", pid)
+        psutil.wait_procs(procs, timeout=5)
         return old
 
     def ensure_shell(self, old: set, session: int, wait: float = 15.0) -> Optional[str]:

@@ -1187,7 +1187,8 @@ class UpdatesModule(BaseModule):
     def on_deactivate(self) -> None:
         # Leaving the pane cancels nothing: a cancel used to reach winget as
         # `taskkill /T /F` in the middle of an install. Scans and installs run
-        # on; each tab's own Cancel button and app exit (on_stop) stop them.
+        # on until they finish; Run All has Stop (before the next package), and
+        # app exit (on_stop) stops the rest between packages.
         pass
 
     def on_start(self, app) -> None:

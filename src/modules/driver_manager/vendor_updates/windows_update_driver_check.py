@@ -118,13 +118,17 @@ def find_windows_update_drivers_for_many(drivers) -> dict:
     WU search, matched in memory against every driver in drivers that
     has a hardware_id. Returns a dict keyed by device_id -- only devices
     with a real match are present. Must run in a COMWorker, same as the
-    single-device version. Empty dict (never raises) if the search
-    itself fails or nothing has a hardware_id to match on. Never even
+    single-device version. Raises RuntimeError if the search itself
+    fails ("could not check" is not "nothing found"); an empty dict when
+    nothing matches or nothing has a hardware_id to match on. Never even
     calls into WU at all when drivers is empty -- every vendor-specific
     check already matched, nothing left for this pass to add."""
     if not drivers:
         return {}
     candidates = _search_pending_driver_updates()
+    if candidates is None:
+        # Searched and failed is not searched and found nothing.
+        raise RuntimeError("Windows Update's driver search failed (see the log)")
     if not candidates:
         return {}
     matches = {}

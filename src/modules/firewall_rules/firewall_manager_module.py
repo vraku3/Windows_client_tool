@@ -1425,17 +1425,28 @@ class FirewallManagerModule(BaseModule):
         def work(_w):
             netsh_export_rules(path)
             _require_policy_file(path)
-            return fetch_firewall_rules()
+            # The export is done; a failed re-read of the rule list must not
+            # turn a good backup into an error.
+            try:
+                return fetch_firewall_rules(), ""
+            except Exception as e:  # noqa: BLE001 -- reported next to the success
+                logger.warning("firewall: exported, but the rule list could not be re-read: %s", e)
+                return None, str(e)
 
         worker = Worker(work)
-        worker.signals.result.connect(self._on_rules_loaded)
         worker.signals.error.connect(self._on_error)
 
-        def on_export_result(rules):
+        def on_export_result(result):
+            rules, reread_error = result
             # Announced only now: before, "Export Complete" showed before the
             # export had even started, so a failed one looked like a backup.
             self._progress.hide()
-            self._status_lbl.setText(f"Rules exported successfully ({len(rules)} rules loaded).")
+            if rules is not None:
+                self._on_rules_loaded(rules)
+                self._status_lbl.setText(f"Rules exported successfully ({len(rules)} rules loaded).")
+            else:
+                self._status_lbl.setText("Rules exported; the rule list could not be re-read: "
+                                         + reread_error)
             QMessageBox.information(
                 self._outer, "Export Complete",
                 f"Firewall policy exported to:\n{path}",

@@ -29,7 +29,7 @@
     "verify_after_update": true,
     "restore_point_before_install": true,
     "wu_include_hidden": false,
-    "wu_include_drivers": true,
+    "wu_include_drivers": false,
     "unattended_stages": ["wu", "winget", "cleanup"],
     "unattended_interval_days": 7,
     "unattended_time": "03:00"

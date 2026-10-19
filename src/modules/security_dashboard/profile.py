@@ -176,7 +176,11 @@ def plan_baseline(name: str, catalog: Dict[str, Any],
             # Staged anyway -- the target says what it should be and the apply
             # path verifies afterwards -- but called out, because it is a
             # different thing from "this differs from what you want".
-            staged.add(control, desired, from_value=None)
+            try:
+                staged.add(control, desired, from_value=None)
+            except ValueError as e:
+                skipped.append({"id": control_id, "reason": f"not staged: {e}"})
+                continue
             skipped.append({
                 "id": control_id,
                 "reason": "its current value could not be read, so it is "
@@ -187,7 +191,13 @@ def plan_baseline(name: str, catalog: Dict[str, Any],
             skipped.append({"id": control_id,
                             "reason": "already at the baseline value"})
             continue
-        staged.add(control, desired, from_value=current)
+        try:
+            staged.add(control, desired, from_value=current)
+        except ValueError as e:
+            # A baseline value this tool cannot write exactly (a numeric
+            # control without a value-specific writer) is listed, not fatal.
+            skipped.append({"id": control_id, "reason": f"not staged: {e}"})
+            continue
         if control.requires_reboot:
             skipped.append({
                 "id": control_id,

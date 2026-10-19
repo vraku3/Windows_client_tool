@@ -79,6 +79,23 @@ def register_provider(provider: VendorProvider) -> None:
     _PROVIDERS[provider.vendor_name] = provider
 
 
+#: Why an AMD display device is never checked or updated here.
+HELD_REASON = ("AMD display drivers are held: this PC keeps the RX 7900 XTX on its 2022 "
+               "driver on purpose (newer ones crash games here), so Driver Manager does not "
+               "check or install an AMD display driver.")
+
+
+def is_held_driver(driver: DriverInfo) -> bool:
+    """An AMD display adapter (PCI vendor 1002, or an AMD/ATI publisher, in the
+    Display class). Never offered for update by any path in this app."""
+    cls = (getattr(driver, "driver_class", "") or "").upper()
+    hwid = (getattr(driver, "hardware_id", "") or "").upper()
+    pub = (getattr(driver, "publisher", "") or "").lower()
+    amd = ("VEN_1002" in hwid or pub.startswith(("advanced micro devices", "amd", "ati "))
+           or "ati technologies" in pub)
+    return cls == "DISPLAY" and amd
+
+
 def provider_for(driver: DriverInfo) -> Optional[VendorProvider]:
     """The registered provider for driver's vendor, or None -- call
     no_provider_reason(driver) to learn why when this is None."""

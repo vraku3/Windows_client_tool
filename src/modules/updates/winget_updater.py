@@ -1,10 +1,14 @@
+import logging
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from typing import List, Callable, Optional
 
 from core import winget_list
 from core.blocklist import is_blocked
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +25,7 @@ def _run_winget(
     output_cb: Optional[Callable[[str], None]] = None,
     is_cancelled: Callable[[], bool] = lambda: False,
     returncode_out: Optional[List[Optional[int]]] = None,
+    timeout_s: Optional[float] = None,
 ) -> str:
     """Run winget, stream output via output_cb, return full output.
 
@@ -53,9 +58,15 @@ def _run_winget(
         )
         stop_watching = threading.Event()
 
+        deadline = time.monotonic() + timeout_s if timeout_s else None
+
         def _watch_for_cancel() -> None:
             while not stop_watching.wait(0.5):
-                if is_cancelled():
+                timed_out = deadline is not None and time.monotonic() > deadline
+                if timed_out:
+                    logger.error("winget %s still running after %ss -- ending it",
+                                 " ".join(args[:3]), timeout_s)
+                if is_cancelled() or timed_out:
                     subprocess.run(
                         ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                         capture_output=True, timeout=10,
@@ -193,6 +204,10 @@ class UpdateOutcome:
         return self.state == winget_list.UPDATED
 
 
+#: An install still running after this long is stuck, not slow.
+INSTALL_TIMEOUT_S = 45 * 60
+
+
 def install_update(
     winget_id: str,
     output_cb: Callable[[str], None],
@@ -214,6 +229,9 @@ def install_update(
         ["upgrade", "--id", winget_id, "--exact", "--silent", "--include-unknown",
          "--accept-source-agreements", "--accept-package-agreements"],
         output_cb=output_cb,
+        # Never killed on Cancel; ended only if it is clearly stuck (an
+        # installer waiting on a hidden dialog). The read-back then decides.
+        timeout_s=INSTALL_TIMEOUT_S,
     )
     refused = winget_list.refusal(output)
     if refused:

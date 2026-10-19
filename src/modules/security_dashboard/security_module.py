@@ -1778,6 +1778,13 @@ class SecurityDashboardModule(BaseModule):
             self._error_banner.show()
             return None
         staged = import_profile(data, self.catalog, readings=self._readings)
+        if staged.skipped:
+            self._error_banner.set_error(
+                f"{len(staged.skipped)} setting(s) in the profile were not staged, because this "
+                "tool cannot set them to the profile's exact value: "
+                + "; ".join(cid for cid, _why in staged.skipped[:8])
+                + (" ..." if len(staged.skipped) > 8 else ""))
+            self._error_banner.show()
         self._changeset.clear()
         for change in staged.changes:
             self._changeset.add(change.control, change.to_value,

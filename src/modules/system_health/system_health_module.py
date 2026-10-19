@@ -452,10 +452,12 @@ class SystemHealthModule(BaseModule):
             self._servicing_out.setText(
                 (f"CHKDSK scheduled for {servicing.system_drive()} -- confirmed in BootExecute. "
                  "Reboot to run it." if scheduled else
-                 f"CHKDSK was NOT confirmed as scheduled (exit {result.returncode}); "
-                 "BootExecute shows no check queued"
-                 + (" -- it could not be read." if scheduled is None else ".")
-                 + " Run 'chkdsk /f /r' yourself in an elevated prompt.")
+                 f"CHKDSK was NOT confirmed as scheduled (exit {result.returncode}): "
+                 + ("the boot-time check list (BootExecute) could not be read."
+                    if scheduled is None else
+                    "the boot-time check list (BootExecute) shows no check queued.")
+                 + " Run 'chkdsk /f /r' yourself in an elevated prompt, or "
+                 "'chkntfs " + servicing.system_drive() + "' to see what Windows reports.")
                 + f"\n{result.output[:500]}")
             from modules.system_health import history
             history.append_run(self.app.app_data_dir, action="chkdsk_schedule",

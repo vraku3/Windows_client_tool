@@ -20,7 +20,7 @@ already went wrong elsewhere in this project:
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .catalog.audit_logging import migrate_legacy_value
 from .catalog.model import Risk, SecurityControl
@@ -196,6 +196,9 @@ class ChangeSet:
 
     def __init__(self) -> None:
         self._changes: Dict[str, PendingChange] = {}
+        #: (control id, reason) for targets that could not be staged -- a
+        #: profile value this tool cannot write exactly is skipped, not fatal.
+        self.skipped: List[Tuple[str, str]] = []
 
     def add(self, control: SecurityControl, to_value: Any,
             from_value: Any = _UNREAD) -> None:
@@ -303,8 +306,15 @@ def diff_against(catalog: Dict[str, SecurityControl],
         control = catalog.get(control_id)
         if control is None or not control.writable or desired is None:
             continue
-        if control_id in known:
-            changes.add(control, desired, from_value=known[control_id])
-        else:
-            changes.add(control, desired)
+        try:
+            if control_id in known:
+                changes.add(control, desired, from_value=known[control_id])
+            else:
+                changes.add(control, desired)
+        except ValueError as e:
+            # One value this tool cannot write exactly (a numeric control's
+            # non-recommended setting) is skipped and said so -- it must not
+            # abort the whole profile.
+            logger.warning("profile: %s not staged: %s", control_id, e)
+            changes.skipped.append((control_id, str(e)))
     return changes

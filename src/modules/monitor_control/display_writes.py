@@ -214,7 +214,14 @@ def apply_modes(changes: Sequence[Tuple[str, int, int, float]]
         staged_so_far.append(device)
     committed = commit_staged_modes()
     if not change_succeeded(committed):
-        return False, f"commit failed: {change_result_name(committed)}"
+        reason = f"commit failed: {change_result_name(committed)}"
+        # Still staged: the next display change anyone makes would apply the
+        # mode that just failed, with no countdown to bring it back.
+        leftover = _unstage(staged_so_far, originals)
+        if leftover:
+            reason += ("; and these could not be un-staged (a later display change "
+                       "may apply them): " + ", ".join(leftover))
+        return False, reason
     return True, ""
 
 

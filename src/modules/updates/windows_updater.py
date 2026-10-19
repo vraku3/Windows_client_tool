@@ -203,7 +203,13 @@ def is_held_amd_display_driver(u) -> bool:
                                            for n in _AMD_NAMES)
     by_title = "display" in title and any(title.startswith(n) or f"{n} " in title
                                           for n in _AMD_NAMES)
-    return by_metadata or by_title
+    # PCI vendor 1002 is AMD/ATI graphics (CPUs and chipsets are 1022): any
+    # package for the GPU -- display, extension, HDMI audio -- in any language.
+    try:
+        hwid = str(getattr(u, "DriverHardwareID", "") or "").upper()
+    except Exception:                                    # late-bound COM refused the field
+        hwid = ""
+    return by_metadata or by_title or "VEN_1002" in hwid
 
 
 def _explain(exc: Exception) -> str:

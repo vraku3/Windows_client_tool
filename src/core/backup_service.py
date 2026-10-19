@@ -540,9 +540,11 @@ class BackupService:
     def _revert_scheduled_task(task: str, before) -> None:
         """Put a task the tweak DISABLED back. There was no branch for this
         step type at all, so it fell through to "reverted" and the task stayed
-        disabled. `before` is schtasks' Status at apply time: already Disabled
-        means nothing to do; unrecorded ("Unknown", e.g. a refused query or a
-        localized Status label) is an error, never a silent success."""
+        disabled. `before` is the task's state at apply time -- "Enabled" or
+        "Disabled" from its XML definition (`tweak_engine._task_enabled_state`;
+        older records hold schtasks' Status, e.g. "Ready"). Already Disabled
+        means nothing to do; unrecorded ("Unknown", from records written
+        before the XML read) is an error, never a silent success."""
         if before == "Disabled":
             return
         if not before or before == "Unknown":

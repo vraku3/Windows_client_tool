@@ -35,7 +35,7 @@ from modules.driver_manager.driver_reader import (
 )
 from modules.driver_manager.driver_search_provider import DriverSearchProvider
 from modules.driver_manager.vendor_updates.provider import (
-    provider_for, no_provider_reason, NoProviderReason,
+    provider_for, no_provider_reason, NoProviderReason, is_held_driver, HELD_REASON,
 )
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
@@ -988,6 +988,9 @@ class DriverModule(BaseModule):
         return None
 
     def _check_for_vendor_update(self, driver: DriverInfo) -> None:
+        if is_held_driver(driver):
+            QMessageBox.information(self._widget, "Check for Vendor Update", HELD_REASON)
+            return
         reason = no_provider_reason(driver)
         if reason == NoProviderReason.UNRECOGNIZED_VENDOR:
             QMessageBox.information(
@@ -1170,6 +1173,9 @@ class DriverModule(BaseModule):
         instead of it: a device can have both a vendor-specific check
         AND something newer/different sitting in Windows Update's own
         queue, and this app has no way to know which is more current."""
+        if is_held_driver(driver):
+            QMessageBox.information(self._widget, "Check Windows Update", HELD_REASON)
+            return
         if self._status_lbl:
             self._status_lbl.setText("Checking Windows Update for a driver...")
 
@@ -1303,7 +1309,14 @@ class DriverModule(BaseModule):
         slightly longer sweep. The Windows Update pass is a single
         shared search regardless of how many devices fall into it."""
         drivers = list(self._drivers_ref[0])
-        checkable = [d for d in drivers if provider_for(d) is not None or d.hardware_id]
+        held = [d for d in drivers if is_held_driver(d)]
+        if held:
+            logger.info("Check All: %d AMD display device(s) held, not checked: %s",
+                        len(held), ", ".join(d.device_name for d in held))
+        self._sweep_held = len(held)
+        self._sweep_wu_error = ""
+        checkable = [d for d in drivers if not is_held_driver(d)
+                     and (provider_for(d) is not None or d.hardware_id)]
         if not checkable:
             QMessageBox.information(
                 self._widget, "Check All for Updates",
@@ -1404,6 +1417,7 @@ class DriverModule(BaseModule):
                 # source must not blank the whole sweep" rule as above.
                 logger.warning("driver_module: bulk Windows Update driver "
                                "check failed: %s", exc)
+                self._sweep_wu_error = str(exc)   # read by _on_sweep_finished
         return vendor_found, wu_found
 
     def _on_sweep_finished(self, found: list, wu_found: dict, checkable: list) -> None:
@@ -1423,11 +1437,19 @@ class DriverModule(BaseModule):
         self._refresh_status_cells_for_devices(checkable)
         if self._status_lbl:
             self._status_lbl.setText("Click Refresh to load drivers.")
+        notes = ""
+        if getattr(self, "_sweep_wu_error", ""):
+            notes += (f"\n\nWindows Update could NOT be checked: {self._sweep_wu_error}. "
+                      "Devices without a vendor source were not checked at all.")
+        if getattr(self, "_sweep_held", 0):
+            notes += f"\n\n{self._sweep_held} AMD display device(s) skipped. {HELD_REASON}"
         if not found and not wu_found:
             QMessageBox.information(
                 self._widget, "Check All for Updates",
-                f"Checked {len(checkable)} device(s). No updates found.")
+                f"Checked {len(checkable)} device(s). No updates found." + notes)
             return
+        if notes:
+            logger.info("Check All notes: %s", notes.strip())
         # e.g. Realtek: found for real, but never auto-installable (see
         # UpdateInfo.manual_download_only) -- these never enter the
         # LIGHT/FULL batch choice, only an informational note with a

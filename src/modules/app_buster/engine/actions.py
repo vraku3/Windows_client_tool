@@ -213,7 +213,13 @@ def close_programs(blockers: Iterable[Tuple[int, str]], log: Log) -> List[str]:
         created = getattr(blocker, "created", None)
         try:
             p = psutil.Process(pid)
-            if created is not None and abs(p.create_time() - created) > 0.5:
+            # No recorded identity is not a match: a blocker whose creation
+            # time could not be read is never ended (same rule as Process
+            # Explorer and File Forensics).
+            if created is None:
+                failed.append(f"{name} ({pid}): could not be identified -- not ended")
+                continue
+            if abs(p.create_time() - created) > 0.5:
                 failed.append(f"{name} ({pid}): it exited and its PID now belongs to "
                               f"{p.name()} -- not ended")
                 continue
@@ -479,13 +485,18 @@ def remove_windows_app(rec: m.AppRecord, scope: str, runner: Runner, log: Log) -
                            "so removal for other accounts is unconfirmed")
         if rec.family.lower() in everyone:
             return Outcome(rec, SKIPPED, "Removed for you, but still installed for another account.")
+    # Decided now, reported after the "Entire PC" file cleanup below: the
+    # app IS gone for every account, so its data folders still go.
+    provisioning_problem = ""
+    if scope in (SCOPE_ALL, SCOPE_PC):
         provisioned = runner.provisioned_names()
         if provisioned is None:
-            return Outcome(rec, SKIPPED, "Removed for every account, but the provisioned list could "
-                           "not be read, so whether new accounts still get it is unconfirmed")
-        if (rec.package_name or "").lower() in provisioned:
-            return Outcome(rec, SKIPPED, "Removed for every account, but it is still provisioned: "
-                           "new accounts will get it")
+            provisioning_problem = ("Removed for every account, but the provisioned list could "
+                                    "not be read, so whether new accounts still get it is "
+                                    "unconfirmed")
+        elif (rec.package_name or "").lower() in provisioned:
+            provisioning_problem = ("Removed for every account, but it is still provisioned: "
+                                    "new accounts will get it")
     if scope == SCOPE_PC:
         stuck = []
         for folder in profile_data_folders(rec.family):
@@ -493,8 +504,11 @@ def remove_windows_app(rec: m.AppRecord, scope: str, runner: Runner, log: Log) -
             log(f"{'deleted' if gone else 'could not fully delete'} {folder}")
             stuck += left
         if stuck:
-            return Outcome(rec, LOCKED, f"Removed; {len(stuck)} data file(s) are in use",
+            return Outcome(rec, LOCKED, f"Removed; {len(stuck)} data file(s) are in use"
+                           + (f". {provisioning_problem}" if provisioning_problem else ""),
                            blockers_under(rec.install_location))
+    if provisioning_problem:
+        return Outcome(rec, SKIPPED, provisioning_problem)
     return Outcome(rec, REMOVED)
 
 

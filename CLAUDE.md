@@ -2211,7 +2211,11 @@ commits a26eb92..c350d3e). Facts worth keeping:
 - **Windows Update never installs an AMD display driver**
   (`windows_updater.is_held_amd_display_driver`: Type 2 + Display class +
   AMD/ATI maker, or the driver title), in the tab, Run All and the
-  unattended task; `updates.wu_include_drivers` now defaults to False.
+  unattended task -- and also matches `VEN_1002` in `DriverHardwareID`.
+  Driver Manager holds the same devices (`provider.is_held_driver`: Display
+  class + VEN_1002 or an AMD/ATI publisher) on its vendor check, its Windows
+  Update check and "Check All". `updates.wu_include_drivers` defaults to False
+  (code AND `config/default_config.json`); an existing config keeps its value.
 - **Registry tweak reverts write the ORIGINAL type** (`reg_kind` is the
   before-type), and a refused before-read stops the step -- recording None
   made the revert DELETE an existing value. Scheduled-task prior state comes

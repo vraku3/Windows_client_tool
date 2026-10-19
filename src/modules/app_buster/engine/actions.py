@@ -118,6 +118,16 @@ class Runner:
             return None            # an unread list is not an empty one
         return names
 
+    def provisioned_names(self) -> Optional[set]:
+        """Package names provisioned for NEW accounts. None = could not read
+        (it needs elevation; an empty list is a real answer)."""
+        rc, out, err = self.powershell(
+            "Get-AppxProvisionedPackage -Online -ErrorAction Stop | "
+            "Select-Object -ExpandProperty DisplayName")
+        if rc != 0 or err.strip():
+            return None
+        return {ln.strip().lower() for ln in out.splitlines() if ln.strip()}
+
     def all_user_families(self) -> Optional[set]:
         rc, out, err = self.powershell(
             "Get-AppxPackage -AllUsers | Select-Object -ExpandProperty PackageFamilyName")
@@ -170,11 +180,23 @@ def blockers_under(folder: str) -> List[Tuple[int, str]]:
         return []
     root = os.path.normcase(os.path.abspath(folder)) + os.sep
     out = []
-    for proc in psutil.process_iter(["pid", "name", "exe"]):
+    for proc in psutil.process_iter(["pid", "name", "exe", "create_time"]):
         exe = proc.info.get("exe") or ""
         if exe and os.path.normcase(exe).startswith(root):
-            out.append((proc.info["pid"], proc.info.get("name") or os.path.basename(exe)))
+            out.append(Blocker(proc.info["pid"], proc.info.get("name") or os.path.basename(exe),
+                               proc.info.get("create_time")))
     return out
+
+
+class Blocker(tuple):
+    """(pid, name) -- the shape every caller unpacks -- plus `created`, the
+    process creation time: a PID alone is not an identity, and Windows can
+    hand it to another program while the "close and retry" dialog is open."""
+
+    def __new__(cls, pid: int, name: str, created: Optional[float] = None):
+        self = super().__new__(cls, (pid, name))
+        self.created = created
+        return self
 
 
 def close_programs(blockers: Iterable[Tuple[int, str]], log: Log) -> List[str]:
@@ -186,9 +208,15 @@ def close_programs(blockers: Iterable[Tuple[int, str]], log: Log) -> List[str]:
         return [name for _pid, name in blockers]
     failed = []
     procs = []
-    for pid, name in blockers:
+    for blocker in blockers:
+        pid, name = blocker
+        created = getattr(blocker, "created", None)
         try:
             p = psutil.Process(pid)
+            if created is not None and abs(p.create_time() - created) > 0.5:
+                failed.append(f"{name} ({pid}): it exited and its PID now belongs to "
+                              f"{p.name()} -- not ended")
+                continue
             p.terminate()
             procs.append((p, name))
         except psutil.NoSuchProcess:
@@ -451,6 +479,13 @@ def remove_windows_app(rec: m.AppRecord, scope: str, runner: Runner, log: Log) -
                            "so removal for other accounts is unconfirmed")
         if rec.family.lower() in everyone:
             return Outcome(rec, SKIPPED, "Removed for you, but still installed for another account.")
+        provisioned = runner.provisioned_names()
+        if provisioned is None:
+            return Outcome(rec, SKIPPED, "Removed for every account, but the provisioned list could "
+                           "not be read, so whether new accounts still get it is unconfirmed")
+        if (rec.package_name or "").lower() in provisioned:
+            return Outcome(rec, SKIPPED, "Removed for every account, but it is still provisioned: "
+                           "new accounts will get it")
     if scope == SCOPE_PC:
         stuck = []
         for folder in profile_data_folders(rec.family):

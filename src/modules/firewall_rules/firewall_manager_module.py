@@ -397,6 +397,23 @@ def netsh_export_rules(path: str) -> None:
                     "could not export the firewall rules")
 
 
+def _require_policy_file(path: str) -> None:
+    """An export counts only when the file is there and not empty."""
+    try:
+        size = os.path.getsize(path)
+    except OSError as e:
+        raise RuntimeError(f"the export did not produce {path}: {e}") from e
+    if size <= 0:
+        raise RuntimeError(f"the export produced an empty file: {path}")
+
+
+def _policy_backup_path() -> str:
+    from datetime import datetime
+    root = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~"),
+                        "WindowsTweaker", "firewall-backups")
+    return os.path.join(root, f"policy-{datetime.now():%Y%m%d-%H%M%S}.wfw")
+
+
 def netsh_import_rules(path: str) -> None:
     _netsh_or_raise(["advfirewall", "import", f'"{path}"'],
                     "could not import the firewall rules")
@@ -1407,19 +1424,22 @@ class FirewallManagerModule(BaseModule):
 
         def work(_w):
             netsh_export_rules(path)
+            _require_policy_file(path)
             return fetch_firewall_rules()
 
         worker = Worker(work)
         worker.signals.result.connect(self._on_rules_loaded)
         worker.signals.error.connect(self._on_error)
-        QMessageBox.information(
-            self._outer, "Export Complete",
-            f"Rules exported to:\n{path}",
-        )
 
         def on_export_result(rules):
+            # Announced only now: before, "Export Complete" showed before the
+            # export had even started, so a failed one looked like a backup.
             self._progress.hide()
             self._status_lbl.setText(f"Rules exported successfully ({len(rules)} rules loaded).")
+            QMessageBox.information(
+                self._outer, "Export Complete",
+                f"Firewall policy exported to:\n{path}",
+            )
 
         worker.signals.result.connect(on_export_result)
         self._workers.append(worker)
@@ -1433,18 +1453,29 @@ class FirewallManagerModule(BaseModule):
         if not path:
             return
 
+        backup = _policy_backup_path()
         reply = QMessageBox.question(
             self._outer, "Confirm Import",
-            f"Import firewall rules from:\n{path}\n\nExisting rules with the same names will be overwritten.",
+            f"Import the firewall policy from:\n{path}\n\n"
+            "This REPLACES the whole Windows Firewall policy -- every rule and every "
+            "profile setting -- with the file's contents. Rules that are not in the "
+            "file are removed.\n\n"
+            f"The current policy is exported first, to:\n{backup}\n"
+            "and nothing is imported if that backup fails. To undo, import the backup.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
         self._progress.show()
-        self._status_lbl.setText("Importing rules...")
+        self._status_lbl.setText("Backing up the current policy, then importing...")
 
         def work(_w):
+            os.makedirs(os.path.dirname(backup), exist_ok=True)
+            netsh_export_rules(backup)
+            _require_policy_file(backup)
+            logger.info("firewall: current policy backed up to %s before importing %s", backup, path)
             netsh_import_rules(path)
             return fetch_firewall_rules()
 

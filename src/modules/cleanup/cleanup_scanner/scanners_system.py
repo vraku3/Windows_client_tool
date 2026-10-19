@@ -2021,6 +2021,9 @@ class _ServiceStopped:
     def __init__(self, name):
         self.name = name
         self._stopped = False
+        #: STOPPED was reached (or it was not running): its files may go.
+        self.confirmed = False
+        self.restart_error = ""
 
     def __enter__(self):
         try:
@@ -2037,13 +2040,13 @@ class _ServiceStopped:
             try:
                 win32serviceutil.WaitForServiceStatus(
                     self.name, win32service.SERVICE_STOPPED, _SERVICE_STOP_WAIT_SECS)
+                self.confirmed = True
             except Exception as e:
-                # Say so and clean anyway -- most of what is queued has
-                # nothing to do with this service.
+                # The rest of the batch is cleaned; the items the service
+                # owns are not (see `confirmed`).
                 logger.warning(
                     "Service %s did not reach STOPPED within %ss (%s) — "
-                    "cleaning anyway; files it still holds open will be skipped",
-                    self.name, _SERVICE_STOP_WAIT_SECS, e)
+                    "its own cache is left alone", self.name, _SERVICE_STOP_WAIT_SECS, e)
         except Exception as e:
             # wuauserv is trigger-started and is usually NOT running, so
             # StopService answers 1062 (seen 2026-10-03). Already stopped
@@ -2051,8 +2054,10 @@ class _ServiceStopped:
             # must not start it again afterwards (_stopped stays False).
             if getattr(e, "winerror", None) == ERROR_SERVICE_NOT_ACTIVE:
                 logger.debug("Service %s was already stopped", self.name)
+                self.confirmed = True
             else:
                 logger.warning("Failed to stop service %s: %s", self.name, e)
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._stopped:
@@ -2068,6 +2073,7 @@ class _ServiceStopped:
                     logger.debug("Service %s was already running again", self.name)
                 else:
                     logger.warning("Failed to start service %s: %s", self.name, e)
+                    self.restart_error = str(e)
         return False  # do not suppress exceptions
 
 
@@ -2126,9 +2132,16 @@ def delete_items_report(items: List[ScanItem],
                 or (bool(own_dirs) and any(_is_inside(path, d) for d in own_dirs))
                 or (bool(exclusions) and is_excluded(path, exclusions)))
 
-    def _do_delete():
+    def _do_delete(service=None):
         report, refused, per_item = DeleteReport(), [], []
         selected = [i for i in items if i.selected]
+        wu_root = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "SoftwareDistribution")
+        if service is not None and not service.confirmed:
+            # Deleting the cache under a running servicing stack races it.
+            held = [i for i in selected if _is_inside(i.path, wu_root)]
+            for i in held:
+                refused.append((i.path, "the Windows Update service did not stop -- left alone"))
+            selected = [i for i in selected if i not in held]
         for idx, item in enumerate(selected):
             if on_progress:
                 on_progress(idx + 1, len(selected))
@@ -2166,8 +2179,14 @@ def delete_items_report(items: List[ScanItem],
         return report, refused, per_item
 
     if stop_wuauserv:
-        with _ServiceStopped("wuauserv"):
-            return _do_delete()
+        service = _ServiceStopped("wuauserv")
+        with service:
+            report, refused, per_item = _do_delete(service)
+        if service.restart_error:
+            refused.append(("Windows Update service (wuauserv)",
+                            f"was stopped for the cleanup and could not be started again: "
+                            f"{service.restart_error}"))
+        return report, refused, per_item
     return _do_delete()
 
 

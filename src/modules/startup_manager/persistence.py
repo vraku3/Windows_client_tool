@@ -345,7 +345,10 @@ def _add_service(inv, win32service, manager, name, display, status) -> None:
     try:
         handle = win32service.OpenService(manager, name, win32service.SERVICE_QUERY_CONFIG)
     except Exception as error:  # noqa: BLE001
-        logger.debug("Service %s not openable: %s", name, error)
+        # A protected or ACL-restricted service is exactly what a persistence
+        # view must not drop silently: it is listed as a coverage gap.
+        logger.warning("Service %s could not be opened: %s", name, error)
+        inv.problems.append(f"Service {name} ({display}) could not be read: {error}")
         return
     try:
         config = win32service.QueryServiceConfig(handle)

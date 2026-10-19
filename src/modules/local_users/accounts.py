@@ -6,6 +6,7 @@ reported as a failure, never as "no users" or "no members".
 from __future__ import annotations
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -176,9 +177,13 @@ def findings(snap: Snapshot, now: Optional[float] = None) -> List[Finding]:
     else:
         by_name = {a.name.lower(): a for a in snap.accounts}
         extra = []
+        computer = (os.environ.get("COMPUTERNAME") or "").lower()
         for m in admins_group[0]:
-            local = m.split("\\")[-1].lower()
-            acct = by_name.get(local)
+            # Only THIS computer's accounts are local: DOMAIN\alice is not the
+            # disabled local alice, and must not be hidden because of her.
+            prefix, _sep, short = m.rpartition("\\")
+            is_local = not prefix or prefix.lower() in (computer, ".")
+            acct = by_name.get(short.lower()) if is_local else None
             if acct is not None and acct.rid == RID_ADMIN:
                 continue
             if acct is not None and not acct.enabled:

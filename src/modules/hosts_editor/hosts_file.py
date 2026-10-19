@@ -125,6 +125,9 @@ class HostsText:
     bom: bytes = b""
     error: str = ""             # could not read at all -- never shown as "empty"
     read_only_reason: str = ""  # readable, but writing back would not be faithful
+    #: The exact bytes read (b"" when absent); a save refuses when the file no
+    #: longer matches them. None = not tracked (built from bytes, not a file).
+    original: Optional[bytes] = None
 
     @property
     def editable(self) -> bool:
@@ -182,14 +185,34 @@ def read_hosts_text(path: str) -> HostsText:
         with open(path, "rb") as fh:
             data = fh.read()
     except FileNotFoundError:
-        return HostsText("", False)
+        return HostsText("", False, original=b"")
     except PermissionError as exc:
         logger.warning("Hosts file refused: %s", exc)
         return HostsText("", True, error="Permission denied reading %s" % path)
     except OSError as exc:
         logger.warning("Cannot read hosts file: %s", exc)
         return HostsText("", True, error="Could not read %s: %s" % (path, exc))
-    return decode_hosts(data)
+    read = decode_hosts(data)
+    read.original = data
+    return read
+
+
+def changed_since_read(path: str, read: HostsText) -> Optional[str]:
+    """Why the file on disk is no longer what was loaded, or None. Another
+    editor, a VPN client or the antivirus may have written it since."""
+    if read.original is None:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            now = fh.read()
+    except FileNotFoundError:
+        now = None
+    except OSError as exc:
+        return "it could not be read again before saving (%s)" % exc
+    if (now is None) != (not read.exists) or (now is not None and now != read.original):
+        return ("it was changed by another program after it was loaded. Reload it and "
+                "make your edits again -- saving now would overwrite that change")
+    return None
 
 
 def encode_hosts(text: str, encoding: str, newline: str = "\r\n", bom: bytes = b"") -> bytes:
@@ -288,6 +311,10 @@ def save_hosts(path: str, text: str, read: HostsText, backup_dir: str) -> SaveOu
     """Save `text` in the encoding and line endings the file was read with."""
     if not read.editable:
         return SaveOutcome(False, error=read.error or read.read_only_reason)
+    conflict = changed_since_read(path, read)
+    if conflict:
+        logger.warning("Hosts save refused for %s: %s", path, conflict)
+        return SaveOutcome(False, error=conflict)
     try:
         data = encode_hosts(text, read.encoding, read.newline, read.bom)
     except UnicodeEncodeError as exc:

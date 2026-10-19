@@ -29,7 +29,8 @@ def test_disabled_account_never_stale():
     assert not acc.matches_chip(a, "Stale >90 days", NOW)
 
 
-def test_findings():
+def test_findings(monkeypatch):
+    monkeypatch.setenv("COMPUTERNAME", "PC")
     accounts = [mk("Administrator", 0x200, rid=500), mk("Guest", 0x220, rid=501),
                 mk("bob", 0x220), mk("ann"), mk("cy")]
     snap = acc.Snapshot(accounts, {"Administrators": (["PC\\Administrator", "PC\\ann", "PC\\cy"], "")})
@@ -38,6 +39,16 @@ def test_findings():
     assert any("Guest" in m for m in msgs)
     assert any("password not required" in m for m in msgs)
     assert any("2 enabled members" in m for m in msgs)
+
+
+def test_a_domain_member_is_not_a_disabled_local_namesake(monkeypatch):
+    """DOMAIN\bob is not the disabled local bob, so it is not hidden."""
+    monkeypatch.setenv("COMPUTERNAME", "PC")
+    accounts = [mk("Administrator", 0x200, rid=500), mk("bob", 0x202), mk("ann")]
+    snap = acc.Snapshot(accounts, {"Administrators": (["PC\Administrator", "PC\ann",
+                                                       "CORP\bob"], "")})
+    msgs = [f.message for f in acc.findings(snap, NOW)]
+    assert any("2 enabled members" in m and "CORP\bob" in m for m in msgs)
 
 
 def test_unreadable_administrators_group_is_unknown():

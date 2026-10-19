@@ -85,11 +85,12 @@ $boot = $null
 foreach ($x in $e) { if ($x.Id -eq 6005) { $boot = $x.TimeCreated } elseif ($boot) { $span = $x.TimeCreated - $boot; '{0:yyyy-MM-dd HH:mm} -> {1:yyyy-MM-dd HH:mm}  up {2:%d}d {2:hh}h {2:mm}m{3}' -f $boot, $x.TimeCreated, $span, $(if ($x.Id -eq 6008) {'  (UNEXPECTED end)'} else {''}); $boot = $null } }
 if ($boot) { '{0:yyyy-MM-dd HH:mm} -> now               up {1:%d}d {1:hh}h {1:mm}m' -f $boot, ((Get-Date) - $boot) }"""),
     SY("os_install_media", "Installation type and servicing channel",
-       "Whether this is a Home/Pro/Enterprise/Education install, a LTSC/IoT channel, Windows in "
-       "S mode, and the composition edition.",
+       "Whether this is a Home/Pro/Enterprise/Education install, a LTSC/IoT channel, and the "
+       "composition edition. S mode is not read: reading the Code Integrity policy key from a "
+       "script was blocked by Bitdefender as CMD:Heur.BZC.ZFV.Boxter (2026-10-18).",
        L(r"""$cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
-$s = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction SilentlyContinue).SkuPolicyRequired
-[pscustomobject]@{ EditionID=$cv.EditionID; CompositionEditionID=$cv.CompositionEditionID; ProductName=$cv.ProductName; SMode=$(if ($s -eq 1) {'yes'} else {'no'}); ReleaseId=$cv.ReleaseId; LCUVer=$cv.LCUVer }""")),
+$os = Get-CimInstance Win32_OperatingSystem
+[pscustomobject]@{ EditionID=$cv.EditionID; CompositionEditionID=$cv.CompositionEditionID; ProductName=$cv.ProductName; Caption=$os.Caption; OperatingSystemSKU=$os.OperatingSystemSKU; DisplayVersion=$cv.DisplayVersion; Build="$($cv.CurrentBuild).$($cv.UBR)"; LCUVer=$cv.LCUVer; SMode='not read (see Settings > System > Activation)' }""")),
     # ---- Hardware (8) ------------------------------------------------------------------------
     HW("disk_predict_failure", "Disk failure prediction (SMART)",
        "The drive's own SMART 'predict failure' flag for each disk -- a True here means back up "

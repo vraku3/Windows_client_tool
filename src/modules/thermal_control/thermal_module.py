@@ -431,8 +431,8 @@ class ThermalWidget(QWidget):
         if self._selected is None:
             return
         if self._selected.startswith(GPU_PREFIX):
-            self._service.gpu_back_to_factory(self._selected[len(GPU_PREFIX):])
-            self._status.setText("Returning the GPU to factory fan control…")
+            nothing = self._service.gpu_back_to_factory(self._selected[len(GPU_PREFIX):])
+            self._status.setText(nothing or "Returning the GPU to its fan control before this app…")
             return
         self._service.release(self._selected)
         self._enabled.setChecked(False)

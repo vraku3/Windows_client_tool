@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
-from typing import List, Tuple
+from typing import Optional, List, Tuple
 
 import psutil
 
@@ -31,9 +31,28 @@ else:
     _ntdll = None
 
 
-def kill_process(pid: int) -> Tuple[bool, str]:
+def created_at(pid: int) -> Optional[float]:
+    """The process creation time (psutil, epoch seconds) -- its identity
+    together with the PID. None when it cannot be read."""
     try:
-        psutil.Process(pid).kill()
+        return psutil.Process(pid).create_time()
+    except psutil.Error:
+        return None
+
+
+def _same_process(proc, created: Optional[float]) -> bool:
+    return created is None or abs(proc.create_time() - created) < 0.5
+
+
+def kill_process(pid: int, created: Optional[float] = None) -> Tuple[bool, str]:
+    """End `pid`. With `created`, only if it is still the process that was
+    confirmed: Windows reuses PIDs, and a dialog can stay open for minutes."""
+    try:
+        proc = psutil.Process(pid)
+        if not _same_process(proc, created):
+            return False, (f"Process {pid} exited; its PID now belongs to {proc.name()} "
+                           "-- not ended.")
+        proc.kill()
         return True, ""
     except psutil.NoSuchProcess:
         return False, f"Process {pid} is no longer running."
@@ -43,11 +62,15 @@ def kill_process(pid: int) -> Tuple[bool, str]:
         return False, str(e)
 
 
-def kill_tree(pid: int) -> Tuple[bool, List[str]]:
-    """Kill process and all descendants. Returns (all_ok, list_of_errors)."""
+def kill_tree(pid: int, created: Optional[float] = None) -> Tuple[bool, List[str]]:
+    """Kill process and all descendants. Returns (all_ok, list_of_errors).
+    With `created`, nothing is ended unless the root is still the confirmed
+    process."""
     errors = []
     try:
         proc = psutil.Process(pid)
+        if not _same_process(proc, created):
+            return False, [f"PID {pid} exited and now belongs to {proc.name()} -- nothing ended"]
         children = proc.children(recursive=True)
         for child in children:
             ok, err = kill_process(child.pid)

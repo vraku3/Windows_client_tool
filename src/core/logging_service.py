@@ -71,6 +71,23 @@ class ApplicationLogger(logging.Logger):
         self.log(logging.DEBUG, msg, stacklevel=2)
 
 
+
+class _SafeRotatingFileHandler(RotatingFileHandler):
+    """Rotation that cannot take logging down. Two app processes (the
+    launcher and its elevated copy) can hold app.log open at once, and on
+    Windows renaming an open file fails with a sharing violation -- after
+    which the stock handler would retry the rename on every record. A failed
+    rollover keeps appending to the current file and stops rotating for the
+    rest of this process."""
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except OSError:
+            self.maxBytes = 0                      # 0 = do not rotate again
+            if self.stream is None:
+                self.stream = self._open()
+
 class LoggingService:
     """Configure Python logging for Windows Client Tool application.
 
@@ -90,13 +107,15 @@ class LoggingService:
         log_dir: Optional[str] = None,
         log_level: str = "INFO",
         console_level: str = "WARNING",
-        max_bytes: int = -1,
+        max_bytes: Optional[int] = None,
         backup_count: int = 5,
     ):
         self._log_dir = log_dir or ""
         self._log_level = getattr(logging, log_level.upper(), logging.INFO)
         self._console_level = getattr(logging, console_level.upper(), logging.WARNING)
-        self._max_bytes = max_bytes
+        # None = the class default. It used to default to -1, which
+        # RotatingFileHandler reads as "never rotate": app.log grew forever.
+        self._max_bytes = self.MAX_BYTES if max_bytes is None else max_bytes
         self._backup_count = backup_count
         self._handlers: list[logging.Handler] = []
         self.session_log_dir: str = ""
@@ -113,7 +132,7 @@ class LoggingService:
             try:
                 os.makedirs(self._log_dir, exist_ok=True)
                 log_file = os.path.join(self._log_dir, "app.log")
-                file_handler = RotatingFileHandler(
+                file_handler = _SafeRotatingFileHandler(
                     log_file,
                     maxBytes=self._max_bytes,
                     backupCount=self._backup_count,

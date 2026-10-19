@@ -630,9 +630,18 @@ class MainWindow(QMainWindow):
         self._tray_manager.show_balloon(title, message)
 
     def _refresh_current(self) -> None:
-        if self._active_module:
+        module = self._active_module
+        if module and module not in self._app.module_registry.disabled_modules:
             try:
-                self._active_module.on_activate()
+                # F5 means "read it again": on_activate() is a no-op for every
+                # module with a first-load guard, so prefer refresh_data(), as
+                # the auto-refresh timer does. A disabled module was never built.
+                refresh = (getattr(module, "refresh_now", None)
+                           or getattr(module, "refresh_data", None))
+                if callable(refresh):
+                    refresh()
+                else:
+                    module.on_activate()
             except Exception:
                 logger.exception("Error refreshing %s", self._active_module.name)
 

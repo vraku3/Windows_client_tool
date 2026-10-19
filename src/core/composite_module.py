@@ -136,6 +136,15 @@ class CompositeModule(BaseModule):
         ]
         return min(intervals) if intervals else None
 
+    def refresh_now(self) -> None:
+        """F5: refresh the visible child now, unthrottled -- also a child that
+        has no auto-refresh interval of its own."""
+        child = self._live.get(self._current)
+        if child is None:
+            return
+        self._last_refresh[self._current] = monotonic() * 1000.0
+        child.refresh_data()
+
     def refresh_data(self) -> None:
         """Tick the visible child, but only as often as that child asked for.
 

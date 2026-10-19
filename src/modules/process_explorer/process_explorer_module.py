@@ -18,7 +18,7 @@ from modules.process_explorer.process_node import ProcessNode
 from modules.process_explorer.process_collector import ProcessCollector
 from modules.process_explorer.process_tree_model import ProcessTreeModel
 from modules.process_explorer.process_actions import (
-    kill_process, kill_tree, suspend_process, resume_process,
+    created_at, kill_process, kill_tree, suspend_process, resume_process,
     set_priority, PRIORITY_LEVELS,
 )
 from modules.process_explorer.properties_dialog import ProcessPropertiesDialog
@@ -446,13 +446,14 @@ class ProcessExplorerModule(BaseModule):
         if not self._selected_node:
             return
         pid, name = self._selected_node.pid, self._selected_node.name
+        created = created_at(pid)       # identity, checked again after the dialog
         reply = QMessageBox.question(
             self._widget, "Kill Process",
             f"Kill {name} (PID {pid})?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            ok, err = kill_process(pid)
+            ok, err = kill_process(pid, created)
             if not ok:
                 self._error_banner.set_error(f"Kill failed: {err}")
 
@@ -546,6 +547,7 @@ class ProcessExplorerModule(BaseModule):
         pid, name = self._selected_node.pid, self._selected_node.name
         # Kill asked first; Kill Tree, which takes every descendant with it
         # (a browser's tabs, a shell's whole session), did not.
+        created = created_at(pid)
         try:
             import psutil
             children = psutil.Process(pid).children(recursive=True)
@@ -564,7 +566,7 @@ class ProcessExplorerModule(BaseModule):
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
-        ok, errors = kill_tree(pid)
+        ok, errors = kill_tree(pid, created)
         if not ok:
             self._error_banner.set_error(
                 "Kill tree partially failed: " + "; ".join(errors))

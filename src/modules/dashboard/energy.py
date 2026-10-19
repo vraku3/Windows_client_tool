@@ -62,13 +62,20 @@ class EnergyMeter:
         if raw is None:
             self._last_t = now
             return None
-        pkg = sum(raw[n] for n in self._inst["pkg"] if n in raw) / 1000.0 if self._inst["pkg"] else None
+        # A counter the query could not read is missing from `raw`; summing the
+        # rest would report a partial (or 0 W) package as a measurement.
+        pkg_names, core_names = self._inst["pkg"], self._inst["core"]
+        pkg = (sum(raw[n] for n in pkg_names) / 1000.0
+               if pkg_names and all(n in raw for n in pkg_names) else None)
         cores = {}
-        for n in self._inst["core"]:
-            if n in raw:
+        if core_names and all(n in raw for n in core_names):
+            for n in core_names:
                 cores[int(_CORE.match(n).group(2))] = raw[n] / 1000.0
         reading = EnergyReading(pkg, cores)
-        watts = pkg if pkg is not None else reading.cores_total_w
+        watts = pkg if pkg is not None else (reading.cores_total_w if cores else None)
+        if watts is None:
+            self._last_t = now          # an unread interval is not integrated as 0 J
+            return reading
         if self._last_t is not None:
             self.joules += watts * (now - self._last_t)       # integrate power over time
         self._last_t = now

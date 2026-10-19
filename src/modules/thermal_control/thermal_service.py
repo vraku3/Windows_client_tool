@@ -461,20 +461,29 @@ class ThermalService(QObject):
         self._gpu_job(work, self._gpu_written)
         return []
 
-    def gpu_back_to_factory(self, name: str) -> None:
+    def gpu_back_to_factory(self, name: str) -> Optional[str]:
+        """Undo this app's fan curve. Returns a message when there is nothing
+        to undo. AMD's ResetToFactory resets ALL GPU tuning (clocks, voltage,
+        power), so it is used only when the GPU was at factory before this
+        app's first write -- never without that recorded baseline."""
         from .engine import adlx
         before = (self._config_get(GPU_FACTORY_KEY, {}) or {}).get(name)
         saved = dict(self._config_get(GPU_CURVES_KEY, {}) or {})
         saved.pop(name, None)
         self._config_set(GPU_CURVES_KEY, saved)
+        if before is None:
+            return ("Nothing to put back: this app never changed this GPU's fan curve. Its "
+                    "current curve (and any other tuning) is left as it is; use AMD Software "
+                    "to reset it.")
 
         def work(_w):
-            if before is None or before.get("factory", True):
+            if before.get("factory", True):
                 adlx.reset_to_factory(name, self.adlx_dir)
             else:                       # it had other tuning: put back only the curve it had
                 adlx.set_curve(name, [tuple(p) for p in before["curve"]], self.adlx_dir)
             return self._read_gpu_fans()
         self._gpu_job(work, self._gpu_written)
+        return None
 
     def set_gpu_zero_rpm(self, name: str, on: bool) -> None:
         from .engine import adlx

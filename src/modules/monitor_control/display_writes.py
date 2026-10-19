@@ -167,6 +167,23 @@ def set_layout(positions) -> Tuple[bool, str]:
     return dc.apply_source_positions(positions)
 
 
+def _unstage(devices: Sequence[str], originals) -> list:
+    """Stage each device back to the mode it runs now. The devices that
+    could not be, as text."""
+    leftover = []
+    for device in devices:
+        mode = originals.get(device)
+        if mode is None or mode.refresh_hz is None:
+            leftover.append(f"{device} (its current mode is unknown)")
+            continue
+        result = stage_mode(device, mode.width, mode.height, mode.refresh_hz)
+        if not change_succeeded(result):
+            leftover.append(f"{device} ({change_result_name(result)})")
+    if leftover:
+        logger.error("Display modes left staged after a failed apply: %s", leftover)
+    return leftover
+
+
 def apply_modes(changes: Sequence[Tuple[str, int, int, float]]
                 ) -> Tuple[bool, str]:
     """Several displays at once: stage them all, then one commit.
@@ -181,11 +198,20 @@ def apply_modes(changes: Sequence[Tuple[str, int, int, float]]
         if not ok:
             return False, f"{device}: {reason}"
 
+    # What each display runs now, to un-stage with: a staged mode stays in
+    # the registry and the NEXT commit anyone makes would apply it.
+    originals = {device: dm.current_mode(device) for device, *_rest in changes}
+    staged_so_far = []
     for device, width, height, refresh in changes:
         staged = stage_mode(device, width, height, refresh)
         if not change_succeeded(staged):
-            return False, (f"{device}: staging failed: "
-                           f"{change_result_name(staged)}")
+            reason = f"{device}: staging failed: {change_result_name(staged)}"
+            leftover = _unstage(staged_so_far, originals)
+            if leftover:
+                reason += ("; and these could not be un-staged (a later display change "
+                           "may apply them): " + ", ".join(leftover))
+            return False, reason
+        staged_so_far.append(device)
     committed = commit_staged_modes()
     if not change_succeeded(committed):
         return False, f"commit failed: {change_result_name(committed)}"

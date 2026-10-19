@@ -28,6 +28,10 @@ class FanController:
         self.curves = cv.CurveSet()
         self._states: Dict[str, cv.CurveState] = {}
         self._defaults: Dict[str, Optional[dict]] = {}     # control id -> BIOS mode/PWM
+        #: Headers an earlier run left stuck that recover() could not hand back.
+        #: They stay in the marker, whatever this run touches or releases,
+        #: until a later start hands them back.
+        self._unresolved: set = set()
         self.last_errors: List[str] = []
         # tick() runs on a worker; shutdown() on the UI thread at exit. Without
         # this, a tick in flight could set a duty AFTER shutdown handed every
@@ -68,6 +72,7 @@ class FanController:
         # BIOS values): deleting it would make the next start believe the
         # fan is fine while it is still stuck at its last duty.
         self._defaults = dict(failed)
+        self._unresolved = set(failed)
         self._write_marker(list(failed))
         if released:
             logger.warning("a previous run did not release %s; handed back to the BIOS", released)
@@ -88,6 +93,7 @@ class FanController:
         return {cid: (v or None) for cid, v in controls.items()}
 
     def _write_marker(self, ids: List[str]) -> None:
+        ids = sorted(set(ids) | self._unresolved)
         try:
             if ids:
                 touched = set(getattr(self.bridge, "touched", ()) or ())
@@ -98,10 +104,18 @@ class FanController:
                     # captured on the write after.
                     if cid not in self._defaults and cid in touched:
                         self._defaults[cid] = self._capture_default(cid)
-                os.makedirs(os.path.dirname(self.marker_path) or ".", exist_ok=True)
-                with open(self.marker_path, "w", encoding="utf-8") as f:
+                folder = os.path.dirname(self.marker_path) or "."
+                os.makedirs(folder, exist_ok=True)
+                # Atomic: a crash mid-write must not leave a truncated record
+                # of fans that are under software control.
+                tmp = os.path.join(folder, f".{os.path.basename(self.marker_path)}."
+                                           f"{os.getpid()}.{threading.get_ident()}.tmp")
+                with open(tmp, "w", encoding="utf-8") as f:
                     json.dump({"pid": os.getpid(),
-                               "controls": {cid: self._defaults.get(cid) for cid in sorted(ids)}}, f)
+                               "controls": {cid: self._defaults.get(cid) for cid in ids}}, f)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, self.marker_path)
             elif os.path.exists(self.marker_path):
                 os.remove(self.marker_path)
         except OSError as e:

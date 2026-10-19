@@ -346,15 +346,22 @@ class ThermalService(QObject):
             return st.reason if st else "this GPU is not available"
         target = GPU_PREFIX_ID + name
         fresh = target not in self._identify
-        # Armed FIRST: the write job's own read-back must already see this
+        if fresh:
+            # The way back is ON DISK before anything changes: a crash during
+            # Identify is recovered at the next start from this record only.
+            before = dict(self._config_get(GPU_IDENTIFY_KEY, {}) or {})
+            restore = dict(before)
+            restore[name] = {"factory": bool(st.gpu.at_factory), "curve": [list(p) for p in st.gpu.curve],
+                             "zero": st.gpu.zero_rpm}
+            self._config_set(GPU_IDENTIFY_KEY, restore)
+            if not self._config_save():
+                self._config_set(GPU_IDENTIFY_KEY, before)
+                return ("Not started: the settings file could not be saved, so the GPU's current "
+                        "fan curve could not be recorded for putting back (see the log)")
+        # Armed BEFORE the write job: its own read-back must already see this
         # Identify, or it would take the marker for a crashed one and undo it.
         self._arm(target, seconds, lambda: self._end_gpu_identify(name))
         if fresh:
-            restore = dict(self._config_get(GPU_IDENTIFY_KEY, {}) or {})
-            restore[name] = {"factory": bool(st.gpu.at_factory), "curve": [list(p) for p in st.gpu.curve],
-                             "zero": st.gpu.zero_rpm}
-            self._config_set(GPU_IDENTIFY_KEY, restore)        # before the write, never after
-            self._config_save()
             top = (st.gpu.speed_range or (0, 100))[1]
             flat = [(t, top) for t, _s in st.gpu.curve]
 
@@ -567,11 +574,15 @@ class ThermalService(QObject):
         if config is not None:
             config.set(key, value)
 
-    def _config_save(self) -> None:
+    def _config_save(self) -> bool:
+        """Flush the config now. False when it could not be written (the
+        config manager logs why); a caller that needs the record on disk
+        before touching hardware must stop."""
         config = getattr(self._app, "config", None)
         save = getattr(config, "save", None)
-        if save is not None:
-            save()
+        if save is None:
+            return True
+        return save() is not False
 
 
 def marker_path_for(app) -> str:

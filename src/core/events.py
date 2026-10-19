@@ -10,6 +10,9 @@ CONFIG_CHANGED = "config.changed"
 MODULE_ERROR = "module.error"
 NOTIFY_BALLOON = "notify.balloon"
 NAV_REQUEST_MODULE = "nav.request_module"
+#: data: the error text. Published (async, so it lands on the GUI thread)
+#: whenever ConfigManager.save() could not write the settings.
+CONFIG_SAVE_FAILED = "config.save_failed"
 DEBLOAT_ITEMS_REMOVED = "debloat.items_removed"
 
 # Typed payloads

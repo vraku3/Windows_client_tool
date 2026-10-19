@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 
 from core.admin_utils import is_admin, restart_as_admin
 from core.base_module import BaseModule
-from core.events import NOTIFY_BALLOON, NAV_REQUEST_MODULE
+from core.events import CONFIG_SAVE_FAILED, NOTIFY_BALLOON, NAV_REQUEST_MODULE
 from ui.sidebar_nav import SidebarNav
 from ui.status_bar import AppStatusBar
 from ui.toolbar import DynamicToolbar
@@ -142,6 +142,7 @@ class MainWindow(QMainWindow):
         self._sidebar.module_selected.connect(self._on_module_selected)
         self._app.event_bus.subscribe(NOTIFY_BALLOON, self._on_notify_balloon)
         self._app.event_bus.subscribe(NAV_REQUEST_MODULE, self._on_nav_request)
+        self._app.event_bus.subscribe(CONFIG_SAVE_FAILED, self._on_config_save_failed)
         self._schedule_update_check()
         self._show_module_warnings()
 
@@ -628,6 +629,16 @@ class MainWindow(QMainWindow):
     def show_notification(self, title: str, message: str) -> None:
         """Public helper for modules to show a tray balloon notification."""
         self._tray_manager.show_balloon(title, message)
+
+    def _on_config_save_failed(self, error: str) -> None:
+        """Settings that cannot be written must not look saved: the status bar
+        says so until a later save succeeds (measured 2026-10-19: an antivirus
+        blocked config.json and every change was silently lost at restart)."""
+        if not self._app.config.last_save_error:
+            return                                  # a later save already succeeded
+        self._status_bar.showMessage(
+            "Settings are NOT being saved -- the settings file could not be written "
+            f"({error}). Check the antivirus; see the log.", 0)
 
     def _refresh_current(self) -> None:
         module = self._active_module

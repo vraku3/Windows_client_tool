@@ -989,7 +989,13 @@ class _UpdateSettingsTab(QWidget):
             return
         patterns = normalize_patterns(self._block_edit.toPlainText())
         self.app.config.set("updates.blocklist_patterns", patterns)
-        self.app.config.save()  # flush now — unattended_runner.py may read this from a fresh process
+        # Flush now — unattended_runner.py may read this from a fresh process.
+        if self.app.config.save() is False:
+            self._block_info_lbl.setText(
+                f"NOT saved — the settings file could not be written (see the log). "
+                f"{len(patterns)} pattern(s) apply to this session only; the scheduled "
+                "maintenance run still uses the old list.")
+            return
         self._block_info_lbl.setText(f"Saved — {len(patterns)} pattern(s).")
 
     def _selected_unattended_stages(self) -> List[str]:

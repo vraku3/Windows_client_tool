@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
@@ -285,6 +286,162 @@ def _powershell_firewall(cmdlet: str, display_name: str, extra: str = "") -> Tup
     if proc.returncode == 0 and "ErrorRecord" not in output:
         return True, output
     return False, output or "%s exited with code %d" % (cmdlet, proc.returncode)
+
+
+def _powershell_exact_id(rule_id: str, action: str) -> Tuple[bool, str]:
+    """Pipe exactly ONE rule, selected by its ID, into `action`.
+
+    `-Name` is NOT an exact selector: it accepts wildcards, so an ID containing
+    `*`, `?` or `[` (third-party installers pick these IDs) would reach other
+    rules too. The rule is therefore found by an exact, case-sensitive compare
+    in the local PersistentStore -- the store the registry IDs come from, so a
+    Group Policy rule can never be the one changed -- and anything but one
+    match is refused before the action runs.
+
+    The ID is passed in an environment variable, never in the command text:
+    Windows PowerShell also ends a single-quoted string at the typographic
+    quotes U+2018-U+201B (measured here: `'a’; Write-Output X; ’b'` ran
+    the Write-Output), so escaping only the ASCII quote let an ID run code.
+    """
+    if "\0" in rule_id:
+        return False, "This rule ID contains a NUL character and cannot be addressed."
+    command = (
+        "$r = @(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop"
+        " | Where-Object { $_.Name -ceq $env:WCT_FW_RULE_ID }); "
+        "if ($r.Count -ne 1) { throw ('expected exactly one rule with this ID, found ' + $r.Count) }; "
+        "$r | %s -ErrorAction Stop" % action)
+    env = dict(os.environ, WCT_FW_RULE_ID=rule_id)
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True, text=True, timeout=90, env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("Firewall action %r on rule %r timed out", action, rule_id)
+        return False, "PowerShell did not answer within 90 s -- the change may or may not have happened."
+    except OSError as exc:
+        logger.warning("Firewall action %r on rule %r: PowerShell could not start: %s",
+                       action, rule_id, exc)
+        return False, "PowerShell could not be started (%s) -- nothing was changed." % exc
+    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if proc.returncode == 0 and "ErrorRecord" not in output:
+        return True, output
+    if "found 0" in output:
+        output += ("\n\nThe rule is in the local registry but not in the local firewall store: "
+                   "it may have been changed by policy or by another program. Refresh and try again.")
+    return False, output or "PowerShell exited with code %d" % proc.returncode
+
+
+def set_rule_enabled_by_id(rule_id: str, enable: bool) -> Tuple[bool, str]:
+    """Enable or disable only the rule with this unique ID."""
+    return _powershell_exact_id(
+        rule_id, "Set-NetFirewallRule -Enabled %s" % ("True" if enable else "False"))
+
+
+def delete_rule_by_id(rule_id: str) -> Tuple[bool, str]:
+    """Keep a restorable copy before deleting this unique ID (on the worker)."""
+    try:
+        path = export_rule_by_id(rule_id)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not back up firewall rule %r: %s", rule_id, exc)
+        return False, "Not attempted: could not save a restorable copy of this rule: %s" % exc
+    ok, message = _powershell_exact_id(rule_id, "Remove-NetFirewallRule")
+    recovery = ("Restorable copy: %s\nRe-importing requires elevation. Windows Firewall picks "
+                "the rule up on its next policy refresh; restarting the firewall service or "
+                "a reboot re-reads the policy." % path)
+    return ok, "\n".join(part for part in (message, recovery) if part)
+
+
+def export_rule_by_id(rule_id: str) -> Path:
+    """Read the exact REG_SZ fresh and write one value in regedit's format."""
+    import winreg
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, fa._POLICY + r"\FirewallRules") as key:
+        value, kind = winreg.QueryValueEx(key, rule_id)
+    if kind != winreg.REG_SZ or not isinstance(value, str):
+        raise ValueError("The rule value is not REG_SZ.")
+    if any(c in rule_id or c in value for c in ("\0", "\r", "\n")):
+        raise ValueError("The rule contains characters that cannot be saved as a quoted REG_SZ.")
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        raise OSError("APPDATA is not set.")
+    folder = Path(appdata) / "WindowsTweaker" / "firewall" / "deleted-rules"
+    folder.mkdir(parents=True, exist_ok=True)
+    safe_id = re.sub(r'[^A-Za-z0-9_.{}-]', "_", rule_id)[:100] or "rule"
+    path = folder / (datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + safe_id + ".reg")
+
+    def escape(text):
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
+    text = ('Windows Registry Editor Version 5.00\r\n\r\n[HKEY_LOCAL_MACHINE\\' +
+            fa._POLICY + '\\FirewallRules]\r\n"' + escape(rule_id) + '"="' + escape(value) + '"\r\n')
+    with path.open("x", encoding="utf-16", newline="") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    logger.info("firewall: saved rule id=%r to %s", rule_id, path)
+    return path
+
+
+def confirm_rule_id(rule_id: str, key: tuple,
+                    listed: Optional[List["FirewallRule"]] = None) -> Tuple[bool, str]:
+    """Re-check, just before acting, that `rule_id` still names the row's rule.
+
+    The ID was attached when the table was filled; rules can be added,
+    renamed or imported since (several action callbacks reload the table
+    without a fresh registry read). Act only if a FRESH registry read still
+    maps the row's key to this same ID alone, and netsh lists exactly one rule
+    under that key -- a second one may be a Group Policy rule this store does
+    not hold. `listed` is read fresh from netsh when not given.
+    """
+    from modules.firewall_rules import firewall_audit as fa
+    try:
+        rules, extras = fa.read_registry_rules(fa.resolve_indirect)
+        if listed is None:
+            listed = fetch_firewall_rules()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not re-read firewall rules before acting: %s", exc)
+        return False, "Could not re-read the firewall rules: %s" % exc
+    counts = fa.listed_key_counts(listed)
+    if fa.unique_rule_id(key, fa.rule_ids_index(rules, extras), counts) != rule_id:
+        return False, "The rule list changed since it was loaded -- refresh and try again."
+    return True, ""
+
+
+def act_on_rule_by_id(rule_id: str, key: tuple, enable: Optional[bool]):
+    """Delete (`enable` None) or toggle ONE rule by ID -> (ok, message, rules, snap).
+
+    `rules` is a fresh netsh list, or None when it could not be re-read, and
+    `snap` the registry snapshot read with it, so the table's IDs come from the
+    same moment as its rows; the by-ID read-back decides `ok` either way. Logged at INFO with the ID so
+    "who removed that rule" can be answered from app.log.
+    """
+    from modules.firewall_rules import firewall_audit as fa
+    what = "delete" if enable is None else ("enable" if enable else "disable")
+    ok, message = confirm_rule_id(rule_id, key)
+    if not ok:
+        logger.info("firewall: %s id=%r not attempted: %s", what, rule_id, message)
+        return False, "Not attempted: " + message, _try_fetch_rules(), fa.take_snapshot()
+    if enable is None:
+        ok, message = delete_rule_by_id(rule_id)
+    else:
+        ok, message = set_rule_enabled_by_id(rule_id, enable)
+    if not ok and message.startswith("Not attempted:"):
+        return False, message, _try_fetch_rules(), fa.take_snapshot()
+    verified, reason = fa.verify_rule_by_id(rule_id, enable)
+    message = "\n".join(part for part in (message, reason) if part)
+    logger.info("firewall: %s id=%r command_ok=%s verified=%s%s", what, rule_id, ok, verified,
+                "" if verified else " -- " + message.replace("\n", " | ")[:500])
+    # A command that failed or timed out may still have acted: the read-back decides.
+    return verified, message, _try_fetch_rules(), fa.take_snapshot()
+
+
+def _try_fetch_rules() -> Optional[List["FirewallRule"]]:
+    try:
+        return fetch_firewall_rules()
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not re-read the firewall rules after an action: %s", exc)
+        return None
 
 
 def set_rule_enabled(name: str, enable: bool) -> Tuple[bool, str]:
@@ -815,6 +972,7 @@ class FirewallManagerModule(BaseModule):
         self._outer = outer
         self._snap = fa.Snapshot()
         self._extras_map: dict = {}
+        self._rule_ids_map: dict = {}
         self._chip = "all"
         self._build_audit_ui(layout, toolbar)
 
@@ -992,7 +1150,8 @@ class FirewallManagerModule(BaseModule):
         self._finding_names: set = set()
 
     def _extra_for(self, rule: FirewallRule) -> "fa.RuleExtra":
-        return self._extras_map.get(fa.rule_key(rule), fa.RuleExtra())
+        key = fa.rule_key(rule)
+        return self._extras_map.get(key, self._extras_map.get(key[:3], fa.RuleExtra()))
 
     def _set_chip(self, key: str) -> None:
         self._chip = key
@@ -1014,6 +1173,7 @@ class FirewallManagerModule(BaseModule):
     def _refresh_audit_view(self) -> None:
         snap = self._snap
         self._extras_map = fa.extras_index(snap.rules, snap.extras) if snap.rules else {}
+        self._rule_ids_map = fa.rule_ids_index(snap.rules, snap.extras) if not snap.error else {}
         counts = fa.chip_counts(self._all_rules,
                                 [self._extra_for(r) for r in self._all_rules])
         for key, label in fa.CHIPS:
@@ -1044,7 +1204,9 @@ class FirewallManagerModule(BaseModule):
         if not path:
             return
         rules = self._visible_rules()
-        text = fa.rules_to_csv(rules, [self._extra_for(r) for r in rules])
+        listed_keys = fa.listed_key_counts(self._all_rules)
+        ids = [fa.unique_rule_id(fa.rule_key(r), self._rule_ids_map, listed_keys) for r in rules]
+        text = fa.rules_to_csv(rules, [self._extra_for(r) for r in rules], ids)
         try:
             with open(path, "w", encoding="utf-8-sig", newline="") as fh:
                 fh.write(text)
@@ -1103,7 +1265,7 @@ class FirewallManagerModule(BaseModule):
         def on_done(result):
             rules, snap = result
             self._snap = snap
-            self._on_rules_loaded(rules)
+            self._on_rules_loaded(rules, fresh_snapshot=True)
 
         worker = Worker(work)
         worker.signals.result.connect(on_done)
@@ -1111,9 +1273,18 @@ class FirewallManagerModule(BaseModule):
         self._workers.append(worker)
         QThreadPool.globalInstance().start(worker)
 
-    def _on_rules_loaded(self, rules: List[FirewallRule]) -> None:
+    def _on_rules_loaded(self, rules: List[FirewallRule], fresh_snapshot: bool = False) -> None:
         self._all_rules = rules
+        self._list_stale = False
         self._refresh_audit_view()
+        if not fresh_snapshot:
+            # Import, Block, Open Port and Unblock reload netsh WITHOUT a
+            # registry read; the IDs of the older snapshot may name other rules
+            # now (an import regenerates them). Rows act by name, with its
+            # warning, until the next Refresh. (A separate snapshot Worker was
+            # tried: one landing after the pane was torn down crashed the
+            # process, 0xC0000005, in the test suite.)
+            self._rule_ids_map = {}
         self._progress.hide()
         self._set_buttons_enabled(True)
         self._apply_filter()
@@ -1305,20 +1476,72 @@ class FirewallManagerModule(BaseModule):
         self._workers.append(worker)
         QThreadPool.globalInstance().start(worker)
 
+    def _row_key(self, row: int) -> tuple:
+        """`fa.rule_key` of the rule shown in `row`."""
+        def text(col):
+            item = self._table.item(row, col)
+            return item.text() if item else ""
+        return fa.rule_key(FirewallRule(name=text(0), enabled="", direction=text(2),
+                                        action="", protocol=text(4), local_port=text(5),
+                                        remote_port=text(6), program=text(7), profile=""))
+
+    def _row_identity(self, row: int) -> str:
+        """Direction / action / protocol / ports / program / profile of `row` --
+        what tells same-named rules apart in a confirmation."""
+        def text(col):
+            item = self._table.item(row, col)
+            return item.text() if item else ""
+        rule_id = self._table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        return ("%s  %s  %s   local port %s   remote port %s\nProgram: %s\nProfiles: %s\nRule ID: %s"
+                % (text(2), text(3), text(4), text(5) or "Any", text(6) or "Any",
+                   text(7) or "(any)", text(8), rule_id or fa.NO_UNIQUE_ID))
+
+    #: Set when an action was CONFIRMED but the list could not be re-read:
+    #: the table then shows the state before the action, and a double-click
+    #: on it would ask for the opposite of what someone means. Cleared by
+    #: the next successful load.
+    _list_stale = False
+
+    def _refuse_if_stale(self) -> bool:
+        if not self._list_stale:
+            return False
+        QMessageBox.information(
+            self._outer, "Refresh First",
+            "The last change was confirmed, but the rule list could not be re-read "
+            "afterwards, so the table may show rules as they were before it.\n\n"
+            "Press Refresh before changing another rule.")
+        return True
+
+    def _confirmed_but_stale(self, done: str) -> None:
+        self._list_stale = True
+        self._status_lbl.setText(
+            f"{done} The rule list could not be re-read -- the table is out of date; "
+            f"press Refresh.")
+        QMessageBox.warning(
+            self._outer, "Rule List Out of Date",
+            f"{done}\n\nThe rule list could not be re-read afterwards, so the table "
+            f"still shows the rules as they were before. Press Refresh before "
+            f"changing another rule.")
+
     def _delete_rule(self) -> None:
+        if self._refuse_if_stale():
+            return
         name = self._get_selected_name()
         if not name:
             return
 
-        # netsh and Remove-NetFirewallRule both select by DISPLAY name, which is
-        # not unique (one app often has TCP/UDP, in/out rules under one name):
-        # say how many rules this one row really stands for.
+        row = self._table.selectedItems()[0].row()
+        rule_id = self._table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        key = self._row_key(row)
         sharing = sum(1 for r in self._all_rules if r.name == name)
-        scope = (f"\n\n{sharing} rules share this name -- ALL {sharing} will be deleted."
-                 if sharing > 1 else "")
+        scope = (f"\n\n{self._row_identity(row)}\n\nOnly this rule is deleted." if rule_id else
+                 (f"\n\n{sharing} rules share this name -- ALL {sharing} will be deleted."
+                  if sharing > 1 else ""))
+        recovery = ("A restorable copy must be saved before deletion." if rule_id else
+                    "This cannot be undone.")
         reply = QMessageBox.warning(
             self._outer, "Delete Rule",
-            f"Delete firewall rule:\n{name}?{scope}\n\nThis cannot be undone.",
+            f"Delete firewall rule:\n{name}?{scope}\n\n{recovery}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1329,22 +1552,38 @@ class FirewallManagerModule(BaseModule):
         self._status_lbl.setText(f"Deleting rule '{name}'...")
 
         def work(_w):
+            if rule_id:
+                return act_on_rule_by_id(rule_id, key, None)
             ok, message = delete_rule(name)
             rules = fetch_firewall_rules()
-            # Verify against Windows rather than trusting the exit code.
             gone = not any(r.name == name for r in rules)
-            return ok and gone, message, rules
+            return ok and gone, message, rules, None
 
         def on_done(result):
-            ok, message, rules = result
-            self._on_rules_loaded(rules)
+            ok, message, rules, snap = result
+            if snap is not None:
+                self._snap = snap
+            if rules is not None:
+                self._on_rules_loaded(rules, fresh_snapshot=snap is not None)
+            else:
+                self._progress.hide()
+                message += "\n\nThe rule list could not be re-read -- press Refresh."
+            if ok and rules is None:
+                done = f"Deleted rule '{name}' (confirmed)."
+                if rule_id and message:
+                    done += "\n\n" + message
+                self._confirmed_but_stale(done)
+                return
             if ok:
                 self._status_lbl.setText(f"Deleted rule '{name}'.")
+                if rule_id and message:
+                    QMessageBox.information(self._outer, "Rule Deleted", message)
                 return
             self._status_lbl.setText(f"Could not delete rule '{name}'.")
             QMessageBox.warning(
                 self._outer, "Could Not Delete Rule",
-                "Windows would not delete this rule:\n%s\n\n%s" % (name, message),
+                "This rule was not deleted, or the deletion could not be confirmed:\n%s\n\n%s"
+                % (name, message),
             )
 
         worker = Worker(work)
@@ -1355,11 +1594,15 @@ class FirewallManagerModule(BaseModule):
 
     def _on_double_click(self, item: QTableWidgetItem) -> None:
         """Toggle enabled/disabled state on double-click."""
+        if self._refuse_if_stale():
+            return
         row = item.row()
         name_item = self._table.item(row, 0)
         if not name_item:
             return
         name = name_item.text()
+        rule_id = name_item.data(Qt.ItemDataRole.UserRole)
+        key = self._row_key(row)
         enabled_item = self._table.item(row, 1)
         current_state = enabled_item.text() if enabled_item else ""
 
@@ -1368,8 +1611,17 @@ class FirewallManagerModule(BaseModule):
 
         wanted = "Yes" if new_state else "No"
         sharing = sum(1 for r in self._all_rules if r.name == name)
-        if sharing > 1:
-            verb = "enable" if new_state else "disable"
+        verb = "enable" if new_state else "disable"
+        if rule_id:
+            reply = QMessageBox.question(
+                self._outer, "Change Rule",
+                f"{verb.capitalize()} this rule only?\n{name}\n\n{self._row_identity(row)}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        elif sharing > 1:
             reply = QMessageBox.question(
                 self._outer, "Several Rules Share This Name",
                 f"{sharing} firewall rules are named:\n{name}\n\n"
@@ -1384,15 +1636,26 @@ class FirewallManagerModule(BaseModule):
         )
 
         def work(_w):
+            if rule_id:
+                return act_on_rule_by_id(rule_id, key, new_state)
             ok, message = set_rule_enabled(name, new_state)
             rules = fetch_firewall_rules()
-            # Don't trust the exit code -- read back what the rule now says.
             applied = any(r.name == name and r.enabled == wanted for r in rules)
-            return ok and applied, message, rules
+            return ok and applied, message, rules, None
 
         def on_done(result):
-            ok, message, rules = result
-            self._on_rules_loaded(rules)
+            ok, message, rules, snap = result
+            if snap is not None:
+                self._snap = snap
+            if rules is not None:
+                self._on_rules_loaded(rules, fresh_snapshot=snap is not None)
+            else:
+                message += "\n\nThe rule list could not be re-read -- press Refresh."
+            if ok and rules is None:
+                self._confirmed_but_stale(
+                    f"Rule '{name}' is now {'enabled' if new_state else 'disabled'} "
+                    f"(confirmed).")
+                return
             if ok:
                 self._status_lbl.setText(
                     f"Rule '{name}' is now {'enabled' if new_state else 'disabled'}."
@@ -1401,8 +1664,8 @@ class FirewallManagerModule(BaseModule):
             self._status_lbl.setText(f"Could not change rule '{name}'.")
             QMessageBox.warning(
                 self._outer, "Could Not Change Rule",
-                "Windows would not %s this rule:\n%s\n\n%s"
-                % ("enable" if new_state else "disable", name, message),
+                "This rule was not %s, or the change could not be confirmed:\n%s\n\n%s"
+                % ("enabled" if new_state else "disabled", name, message),
             )
 
         worker = Worker(work)
@@ -1528,6 +1791,7 @@ class FirewallManagerModule(BaseModule):
 
     def _apply_filter(self) -> None:
         visible = self._visible_rules()
+        listed_keys = fa.listed_key_counts(self._all_rules)
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(visible))
         for row, rule in enumerate(visible):
@@ -1545,6 +1809,12 @@ class FirewallManagerModule(BaseModule):
             )
             for col, val in enumerate(vals):
                 item = centered_item(val, sortable=(col == 0))
+                if col == 0:
+                    # A key netsh lists twice (e.g. a Group Policy rule beside a local
+                    # one) has no single rule behind it, whatever the local store says.
+                    key = fa.rule_key(rule)
+                    item.setData(Qt.ItemDataRole.UserRole,
+                                 fa.unique_rule_id(key, self._rule_ids_map, listed_keys))
                 # Whatever the column width, the full value is one hover away.
                 item.setToolTip(tip)
                 # Colour coding
@@ -1603,7 +1873,8 @@ class FirewallManagerModule(BaseModule):
         cell = lambda c: (self._table.item(row, c).text() if self._table.item(row, c) else "")  # noqa: E731
         rule = FirewallRule(cell(0), cell(1), cell(2), cell(3), cell(4),
                             cell(5), cell(6), cell(7), cell(8))
-        self._detail_lbl.setText(fa.rule_detail(rule, self._extra_for(rule)))
+        rule_id = self._table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        self._detail_lbl.setText(fa.rule_detail(rule, self._extra_for(rule), rule_id))
 
     def _get_selected_name(self) -> Optional[str]:
         items = self._table.selectedItems()

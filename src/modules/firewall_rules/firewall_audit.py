@@ -26,6 +26,8 @@ _POLICY = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPo
 _PROTOCOLS = {"6": "TCP", "17": "UDP", "1": "ICMPv4", "58": "ICMPv6",
               "2": "IGMP", "41": "IPv6", "47": "GRE", "50": "ESP", "51": "AH"}
 ALL_PROFILES = "Domain,Private,Public"
+NO_UNIQUE_ID = "no unique ID -- acts by name"
+LOCAL_STORE = "local rule (registry)"
 
 SEV_HIGH, SEV_MEDIUM, SEV_LOW, SEV_INFO = "high", "medium", "low", "info"
 _SEV_ORDER = {SEV_HIGH: 0, SEV_MEDIUM: 1, SEV_LOW: 2, SEV_INFO: 3}
@@ -52,6 +54,8 @@ class RuleExtra:
     local_ip: str = ""
     grouping: str = ""
     icmp: str = ""                   # ICMP type/code filter; part of a rule's identity
+    rule_id: str = ""
+    raw_name: str = ""               # Name= before MRT resolution
 
 
 @dataclass
@@ -141,7 +145,7 @@ def parse_registry_rule(value: str, resolve: Optional[Callable[[str], str]] = No
     extra = RuleExtra(package=one("PFN"), service=one("Svc"),
                       remote_ip=ra or "Any", local_ip=la or "Any",
                       icmp=_uniq(multi.get("ICMP4", []) + multi.get("ICMP6", [])),
-                      grouping=one("EmbedCtxt"))
+                      grouping=one("EmbedCtxt"), raw_name=raw_name)
     return rule, extra
 
 
@@ -200,12 +204,37 @@ def read_registry_rules(resolve: Optional[Callable[[str], str]] = None):
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _POLICY + r"\FirewallRules") as k:
         n = winreg.QueryInfoKey(k)[1]
         for i in range(n):
-            _, val, _ = winreg.EnumValue(k, i)
+            rule_id, val, _ = winreg.EnumValue(k, i)
             parsed = parse_registry_rule(val, resolve)
             if parsed:
+                parsed[1].rule_id = rule_id
                 rules.append(parsed[0])
                 extras.append(parsed[1])
     return rules, extras
+
+
+def verify_rule_by_id(rule_id: str, enabled: Optional[bool] = None) -> Tuple[bool, str]:
+    """Read back this exact value; enabled=None checks that it was deleted."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _POLICY + r"\FirewallRules") as key:
+            try:
+                value, _kind = winreg.QueryValueEx(key, rule_id)
+            except FileNotFoundError:
+                return (True, "") if enabled is None else (False, "The rule ID is missing.")
+    except OSError as exc:
+        logger.warning("Could not confirm firewall rule %r: %s", rule_id, exc)
+        return False, "Could not confirm this rule: %s" % exc
+    if enabled is None:
+        return False, "The rule ID is still present."
+    active = ([part.partition("=")[2].upper() for part in value.split("|")[1:]
+               if part.startswith("Active=")]
+              if isinstance(value, str) else [])
+    if len(active) != 1 or active[0] not in ("TRUE", "FALSE"):
+        return False, "Could not confirm this rule: its Active state is unreadable."
+    if (active[0] == "TRUE") != enabled:
+        return False, "This rule's Active state did not change to the requested value."
+    return True, ""
 
 
 def read_profile_states() -> List[ProfileState]:
@@ -533,27 +562,122 @@ def _allow_and_block_same_program(rules: Sequence) -> List[str]:
 # ----------------------------------------------------------------------- csv
 
 CSV_COLS = ["Name", "Enabled", "Direction", "Action", "Protocol", "Local Port",
-            "Remote Port", "Program", "Profile", "Remote Address", "Service", "Package"]
+            "Remote Port", "Program", "Profile", "Remote Address", "Service", "Package",
+            "Rule ID", "Store"]
 
 
-def rules_to_csv(rules: Sequence, extras: Optional[Sequence[RuleExtra]] = None) -> str:
+def rules_to_csv(rules: Sequence, extras: Optional[Sequence[RuleExtra]] = None,
+                 rule_ids: Optional[Sequence[Optional[str]]] = None) -> str:
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\r\n")
     w.writerow(CSV_COLS)
     for i, r in enumerate(rules):
         e = extras[i] if extras else RuleExtra()
+        rule_id = rule_ids[i] if rule_ids is not None else e.rule_id
         w.writerow([r.name, r.enabled, r.direction, r.action, r.protocol, r.local_port,
-                    r.remote_port, r.program, r.profile, e.remote_ip, e.service, e.package])
+                    r.remote_port, r.program, r.profile, e.remote_ip, e.service, e.package,
+                    rule_id or NO_UNIQUE_ID, LOCAL_STORE])
     return buf.getvalue()
 
 
+def normalize_protocol(value: str) -> Optional[str]:
+    value = (value or "").strip().lower()
+    if is_any(value) or value == "256":
+        return "any"
+    names = {name.lower(): number for number, name in _PROTOCOLS.items()}
+    if value in names:
+        return names[value]
+    if value.isascii() and value.isdecimal() and 0 <= int(value) <= 255:
+        return str(int(value))
+    return None
+
+
+def normalize_ports(value: str) -> Optional[tuple]:
+    """Canonical port sets, including the registry's split IPHTTPS keywords."""
+    if is_any(value):
+        return ("any",)
+    tokens = {part.strip().lower() for part in value.split(",")}
+    for direction in ("in", "out"):
+        pair = {"iptls" + direction, "iphttps" + direction}
+        if pair <= tokens:
+            tokens.difference_update(pair)
+            tokens.add("iphttps")
+    keywords, ranges = set(), []
+    for token in tokens:
+        if token in {"rpc", "rpc-epmap", "iphttps", "teredo", "ply2disc"}:
+            keywords.add(token)
+            continue
+        match = re.fullmatch(r"([0-9]+)(?:\s*-\s*([0-9]+))?", token)
+        if not match:
+            return None
+        low = int(match[1])
+        high = int(match[2]) if match[2] else low
+        if not 0 <= low <= high <= 65535:
+            return None
+        ranges.append((low, high))
+    merged = []
+    for low, high in sorted(ranges):
+        if merged and low <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(high, merged[-1][1]))
+        else:
+            merged.append((low, high))
+    return (tuple(sorted(keywords)), tuple(merged))
+
+
 def rule_key(rule) -> tuple:
-    return (rule.name.lower(), rule.direction, expand_program(rule.program).lower())
+    base = (rule.name.lower(), rule.direction, expand_program(rule.program).lower())
+    fields = (normalize_protocol(rule.protocol), normalize_ports(rule.local_port),
+              normalize_ports(rule.remote_port))
+    # An unfamiliar field must not invent a more specific identity.
+    return base if None in fields else base + fields
 
 
 def extras_index(rules: Sequence, extras: Sequence[RuleExtra]) -> Dict[tuple, RuleExtra]:
     """Registry extras keyed so a netsh-listed rule can find its own."""
-    return {rule_key(r): e for r, e in zip(rules, extras)}
+    result = {rule_key(r): e for r, e in zip(rules, extras)}
+    bases: Dict[tuple, List[RuleExtra]] = {}
+    for rule, extra in zip(rules, extras):
+        bases.setdefault(rule_key(rule)[:3], []).append(extra)
+    result.update({key: values[0] for key, values in bases.items() if len(values) == 1})
+    return result
+
+
+def listed_key_counts(rules: Sequence) -> Dict[tuple, int]:
+    """Count full identities and old identities for a conservative fallback."""
+    from collections import Counter
+    return Counter(key for rule in rules for key in {rule_key(rule), rule_key(rule)[:3]})
+
+
+def unique_rule_id(key: tuple, ids: Dict[tuple, Optional[str]],
+                   counts: Dict[tuple, int]) -> Optional[str]:
+    for candidate in (key, key[:3]):
+        if counts.get(candidate) == 1 and ids.get(candidate):
+            return ids[candidate]
+    return None
+
+
+def rule_ids_index(rules: Sequence, extras: Sequence[RuleExtra]) -> Dict[tuple, Optional[str]]:
+    """Only a unique registry match can identify a netsh-listed row.
+
+    A Store-app rule (`Name=@{Package?ms-resource:...}`) is keyed here on its
+    RESOLVED name, but netsh lists it under the raw `@{...}` string, so the two
+    never describe the same row -- and a policy rule that happens to carry the
+    resolved name would be handed this local rule's ID. Those rules get no ID.
+    """
+    result: Dict[tuple, Optional[str]] = {}
+    bases: Dict[tuple, List[RuleExtra]] = {}
+    for rule, extra in zip(rules, extras):
+        bases.setdefault(rule_key(rule)[:3], []).append(extra)
+        if extra.raw_name.startswith("@{"):
+            continue
+        key = rule_key(rule)
+        result[key] = None if key in result else (extra.rule_id or None)
+    for key, values in bases.items():
+        if len(values) == 1 and not values[0].raw_name.startswith("@{"):
+            result[key] = values[0].rule_id or None
+        elif key in result:
+            result[key] = None
+    return result
 
 
 @dataclass
@@ -578,13 +702,16 @@ def take_snapshot() -> Snapshot:
     return Snapshot(rules, extras, profiles, audit(rules, extras, profiles))
 
 
-def rule_detail(rule, extra: Optional[RuleExtra] = None) -> str:
+def rule_detail(rule, extra: Optional[RuleExtra] = None,
+                rule_id: Optional[str] = None) -> str:
     lines = [rule.name,
              "%s  %s  %s  (%s)" % (rule.direction, rule.action, rule.protocol,
                                    "enabled" if rule.enabled == "Yes" else "disabled"),
              "Program:  %s" % (rule.program or "(any)"),
              "Local port:  %s    Remote port:  %s" % (rule.local_port or "Any", rule.remote_port or "Any"),
-             "Profiles:  %s" % rule.profile]
+             "Profiles:  %s" % rule.profile,
+             "Rule ID:  %s" % (rule_id or NO_UNIQUE_ID),
+             "Store:  %s" % LOCAL_STORE]
     if extra:
         if extra.remote_ip:
             lines.append("Remote address:  %s" % extra.remote_ip)

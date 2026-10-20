@@ -46,6 +46,12 @@ cp "dist/WinClientTool-Portable.exe" "C:/Users/iorda/OneDrive/1 Personal/Aplica�
 ```
 The user runs the app day-to-day from `Aplicații/`, not from this repo's own (gitignored) `dist/`. Skipping this step leaves a stale copy running there indefinitely — do it every time, overwriting whatever's already there. Same deal for an onedir build: `cp -r "dist/WinClientTool" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool"`. See the `build-portable` skill (`.claude/skills/build-portable/SKILL.md`), which bakes this step in.
 
+**Then prove the deployed exe actually RUNS** — also a hard requirement (user, 2026-10-20): launch
+the copy in `Aplicații/` elevated, wait ~10 s, and check the process is still alive. Smart App
+Control has blocked fresh unsigned builds on this PC before; pyinstaller exiting 0 proves nothing.
+If it is gone, read `Microsoft-Windows-CodeIntegrity/Operational` (3077 = Smart App Control/WDAC
+block) and Bitdefender's history, and report the block — never "built and deployed" alone.
+
 **Syntax check** (without running):
 ```
 python -c "import sys; sys.path.insert(0, 'src'); import main"
@@ -1845,6 +1851,15 @@ keep, for the same reason: it lets the engine test headless.
   signals the real Win32 event the wait is actually listening on. Both
   `on_deactivate` and `on_stop` route through the module's own
   `_stop_watch()`, which calls both.
+- **One stuck handle must not hide the rest of a process** (`core/procengine/handles.py`,
+  2026-10-20). A file opened for synchronous I/O blocks `NtQueryObject` while another thread
+  waits in a synchronous call on it (`ReadDirectoryChangesW` on a directory, a device read);
+  the old single-thread pass then lost every name after it, so a full test run's search for
+  this process's own open file said `0 matches`. `HandleNamer` now abandons a query that
+  stalls `STALL_SECONDS` (0.2 s), marks that ONE handle, continues on a fresh thread, and
+  remembers the object (`_BLOCKING_OBJECTS`) so the next search skips it; a late answer
+  removes it again. `tests/test_procengine_findref.py`'s `stuck_directory_handles`
+  reproduces it.
 - **A refusal is never collapsed into "nothing found."** Per-file analysis
   refusals, `os.walk` directory refusals, a corrupted history file, and a
   discarded `kill process` result are all surfaced rather than silently
@@ -2233,6 +2248,14 @@ commits a26eb92..c350d3e). Facts worth keeping:
   class + VEN_1002 or an AMD/ATI publisher) on its vendor check, its Windows
   Update check and "Check All". `updates.wu_include_drivers` defaults to False
   (code AND `config/default_config.json`); an existing config keeps its value.
+  Held offers are SHOWN (2026-10-20): a greyed unselectable row "Held by
+  WinClientTool", "N held" counts, held lines in Run All / unattended and the
+  report, "Held (AMD display driver kept on purpose)" in Driver Manager. With
+  drivers off, `fetch_pending_updates(held_out=...)` searches EVERYTHING and
+  drops drivers in code (`Type` must read 1, an unreadable one is left out);
+  `Type<>'Driver'` in the criteria would hide the held offers too. Measured:
+  7.6 s full search vs 1.3 s without drivers. A hold check that raises refuses
+  that one update instead of aborting the batch.
 - **Registry tweak reverts write the ORIGINAL type** (`reg_kind` is the
   before-type), and a refused before-read stops the step -- recording None
   made the revert DELETE an existing value. Scheduled-task prior state comes
@@ -2263,6 +2286,13 @@ commits a26eb92..c350d3e). Facts worth keeping:
 - Codex's ELEVATED Windows sandbox broke ("helper_unknown_error: setup refresh
   had errors", even in a fresh `codex exec`); `-c windows.sandbox="unelevated"`
   worked. Batches B-F were done by Claude at the user's choice.
+  ROOT CAUSE found 2026-10-20: the npm CLI 0.162.1's sandbox setup tried to change
+  the ACL of the Codex desktop app's `node_repl.exe` (an MCP server in
+  `~/.codex/config.toml`), got a sharing violation (os error 32) while copies of it
+  were running, and treated that as fatal. 0.163.0 logs it and carries on:
+  `npm i -g @openai/codex@0.163.0` fixed it, and the elevated sandbox runs commands again
+  (`~/.codex/.sandbox/sandbox.<date>.log` shows `errors=[]`). If it breaks again,
+  read that log first and compare `codex --version` with the desktop app's.
 
 ## Pending restart (`src/core/pending_reboot.py`)
 

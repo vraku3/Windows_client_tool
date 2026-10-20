@@ -32,6 +32,19 @@ in `Aplicații/` and `Aplicații/old/` before (cleaned up 2026-08-14).
    ```
    cp "dist/WinClientTool-Portable.exe" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe"
    ```
+6. **Prove the deployed exe RUNS — always** (user, 2026-10-20: "super important"). Smart App
+   Control has blocked fresh builds here. In PowerShell:
+   ```
+   $exe = "C:\Users\iorda\OneDrive\1 Personal\Aplicații\WinClientTool-Portable.exe"
+   $t0 = Get-Date
+   Start-Process $exe -Verb RunAs
+   Start-Sleep 10
+   Get-Process | Where-Object { $_.Path -eq $exe }
+   Get-WinEvent -LogName 'Microsoft-Windows-CodeIntegrity/Operational' -MaxEvents 20 |
+     Where-Object { $_.TimeCreated -ge $t0 -and $_.Id -in 3076,3077,3033,3034 }
+   ```
+   No process, or a 3077 naming the exe = blocked. Report that with the event text; the build
+   is NOT done. Also run `tools/check_frozen_scripts.py` against the built exe.
 
 ## Steps — onedir (folder) build, if also requested
 
@@ -44,6 +57,8 @@ in `Aplicații/` and `Aplicații/old/` before (cleaned up 2026-08-14).
    rm -rf "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool"
    cp -r "dist/WinClientTool" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool"
    ```
+5. Prove it runs, exactly as step 6 of the portable build, with the folder's
+   `WinClientTool.exe`.
 
 ## Notes
 

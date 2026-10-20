@@ -8,6 +8,7 @@ answers, and only one of them is safe to act on.
 import os
 import time
 
+import pytest
 
 from core.procengine.findref import FindReport, Match, find
 
@@ -47,6 +48,76 @@ def test_an_open_file_handle_is_found(tmp_path):
         assert any(match.kind == "Handle" for match in report.matches)
     finally:
         handle.close()
+
+
+@pytest.fixture
+def stuck_directory_handles(tmp_path):
+    """Three synchronous directory handles, each with a ReadDirectoryChangesW
+    waiting on it -- which holds the file-object lock, so a name query on
+    them waits too. A full test run leaves handles like these behind, and
+    the search for this process's own open file came back "0 matches"."""
+    import ctypes
+    import threading
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                                wintypes.HANDLE]
+    watched = tmp_path / "watched"
+    watched.mkdir()
+    handles = []
+    for _ in range(3):
+        h = k32.CreateFileW(str(watched), 0x1, 0x7, None, 3, 0x02000000, None)
+        assert h and h != wintypes.HANDLE(-1).value, ctypes.get_last_error()
+        handles.append(h)
+
+    def wait(h):
+        buf = ctypes.create_string_buffer(4096)
+        got = wintypes.DWORD()
+        k32.ReadDirectoryChangesW(wintypes.HANDLE(h), buf, 4096, False, 0x1,
+                                  ctypes.byref(got), None, None)
+
+    threads = [threading.Thread(target=wait, args=(h,), daemon=True) for h in handles]
+    for thread in threads:
+        thread.start()
+    time.sleep(0.3)
+    yield
+    (watched / "release.txt").write_text("")      # ends the waiting reads
+    for thread in threads:
+        thread.join(2)
+    for h in handles:
+        k32.CloseHandle(wintypes.HANDLE(h))
+
+
+def test_a_stuck_handle_does_not_hide_the_rest_of_the_process(tmp_path,
+                                                             stuck_directory_handles):
+    marker = tmp_path / "findref-stuck-probe.txt"
+    marker.write_text("hello")
+    with open(marker):
+        report = find("findref-stuck-probe", handles=True, modules=False)
+    assert any(match.pid == MY_PID for match in report.matches), report.summary()
+
+
+def test_a_stuck_handle_costs_one_row_and_says_so(tmp_path, stuck_directory_handles):
+    from core.procengine.handles import HandleNamer, system_handles
+
+    marker = tmp_path / "namer-stuck-probe.txt"
+    marker.write_text("hello")
+    with open(marker):
+        rows, note = HandleNamer().describe(system_handles(MY_PID))
+        # And again: the objects that blocked are skipped, not waited on twice.
+        started = time.perf_counter()
+        again, _note = HandleNamer().describe(system_handles(MY_PID))
+        second = time.perf_counter() - started
+    assert any(r.name and "namer-stuck-probe" in r.name for r in rows), note
+    assert note and note.startswith("BLOCKED") and "queried normally" in note
+    assert sum("did not return" in (r.unavailable or "") for r in rows) <= 3
+    assert any(r.name and "namer-stuck-probe" in r.name for r in again)
+    # Skipping is still a gap in the search, and must be reported as one.
+    assert _note and _note.startswith("BLOCKED") and "skipped" in _note, _note
+    assert second < 0.5, f"the known-blocking objects were waited on again ({second:.2f}s)"
 
 
 def test_a_closed_file_is_not_found(tmp_path):

@@ -230,7 +230,8 @@ def test_the_process_handle_is_closed_by_the_worker_not_the_caller():
 
     from core.procengine import handles as module
 
-    source = inspect.getsource(module.HandleNamer.describe)
+    # The naming worker lives in `_pass` (one per stretch between blocked handles).
+    source = inspect.getsource(module.HandleNamer._pass)
     worker = source[source.index("def work("):]
     assert "CloseHandle(source)" in worker,         "the worker must own the handle it was given"
     after_wait = source[source.index("finished.wait("):]

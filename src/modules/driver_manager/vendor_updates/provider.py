@@ -84,6 +84,9 @@ HELD_REASON = ("AMD display drivers are held: this PC keeps the RX 7900 XTX on i
                "driver on purpose (newer ones crash games here), so Driver Manager does not "
                "check or install an AMD display driver.")
 
+#: The Update Status cell of a held device -- shown, never blank or "up to date".
+HELD_STATUS = "Held (AMD display driver kept on purpose)"
+
 
 def is_held_driver(driver: DriverInfo) -> bool:
     """An AMD display adapter (PCI vendor 1002, or an AMD/ATI publisher, in the

@@ -11,6 +11,7 @@ def test_normalize_stage_data_empty_input():
     assert result == {
         "wu_results": [],
         "wu_installed": 0,
+        "wu_held": [],
         "winget_results": [],
         "store_triggered": 0,
         "cleanup_freed": 0,
@@ -105,7 +106,7 @@ def test_run_wu_stage_honors_the_include_drivers_setting(monkeypatch):
 
     captured = {}
 
-    def _fake_fetch(include_hidden=False, patterns=None, include_drivers=True):
+    def _fake_fetch(include_hidden=False, patterns=None, include_drivers=True, held_out=None):
         captured["include_drivers"] = include_drivers
         return []
 

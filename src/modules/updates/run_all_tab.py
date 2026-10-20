@@ -162,9 +162,11 @@ class _RunAllTab(QWidget):
         self._run_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._report_btn.setEnabled(True)
-        self._status_lbl.setText("Stopped -- the stages already run are reported."
-                                 if cancelled else "Run complete.")
         self._last_data = self._normalize_data(data)
+        held = len(self._last_data.get("wu_held") or [])
+        held_note = f" {held} AMD display driver update(s) held on purpose." if held else ""
+        self._status_lbl.setText(("Stopped -- the stages already run are reported."
+                                  if cancelled else "Run complete.") + held_note)
 
         from modules.updates.history_writer import append_run
         append_run(

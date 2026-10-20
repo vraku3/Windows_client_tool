@@ -32,7 +32,17 @@ class WindowsUpdate:
     #: tagInstallationRebootBehavior enum: 0 never reboots, 1 always requires a
     #: reboot, 2 may request one.
     reboot: str = ""
+    #: An AMD display driver this app never installs (`is_held_amd_display_driver`).
+    #: A held entry is only ever SHOWN: it carries no COM identity, and
+    #: `install_updates_iter` refuses it whatever list it arrives in.
+    held: bool = False
 
+
+#: What every surface says for a held update instead of hiding it.
+#: "by WinClientTool": the hold is this app's, not Windows'. Windows Update
+#: itself (Settings > Windows Update) is not stopped from offering it.
+HELD_TEXT = ("Held by WinClientTool: AMD display driver -- kept on the installed "
+             "version on purpose")
 
 #: tagInstallationRebootBehavior, read from wuapi.dll's generated type module.
 _REBOOT_TEXT = {"0": "No", "1": "Yes", "2": "May ask"}
@@ -44,6 +54,36 @@ def severity_text(u: "WindowsUpdate") -> str:
 
 def reboot_text(u: "WindowsUpdate") -> str:
     return _REBOOT_TEXT.get(u.reboot, "—")
+
+
+def wu_status_text(updates: List["WindowsUpdate"], held: List["WindowsUpdate"]) -> str:
+    """The Windows Updates tab's status line. Held AMD display drivers are
+    counted ("N held") rather than left to vanish, and never in the pending
+    count -- nothing on this tab can install them."""
+    severe = sum(1 for u in updates if (u.severity or "").lower() in ("critical", "important"))
+    reboot = sum(1 for u in updates if u.reboot in ("1", "2"))
+    extra = []
+    if severe:
+        extra.append(f"{severe} critical/important")
+    if reboot:
+        extra.append(f"{reboot} need a restart")
+    if held:
+        extra.append(f"{len(held)} held (AMD display driver, kept on purpose)")
+    suffix = (" — " + ", ".join(extra)) if extra else ""
+    return f"{len(updates)} pending update(s){suffix}."
+
+
+def split_scan(payload) -> "tuple[List[WindowsUpdate], List[WindowsUpdate]]":
+    """(installable, held) from a tab scan's result: a {"updates", "held"}
+    dict, or a bare list (no held information). A held entry that somehow
+    reached the installable list is moved out of it."""
+    if isinstance(payload, dict):
+        updates = list(payload.get("updates") or [])
+        held = list(payload.get("held") or [])
+    else:
+        updates, held = list(payload or []), []
+    held += [u for u in updates if u.held]
+    return [u for u in updates if not u.held], held
 
 
 def _com_str(obj, attr: str) -> str:
@@ -106,6 +146,7 @@ def fetch_pending_updates(
     include_hidden: bool = False,
     patterns: Optional[List[str]] = None,
     include_drivers: bool = True,
+    held_out: Optional[List[WindowsUpdate]] = None,
 ) -> List[WindowsUpdate]:
     """
     Uses Microsoft.Update.Session COM object to get pending updates.
@@ -124,11 +165,22 @@ def fetch_pending_updates(
     no such parameter, and both the interactive Windows Updates tab and the
     shared run_wu_stage (used by both Run All and the headless --unattended
     runner) called it without one, so unchecking the box changed nothing.
+
+    held_out: optional list that receives every AMD display driver offer the
+    hold kept out of the result, as a `held=True` entry WITHOUT a COM identity
+    -- so a caller can say "held" instead of letting the update vanish. The
+    returned list never contains one, whether or not held_out is passed.
     """
     import win32com.client
     updates = []
     criteria = "IsInstalled=0" if include_hidden else "IsInstalled=0 and IsHidden=0"
-    if not include_drivers:
+    # With drivers excluded, the criteria alone would also hide the held AMD
+    # offers -- and drivers are excluded by DEFAULT, so the held rows would
+    # never appear. When a caller asks for them, search everything and drop
+    # the drivers here instead (measured: 7.6 s for the full search against
+    # 1.3 s without drivers). A driver is still never offered for install.
+    drop_drivers = not include_drivers and held_out is not None
+    if not include_drivers and not drop_drivers:
         criteria += " and Type<>'Driver'"
     try:
         session = win32com.client.Dispatch("Microsoft.Update.Session")
@@ -159,10 +211,26 @@ def fetch_pending_updates(
 
             if patterns and is_blocked(u.Title, kb, patterns):
                 continue
+            if drop_drivers and not is_held_amd_display_driver(u):
+                kind = _update_type(u)
+                if kind != 1:     # utSoftware; a driver, or a type we could not read
+                    if kind is None:
+                        logger.warning("Windows Update: %r left out -- its update type "
+                                       "could not be read and driver updates are off",
+                                       u.Title)
+                    continue
             if is_held_amd_display_driver(u):
                 logger.warning("Windows Update: held back %r -- AMD display drivers are never "
                                "installed by this app (the RX 7900 XTX stays on its 2022 driver)",
                                u.Title)
+                if held_out is not None:
+                    held_out.append(WindowsUpdate(
+                        kb=kb, title=u.Title, classification=classification,
+                        size_mb=size_mb, min_size_mb=min_size_mb,
+                        severity=severity, reboot=reboot,
+                        release_date=release_date, identity=None,
+                        is_hidden=hidden, held=True,
+                    ))
                 continue
 
             updates.append(WindowsUpdate(
@@ -179,6 +247,14 @@ def fetch_pending_updates(
 _AMD_NAMES = ("advanced micro devices", "amd", "ati technologies")
 
 
+def _update_type(u) -> Optional[int]:
+    """IUpdate.Type (1 software, 2 driver), or None when it cannot be read."""
+    try:
+        return int(u.Type)
+    except Exception:                                    # late-bound COM refused the field
+        return None
+
+
 def is_held_amd_display_driver(u) -> bool:
     """A Windows Update DRIVER offer for an AMD display adapter. These are
     never installed: the owner keeps the RX 7900 XTX on a 2022 driver on
@@ -186,17 +262,20 @@ def is_held_amd_display_driver(u) -> bool:
     replace another's components. Judged from the IWindowsDriverUpdate
     fields when the object exposes them, else from the title Windows Update
     gives drivers ("Advanced Micro Devices, Inc. - Display - 31.0...")."""
-    try:
-        if int(getattr(u, "Type", 0) or 0) != 2:          # utDriver
-            return False
-    except (TypeError, ValueError):
+    # An unreadable Type is not "not a driver": the title and hardware-id
+    # checks below still decide, so a refused field never lets one through.
+    kind = _update_type(u)
+    if kind is not None and kind != 2:                   # utDriver
         return False
     try:
         cls = str(getattr(u, "DriverClass", "") or "").lower()
         maker = str(getattr(u, "DriverManufacturer", "") or "").lower()
     except Exception:                                    # late-bound COM refused the field
         cls = maker = ""
-    title = str(getattr(u, "Title", "") or "").lower()
+    try:
+        title = str(getattr(u, "Title", "") or "").lower()
+    except Exception:                                    # late-bound COM refused the field
+        title = ""
     # Either source is enough: metadata can be partial (a class with no
     # maker), and a hold missed here installs the driver the user refuses.
     by_metadata = cls == "display" and any(n in maker.split() or maker.startswith(n)
@@ -271,6 +350,23 @@ def install_updates_iter(
         if progress_cb:
             progress_cb(i, total, u.title)
         _log(f"[{i + 1}/{total}] {u.title}  ({size_text(u)})")
+
+        # Defence in depth: the scan already keeps these out, but a held driver
+        # is never installed whatever list it arrives in.
+        try:
+            held = u.held or (u.identity is not None and is_held_amd_display_driver(u.identity))
+        except Exception as e:
+            # A COM refusal here used to escape the loop and lose every result
+            # already collected. Unsure means not installed.
+            detail = _explain(e)
+            _log(f"  not installed: could not confirm it is not a held AMD driver ({detail})")
+            results.append(InstallResult(u.kb, u.title, False, hresult_from_com_error(e),
+                                         "not installed: the AMD driver hold could not be "
+                                         f"checked ({detail})"))
+            continue
+        if held:
+            _log(f"  {HELD_TEXT}")
+            continue
 
         if u.identity is None:
             results.append(InstallResult(u.kb, u.title, False, None, "stale scan — no COM identity, re-scan first"))

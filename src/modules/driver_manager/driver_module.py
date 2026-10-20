@@ -35,7 +35,7 @@ from modules.driver_manager.driver_reader import (
 )
 from modules.driver_manager.driver_search_provider import DriverSearchProvider
 from modules.driver_manager.vendor_updates.provider import (
-    provider_for, no_provider_reason, NoProviderReason, is_held_driver, HELD_REASON,
+    provider_for, no_provider_reason, NoProviderReason, is_held_driver, HELD_REASON, HELD_STATUS,
 )
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
@@ -97,7 +97,10 @@ def _update_status_text(driver: DriverInfo, history_by_id: Dict[str, "update_his
     would wrongly imply checking is even possible. history_by_id: the
     WHOLE history store, loaded once per _populate()/_do_export() call
     rather than once per row (update_history.get_all() vs. N calls to
-    get()) -- _populate runs on every filter keystroke."""
+    get()) -- _populate runs on every filter keystroke. A held AMD display
+    device says so, ahead of everything else: it is never checked here."""
+    if is_held_driver(driver):
+        return HELD_STATUS
     if provider_for(driver) is None:
         return "—"
     return update_history.status_label(driver.version, history_by_id.get(driver.device_id))
@@ -896,7 +899,8 @@ class DriverModule(BaseModule):
             group = item0.data(Qt.ItemDataRole.UserRole + 1)
             in_group = isinstance(group, DriverGroup) and device_id in group.device_ids
             if item0.data(Qt.ItemDataRole.UserRole) == device_id or in_group:
-                text = update_history.status_label(driver.version, update_history.get(device_id))
+                text = (HELD_STATUS if is_held_driver(driver) else
+                        update_history.status_label(driver.version, update_history.get(device_id)))
                 self._table.setItem(r, status_col, centered_item(text))
                 return
 
@@ -1320,7 +1324,8 @@ class DriverModule(BaseModule):
         if not checkable:
             QMessageBox.information(
                 self._widget, "Check All for Updates",
-                "No devices with a hardware ID to check were found.")
+                "No devices with a hardware ID to check were found."
+                + (f"\n\n{len(held)} AMD display device(s) held. {HELD_REASON}" if held else ""))
             return
         if self._status_lbl:
             self._status_lbl.setText(f"Checking {len(checkable)} device(s) for updates...")
@@ -1442,7 +1447,8 @@ class DriverModule(BaseModule):
             notes += (f"\n\nWindows Update could NOT be checked: {self._sweep_wu_error}. "
                       "Devices without a vendor source were not checked at all.")
         if getattr(self, "_sweep_held", 0):
-            notes += f"\n\n{self._sweep_held} AMD display device(s) skipped. {HELD_REASON}"
+            notes += (f"\n\n{self._sweep_held} AMD display device(s) held -- not checked, "
+                      f"not installed. {HELD_REASON}")
         if not found and not wu_found:
             QMessageBox.information(
                 self._widget, "Check All for Updates",
@@ -2135,12 +2141,18 @@ class DriverModule(BaseModule):
             "this app does not perform the rollback itself.")
         act_rollback.triggered.connect(
             lambda: self._check_rollback_and_open_devmgr(driver))
-        act_check_update = menu.addAction("Check for Vendor Update...")
+        held = bool(driver) and is_held_driver(driver)
+        act_check_update = menu.addAction(
+            f"Check for Vendor Update -- {HELD_STATUS}" if held else "Check for Vendor Update...")
+        act_check_update.setEnabled(not held)
         act_check_update.triggered.connect(
             lambda: self._check_for_vendor_update(driver) if driver else None)
-        act_check_wu = menu.addAction("Check Windows Update for this Device...")
-        act_check_wu.setEnabled(bool(driver and driver.hardware_id))
+        act_check_wu = menu.addAction(
+            f"Check Windows Update -- {HELD_STATUS}" if held
+            else "Check Windows Update for this Device...")
+        act_check_wu.setEnabled(bool(driver and driver.hardware_id) and not held)
         act_check_wu.setToolTip(
+            HELD_REASON if held else
             "Windows Update's own driver channel -- vendor-agnostic, "
             "covers hardware no vendor-specific check above exists for "
             "yet (Intel in particular distributes most of its consumer "

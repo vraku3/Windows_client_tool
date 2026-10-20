@@ -20,12 +20,14 @@ def _esc(v) -> str:
 
 
 def render_update_report_html(data: dict, history: List[dict]) -> str:
-    """data keys (all optional): wu_results, winget_results, store_triggered,
+    """data keys (all optional): wu_results, wu_held, winget_results, store_triggered,
     cleanup_freed, cleanup_deleted, dism_output — see stage_runners.py outputs."""
     hostname = data.get("hostname") or socket.gethostname()
     generated = data.get("generated") or datetime.now().strftime("%A, %d %B %Y, %H:%M")
 
     wu_results = data.get("wu_results") or []
+    #: AMD display drivers the hold kept back: listed as held, never installed.
+    wu_held = data.get("wu_held") or []
     winget_results = data.get("winget_results") or []
     store_triggered = data.get("store_triggered")
     cleanup_freed = data.get("cleanup_freed", 0)
@@ -36,6 +38,10 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
         f"<tr><td>{_esc(r.get('title'))}</td><td>{_esc(r.get('kb'))}</td>"
         f"<td class=\"{'ok' if r.get('success') else 'warn'}\">{_esc(r.get('message'))}</td></tr>"
         for r in wu_results
+    ) + "".join(
+        f"<tr><td>{_esc(r.get('title'))}</td><td>{_esc(r.get('kb'))}</td>"
+        f"<td class=\"held\">{_esc(r.get('message') or 'held')}</td></tr>"
+        for r in wu_held
     ) or "<tr><td colspan=3>No Windows Update installs this run.</td></tr>"
 
     wg_rows = "".join(
@@ -52,10 +58,11 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
         for e in list(history)[-20:][::-1]
     ) or "<tr><td colspan=3>No prior runs recorded.</td></tr>"
 
+    held_suffix = f", {len(wu_held)} held" if wu_held else ""
     cards = f"""
       <div class="card"><div class="k">Windows Update</div>
         <div class="v {'ok' if all(r.get('success') for r in wu_results) or not wu_results else 'warn'}">
-          {len([r for r in wu_results if r.get('success')])}/{len(wu_results)} installed</div></div>
+          {len([r for r in wu_results if r.get('success')])}/{len(wu_results)} installed{held_suffix}</div></div>
       <div class="card"><div class="k">Winget</div><div class="v">{len(winget_results)} updated</div></div>
       <div class="card"><div class="k">Microsoft Store</div>
         <div class="v">{'scan triggered' if store_triggered else 'not run'}</div></div>
@@ -86,7 +93,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
   table {{border-collapse:collapse;width:100%;margin-bottom:16px;}}
   th {{background:#2c2c2c;color:#aaa;text-align:left;padding:6px 10px;}}
   td {{padding:5px 10px;border-bottom:1px solid #2c2c2c;}}
-  .ok {{color:#4ec9b0;}} .warn {{color:#e5c07b;}}
+  .ok {{color:#4ec9b0;}} .warn {{color:#e5c07b;}} .held {{opacity:.7;}}
   pre {{background:#151515;border:1px solid #2c2c2c;border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;}}
 </style>
 </head>

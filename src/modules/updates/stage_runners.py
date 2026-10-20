@@ -21,25 +21,36 @@ CancelFn = Callable[[], bool]
 
 def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """Scan + install pending Windows Updates. Returns results + reboot flag."""
-    from modules.updates.windows_updater import fetch_pending_updates, install_updates_iter
+    from modules.updates.windows_updater import (
+        fetch_pending_updates, install_updates_iter, HELD_TEXT,
+    )
 
     patterns = app.config.get("updates.blocklist_patterns", [])
     include_hidden = app.config.get("updates.wu_include_hidden", False)
     include_drivers = app.config.get("updates.wu_include_drivers", False)
     log("Windows Update: scanning...")
+    held_found: list = []
     updates = fetch_pending_updates(
         include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
+        held_out=held_found,
     )
+    # Held updates are reported, never installed: they are not in `updates`.
+    held = [{"kb": u.kb, "title": u.title, "state": "held", "message": HELD_TEXT}
+            for u in held_found]
+    for h in held:
+        log(f"Windows Update: held -- {h['title']} ({HELD_TEXT})")
     if not updates:
-        log("Windows Update: system is up to date.")
-        return {"results": [], "reboot_required": False, "installed_count": 0}
-    log(f"Windows Update: {len(updates)} update(s) found.")
+        log("Windows Update: nothing to install." if held
+            else "Windows Update: system is up to date.")
+        return {"results": [], "reboot_required": False, "installed_count": 0, "held": held}
+    log(f"Windows Update: {len(updates)} update(s) found"
+        + (f", {len(held)} held." if held else "."))
 
     from core.disk_space import check_wu_preflight
     reason = check_wu_preflight(sum(u.size_mb for u in updates))
     if reason:
         log(f"Windows Update: skipped — {reason}")
-        return {"results": [], "reboot_required": False, "installed_count": 0}
+        return {"results": [], "reboot_required": False, "installed_count": 0, "held": held}
 
     if app.config.get("updates.restore_point_before_install", True):
         from core.system_restore import create_restore_point
@@ -51,7 +62,7 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
             log("Windows Update: NOT installed -- the System Restore point that Settings asks "
                 "for could not be created (System Restore off or blocked by policy?).")
             return {"results": [], "reboot_required": False, "installed_count": 0,
-                    "error": "restore point could not be created"}
+                    "held": held, "error": "restore point could not be created"}
         log("Restore point created.")
 
     def _progress(done, total, title):
@@ -75,7 +86,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     except Exception:
         logger.warning("Could not check reboot-pending state", exc_info=True)
 
-    return {"results": results_dicts, "reboot_required": reboot_required, "installed_count": installed}
+    return {"results": results_dicts, "reboot_required": reboot_required,
+            "installed_count": installed, "held": held}
 
 
 def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
@@ -246,6 +258,7 @@ def normalize_stage_data(data: dict) -> dict:
     return {
         "wu_results": wu.get("results", []),
         "wu_installed": wu.get("installed_count", 0),
+        "wu_held": wu.get("held", []),
         "winget_results": winget.get("results", []),
         "store_triggered": store.get("triggered", 0),
         "cleanup_freed": cleanup.get("freed", 0),

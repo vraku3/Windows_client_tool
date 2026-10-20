@@ -26,12 +26,13 @@ from modules.updates.winget_updater import (
 from modules.updates.windows_updater import (
     fetch_pending_updates, install_updates_iter, hide_update,
     WindowsUpdate, InstallResult, size_text, severity_text, reboot_text,
+    HELD_TEXT, wu_status_text, split_scan,
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
 from modules.updates.run_all_tab import _RunAllTab
 from ui.error_banner import ErrorBanner
 import logging
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 logger = logging.getLogger(__name__)
 
 
@@ -379,6 +380,8 @@ class _WinUpdatesTab(QWidget):
         super().__init__(parent)
         self.app = None
         self._updates: List[WindowsUpdate] = []
+        #: AMD display drivers the hold keeps out: shown, never selectable.
+        self._held: List[WindowsUpdate] = []
         self._loaded = False
         self._workers: List = []
         self._op_timer: Optional[QElapsedTimer] = None
@@ -500,9 +503,12 @@ class _WinUpdatesTab(QWidget):
         include_drivers = self.app.config.get("updates.wu_include_drivers", False) if self.app else False
 
         def _fetch(worker):
-            return fetch_pending_updates(
+            held: List[WindowsUpdate] = []
+            updates = fetch_pending_updates(
                 include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
+                held_out=held,
             )
+            return {"updates": updates, "held": held}
 
         w = COMWorker(_fetch)
         w.signals.result.connect(self._on_updates)
@@ -510,23 +516,16 @@ class _WinUpdatesTab(QWidget):
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
 
-    def _on_updates(self, updates: List[WindowsUpdate]):
+    def _on_updates(self, payload) -> None:
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
             return
+        updates, held = split_scan(payload)
         self._updates = updates
+        self._held = held
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._render_table()
-        severe = sum(1 for u in updates
-                     if u.severity.lower() in ("critical", "important"))
-        reboot = sum(1 for u in updates if u.reboot in ("1", "2"))
-        extra = []
-        if severe:
-            extra.append(f"{severe} critical/important")
-        if reboot:
-            extra.append(f"{reboot} need a restart")
-        suffix = (" — " + ", ".join(extra)) if extra else ""
-        self._status_lbl.setText(f"{len(updates)} pending update(s){suffix}.")
+        self._status_lbl.setText(wu_status_text(updates, held))
         self._install_btn.setEnabled(len(updates) > 0)
         try:
             self._reboot_banner.setVisible(is_reboot_pending())
@@ -552,6 +551,26 @@ class _WinUpdatesTab(QWidget):
             elif result_text:
                 result_item.setForeground(QColor("#e06c75"))
             self._table.setItem(row, 7, result_item)
+        self._render_held_rows()
+
+    def _render_held_rows(self) -> None:
+        """Held AMD display drivers go below the installable rows, greyed and
+        NOT selectable -- Install/Hide/Blocklist act on selected rows only, so
+        nothing on this tab can act on one."""
+        base = len(self._updates)
+        self._table.setRowCount(base + len(self._held))
+        grey = QColor(chrome("text_muted"))
+        for i, u in enumerate(self._held):
+            row = base + i
+            title = u.title + (" [hidden]" if u.is_hidden else "")
+            cells = [u.kb, title, u.classification, severity_text(u), size_text(u),
+                     reboot_text(u), u.release_date, HELD_TEXT]
+            for col, text in enumerate(cells):
+                item = centered_item(text)
+                item.setFlags(Qt.ItemFlag.ItemIsEnabled)      # not selectable
+                item.setForeground(grey)
+                item.setToolTip(HELD_TEXT)
+                self._table.setItem(row, col, item)
 
     def _on_error(self, err_str: str):
         self._refresh_btn.setEnabled(True)
@@ -641,9 +660,12 @@ class _WinUpdatesTab(QWidget):
         include_drivers = self.app.config.get("updates.wu_include_drivers", False) if self.app else False
 
         def _fetch(worker):
-            return fetch_pending_updates(
+            held: List[WindowsUpdate] = []
+            updates = fetch_pending_updates(
                 include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
+                held_out=held,
             )
+            return {"updates": updates, "held": held}
 
         w = COMWorker(_fetch)
         w.signals.result.connect(lambda after: self._on_verify_done(results, after))
@@ -651,7 +673,11 @@ class _WinUpdatesTab(QWidget):
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
 
-    def _on_verify_done(self, results: List[InstallResult], after_updates: List[WindowsUpdate]) -> None:
+    def _on_verify_done(self, results: List[InstallResult], payload) -> None:
+        if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
+            return
+        after_updates, held = split_scan(payload)
+        self._held = held
         still_pending_titles = {u.title for u in after_updates}
         verify_map = {}
         for r in results:
@@ -664,7 +690,9 @@ class _WinUpdatesTab(QWidget):
                 verify_map[key] = "OK — CONFIRMED"
         self._updates = after_updates
         self._render_table(verify_map)
-        self._status_lbl.setText(f"Verified — {len(after_updates)} update(s) still pending.")
+        held_note = f", {len(held)} held (AMD display driver, kept on purpose)" if held else ""
+        self._status_lbl.setText(
+            f"Verified — {len(after_updates)} update(s) still pending{held_note}.")
         self._install_btn.setEnabled(len(after_updates) > 0)
 
     def _do_hide(self) -> None:

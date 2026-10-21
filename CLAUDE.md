@@ -198,12 +198,20 @@ self.app.thread_pool.start(w)
 **Cancellation**: Use `worker.cancel()` — do NOT directly assign `worker._cancelled = True`. The `cancel()` method uses a `Lock` to safely set the flag; bypassing it risks race conditions. This applies in `_cancel_all()` methods too:
 
 ```python
+from core.worker import retire
+
 def _cancel_all(self) -> None:
-    for w in self._workers:
-        w.cancel()       # safe — uses Lock
-        # NOT: w._cancelled = True
-    self._workers.clear()
+    retire(self._workers)   # cancels each (Lock-safe) and empties the list SAFELY
+    # NOT: for w in self._workers: w.cancel(); self._workers.clear()
 ```
+
+**Never drop the last reference to a worker that is still running** (2026-10-21).
+`for w ...: w.cancel(); self._workers.clear()` freed a running worker's
+`WorkerSignals` when it ended while its queued `cancelled`/`finished` were still
+in the event loop; delivering them ran a freed closure -- an access violation
+(`category_group`, every run of `test_cleanup_final_review_ui`; intermittently
+in whole-suite runs). `core.worker.retire()` holds each worker until its own
+`finished` (always the last signal) has been delivered.
 
 For WMI/COM operations use `COMWorker` (calls `pythoncom.CoInitialize()` automatically) instead of plain `Worker`.
 
@@ -392,16 +400,80 @@ bounded per-line timestamp window).
 
 ### Cleanup Module (`src/modules/cleanup/`)
 
+**2026-10-21 research audit:** Quick Cleanup's "safe" recent-files action
+deleted jump-list and Quick Access pins. Recent files and auto-discovered
+caches now require manual selection, including under presets. The deleter
+refuses installed games, launcher state, printer/WMI/COM+ databases, all
+WinSxS contents, account stores, unsaved editor data and Chromium site data,
+checking written and resolved paths and each deleting-walk entry. Installer
+packages require a fresh orphan reference check. Hand-written scanners target
+documented caches only; print queues require a confirmed stopped Spooler.
+The research-backed catalog separates cloud logs from upload staging, rates
+shaders/recovery files/diagnostics caution, fixes paths and labels, and disables
+duplicate targets. Steam profiles are offered only as explicit cache leaves.
+Rules the guards follow (`protected_state_dirs`, `_named_user_data`,
+`_state_path_protected` in `scanners_system.py`; tests in
+`tests/test_cleanup_research_*.py`):
+- **Containing counts.** A folder that HOLDS protected state is refused as a
+  whole, the same as one holding a sign-in store. So the whole `INetCache`
+  is refused wherever classic Outlook has a `Content.Outlook` in it;
+  `inetcache_ietlc` now targets `INetCache\IE` and `INetCache\Low\IE` only.
+  A catalog path the guards always refuse is dead weight, and
+  `test_no_enabled_catalog_path_is_one_the_deleter_always_refuses` fails on one.
+- **Names guard custom locations**: any `steamapps`, `Steam\downloads`,
+  `Epic...\Data\Manifests`, `XboxLiveDeviceInfo`, `blob_storage`,
+  `Service Worker\ScriptCache|CacheStorage`, and `htmlcache` or
+  `htmlcache\Default` except their `Cache`/`Code Cache`/`GPUCache` leaves.
+- **The deleting walk resolves once per ITEM** (`_skip_for`): it never follows
+  a link, so an entry leads to the root's realpath plus the same tail.
+  A realpath per file cost ~90 us (~220 us with the guards then); 100k
+  entries in %TEMP% made that ~20 s. The guard roots are cached per environment.
+- **A correction must not widen.** PSReadLine history was offered from
+  %LOCALAPPDATA%, where it does not live, so it found nothing; the history is
+  now not offered at all rather than "fixed" to %APPDATA%. Path fixes that
+  find MORE (JetBrains/Android Studio/Thunderbird to %LOCALAPPDATA%) were made
+  only where a vendor source documents a cache.
+
 **Scanner** (`cleanup_scanner.py`): functions take `min_age_days: int = 0` and return `ScanResult`. `ScanItem` fields: `path`, `size`, `is_dir`, `selected`, `safety` ("safe"/"caution"/"danger") — **no `name` field** (passing `name=` raises `TypeError`).
 
-**Ten tabs** in `cleanup_module.py`, in order: Quick Cleanup
-(`components/quick_cleanup_tab.py`'s `QuickCleanupTab`, with presets and one
-`CategoryGroup` per category), System Junk, Browser Caches
-(`_BrowserCleanupTab`), App & Game Caches, Windows Update, Logs & Reports,
-Large Items (`_LargeItemsTab`), Dev Tools, Discover (`_DiscoverTab`, read-only)
-and History (`_HistoryTab`). Above them sit the "Clean Now" button (runs Quick
-Cleanup's Clean All Safe), the session/all-time freed labels and
-`DriveSummaryBar`. There is no Overview tab any more.
+**Eleven tabs** in `cleanup_module.py`, in order: Quick Cleanup (the overview
+dashboard), System Junk, Browser Caches, App & Game Caches, Windows Update,
+Logs & Reports, Large Items, Dev Tools, Discover (read-only), Duplicates
+(explicit Scan only), and History. Names are kept; literal ampersands use
+`&&` in Qt captions and navigation uses widget identity. Three zones are
+Overview, Review by area, and Tools and records. The compact header exposes
+the preset clean, drive meters (warning below 15% free; critical below 5%
+or 10 GB), measured session/all-time totals, Export report and Exclusions.
+The elided last-clean line opens History; the redundant history dialog is gone.
+
+**2026-10-21 redesign:** `cleanup_scanner/knowledge.py` loads runtime JSON
+with what, used_for, verdict, risk, before_cleaning, regenerates, sources and
+catalog_concern (462/462 catalog entries covered). Missing entries show the
+catalog description and **Not yet researched**. Effective safety is the most
+cautious of scanner, catalog and research. Shared rows/details and QPainter
+charts use the semantic chart palette at paint time. Recommendations are
+rules over measured scan/history/drive facts, never delete, and keep model
+folders and live tool runtimes protected. Reports are escaped offline HTML
+plus CSV, with retention limited to exact cleanup report filenames. Owner
+defaults: caution/danger unticked, tab names kept, cross-tab paths labelled
+and counted once in snapshot totals. DetailPane paths elide in the middle
+with full-path tooltips and a small minimum; badges retain natural height,
+centred vertically even on two-line rows. Widget-scoped shortcuts avoid the
+main window's hotkeys; teardown cancels every new worker owner.
+
+**Metadata follow-up (WP9/WP12):** Clean Now, Quick Cleanup category/preset
+cleans, area tabs, Browser Caches and Discover expose measured freed totals,
+but no per-item DeleteReport/context callback to the module. Their shared
+`delete_items_report` pipeline records history internally. To populate
+`record_report(categories={catalog_category: measured_bytes}, preset=..., source=...)`,
+pass explicit context through the runner/browser/Discover entry points and
+attribute the returned per-item reports inside that pipeline. Do not infer
+category freed bytes from scanned sizes, patch a global recorder, or create
+a second history entry from the module. Duplicate actions also record
+internally and need explicit context at their engine boundary. Driver/Disk Cleanup tool panels also
+need explicit outcome/context APIs. This follow-up requires edits outside
+WP12 ownership.
+
 - `_ScanTab(QWidget)` — reusable tab wrapping a `{fn: (label, safety)}` scanners dict (System Junk, App & Game Caches, Windows Update, Logs & Reports, Dev Tools, and inside Large Items); exposes `freed_bytes = pyqtSignal(int)` and `auto_scan()` (no-op if already scanned). Tracks **all** workers (scan + clean) in a single `self._workers: list`.
 - `_BrowserCleanupTab(QWidget)` — uses `EnhancedBrowserScanner` from `browser_scanner.py`; same signal and worker pattern.
 - `_LargeItemsTab(QWidget)` — a `_ScanTab` plus the DriverStore panel and the Disk Cleanup panel; its `_cancel_all()` cancels all three.
@@ -409,6 +481,29 @@ Cleanup's Clean All Safe), the session/all-time freed labels and
 - `CleanupModule.on_activate()` refreshes `DriveSummaryBar` and calls `_quick.auto_scan()` (scans Quick Cleanup once); `QTabWidget.currentChanged` (`_on_tab_changed`) calls each tab's `auto_scan()` for lazy first-load and refreshes History. The 60 s auto-refresh rescans Quick Cleanup only, and only while it is the visible tab.
 
 **Rules here, every one of which cost a measured defect:**
+
+- **Duplicates** (`duplicates/`, Qt-free; `tabs/_duplicates_tab.py`, virtual
+  `QTreeView`) never auto-scans or selects every member of a group. Parallel
+  `scandir` skips cloud placeholders and directory reparses; physical
+  `(st_dev, st_ino)` identity collapses hard-link aliases. Size -> 64 KiB
+  samples -> full native SHA-256 uses cancellable 1 MiB reads and an optional
+  SQLite metadata-keyed cache. Name/size/probable candidates require fresh
+  exact content before removal. Similar images require manual selection,
+  an additional review confirmation and fresh dHash distance checks. Every
+  removal rechecks keeper/target metadata, `_refusal_reason`, `_protected_entry`
+  and cloud attributes. Permanent deletion uses the measured deleter; Recycle
+  Bin uses `IFileOperation` with `FOFX_RECYCLEONDELETE` (never a hard-delete
+  fallback). Recycle Bin and same-volume moves credit **zero** freed bytes. Audit and all-time
+  totals are recorded inside the action engine even after cancellation; the
+  tab emits session totals without recording them twice. TreeSize MFT is not
+  reused: its rolled-up NodeStore lacks physical file identity and nanosecond
+  snapshot metadata, requiring a second metadata walk. Read-only Downloads
+  benchmark (2026-10-21, 4 threads, warm filesystem, 1 MiB minimum): **107 files,
+  3 groups, 0 errors**, 37,686,268 bytes read in **0.0593 s total** (enumeration
+  0.0492 s; sampling 0.00250 s; SHA-256 0.00746 s, aggregate **4.94 GB/s**).
+  Cached repeat: **0.0503 s, 12 cache hits, zero file-data bytes read**. This is
+  a small warm dataset, not a whole-drive throughput guarantee.
+  `tools/duplicates_bench.py FOLDER [--cache PATH]` prints per-stage timings.
 
 - **A cancelled Worker emits `cancelled` — never `result` or `error`.** Nothing
   was connected to it, so `on_deactivate()` (any module switch) left `_scanning`
@@ -2153,6 +2248,64 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   Character Map probe is gone: a copy launched from %TEMP% is now blocked with
   a modal Explorer error on this PC, so only Paint is closed and reopened.
 
+**Optimise OS** (Game Mode's 4th tab, 2026-10-21; `engine/optimise.py`,
+`engine/space.py`, `engine/app_usage.py`, Qt only in `optimise_tab.py`).
+Persistent preferences, independent of Game Mode ON/OFF; Apply and Revert are
+REFUSED while Game Mode is ON (or its journal is unreadable).
+- **Reversible items** share one contract: read the exact before-state
+  (registry presence/type/value/key presence, SCM start type + delayed flag +
+  running, feature/capability state), journal it in `optimise.json` with
+  `done` False BEFORE the write, read back, mark `done`; Revert restores in
+  reverse order and reads back; a refused read is never journaled and a
+  corrupt journal is left untouched. Tailored = T items, Maximum = T + M, O is
+  offered but never ticked. T: menu/hover delay, Explorer to This PC, folder
+  tips, Remote Assistance off (`fAllowToGetHelp` 1 -> 0), RetailDemo Disabled
+  (was Manual). M: SysMain, USB suspend (AC), Chrome/Brave
+  `BackgroundModeEnabled=0` policy (only when the browser is installed; a
+  policy key the profile created is deleted again on revert, only if empty),
+  remove capabilities Handwriting/MathRecognizer/StepsRecorder. O: background
+  apps, Ink Workspace policy (only with NO pen/touch -- PnP digitizer usage
+  page 0x0D + SM_DIGITIZER; unreadable = not offered), Work Folders, SMB Direct
+  (only when `Get-NetAdapterRdma` lists none), IE mode / legacy WMP / VBScript
+  capabilities, SNMPTrap Disabled, Print Management console.
+- **Capabilities**: removed with `Remove-WindowsCapability -Online` (journaled
+  first, RestartNeeded reported); Revert runs `Add-WindowsCapability`, which
+  needs Windows Update / internet (payloads are not kept locally; on this
+  Insider build one may not exist), so a failed re-add stays in the journal
+  WITH its `error`, never marked reverted. `NEVER_OFFER` (Hello.Face,
+  Language.Basic/OCR/Speech/TTS, PowerShell ISE, OneSync, NetFX3, OpenSSH,
+  Notepad, Wallpapers, DirectX DB, every Wifi/Ethernet driver capability,
+  Sense) is refused even natively. `Get-WindowsCapability`/`-OptionalFeature`
+  are read as one listing per kind (~4 s each here), cached 15 s, dropped on
+  every write; a state other than the known ones (e.g. Staged) is refused.
+- **Free up space** is ONE-WAY, its own confirmation, never journaled:
+  temp (keeps < 24 h), WU download cache (stop_wuauserv), WER, crash dumps
+  (user/minidump/MEMORY.DMP, nested items deduped), Windows logs >= 30 days --
+  scanned through `scan_cache.cached_scan`, deleted ONLY through
+  `delete_items_report` (which records `cleanup_history`), never through
+  `run_cleanup_safe_stage` (its safe sweep takes shader caches, Prefetch, the
+  Recycle Bin). Component store cleanup is `run_dism_stage`
+  (StartComponentCleanup, never /ResetBase). WU cache and DISM are refused
+  while TrustedInstaller runs or `Microsoft.Update.Installer.IsBusy`, and when
+  that cannot be read. Excluded and said so: shader caches, Recycle Bin,
+  restore points, browser data.
+- **Apps you may not use** are suggestions only: UserAssist (ROT13, count @4,
+  FILETIME @60; `UEME_*` and implausible dates skipped), BAM for the current
+  SID (device paths via QueryDosDevice), Prefetch (exe name only, so it can only
+  make an app USED). Matched by full path (DisplayIcon program or anything
+  under InstallLocation; AppX by family or install folder). "No usage record"
+  is UNKNOWN, never unused. Measured here 2026-10-21: records only reach back to
+  2026-09-04 (the reinstall), 13 used, 7 unknown, ZERO suggestions; the pane
+  says so. Drivers/runtimes/frameworks/security/AMD/launchers and games
+  (incl. AppX with `MicrosoftGame.config`) and the owner's protected list are
+  never suggested. The only action is "Open in App Buster".
+- **Read-only notes**: wisvc Disabled on an Insider build (build above
+  `RELEASED_BUILD_MAX` 26200, or a WindowsSelfHost BranchName), XboxGipSvc
+  Disabled. Read live, never changed.
+- `tools/optimise_os_roundtrip.py` (elevated, never run by tests) round-trips
+  every Maximum registry/service/power item incl. T5, T6, M3, M4; it does NOT
+  touch the capability removals or the one-way cleanups, and says so.
+
 ### Whole-app review fixes (2026-10-17)
 
 Leads from a `/gpt` whole-app review (six Codex workers stopped at the
@@ -2343,6 +2496,17 @@ app.module_registry.register(MyModule())
 Note: EventViewer, CBS, DISM, WU, Reliability, and CrashDumps are embedded in DiagnoseModule — do NOT register them as standalone modules.
 
 ## Important Gotchas
+
+- **Never run the WHOLE test suite from a Codex sandbox** (2026-10-21). Bitdefender's behaviour
+  monitor (ATC) killed `python -m pytest tests` run as `CodexSandboxOffline` (restricted token,
+  parent `codex-command-runner`) as `SuspiciousBehavior` / `ATC.Malicious`: the suite as ONE
+  process discovers windows and processes, writes/hashes/back-dates/deletes thousands of files,
+  sets NTFS attributes and touches the registry -- MITRE T1010/T1057/T1070/T1083/T1112/T1485/T1486
+  in its record (`C:\ProgramData\Bitdefender\Bitdefender Security App\ctc\rca\*.dat`, readable as
+  JSON; notifications in `events\events.db`, SQLite -- read COPIES). Nothing was quarantined; only
+  that run died. The same full suite under the owner's own account did not trigger it. So: agents
+  run only the test files for what they changed; the full suite runs under the owner's account.
+  Never add a Bitdefender exclusion for Python to get around it -- that is the owner's decision.
 
 - **This application is English-only, deliberately.** There are zero
   `self.tr()` calls in 92,000 lines and that is a decision, not an

@@ -882,5 +882,17 @@
       "https://github.com/ValveSoftware/steam-for-linux/issues/3096"
     ],
     "catalog_concern": "Valve documents depots, not this Windows path. Directory evidence is a user report in Valve's tracker, corroborated by this PC. Only the default install root is approved by the catalog audit allowlist; custom roots require a separate allowlist review."
+  },
+  "epic_versioned_webcache": {
+    "what": "The Epic Games Launcher's versioned embedded-browser caches (webcache_4147, webcache_4430).",
+    "used_for": "Store pages and launcher UI content; Epic's support steps for display problems say to delete these folders, and the launcher recreates them.",
+    "verdict": "safe",
+    "risk": "Launcher pages load slower once. Installed games, manifests and sign-in are elsewhere and not targeted.",
+    "before_cleaning": "Quit the Epic Games Launcher (including from the system tray).",
+    "regenerates": true,
+    "sources": [
+      "https://www.epicgames.com/help/c-Category_EpicAccounts/c-35761596/a20673770?lang=en-US"
+    ],
+    "catalog_concern": ""
   }
 }

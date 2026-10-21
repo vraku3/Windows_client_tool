@@ -28,6 +28,11 @@ REVIEWED_KEEP = {p.lower() for p in [
     # browser / mail caches with their engine's own names
     r"%APPDATA%\Mozilla\Firefox\Profiles\*\cache2", r"%LOCALAPPDATA%\Mozilla\Firefox\Profiles\*\cache2",
     r"%APPDATA%\Mozilla\Firefox\Profiles\*\startupCache",
+    r"%LOCALAPPDATA%\Mozilla\Firefox\Profiles\*\startupCache",
+    # review 5 (2026-10-21): documented by AMD (comgr README) and Epic support
+    r"%LOCALAPPDATA%\cache\comgr",
+    r"%LOCALAPPDATA%\EpicGamesLauncher\Saved\webcache_4147",
+    r"%LOCALAPPDATA%\EpicGamesLauncher\Saved\webcache_4430",
     r"%APPDATA%\Thunderbird\Profiles\*\cache2", r"%APPDATA%\Thunderbird\Profiles\*\startupCache",
     r"%LOCALAPPDATA%\Microsoft\Windows\INetCache",
     # 2026-10-21: the whole INetCache holds Content.Outlook (opened Outlook

@@ -395,11 +395,11 @@ class QuickCleanupTab(QWidget):
     """
 
     # Emitted when all scans complete: (total_items, total_size)
-    scan_done = pyqtSignal(int, int)
+    scan_done = pyqtSignal(int, object)
 
     # Emitted after a clean -- the MEASURED bytes, feeding CleanupModule's
     # shared "Freed this session" counter like every other tab.
-    freed_bytes = pyqtSignal(int)
+    freed_bytes = pyqtSignal(object)
 
     # A complete scan, as a ScanSnapshot (scan_snapshot.py).
     snapshot_ready = pyqtSignal(object)
@@ -1118,10 +1118,16 @@ class QuickCleanupTab(QWidget):
 
     def _snapshot_per_tab(self) -> dict:
         from modules.cleanup import cleanup_scanner as cs
+        from dataclasses import replace
         per_tab: Dict[str, dict] = {}
         for cid, result in self._display.items():
-            if not isinstance(result, cs.ScanResult) or not result.items:
+            if (cid in self._scan_errors or cid in self._timed_out_cids
+                    or not isinstance(result, cs.ScanResult) or not result.items):
                 continue
+            group = self._group_by_cid.get(cid)
+            selected_paths = {item.path for item in group._items_to_clean()} if group else set()
+            result = replace(result, items=[replace(item, selected=item.path in selected_paths)
+                                            for item in result.items])
             fn = self._scanner_map.get(cid, self._adv_scanner_map.get(cid, (None,)))[0]
             if cid in _RECO_TAB:
                 tab = _RECO_TAB[cid]
@@ -1139,7 +1145,19 @@ class QuickCleanupTab(QWidget):
     def _publish_snapshot(self) -> None:
         try:
             from modules.cleanup.cleanup_scanner.scan_snapshot import ScanSnapshot
+            not_scanned = []
+            for cid, (_fn, label, _color) in {**self._scanner_map, **self._adv_scanner_map}.items():
+                if cid in self._scan_errors:
+                    reason = self._scan_errors[cid]
+                elif cid in self._timed_out_cids or (self._scanning and cid not in self._results):
+                    reason = "Still scanning; no completed result yet."
+                elif cid not in self._results:
+                    reason = "Not scanned yet."
+                else:
+                    continue
+                not_scanned.append({'label': label, 'reason': reason})
             snap = ScanSnapshot.from_results(self._snapshot_per_tab(),
+                                             not_scanned=not_scanned,
                                              preset=str(self._preset_combo.currentData() or ""))
         except (ImportError, AttributeError, TypeError, ValueError, KeyError, OSError) as exc:
             logger.warning("Quick Cleanup: could not build the scan snapshot: %s", exc)

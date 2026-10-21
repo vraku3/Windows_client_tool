@@ -330,7 +330,7 @@ _ROW_ROLE = Qt.ItemDataRole.UserRole
 
 
 class _DiscoverTab(QWidget):
-    freed_bytes = pyqtSignal(int)  # never emitted: Discover deletes nothing
+    freed_bytes = pyqtSignal(object)  # never emitted: Discover deletes nothing
 
     def __init__(self, parent=None):
         super().__init__(parent)

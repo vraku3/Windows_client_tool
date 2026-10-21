@@ -380,7 +380,8 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 # Research audit: three cloud-log splits and separate Firefox crash diagnostics.
 # 545 after four cache leaves checked on the real machine (2026-10-21, WP11):
 # AMD shader caches, Steam httpcache and depotcache, SquirrelTemp.
-REACHABLE_SCANNERS = 545
+# 547 after review 5 (2026-10-21): VS Code code/GPU cache, Epic versioned web caches.
+REACHABLE_SCANNERS = 547
 
 
 def _scanners_the_tabs_offer():

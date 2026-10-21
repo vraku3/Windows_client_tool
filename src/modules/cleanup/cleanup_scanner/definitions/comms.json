@@ -20,7 +20,7 @@
         "%LOCALAPPDATA%\\Zoom\\thumbnail",
         "%LOCALAPPDATA%\\Zoom\\logs"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Zoom named cache and logs."
     },
     {
@@ -377,7 +377,7 @@
         "%LOCALAPPDATA%\\Packages\\MSTeams_*\\LocalCache\\Microsoft\\MSTeams\\EBWebView\\*\\GPUCache",
         "%LOCALAPPDATA%\\Packages\\MSTeams_*\\LocalCache\\Microsoft\\MSTeams\\Logs"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Caches and logs only; Teams stays signed in."
     }
   ]

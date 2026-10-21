@@ -10,14 +10,15 @@
     "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
   },
   "amd_comgr_cache": {
-    "what": "AMD Code Object Manager's cache of compiled GPU kernels (ROCm/HIP/OpenCL), on by default.",
+    "what": "AMD Code Object Manager's cache of compiled GPU kernels (ROCm/HIP/OpenCL): AMD documents %LOCALAPPDATA%\\cache\\comgr as the default (overridable with AMD_COMGR_CACHE_DIR); %LOCALAPPDATA%\\comgr was found on a live machine.",
     "used_for": "Avoids recompiling GPU code between runs; pruned automatically (default cap 30 GB / 75% of disk).",
-    "verdict": "safe",
+    "verdict": "caution",
     "risk": "First GPU-compute run after cleaning recompiles kernels (slower start).",
     "before_cleaning": "Close apps using GPU compute (AI tools, Blender, etc.).",
     "regenerates": true,
     "sources": [
-      "https://github.com/ROCm/llvm-project/blob/amd-staging/amd/comgr/README.md"
+      "https://github.com/ROCm/llvm-project/blob/amd-staging/amd/comgr/README.md",
+      "https://github.com/ROCm/llvm-project/blob/amd-staging/amd/comgr/README.md#caching"
     ],
     "catalog_concern": "AMD documents the Windows default as %LOCALAPPDATA%\\cache\\comgr; %LOCALAPPDATA%\\comgr may be an older location. Consider adding the documented path."
   },
@@ -375,7 +376,7 @@
   },
   "gradle_caches_cache": {
     "what": "Gradle's dependency and build caches, daemon logs/registry, and downloaded Gradle distributions (wrapper\\dists).",
-    "used_for": "Gradle re-downloads dependencies and distributions on the next build; it also prunes these itself (unused >30 days).",
+    "used_for": "Gradle re-downloads dependencies and distributions on the next build. It also cleans up by itself, with defaults that differ by cache type: released wrapper distributions and downloaded resources after 30 days unused, snapshot distributions after 7 days, created/build-cache entries after 7 days, and some caches after 14 days (Gradle's directory-layout documentation).",
     "verdict": "caution",
     "risk": "Long, large first build; offline builds fail; deleting while a daemon runs can break that build.",
     "before_cleaning": "Run 'gradlew --stop' and close Android Studio/IntelliJ.",

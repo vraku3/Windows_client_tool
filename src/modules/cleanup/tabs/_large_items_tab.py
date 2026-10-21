@@ -29,7 +29,7 @@ class _LargeItemsTab(QWidget):
     a scrollable "Removed by Windows tools" section below it, behind a
     vertical splitter, so neither squeezes the other at a small window size.
     """
-    freed_bytes = pyqtSignal(int)
+    freed_bytes = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)

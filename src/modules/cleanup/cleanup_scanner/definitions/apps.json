@@ -741,7 +741,7 @@
       "paths": [
         "%APPDATA%\\Code\\Crashpad"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Crash dumps VS Code keeps after a crash."
     },
     {
@@ -765,6 +765,17 @@
       "safety": "safe",
       "description": "Where Squirrel.Windows Setup.exe (Discord, Slack, Teams classic and other Electron apps) unpacks before installing, plus its SquirrelSetup.log. Nothing reads it after the install finishes; files younger than a day are kept.",
       "keep_newer_than_hours": 24
+    },
+    {
+      "id": "vscode_electron_cache",
+      "label": "VS Code compiled-code and GPU caches",
+      "short_label": "VS Code code cache",
+      "paths": [
+        "%APPDATA%\\Code\\Code Cache",
+        "%APPDATA%\\Code\\GPUCache"
+      ],
+      "safety": "safe",
+      "description": "V8 compiled-script cache and GPU shader cache of VS Code (Electron). Close VS Code first."
     }
   ]
 }

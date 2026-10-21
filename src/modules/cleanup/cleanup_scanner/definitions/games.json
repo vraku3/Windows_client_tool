@@ -943,6 +943,17 @@
       "safety": "caution",
       "description": "Manifests Steam keeps for game content it downloaded. Steam fetches them again when it next updates or verifies a game. Close Steam and make sure no download or update is running; manifests younger than a day are kept.",
       "keep_newer_than_hours": 24
+    },
+    {
+      "id": "epic_versioned_webcache",
+      "label": "Epic Games Launcher versioned web caches",
+      "short_label": "Epic web caches",
+      "paths": [
+        "%LOCALAPPDATA%\\EpicGamesLauncher\\Saved\\webcache_4147",
+        "%LOCALAPPDATA%\\EpicGamesLauncher\\Saved\\webcache_4430"
+      ],
+      "safety": "safe",
+      "description": "The launcher's embedded-browser caches that Epic's own support steps say to delete. Quit the launcher first."
     }
   ]
 }

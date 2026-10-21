@@ -3,7 +3,7 @@
 from html import escape
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget
 
 from core.widget_life import widget_is_valid as _alive
 from modules.cleanup.components.item_rows import RowFacts, knowledge_api
@@ -55,8 +55,15 @@ class DetailPane(QWidget):
         self.browser.setOpenExternalLinks(True)
         self.browser.setAccessibleName("Explanation and research sources")
         layout.addWidget(self.browser)
-        self._paths = QVBoxLayout()
-        layout.addLayout(self._paths)
+        self._paths_scroll = QScrollArea(self)
+        self._paths_scroll.setWidgetResizable(True)
+        self._paths_scroll.setMaximumHeight(240)
+        self._paths_scroll.setAccessibleName("Location paths and actions")
+        paths_widget = QWidget()
+        self._paths = QVBoxLayout(paths_widget)
+        self._paths.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._paths_scroll.setWidget(paths_widget)
+        layout.addWidget(self._paths_scroll)
         self.path_buttons = []
         self.clear()
 
@@ -69,6 +76,7 @@ class DetailPane(QWidget):
 
     def _clear_paths(self):
         self.path_buttons = []
+        self._paths_scroll.hide()
         while self._paths.count():
             item = self._paths.takeAt(0)
             widget = item.widget()
@@ -140,3 +148,4 @@ class DetailPane(QWidget):
                 line.addWidget(button)
                 self.path_buttons.append(button)
             self._paths.addWidget(container)
+        self._paths_scroll.setVisible(bool(paths))

@@ -521,9 +521,9 @@
     "what": "SoftwareDistribution\\Download: Windows Update's download folder.",
     "used_for": "Packages are downloaded again if still needed.",
     "verdict": "caution",
-    "risk": "Re-downloads; an update being installed can fail.",
+    "risk": "Pending updates that were already downloaded are downloaded again; an update being installed right now can fail, so never during an update.",
     "before_cleaning": "Stop wuauserv; not during an update.",
-    "regenerates": false,
+    "regenerates": true,
     "sources": [
       "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-resources"
     ],

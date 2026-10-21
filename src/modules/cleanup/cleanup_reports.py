@@ -186,6 +186,9 @@ def scan_html(snapshot, *, machine=None, recommendations=(), not_offered=None):
     for item in snapshot.not_offered if not_offered is None else not_offered:
         facts = item if isinstance(item, dict) else {'label': str(item)}
         body += f'<p>{_e(facts.get("label", ""))}: {_e(facts.get("reason", ""))}</p>'
+    body += '<h2>Not scanned</h2>'
+    for item in snapshot.not_scanned:
+        body += f'<p>{_e(item.get("label", ""))}: {_e(item.get("reason", ""))}</p>'
     return _document('Cleanup scan report', body)
 
 
@@ -223,6 +226,9 @@ def retain_reports(directory=None, limit=30):
     """Only exact report names in this folder are eligible; no recursive delete."""
     for path in list_reports(directory)[max(0, limit):]:
         path.unlink()
+        companion = path.with_suffix('.csv')
+        if companion.is_file() and not companion.is_symlink():
+            companion.unlink()
 
 
 def _destination(kind, directory):
@@ -248,6 +254,9 @@ def export_scan(snapshot, *, directory=None, **options):
         for row in snapshot.rows:
             values = (row.id, row.label, row.tab, row.category, row.safety, row.effective_safety, row.path, row.size, row.selected)
             writer.writerow("'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value for value in values)
+        for item in snapshot.not_scanned:
+            writer.writerow(('', item.get('label', ''), '', '', '', '', '', '', '',
+                             'Not scanned', item.get('reason', '')))
     retain_reports(path.parent)
     return path, csv_path
 

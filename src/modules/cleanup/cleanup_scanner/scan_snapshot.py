@@ -53,10 +53,12 @@ class ScanSnapshot:
     preset: str = ''
     elevated: bool | None = None
     not_offered: tuple = ()
+    not_scanned: tuple = ()
 
     def __post_init__(self):
         object.__setattr__(self, 'rows', tuple(self.rows))
         object.__setattr__(self, 'not_offered', tuple(self.not_offered))
+        object.__setattr__(self, 'not_scanned', tuple(self.not_scanned))
 
     @property
     def unique_rows(self) -> tuple[SnapshotRow, ...]:

@@ -64,7 +64,8 @@
       "paths": [
         "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2",
         "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2",
-        "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\startupCache"
+        "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\startupCache",
+        "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\startupCache"
       ],
       "safety": "safe",
       "description": "Firefox HTTP and startup caches."

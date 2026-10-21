@@ -414,9 +414,9 @@ class CategoryGroup(QWidget):
     """
 
     # Emitted when scan completes: (item_count, total_size)
-    scan_done = pyqtSignal(int, int)
+    scan_done = pyqtSignal(int, object)
     # Emitted when a clean completes: the bytes MEASURED as freed.
-    freed_bytes = pyqtSignal(int)
+    freed_bytes = pyqtSignal(object)
     # "Review on the area tab" -- the owner decides where that is.
     clicked = pyqtSignal()
     # The expanded state changed (the overview re-lays out its list).
@@ -440,6 +440,7 @@ class CategoryGroup(QWidget):
         self._results = None
         self._scanning = False
         self._cleaning = False
+        self._rescan_after_clean = False
         self._syncing_ticks = False
         self._auto_refresh_enabled = auto_refresh
         self._refresh_interval_ms = refresh_interval_ms
@@ -605,6 +606,9 @@ class CategoryGroup(QWidget):
 
     def scan(self) -> None:
         """Trigger a background scan. Idempotent — ignores if already scanning."""
+        if self._cleaning:
+            self._rescan_after_clean = True
+            return
         if self._scanning:
             return
         self._do_scan()
@@ -628,6 +632,8 @@ class CategoryGroup(QWidget):
         # A cancelled Worker emits `cancelled`, never `result`: nothing else
         # would ever clear this, and _do_clean_all would refuse forever.
         self._cleaning = False
+        # Deactivation explicitly cancels all work, including a deferred scan.
+        self._rescan_after_clean = False
         self._set_state("")
 
     def paintEvent(self, event):
@@ -1062,6 +1068,7 @@ class CategoryGroup(QWidget):
                 self._err_lbl.show()
             self._set_state(msg)
             self.freed_bytes.emit(freed)
+            self._rescan_after_clean = False
             self._do_scan()
 
         def _err(err: str):
@@ -1071,12 +1078,14 @@ class CategoryGroup(QWidget):
             self._set_state("")
             self._err_lbl.setText(f"Clean error: {err}")
             self._err_lbl.show()
+            self._run_deferred_scan()
 
         def _cancelled():
             if not _alive(self) or generation != self._generation:
                 return
             self._cleaning = False
             self._set_state("")
+            self._run_deferred_scan()
 
         w = Worker(_run)
         w.signals.result.connect(_done)
@@ -1084,6 +1093,11 @@ class CategoryGroup(QWidget):
         w.signals.cancelled.connect(_cancelled)
         self._track_worker(w)
         QThreadPool.globalInstance().start(w)
+
+    def _run_deferred_scan(self):
+        if self._rescan_after_clean:
+            self._rescan_after_clean = False
+            self.scan()
 
     # ── Expand / collapse ────────────────────────────────────────────────
 

@@ -391,8 +391,10 @@ def test_dashboard_render_has_no_card_overlap(qapp, tmp_path, theme, width):
     from core import semantic_colors as sc
     previous = qapp.styleSheet()
     sc.set_theme(theme)
-    qapp.setStyleSheet((SRC.parents[2] / "ui" / "styles" / f"{theme}.qss").read_text(encoding="utf-8"))
     tab = _tab(qapp, dict(DATA))
+    # On THIS widget, not the application: app.setStyleSheet repolishes every
+    # widget earlier tests left alive and crashed the suite intermittently.
+    tab.setStyleSheet((SRC.parents[2] / "ui" / "styles" / f"{theme}.qss").read_text(encoding="utf-8"))
     tab._reco_pending = False  # synthetic data only; do not start machine probes
     tab._toggle_advanced()
     tab.resize(width, 960)
@@ -425,5 +427,5 @@ def test_dashboard_render_has_no_card_overlap(qapp, tmp_path, theme, width):
     finally:
         tab.cancel()
         tab.close()
-        qapp.setStyleSheet(previous)
+        assert qapp.styleSheet() == previous
         sc.set_theme("dark")

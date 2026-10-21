@@ -1280,9 +1280,10 @@
       "label": "AMD comgr (ROCm/HIP) LLVM compile cache",
       "short_label": "AMD comgr compile cache",
       "paths": [
-        "%LOCALAPPDATA%\\comgr"
+        "%LOCALAPPDATA%\\comgr",
+        "%LOCALAPPDATA%\\cache\\comgr"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "AMD's Code Object Manager (comgr) LLVM bitcode compile cache for ROCm/HIP/OpenCL compute kernels -- confirmed real on a live machine (dozens of llvmcache-* files). A compiler cache: always regenerates, and can grow large with repeated GPU compute compilation."
     },
     {

@@ -150,7 +150,7 @@ class _Item(QTreeWidgetItem):
 
 class _BrowserCleanupTab(QWidget):
     """Browser -> Profile -> Cache type, research-labelled, measured cleaning."""
-    freed_bytes = pyqtSignal(int)
+    freed_bytes = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)

@@ -137,7 +137,8 @@ def _sc(level: str) -> str:
 
 
 def _confirm_large(parent: QWidget, nbytes: int) -> bool:
-    if nbytes < CONFIRM_BYTES:
+    review = parent._selected_review_facts() if isinstance(parent, _ScanTab) else []
+    if nbytes < CONFIRM_BYTES and not review:
         return True
     mb = QMessageBox(parent)
     mb.setWindowTitle("Confirm Delete")
@@ -146,6 +147,12 @@ def _confirm_large(parent: QWidget, nbytes: int) -> bool:
         f"You are about to permanently delete <b>{cs.format_size(nbytes)}</b>."
         "<br>This cannot be undone."
     )
+    if review:
+        paths = list(dict.fromkeys(fact.path for fact in review))[:5]
+        risks = list(dict.fromkeys(fact.entry.risk for fact in review
+                                   if fact.entry is not None and fact.entry.risk))
+        mb.setInformativeText("Review / Risky locations require confirmation at any size.")
+        mb.setDetailedText("\n".join(paths) + "\n\n" + "\n".join(risks))
     mb.setStandardButtons(
         QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel
     )
@@ -205,7 +212,7 @@ class _ScanTab(QWidget):
     scanners: dict  { scanner_fn: (display_label, safety_level) }
     wu_cache: True if wuauserv must be stopped during clean.
     """
-    freed_bytes = pyqtSignal(int)
+    freed_bytes = pyqtSignal(object)
 
     #: Give up on a scan that has not finished in this long, hand the tab
     #: back, and say what never reported. The worst measured sweep on a real
@@ -835,6 +842,19 @@ class _ScanTab(QWidget):
             self._refresh_actions()
             if item is self._tree.currentItem():
                 self._on_current_changed(item, None)
+
+    def _selected_review_facts(self):
+        selected = {item.path for item in self._get_selected_items() if item.selected}
+        review = []
+        def visit(node):
+            facts = node.data(0, FACTS_ROLE)
+            if isinstance(facts, RowFacts) and facts.path in selected and facts.safety != "safe":
+                review.append(facts)
+            for index in range(node.childCount()):
+                visit(node.child(index))
+        for index in range(self._tree.topLevelItemCount()):
+            visit(self._tree.topLevelItem(index))
+        return review
 
     def _do_clean(self):
         if self._cleaning or self._scanning or self._result is None:

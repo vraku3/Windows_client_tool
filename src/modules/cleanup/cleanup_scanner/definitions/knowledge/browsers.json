@@ -152,17 +152,17 @@
     "catalog_concern": "Label says 'content prefs' but content-prefs.sqlite (per-site zoom etc.) is not targeted, good."
   },
   "inetcache_ietlc": {
-    "what": "INetCache is WinINet's Temporary Internet Files (used by IE mode, the Windows web components and many apps). It also contains Content.Outlook, where classic Outlook puts attachments you open, and Office's Content.MSO. Cookies are in INetCookies, not here.",
+    "what": "WinINet's Temporary Internet Files used by IE mode and Windows web components: only the INetCache\\IE and INetCache\\Low\\IE folders are targeted. Other INetCache folders and cookies (INetCookies) are not touched.",
     "used_for": "Cached web files are re-downloaded when needed. Outlook copies an attachment into Content.Outlook to open it; edits you save without 'Save As' stay only there.",
     "verdict": "caution",
-    "risk": "Edits to an Outlook attachment opened from a message, saved only to the temp copy, are lost. A full or cleared folder is harmless for Windows itself.",
+    "risk": "Cached web content is downloaded again; an app holding a file open keeps it (locked files are skipped).",
     "before_cleaning": "Close Outlook and Office apps first.",
     "regenerates": true,
     "sources": [
       "https://www.slipstick.com/outlook/securetemp-files-folder/",
       "https://www.outlook-tips.net/tips/securetemp-folder/"
     ],
-    "catalog_concern": "Listed safe; caution because of Content.Outlook (OLK) attachment copies. Label claims 'Cookies and DownloadHistory' but cookies are not in INetCache; fix the label."
+    "catalog_concern": ""
   },
   "opera_cache": {
     "what": "Opera's Cache, Code Cache, GPUCache and Media Cache. Opera keeps its profile in %APPDATA%\\Opera Software\\Opera Stable and its caches in the %LOCALAPPDATA% twin of that folder.",

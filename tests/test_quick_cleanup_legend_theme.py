@@ -42,14 +42,15 @@ def _render_name_region(theme: str):
     qss = open(os.path.join(os.path.dirname(__file__), "..", "src", "ui", "styles",
                             f"{theme}.qss"), encoding="utf-8").read()
     previous = qapp.styleSheet()
-    qapp.setStyleSheet(qss)
     sc.set_theme(theme)
     try:
         # Hosted the way the overview hosts it: on a chartCard, with the
-        # rows' own surfaces transparent.
+        # rows' own surfaces transparent. The theme goes on the CARD, not the
+        # application: app.setStyleSheet repolishes every widget earlier tests
+        # left alive and crashed the suite intermittently (2026-10-21).
         card = QFrame()
         card.setObjectName("chartCard")
-        card.setStyleSheet("QWidget#categoryGroup, QWidget#categoryRow "
+        card.setStyleSheet(qss + "\nQWidget#categoryGroup, QWidget#categoryRow "
                            "{ background: transparent; }")
         lay = QVBoxLayout(card)
         group = CategoryGroup("Temp Files", cs.scan_temp_files)
@@ -65,7 +66,7 @@ def _render_name_region(theme: str):
         origin = header.mapTo(card, header.rect().topLeft())
         image = card.grab().toImage().copy(origin.x() + name.x(), origin.y() + 4, 120, 22)
     finally:
-        qapp.setStyleSheet(previous)
+        assert qapp.styleSheet() == previous
         sc.set_theme("dark")
     return image
 

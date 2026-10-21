@@ -257,8 +257,8 @@
   "teams_new_webview_cache": {
     "what": "New Teams' WebView2 Cache/Code Cache/GPUCache for every profile, plus its Logs folder.",
     "used_for": "Microsoft documents deleting files in the new Teams cache folder; caches rebuild. Logs are diagnostics used by support.",
-    "verdict": "safe",
-    "risk": "Lost Teams diagnostics; slightly slower first start. Sign-in stays (IndexedDB/Local Storage untouched).",
+    "verdict": "caution",
+    "risk": "Teams' Logs folder is diagnostics: once deleted, a problem that already happened can no longer be investigated (Microsoft's clear-cache article warns of this). The caches themselves rebuild; sign-in stays (IndexedDB/Local Storage untouched).",
     "before_cleaning": "Quit Teams (right-click tray icon > Quit)",
     "regenerates": true,
     "sources": [
@@ -363,8 +363,8 @@
   "zoom_cache": {
     "what": "Zoom's per-user data lives in %APPDATA%\\Zoom (logs in %APPDATA%\\Zoom\\logs). These %LOCALAPPDATA%\\Zoom cache/thumbnail/logs folders are not documented.",
     "used_for": "Logs are diagnostics; thumbnails/caches would be refetched.",
-    "verdict": "safe",
-    "risk": "Lost diagnostics. Local recordings are in Documents\\Zoom and are not targeted.",
+    "verdict": "caution",
+    "risk": "These %LOCALAPPDATA%\\Zoom folders are not documented by Zoom, so what else they hold cannot be confirmed; logs are diagnostics. Local recordings are in Documents\\Zoom and are not targeted.",
     "before_cleaning": "Quit Zoom",
     "regenerates": true,
     "sources": [

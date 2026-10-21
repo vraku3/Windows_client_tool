@@ -630,7 +630,7 @@
     "catalog_concern": "User data."
   },
   "thunderbird_cache": {
-    "what": "Thunderbird's network cache (cache2) and startup cache in each profile. The mail, address books and settings are elsewhere in the profile and are not targeted.",
+    "what": "Thunderbird's network cache (cache2) and startup cache in each profile under %LOCALAPPDATA%\\Thunderbird\\Profiles. The mail, address books and settings live in the Roaming profile and are not targeted.",
     "used_for": "cache2 holds downloaded remote content (images in messages, web pages); startupCache speeds start-up. Thunderbird recreates both.",
     "verdict": "safe",
     "risk": "None known; remote images re-download.",
@@ -640,7 +640,7 @@
       "https://support.mozilla.org/questions/1242460",
       "https://support.mozilla.org/ar/questions/1490363"
     ],
-    "catalog_concern": "Thunderbird's cache normally lives in %LOCALAPPDATA%\\Thunderbird\\Profiles\\*, which is not listed, so this finds little. Label mentions panacea.db/global inbox, which are NOT targeted (good; panacea.db holds folder data)."
+    "catalog_concern": ""
   },
   "veeam_cache": {
     "what": "Not documented by the vendor for this path. Log files of a Veeam product in the user profile; Veeam Agent's main logs are under ProgramData.",
@@ -675,9 +675,9 @@
   "vscode_crashpad": {
     "what": "Crash reports (minidumps) collected by Crashpad, the crash reporter built into VS Code (Electron).",
     "used_for": "Pending reports wait to be uploaded or are kept for local analysis; nothing else needs them. New ones appear only after a crash.",
-    "verdict": "safe",
-    "risk": "Lost diagnostics: you cannot attach a recent crash dump to a VS Code bug report.",
-    "before_cleaning": "",
+    "verdict": "caution",
+    "risk": "Crashpad keeps PENDING reports until they upload; deleting them loses reports that may never have reached Microsoft, and you cannot attach a recent crash dump to a bug report.",
+    "before_cleaning": "Only after you no longer need to report a recent VS Code crash; close VS Code.",
     "regenerates": false,
     "sources": [
       "https://crashpad.chromium.org/doxygen/classcrashpad_1_1CrashReportUploadThread.html"
@@ -794,6 +794,19 @@
     "sources": [
       "https://docs.uipath.com/studio/standalone/2023.10/user-guide/setup-logs",
       "https://github.com/Squirrel/Squirrel.Windows/blob/develop/src/Squirrel/Utility.cs"
+    ],
+    "catalog_concern": ""
+  },
+  "vscode_electron_cache": {
+    "what": "VS Code's Chromium/Electron 'Code Cache' (V8 compiled JavaScript) and 'GPUCache' (compiled GPU shaders).",
+    "used_for": "Speeds up start-up and rendering; VS Code rebuilds both on the next start. Settings, extensions and workspace state are elsewhere and not targeted.",
+    "verdict": "safe",
+    "risk": "Slightly slower first start after cleaning.",
+    "before_cleaning": "Close VS Code (files in use are skipped).",
+    "regenerates": true,
+    "sources": [
+      "https://v8.dev/blog/code-caching-for-devs",
+      "https://www.chromium.org/developers/design-documents/network-stack/disk-cache/"
     ],
     "catalog_concern": ""
   }

@@ -154,6 +154,9 @@ class FakeSystem:
     def task_enabled(self, path):
         return self.task_state.get(path)
 
+    def task_running(self, path):
+        return False
+
     def set_task_enabled(self, path, enabled):
         if path in self.protected:
             return "access denied"

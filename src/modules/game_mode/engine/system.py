@@ -339,7 +339,13 @@ class WinSystem:
     def wifi_connected(self) -> Optional[bool]:
         """Is a Wi-Fi adapter up? NdisPhysicalMedium 9 is Native 802.11 --
         language-independent, unlike adapter names. None = could not read."""
-        res = run(["powershell", "-NoProfile", "-Command",
+        from .optimise import powershell_exe     # absolute path: see its docstring
+        try:
+            exe = powershell_exe()
+        except OSError as error:
+            logger.warning("game mode: Wi-Fi state unreadable: %s", error)
+            return None
+        res = run([exe, "-NoProfile", "-Command",
                    "@(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object "
                    "{ $_.NdisPhysicalMedium -eq 9 -and $_.Status -eq 'Up' }).Count"], timeout=30)
         text = (res.stdout or "").strip()
@@ -440,6 +446,28 @@ class WinSystem:
                 logger.debug("game mode: window %s skipped: %s", hwnd, error)
             return True
         win32gui.EnumWindows(each, None)
+        return found
+
+    def has_visible_window(self, pids) -> Optional[bool]:
+        """Any visible top-level window, including untitled or owned windows.
+        None means unreadable: a preloaded viewer must then be left alone."""
+        import win32gui
+        import win32process
+        found = False
+        wanted = set(pids)
+
+        def each(hwnd, _):
+            nonlocal found
+            if (win32gui.IsWindowVisible(hwnd)
+                    and win32process.GetWindowThreadProcessId(hwnd)[1] in wanted):
+                found = True
+            return True
+
+        try:
+            win32gui.EnumWindows(each, None)
+        except Exception as error:  # noqa: BLE001 -- COM/window enumeration can fail
+            logger.warning("game mode: visible windows unreadable: %s", error)
+            return None
         return found
 
     def window_state(self, pids) -> str:
@@ -575,17 +603,42 @@ class WinSystem:
         task = self._task(path)
         return None if task is None else bool(task.Enabled)
 
+    def task_running(self, path: str) -> Optional[bool]:
+        try:
+            task = self._task(path)
+            return None if task is None else task.State == 4  # TASK_STATE_RUNNING
+        except Exception as error:  # noqa: BLE001 -- Task Scheduler COM refusals
+            logger.warning("game mode: task %s state unreadable: %s", path, error)
+            return None
+
+    def stop_task(self, path: str) -> Optional[str]:
+        """Stop a current run; enabling the task again restores its triggers."""
+        try:
+            task = self._task(path)
+            if task is None:
+                return "task not found"
+            task.Stop(0)
+            deadline = time.monotonic() + 3.0
+            while task.State == 4:  # Stop can return S_FALSE while the instance keeps running.
+                if time.monotonic() >= deadline:
+                    return "the current run is still running"
+                time.sleep(0.1)
+        except Exception as error:  # noqa: BLE001 -- Task Scheduler COM refusals
+            return f"refused ({getattr(error, 'excepinfo', None) or error})"
+        return None
+
     def set_task_enabled(self, path: str, enabled: bool) -> Optional[str]:
         """Flip IRegisteredTask.Enabled -- never re-register, which rewrites
         the principal and breaks SYSTEM/password tasks."""
-        task = self._task(path)
-        if task is None:
-            return "task not found"
         try:
+            task = self._task(path)
+            if task is None:
+                return "task not found"
             task.Enabled = enabled
+            current = self._task(path)
+            return None if current is not None and bool(current.Enabled) == enabled else "read-back differs"
         except Exception as error:  # noqa: BLE001 -- COM refusals arrive as com_error
             return f"refused ({getattr(error, 'excepinfo', None) or error})"
-        return None if bool(self._task(path).Enabled) == enabled else "read-back differs"
 
     @staticmethod
     def _task(path: str):

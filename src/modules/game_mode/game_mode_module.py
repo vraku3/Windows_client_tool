@@ -90,6 +90,7 @@ class GameModeModule(BaseModule):
         self._state = self._numbers = self._banner = None
         self._advice = self._advice_status = self._estimate = None
         self._pending_log: List[str] = []
+        self._optimise_tab = None
 
     # ---- lifecycle ----------------------------------------------------------------------------
     def on_start(self, app) -> None:
@@ -128,12 +129,22 @@ class GameModeModule(BaseModule):
         self._show_state(session.total_handles(procs), len(procs))
 
     def on_stop(self) -> None:
+        if self._optimise_tab is not None:
+            self._optimise_tab.cancel()
         if self._live_timer is not None:
             self._live_timer.stop()
         if self._enforce_timer is not None:
             self._enforce_timer.stop()
         _keep_awake(False)
         self.cancel_all_workers()
+
+    def _navigate_to(self, module_name: str) -> None:
+        """Optimise OS's "Open in App Buster": App Buster does the removal."""
+        bus = getattr(getattr(self, "app", None), "event_bus", None)
+        if bus is None:
+            return
+        from core.events import NAV_REQUEST_MODULE, NavRequestData
+        bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name=module_name))
 
     def _save_choices(self) -> None:
         config = getattr(getattr(self, "app", None), "config", None)
@@ -159,6 +170,10 @@ class GameModeModule(BaseModule):
             self._log.appendPlainText(line)
         self._pending_log = []
         self._tabs.addTab(self._log, "Log")
+        from .optimise_tab import OptimiseTab
+        self._optimise_tab = OptimiseTab(lambda: self.app.thread_pool, w, host_busy=lambda: self._busy,
+                                         busy_changed=self._show_state, navigate=self._navigate_to)
+        self._tabs.addTab(self._optimise_tab, "Optimise OS")
         lay.addWidget(self._tabs, 1)
         self._widget = w
         self._show_state()
@@ -464,7 +479,8 @@ class GameModeModule(BaseModule):
             self._state.setText("Game Mode is OFF")
         set_role(self._state, "statusSuccess" if on else "sectionTitle")
         self._numbers.setText(self._numbers_text(handles, processes))
-        self._on_btn.setEnabled(not on and not self._busy)
+        optimise_busy = self._optimise_tab is not None and self._optimise_tab.busy
+        self._on_btn.setEnabled(not on and not self._busy and not optimise_busy)
         self._off_btn.setEnabled(on and not self._busy)
         for widget in (*self._flag_boxes.values(), self._svc_tree, self._app_tree,
                        self._rec_btn, self._max_btn):
@@ -505,7 +521,10 @@ class GameModeModule(BaseModule):
                 + ("• switch the power plan for gaming\n" if self._choices.plan else "")
                 + f"• stop {len(self._choices.services)} kind(s) of background service if running\n"
                 + ("• pause Windows Automatic Maintenance\n" if self._choices.maintenance else "")
-                + ("• pause scheduled updater/maintenance tasks\n" if self._choices.tasks else "")
+                + (("• pause scheduled updater/maintenance tasks, and STOP any of them already "
+                    "running (they run again at their next trigger)\n"
+                    if self._choices.preset == catalog.MAX else
+                    "• pause scheduled updater/maintenance tasks\n") if self._choices.tasks else "")
                 + ("• turn transparency and animations off\n" if self._choices.visuals else "")
                 + ("• restart Explorer (interrupts File Explorer copies and closes folder windows)\n" if self._choices.explorer else "")
                 + (f"• close: {', '.join(closing)}\n" if closing else "")
@@ -518,7 +537,9 @@ class GameModeModule(BaseModule):
                                     QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Ok
 
     def _turn_on(self) -> None:
-        if self._busy or self._journal.active or not self._confirm_on():
+        if (self._busy or self._journal.active
+                or (self._optimise_tab is not None and self._optimise_tab.busy)
+                or not self._confirm_on()):
             return
         self._busy = True
         self._show_state()

@@ -89,6 +89,9 @@ class Choices:
     lower: bool = True
     #: Pause the updater/maintenance scheduled tasks in `catalog.TASKS`.
     tasks: bool = True
+    #: Catalog patterns selected individually, like services and apps.
+    paused_tasks: Set[str] = field(default_factory=lambda: {t.pattern for t in catalog.TASKS
+                                                             if t.level == catalog.REC})
     #: Pause Windows' Automatic Maintenance (one HKLM value).
     maintenance: bool = True
     #: Transparency and window animations off.
@@ -104,7 +107,8 @@ class Choices:
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
-        out.update(services=sorted(self.services), close=sorted(self.close), preset=self.preset)
+        out.update(services=sorted(self.services), close=sorted(self.close), preset=self.preset,
+                   paused_tasks=sorted(self.paused_tasks))
         return out
 
 
@@ -114,6 +118,7 @@ def preset(level: str, groups: List["AppGroup"]) -> Choices:
     # A program an AI agent runs inside is never ticked by a preset.
     hosting = {g.exe for g in groups if g.hosts}
     return Choices(services={s.name for s in catalog.SERVICES if s.level in wanted},
+                   paused_tasks={t.pattern for t in catalog.TASKS if t.level in wanted},
                    close={a.exe for a in catalog.APPS if a.level in wanted and a.exe not in hosting},
                    visuals=level == catalog.MAX, explorer=False, preset=level)
 
@@ -130,6 +135,10 @@ def choices_from_config(data) -> Choices:
     if isinstance(data.get("close"), list):
         c.close = {s.lower() for s in data["close"] if isinstance(s, str)}
     c.preset = data.get("preset") if data.get("preset") in (catalog.REC, catalog.MAX) else "custom"
+    if isinstance(data.get("paused_tasks"), list):
+        c.paused_tasks = {s for s in data["paused_tasks"] if isinstance(s, str)}
+    elif c.preset == catalog.MAX:
+        c.paused_tasks = {t.pattern for t in catalog.TASKS if t.level in (catalog.REC, catalog.MAX)}
     return c
 
 
@@ -246,6 +255,8 @@ def _fold_helpers(groups: List[AppGroup]) -> List[AppGroup]:
         changed = False
         owner = {p.pid: g for g in groups for p in g.procs}
         for g in groups:
+            if g.spec and g.spec.when:   # keep its per-app close condition in force
+                continue
             parents = {id(owner[r.ppid]): owner[r.ppid] for r in g.roots if r.ppid in owner}
             if len(parents) == 1 and len(g.roots) == sum(1 for r in g.roots if r.ppid in owner):
                 parent = next(iter(parents.values()))
@@ -371,7 +382,11 @@ class _On:
         self.j.mark_done(entry)
         self.log(OK, "Window animations turned off")
 
-    def tasks(self, elevated: bool) -> None:
+    def tasks(self, elevated: bool, choices: Choices) -> None:
+        wanted = choices.paused_tasks
+        if choices.preset in (catalog.REC, catalog.MAX):
+            levels = {catalog.REC, catalog.MAX} if choices.preset == catalog.MAX else {catalog.REC}
+            wanted = {t.pattern for t in catalog.TASKS if t.level in levels}
         try:
             found = self.s.tasks()
         except Exception as error:  # noqa: BLE001 -- the Task Scheduler COM API raises com_error
@@ -380,8 +395,9 @@ class _On:
         paused, refused = 0, []
         for path, enabled in found:
             spec = catalog.task_spec(path)
-            if spec is None or not enabled:
+            if spec is None or spec.pattern not in wanted or not enabled:
                 continue
+            running = choices.preset == catalog.MAX and self.s.task_running(path) is True
             entry = self.j.record({"kind": "task", "path": path, "label": spec.label})
             error = self.s.set_task_enabled(path, False)
             if error:
@@ -389,6 +405,13 @@ class _On:
                 continue
             self.j.mark_done(entry)
             paused += 1
+            if running:
+                error = self.s.stop_task(path)
+                if error:
+                    self.log(WARN, f"{spec.label}: paused for future triggers; {error}")
+                else:
+                    self.log(INFO, f"{spec.label}: stopped a run in progress; "
+                                   "it runs again at its next trigger")
         self.log(OK, f"{paused} scheduled updater/maintenance task(s) paused")
         if refused:
             self.log(INFO if not elevated else WARN,
@@ -463,11 +486,17 @@ class _On:
         self.j.mark_done(entry)
         self.log(OK, f"{spec.label}: stopped")
 
-    def close_apps(self, groups: List[AppGroup], wanted: Set[str]) -> None:
+    def close_apps(self, groups: List[AppGroup], wanted: Set[str], maximum: bool = False) -> None:
         """Every program is journaled first, then all are closed together."""
         chosen = [g for g in groups if g.exe in wanted]
-        entries, jobs = [], []
+        entries, jobs, closing = [], [], []
         for g in chosen:
+            if g.spec and g.spec.when == "spareprocess":
+                if (not maximum or any("spareprocess" not in (self.s.details(p.pid)[1] or "").lower()
+                                       for p in g.procs)
+                        or self.s.has_visible_window([p.pid for p in g.procs]) is not False):
+                    self.log(INFO, f"{g.label}: left open -- not a hidden spare process in Maximum")
+                    continue
             path, cmdline, elevated = self.s.details(g.roots[0].pid)
             program, args = split_command_line(cmdline or "")
             extra = g.spec.reopen_args if g.spec else ""
@@ -481,10 +510,11 @@ class _On:
                 "reopen": reopen and elevated is not True, "was_elevated": elevated,
                 "handles": g.handles, "processes": len(g.procs), "window": state}))
             jobs.append(([(p.pid, p.create_time) for p in g.procs], path))
+            closing.append(g)
         if not jobs:
             return
         self.log(INFO, f"Closing {len(jobs)} program(s) together...")
-        for g, entry, error in zip(chosen, entries, self.s.close_many(jobs)):
+        for g, entry, error in zip(closing, entries, self.s.close_many(jobs)):
             if error:
                 self.log(BAD, f"{g.label}: not closed ({error})")
                 continue
@@ -533,13 +563,13 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     if choices.maintenance:
         on.maintenance(elevated)
     if choices.tasks:
-        on.tasks(elevated)
+        on.tasks(elevated, choices)
     if choices.visuals:
         on.visuals()
     on.services(choices.services, elevated)
     groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0],
                           system.fullscreen_pids())
-    on.close_apps(groups, choices.close)
+    on.close_apps(groups, choices.close, choices.preset == catalog.MAX)
     if choices.lower:
         on.lower(groups, choices.close)
     if choices.explorer:

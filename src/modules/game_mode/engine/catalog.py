@@ -160,7 +160,37 @@ class TaskSpec:
     level: str
 
 
+# Deliberately excluded: PI\Secure-Boot-Update (security), WaaSMedic\
+# (Update repair), XblGameSave\XblGameSaveTask (cloud saves), AMDRyzenMasterSDKTask,
+# anything Bitdefender, OneDrive Startup Task*, Chkdsk\SyspartRepair and AppID\ tasks.
 TASKS = (
+    TaskSpec(r"\Git for Windows Updater", "Git update", REC),
+    TaskSpec(r"\WinClientTool_UnattendedMaintenance", "Unattended maintenance", REC),
+    TaskSpec(r"\Microsoft\Windows\InstallService\ScanForUpdates", "Store update scan", REC),
+    TaskSpec(r"\Microsoft\Windows\InstallService\ScanForUpdatesAsUser", "Store user update scan", REC),
+    TaskSpec(r"\Microsoft\Windows\InstallService\SmartRetry", "Store update retry", REC),
+    TaskSpec(r"\Microsoft\Windows\DiskCleanup\SilentCleanup", "Disk cleanup", REC),
+    TaskSpec(r"\Microsoft\Windows\Diagnosis\Scheduled", "Scheduled diagnostics", REC),
+    TaskSpec(r"\Microsoft\Windows\Diagnosis\RecommendedTroubleshootingScanner", "Troubleshooting scan", REC),
+    TaskSpec(r"\Microsoft\Windows\DiskFootprint\Diagnostics", "Storage diagnostics", REC),
+    TaskSpec(r"\Microsoft\Windows\Registry\RegIdleBackup", "Registry backup", REC),
+    TaskSpec(r"\Microsoft\Windows\Shell\IndexerAutomaticMaintenance", "Indexer maintenance", REC),
+    TaskSpec(r"\Microsoft\Windows\Shell\ThemesSyncedImageDownload", "Theme image download", REC),
+    TaskSpec(r"\Microsoft\Windows\Speech\SpeechModelDownloadTask", "Speech model download", REC),
+    TaskSpec(r"\Microsoft\Windows\Maps\MapsToastTask", "Maps notifications", REC),
+    TaskSpec(r"\Microsoft\Windows\PI\Sqm-Tasks", "SQM telemetry", REC),
+    TaskSpec(r"\Microsoft\Windows\MemoryDiagnostic\ProcessMemoryDiagnosticEvents", "Memory diagnostic events", REC),
+    TaskSpec(r"\SoftLanding\*", "Windows tips", REC),
+    TaskSpec(r"\Microsoft\Windows\Flighting\FeatureConfig\*", "Feature configuration", MAX),
+    TaskSpec(r"\Microsoft\Windows\Flighting\OneSettings\RefreshCache", "Settings cache refresh", MAX),
+    TaskSpec(r"\Microsoft\Windows\DiskFootprint\StorageSense", "Storage Sense", MAX),
+    TaskSpec(r"\Microsoft\Windows\Chkdsk\ProactiveScan", "Disk scan", MAX),
+    TaskSpec(r"\Microsoft\Windows\Data Integrity Scan\*", "Data integrity scan", MAX),
+    TaskSpec(r"\Microsoft\Windows\StateRepository\MaintenanceTasks", "App state maintenance", MAX),
+    TaskSpec(r"\Microsoft\Windows\UpdateOrchestrator\Schedule Scan", "Update scan", MAX),
+    TaskSpec(r"\Microsoft\Windows\UpdateOrchestrator\Schedule Scan Static Task", "Static update scan", MAX),
+    TaskSpec(r"\Microsoft\Windows\UpdateOrchestrator\Schedule Work", "Update work", MAX),
+    TaskSpec(r"\Microsoft\Windows\UpdateOrchestrator\USO_UxBroker", "Update notifications", MAX),
     TaskSpec(r"\GoogleSystem\GoogleUpdater\*", "Google Updater", REC),
     TaskSpec(r"\GoogleUpdateTask*", "Google Update", REC),
     TaskSpec(r"\MicrosoftEdgeUpdateTask*", "Edge Update", REC),
@@ -210,6 +240,8 @@ class AppSpec:
     lower: bool = False
     #: Added when it is reopened (Chromium browsers: bring the tabs back).
     reopen_args: str = ""
+    #: "spareprocess": only Maximum may close a hidden preloaded viewer.
+    when: str = ""
 
     @property
     def close(self) -> bool:
@@ -275,6 +307,8 @@ APPS = (
     _a("wallpaper64.exe", "Wallpaper Engine", "Animated wallpaper: GPU time behind the game.", REC),
     _a("lively.exe", "Lively Wallpaper", "Animated wallpaper: GPU time behind the game.", REC),
     # -- Windows' own on-demand helpers (Maximum) ------------------------------------------------
+    _a("photos.exe", "Photos preload", "Hidden preloaded viewer; Photos starts it again when needed.",
+       MAX, reopen=False, when="spareprocess"),
     # -- idle game launchers (Maximum; only while they run no game) -------------------------------
     _a("steam.exe", "Steam (no game running)",
        "Steam and its web helpers (~6,000 handles measured) with no game started from it; "

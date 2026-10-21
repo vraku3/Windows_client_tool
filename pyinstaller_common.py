@@ -41,6 +41,9 @@ def get_datas(project_root: str) -> list:
         (os.path.join(project_root, "src", "modules", "cleanup",
                       "cleanup_scanner", "definitions"),
          "modules/cleanup/cleanup_scanner/definitions"),
+        (os.path.join(project_root, "src", "modules", "cleanup", "cleanup_scanner",
+                      "definitions", "knowledge", "*.json"),
+         "modules/cleanup/cleanup_scanner/definitions/knowledge"),
         # LibreHardwareMonitor (library only), loaded by
         # thermal_control/engine/lhm_bridge.py from _get_resource_dir()/vendor/lhm.
         # Without it the frozen Thermal Control silently falls back to GPU-only.
@@ -86,8 +89,31 @@ def write_version_info(project_root: str) -> str:
 
 
 HIDDEN_IMPORTS = [
+    "modules.cleanup.cleanup_scanner.knowledge",
+    "modules.cleanup.cleanup_scanner.scan_snapshot",
+    "modules.cleanup.cleanup_scanner.recommend",
+    "modules.cleanup.cleanup_reports",
+    "modules.cleanup.components.item_rows",
+    "modules.cleanup.components.safety_delegate",
+    "modules.cleanup.components.detail_pane",
+    "modules.cleanup.components.charts",
+    "modules.cleanup.components.kpi_tiles",
+    "modules.cleanup.components.recommendations_panel",
+    "modules.game_mode.engine.optimise",
+    "modules.game_mode.engine.space",
+    "modules.game_mode.engine.app_usage",
+    "modules.game_mode.optimise_tab",
     "modules.cleanup.cleanup_scanner.discover",
     "modules.cleanup.tabs._discover_tab",
+    "modules.cleanup.tabs._duplicates_tab",
+    "modules.cleanup.tabs._duplicates_model",
+    "modules.cleanup.duplicates",
+    "modules.cleanup.duplicates.models",
+    "modules.cleanup.duplicates.enumerate",
+    "modules.cleanup.duplicates.finder",
+    "modules.cleanup.duplicates.hash_cache",
+    "modules.cleanup.duplicates.actions",
+    "modules.cleanup.duplicates.reports",
     "modules.cleanup.tabs._history_tab",
     "modules.cleanup.components.drive_summary_bar",
     "modules.cleanup.cleanup_scanner.deleter",
@@ -216,6 +242,7 @@ HIDDEN_IMPORTS = [
     "modules.dashboard.performance_module",
     "modules.dashboard.performance_tab",
     "ui.perf_graph",
+    "core.shell_launch",          # imported lazily by Duplicates' Open (unelevated launch)
     "core.procengine.cpuinfo",
     "core.procengine.meminfo",
     "modules.dashboard.processes_tab",

@@ -5,6 +5,7 @@ for progress updates, error handling, and cancellation support.
 """
 
 import logging
+import weakref
 from threading import Lock
 from typing import Any, Callable
 
@@ -32,6 +33,52 @@ def _emit(signals: Any, name: str, *args: Any) -> None:
         if "has been deleted" not in str(exc):
             raise
         logger.debug("signals gone before %s could be emitted", name)
+
+
+#: Cancelled workers whose `finished` has not been delivered yet (see `retire`).
+_RETIRING: set = set()
+
+
+#: How long a retired worker is still held once its `finished` was emitted.
+RELEASE_AFTER_MS = 2000
+
+
+def _release_later(worker) -> None:
+    if worker is None:
+        return
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(RELEASE_AFTER_MS, lambda: _RETIRING.discard(worker))
+
+
+def retire(workers: list) -> None:
+    """Cancel every worker in `workers` and empty the list -- SAFELY.
+
+    Clearing the list right after `cancel()` dropped the last Python reference
+    to a worker that was still running. When it ended, its `WorkerSignals` was
+    freed while its queued `cancelled`/`finished` were still waiting in the
+    event loop, and delivering them ran a freed closure: an access violation
+    (category_group, every run of test_cleanup_final_review_ui, 2026-10-21).
+    Here each worker is kept alive until its `finished` -- the last signal it
+    ever sends -- has been delivered, then released.
+    """
+    for worker in list(workers):
+        worker.cancel()
+        if not isinstance(worker, Worker):
+            continue
+        _RETIRING.add(worker)
+        if worker.finished_emitted:
+            # Already sent: any queued delivery is ahead of this timer.
+            _release_later(worker)
+        else:
+            # Only RETIRED workers get this connection. Connecting it in every
+            # Worker's __init__ gave every worker an extra queued slot, and each
+            # one an owner dropped early ran freed memory -- access violations
+            # across the whole suite (2026-10-21).
+            ref = weakref.ref(worker)
+            worker.signals.finished.connect(lambda: _release_later(ref()))
+            if worker.finished_emitted:      # it finished while we connected
+                _release_later(worker)
+    workers.clear()
 
 
 class WorkerSignals(QObject):
@@ -87,6 +134,9 @@ class Worker(QRunnable):
         self.signals = WorkerSignals()
         self._cancelled = False
         self._cancel_lock = Lock()
+        # Set (on the worker thread) just before `finished` -- always the LAST
+        # signal -- is emitted; `retire()` holds a worker until it is delivered.
+        self.finished_emitted = False
 
     def run(self) -> Any:
         """Execute worker function.
@@ -97,6 +147,7 @@ class Worker(QRunnable):
         with self._cancel_lock:
             if self._cancelled:
                 _emit(self.signals, "cancelled")
+                self.finished_emitted = True
                 _emit(self.signals, "finished")
                 return
 
@@ -117,6 +168,7 @@ class Worker(QRunnable):
             logger.exception("Worker error: %s", e)
             _emit(self.signals, "error", str(e))
         finally:
+            self.finished_emitted = True
             _emit(self.signals, "finished")
 
     def cancel(self) -> bool:

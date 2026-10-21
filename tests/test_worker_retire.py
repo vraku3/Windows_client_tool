@@ -45,6 +45,32 @@ def test_a_finished_worker_is_released_after_the_delay(qapp, monkeypatch):
     assert w not in wk._RETIRING
 
 
+def test_retiring_several_workers_releases_each_its_own(qapp, monkeypatch):
+    monkeypatch.setattr(wk, "RELEASE_AFTER_MS", 50)
+    gate_a, gate_b = threading.Event(), threading.Event()
+    running = threading.Semaphore(0)
+
+    def body(gate):
+        running.release()
+        gate.wait(5)
+
+    a = wk.Worker(lambda _w: body(gate_a))
+    b = wk.Worker(lambda _w: body(gate_b))
+    pool = QThreadPool.globalInstance()
+    pool.start(a)
+    pool.start(b)
+    # Both must be RUNNING: a cancelled worker that has not started ends at once.
+    assert running.acquire(timeout=5) and running.acquire(timeout=5)
+    wk.retire([a, b])
+    gate_a.set()
+    _pump(qapp, lambda: a not in wk._RETIRING)
+    assert a not in wk._RETIRING
+    assert b in wk._RETIRING            # still running: must stay held
+    gate_b.set()
+    _pump(qapp, lambda: b not in wk._RETIRING)
+    assert b not in wk._RETIRING
+
+
 def test_an_unretired_worker_gets_no_extra_connection():
     w = wk.Worker(lambda _w: 1)
     assert w.signals.receivers(w.signals.finished) == 0

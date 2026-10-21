@@ -74,8 +74,10 @@ def retire(workers: list) -> None:
             # Worker's __init__ gave every worker an extra queued slot, and each
             # one an owner dropped early ran freed memory -- access violations
             # across the whole suite (2026-10-21).
-            ref = weakref.ref(worker)
-            worker.signals.finished.connect(lambda: _release_later(ref()))
+            # Bound per worker (default argument): a plain closure over the loop
+            # variable released the LAST retired worker for every one of them.
+            worker.signals.finished.connect(
+                lambda ref=weakref.ref(worker): _release_later(ref()))
             if worker.finished_emitted:      # it finished while we connected
                 _release_later(worker)
     workers.clear()

@@ -25,7 +25,7 @@ def test_no_enabled_entry_points_at_anything_but_reviewed_junk():
 
 def test_sign_in_stores_are_never_targets():
     from modules.cleanup.cleanup_scanner import catalog
-    banned = ("cookies", "local storage", "indexeddb", "session storage", "login data",
+    banned = ("cookies", "local storage", "indexeddb", "session storage", "login data", "blob_storage",
               "\\network", "tdata", "\\config", "steamapps", "\\outlook")
     for spec in catalog.load_catalog(force=True).values():
         if spec.disabled_reason:
@@ -35,6 +35,19 @@ def test_sign_in_stores_are_never_targets():
             assert not any(b in low + "\\" for b in banned if not b.startswith("\\")) and \
                 not any(low.endswith(b) or (b + "\\") in low for b in banned if b.startswith("\\")), \
                 f"{spec.id}: {path}"
+
+
+def test_site_data_and_servicing_are_not_catalog_cleanup_targets():
+    from modules.cleanup.cleanup_scanner import catalog
+    for spec in catalog.load_catalog(force=True).values():
+        if spec.disabled_reason:
+            continue
+        for path in spec.paths:
+            low = path.lower()
+            assert not any(token in low for token in (
+                "\\winsxs\\", "\\service worker\\scriptcache",
+                "\\service worker\\cachestorage")), (spec.id, path)
+            assert not low.endswith(("\\htmlcache", "\\htmlcache\\default")), (spec.id, path)
 
 
 def test_outlook_data_is_refused_by_the_deleter(tmp_path, monkeypatch):

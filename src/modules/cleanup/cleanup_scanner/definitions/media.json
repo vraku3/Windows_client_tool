@@ -13,23 +13,24 @@
     },
     {
       "id": "aftereffects_cache",
-      "label": "Adobe After Effects disk cache and media cache",
+      "label": "Adobe shared media caches (aftereffects cache)",
       "paths": [
         "%APPDATA%\\Adobe\\Common\\Media Cache Files",
         "%LOCALAPPDATA%\\Adobe\\Common\\Media Cache Files"
       ],
       "safety": "safe",
-      "description": "Adobe After Effects disk cache and media cache."
+      "description": "Adobe shared media caches.",
+      "disabled_reason": "duplicate of premiere_cache"
     },
     {
       "id": "amd_radeon_cache",
-      "label": "AMD Radeon Software logs, driver cache, and relodge temp files",
+      "label": "AMD Radeon diagnostic logs",
       "paths": [
         "%APPDATA%\\AMD\\AGESA\\logs",
-        "%LOCALAPPDATA%\\AMD\\ Radeon\\Logs"
+        "%LOCALAPPDATA%\\AMD\\Radeon\\Logs"
       ],
       "safety": "safe",
-      "description": "AMD Radeon Software logs, driver cache, and relodge temp files."
+      "description": "AMD Radeon diagnostic logs."
     },
     {
       "id": "amd_dvr_cache",
@@ -47,27 +48,26 @@
       "paths": [
         "%LOCALAPPDATA%\\Audacity\\Temp"
       ],
-      "safety": "safe",
-      "description": "Audacity peak files, audacity temp dir, and waveform cache."
+      "safety": "caution",
+      "description": "Audacity peak files, audacity temp dir, and waveform cache. Temporary files may contain recovery data; save projects and close the application before reviewing."
     },
     {
       "id": "blender_cache",
-      "label": "Blender render output temp and autosave files",
+      "label": "Blender named cache folders",
       "paths": [
         "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\cache"
       ],
       "safety": "safe",
-      "description": "Blender render output temp and autosave files."
+      "description": "Blender named cache folders."
     },
     {
       "id": "blender_full_cache",
       "label": "Blender vertex cache, render stamp, and geometry nodes staging",
       "paths": [
-        "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\cache",
         "%LOCALAPPDATA%\\Blender Foundation\\Blender\\*\\tmp"
       ],
-      "safety": "safe",
-      "description": "Blender vertex cache, render stamp, and geometry nodes staging."
+      "safety": "caution",
+      "description": "Blender vertex cache, render stamp, and geometry nodes staging. Temporary files may contain recovery data; save projects and close the application before reviewing."
     },
     {
       "id": "camtasia_cache",
@@ -137,13 +137,13 @@
     },
     {
       "id": "ffmpeg_cache",
-      "label": "FFmpeg temp encoding output and stream dump files",
+      "label": "FFmpeg and MediaFire temporary files",
       "paths": [
         "%TEMP%\\ffmpeg",
         "%TEMP%\\MediaFire"
       ],
       "safety": "safe",
-      "description": "FFmpeg temp encoding output and stream dump files."
+      "description": "FFmpeg and MediaFire temporary files."
     },
     {
       "id": "filmora_cache",
@@ -198,13 +198,13 @@
     },
     {
       "id": "illustrator_cache",
-      "label": "Adobe Illustrator cache and saved recovery data",
+      "label": "Illustrator cache and temporary files",
       "paths": [
         "%APPDATA%\\Adobe\\Illustrator*\\Cache",
         "%APPDATA%\\Adobe\\Illustrator*\\Temp"
       ],
-      "safety": "safe",
-      "description": "Adobe Illustrator cache and saved recovery data."
+      "safety": "caution",
+      "description": "Illustrator cache and temporary files."
     },
     {
       "id": "infuse_cache",
@@ -224,8 +224,8 @@
         "%LOCALAPPDATA%\\Intel\\Graphics\\Logs",
         "%LOCALAPPDATA%\\Intel\\Graphics\\ShaderCache"
       ],
-      "safety": "safe",
-      "description": "Intel Graphics Command Center cache, driver logs, and shader cache."
+      "safety": "caution",
+      "description": "Intel Graphics Command Center cache, driver logs, and shader cache. Clearing shaders causes recompilation, slower launches and possible stutter; close games first."
     },
     {
       "id": "jellyfin_cache",
@@ -279,13 +279,14 @@
     },
     {
       "id": "nvidia_display_cache",
-      "label": "NVIDIA Display Driver container, DRS database, and telemetry cache",
+      "label": "NVIDIA shader caches",
       "paths": [
         "%LOCALAPPDATA%\\NVIDIA\\DXCache",
         "%LOCALAPPDATA%\\NVIDIA\\GLCache"
       ],
-      "safety": "safe",
-      "description": "NVIDIA Display Driver container, DRS database, and telemetry cache."
+      "safety": "caution",
+      "description": "NVIDIA shader caches. Clearing shaders causes recompilation, slower launches and possible stutter; close games first.",
+      "disabled_reason": "duplicate of d3d_shader_cache"
     },
     {
       "id": "nvidia_experience_cache",
@@ -299,14 +300,14 @@
     },
     {
       "id": "nvidia_geforce_cache",
-      "label": "NVIDIA GeForce Experience logs, driver download cache, and screenshot folder",
+      "label": "GeForce Experience named caches and logs",
       "paths": [
         "%APPDATA%\\NVIDIA\\GeForce Experience\\logs",
         "%LOCALAPPDATA%\\NVIDIA\\GeForce Experience\\logs",
         "%LOCALAPPDATA%\\NVIDIA\\GeForce Experience\\UpdateTemp"
       ],
       "safety": "safe",
-      "description": "NVIDIA GeForce Experience logs, driver download cache, and screenshot folder."
+      "description": "GeForce Experience named caches and logs."
     },
     {
       "id": "nvidia_shadowplay_cache",
@@ -320,14 +321,14 @@
     },
     {
       "id": "obs_cache",
-      "label": "OBS Studio recording temp, replay buffer, and encoder logs",
+      "label": "OBS Studio cache and logs",
       "paths": [
         "%APPDATA%\\OBS\\logs",
         "%APPDATA%\\obs-studio\\logs",
         "%LOCALAPPDATA%\\OBS\\crashreports"
       ],
       "safety": "safe",
-      "description": "OBS Studio recording temp, replay buffer, and encoder logs."
+      "description": "OBS Studio cache and logs."
     },
     {
       "id": "peertube_cache",
@@ -341,13 +342,13 @@
     },
     {
       "id": "photoshop_cache",
-      "label": "Adobe Photoshop scratch disk, history, and plugins cache",
+      "label": "Photoshop cache and temporary files",
       "paths": [
         "%LOCALAPPDATA%\\Adobe\\Photoshop\\*\\Cache",
         "%APPDATA%\\Adobe\\Photoshop\\*\\Cache"
       ],
       "safety": "safe",
-      "description": "Adobe Photoshop scratch disk, history, and plugins cache."
+      "description": "Photoshop cache and temporary files."
     },
     {
       "id": "plex_cache",
@@ -372,7 +373,7 @@
     },
     {
       "id": "premiere_cache",
-      "label": "Adobe Premiere Pro media cache, peak files, and auto-save",
+      "label": "Adobe shared media caches",
       "paths": [
         "%APPDATA%\\Adobe\\Common\\Media Cache Files",
         "%APPDATA%\\Adobe\\Common\\Peak Files",
@@ -380,7 +381,7 @@
         "%LOCALAPPDATA%\\Adobe\\Common\\Peak Files"
       ],
       "safety": "safe",
-      "description": "Adobe Premiere Pro media cache, peak files, and auto-save."
+      "description": "Adobe shared media caches."
     },
     {
       "id": "qobuz_cache",
@@ -479,8 +480,8 @@
       "paths": [
         "%LOCALAPPDATA%\\VEGASTemp"
       ],
-      "safety": "safe",
-      "description": "Vegas Pro autosave, GPU render cache, and proxy files."
+      "safety": "caution",
+      "description": "Vegas Pro autosave, GPU render cache, and proxy files. Temporary files may contain recovery data; save projects and close the application before reviewing."
     },
     {
       "id": "vlc_cache",

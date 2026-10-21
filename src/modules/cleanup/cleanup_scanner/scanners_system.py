@@ -2,18 +2,17 @@
 import logging
 import os
 import re
-import shutil
 import glob
 import string
 import subprocess
 import time
 import psutil
 from typing import List, Callable, Optional, Tuple
-from pathlib import Path
 
 from modules.cleanup.cleanup_scanner._common import (
     ScanItem, ScanResult, get_dir_size, _make_item, _make_item_with_age,
 )
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size, on_disk_size_of
 
 from modules.cleanup.cleanup_scanner import (
     drives, known_folders, virtual_disks)
@@ -149,7 +148,7 @@ def scan_prefetch(min_age_days: int = 0) -> ScanResult:
     result = ScanResult()
     pf_dir = r"C:\Windows\Prefetch"
     for pf in glob.glob(os.path.join(pf_dir, "*.pf")):
-        item = _make_item_with_age(pf, safety="safe", min_age_days=min_age_days)
+        item = _make_item_with_age(pf, safety="caution", min_age_days=min_age_days)
         if item:
             result.items.append(item)
             result.total_size += item.size
@@ -301,8 +300,9 @@ def scan_appdata_autodiscover(min_age_days: int = 0) -> ScanResult:
                     rp = os.path.realpath(entry.path)
                     if rp not in seen:
                         seen.add(rp)
-                        item = _make_item(entry.path, safety="safe", min_age_days=min_age_days)
+                        item = _make_item(entry.path, safety="caution", min_age_days=min_age_days)
                         if item and item.size > 0:
+                            item.selected = False
                             result.items.append(item)
                             result.total_size += item.size
                 else:
@@ -415,7 +415,7 @@ def scan_store_app_caches(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_recent_files(min_age_days: int = 0) -> ScanResult:
-    """Recent .lnk shortcuts and jump list destinations."""
+    """Recent shortcuts and jump lists, including personal Quick Access pins."""
     result = ScanResult()
     appdata = os.environ.get("APPDATA", "")
     targets = [
@@ -427,83 +427,68 @@ def scan_recent_files(min_age_days: int = 0) -> ScanResult:
         if not os.path.isdir(t):
             continue
         for f in glob.glob(os.path.join(t, "*.lnk")):
-            item = _make_item_with_age(f, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
             if item:
+                item.selected = False
                 result.items.append(item)
                 result.total_size += item.size
         for f in glob.glob(os.path.join(t, "*.automaticDestinations-ms")):
-            item = _make_item_with_age(f, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
             if item:
+                item.selected = False
                 result.items.append(item)
                 result.total_size += item.size
         for f in glob.glob(os.path.join(t, "*.customDestinations-ms")):
-            item = _make_item_with_age(f, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
             if item:
+                item.selected = False
                 result.items.append(item)
                 result.total_size += item.size
     return result
 
 def scan_game_caches(min_age_days: int = 0) -> ScanResult:
-    """Caches for Steam, Epic, Xbox, Battle.net, EA app, Ubisoft Connect, GOG Galaxy, Discord."""
+    """Named launcher caches only; installed games and profiles are never junk."""
     result = ScanResult()
     local = os.environ.get("LOCALAPPDATA", "")
     appdata = os.environ.get("APPDATA", "")
-    targets = [
-        # Steam
-        os.path.join(local, r"Programs\Steam\steamapps"),
-        os.path.join(local, r"Programs\Steam\shadercache"),
-        os.path.join(local, r"Programs\Steam\htmlcache"),
-        os.path.join(local, r"Programs\Steam\downloads"),
-        # Epic
-        os.path.join(appdata, r"Epic\EpicGamesLauncher\Data\Manifests"),
-        os.path.join(local, r"EpicGamesLauncher\Data\Portal\Cache"),
-        # Xbox / Gaming Services
-        os.path.join(local, r"Packages\Microsoft.GamingServices_*\LocalCache"),
-        os.path.join(local, r"Packages\Microsoft.XboxGamingOverlay_*\LocalCache"),
-        os.path.join(local, r"Packages\FamilyNotifications.*\LocalState"),
-        os.path.join(os.environ.get("PROGRAMDATA", ""), r"XboxLiveDeviceInfo"),
-        # Battle.net
-        os.path.join(appdata, r"Blizzard\Battle.net\Cache"),
-        # EA app
-        os.path.join(appdata, r"EA Desktop\Cache"),
-        os.path.join(appdata, r"Electronic Arts\EA Desktop\Cache"),
-        # Ubisoft Connect
-        os.path.join(appdata, r"Ubisoft\Connect\cache"),
-        # GOG Galaxy
-        os.path.join(appdata, r"GOG.com\Galaxy\Cache"),
-        # Discord
-        os.path.join(appdata, r"discord\Cache"),
-        os.path.join(appdata, r"discord\GPUCache"),
-    ]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        try:
-            size = get_dir_size(t)
-            if size > 0:
-                item = ScanItem(path=t, size=size, is_dir=True, safety="safe")
-                result.items.append(item)
-                result.total_size += size
-        except OSError:
-            logger.debug("Ignored OSError", exc_info=True)
+    targets = [os.path.join(local, "EpicGamesLauncher", "Data", "Portal", "Cache")]
+    for root in (os.path.join(local, "Programs", "Steam", "htmlcache"),
+                 os.path.join(local, "Steam", "htmlcache")):
+        for profile in (root, os.path.join(root, "Default")):
+            targets.extend(os.path.join(profile, leaf) for leaf in ("Cache", "Code Cache", "GPUCache"))
+    for tail in (r"Blizzard\Battle.net\Cache", r"EA Desktop\Cache",
+                 r"Electronic Arts\EA Desktop\Cache", r"Ubisoft\Connect\cache",
+                 r"GOG.com\Galaxy\Cache", r"discord\Cache", r"discord\GPUCache"):
+        targets.append(os.path.join(appdata, tail))
+    for target in targets:
+        item = _make_item(target, safety="caution", min_age_days=min_age_days)
+        if item and item.size > 0:
+            item.selected = False
+            result.items.append(item)
+            result.total_size += item.size
     return result
 
+
 def scan_ide_caches(min_age_days: int = 0) -> ScanResult:
-    """JetBrains, Visual Studio, Notepad++, FileZilla caches."""
+    """Documented JetBrains system caches and Visual Studio component caches."""
     result = ScanResult()
     local = os.environ.get("LOCALAPPDATA", "")
-    appdata = os.environ.get("APPDATA", "")
     temp = os.environ.get("TEMP", "")
 
     # JetBrains IDEs (find all IDE folders under JetBrains)
     jb_root = os.path.join(local, r"JetBrains")
     if os.path.isdir(jb_root):
-        for ide in glob.glob(os.path.join(jb_root, "*IDE*")):
-            for sub in ("caches", "index", "logs"):
+        # Only versioned IDE system folders (PyCharm2026.2, IntelliJIdea2025.3):
+        # never Toolbox, whose folder holds the installed IDEs themselves.
+        for ide in glob.glob(os.path.join(jb_root, "*")):
+            if not re.search(r"\d{4}\.\d+$", os.path.basename(ide)):
+                continue
+            for sub in ("caches", "index"):
                 sub_path = os.path.join(ide, sub)
                 if os.path.isdir(sub_path):
-                    item = _make_item(sub_path, safety="safe", min_age_days=min_age_days)
+                    item = _make_item(sub_path, safety="caution", min_age_days=min_age_days)
                     if item and item.size > 0:
+                        item.selected = False
                         result.items.append(item)
                         result.total_size += item.size
 
@@ -515,69 +500,52 @@ def scan_ide_caches(min_age_days: int = 0) -> ScanResult:
             if not os.path.isdir(vs_path):
                 continue
             vs_items = [
-                os.path.join(vs_path, ".vs"),
                 os.path.join(vs_path, "ComponentModelCache"),
-                os.path.join(vs_path, "Settings"),
             ]
             for vi in vs_items:
                 if os.path.isdir(vi):
-                    item = _make_item(vi, safety="safe", min_age_days=min_age_days)
+                    item = _make_item(vi, safety="caution", min_age_days=min_age_days)
                     if item and item.size > 0:
+                        item.selected = False
                         result.items.append(item)
                         result.total_size += item.size
     # VS ~vs* temp files
     if temp:
         for f in glob.glob(os.path.join(temp, "~vs*")):
-            item = _make_item_with_age(f, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
             if item:
+                item.selected = False
                 result.items.append(item)
                 result.total_size += item.size
-    # Notepad++ backups
-    npp_dir = os.path.join(appdata, r"Notepad++\backup")
-    if os.path.isdir(npp_dir):
-        item = _make_item(npp_dir, safety="safe", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    # FileZilla
-    fz_dir = os.path.join(appdata, r"FileZilla")
-    if os.path.isdir(fz_dir):
-        item = _make_item(fz_dir, safety="safe", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
     return result
 
-def scan_print_spooler(min_age_days: int = 0) -> ScanResult:
-    """Windows print spooler queue — only when spooler service is stopped."""
-    result = ScanResult()
-    spool_printers = r"C:\Windows\System32\spool\PRINTERS"
-    spool_servers = r"C:\Windows\System32\spool\SERVERS"
-    # Check service status
+
+def _spooler_stopped() -> bool:
+    """Only a successful STOPPED query proves the print queue is idle."""
     try:
         proc = subprocess.run(
-            ["sc", "query", "spooler"],
-            capture_output=True, text=True, errors="replace",
-            timeout=10,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        if "RUNNING" in proc.stdout.upper():
-            # Service running — mark as danger so it's never auto-selected
-            item = _make_item(spool_printers, safety="danger", min_age_days=min_age_days)
-            if item and item.size > 0:
-                result.items.append(item)
-                result.total_size += item.size
-            return result
-    except Exception as e:
-        logger.warning("Spooler scan failed: %s", e)
-    # Spooler not running — safe to clean
-    for t in [spool_printers, spool_servers]:
-        if os.path.isdir(t):
-            item = _make_item(t, safety="caution", min_age_days=min_age_days)
-            if item and item.size > 0:
-                result.items.append(item)
-                result.total_size += item.size
+            ["sc", "query", "spooler"], capture_output=True, text=True,
+            errors="replace", timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+        return proc.returncode == 0 and bool(re.search(r"STATE\s*:\s*1\s+STOPPED\b", proc.stdout, re.I))
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not confirm Spooler is stopped: %s", exc)
+        return False
+
+
+def scan_print_spooler(min_age_days: int = 0) -> ScanResult:
+    """Print queue files, offered only after Spooler is confirmed stopped."""
+    result = ScanResult()
+    if not _spooler_stopped():
+        return result
+    root = os.environ.get("windir", r"C:\Windows")
+    item = _make_item(os.path.join(root, "System32", "spool", "PRINTERS"),
+                      safety="caution", min_age_days=min_age_days)
+    if item and item.size > 0:
+        item.selected = False
+        result.items.append(item)
+        result.total_size += item.size
     return result
+
 
 def scan_etl_logs(min_age_days: int = 0) -> ScanResult:
     """WindowsUpdate ETL, DeliveryOptimization ETL, and ScriptArtifacts logs."""
@@ -685,7 +653,7 @@ def scan_perflogs(min_age_days: int = 0) -> ScanResult:
     for t in targets:
         if not os.path.isdir(t):
             continue
-        item = _make_item(t, safety="safe", min_age_days=min_age_days)
+        item = _make_item(t, safety="caution", min_age_days=min_age_days)
         if item and item.size > 0:
             result.items.append(item)
             result.total_size += item.size
@@ -793,19 +761,23 @@ def scan_diagnostic_data(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_powershell_logs(min_age_days: int = 0) -> ScanResult:
-    """PowerShell transcription, module logging, and script execution logs."""
+    """PowerShell transcripts and PowerShell's own logs (audit records: caution).
+
+    Never PSReadLine: that is the command history the Up arrow recalls, not a
+    log. The old target looked in %LOCALAPPDATA%, where it does not live, so
+    it found nothing -- correcting the path would have started deleting it.
+    """
     result = ScanResult()
     local = os.environ.get("LOCALAPPDATA", "")
     windir = os.environ.get("windir", r"C:\Windows")
     targets = [
-        os.path.join(local, r"Microsoft\Windows\PowerShell\PSReadLine"),
         os.path.join(local, r"Microsoft\Windows\PowerShell\TranscriptLogs"),
         os.path.join(windir, r"System32\WindowsPowerShell\v1.0\Logs"),
     ]
     for t in targets:
         if not os.path.isdir(t):
             continue
-        item = _make_item(t, safety="safe", min_age_days=min_age_days)
+        item = _make_item(t, safety="caution", min_age_days=min_age_days)
         if item and item.size > 0:
             result.items.append(item)
             result.total_size += item.size
@@ -847,7 +819,7 @@ def scan_windows_installer_cache(min_age_days: int = 0) -> ScanResult:
                 if entry.name.endswith('.msi') or entry.name.endswith('.msp'):
                     fpath = entry.path
                     try:
-                        size = os.path.getsize(fpath)
+                        size = on_disk_size_of(fpath)
                         if min_age_days > 0:
                             mtime = os.path.getmtime(fpath)
                             if (time.time() - mtime) < min_age_days * 86400:
@@ -861,30 +833,11 @@ def scan_windows_installer_cache(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_wmi_logs(min_age_days: int = 0) -> ScanResult:
-    """WMI (Windows Management Instrumentation) logs and permanent event consumers."""
+    """WMI (Windows Management Instrumentation) logs only; the repository is a system database."""
     result = ScanResult()
     windir = os.environ.get("windir", r"C:\Windows")
     targets = [
         os.path.join(windir, r"System32\wbem\Logs"),
-        os.path.join(windir, r"System32\wbem\Repository\FS"),
-    ]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety="safe", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
-
-def scan_print_nightmare_logs(min_age_days: int = 0) -> ScanResult:
-    """Print spooler transaction logs and spooling queue residuals."""
-    result = ScanResult()
-    windir = os.environ.get("windir", r"C:\Windows")
-    targets = [
-        os.path.join(windir, r"System32\spool\PRINTERS"),
-        os.path.join(windir, r"System32\spool\SERVERS"),
-        os.path.join(windir, r"System32\spool\drivers"),
     ]
     for t in targets:
         if not os.path.isdir(t):
@@ -894,6 +847,11 @@ def scan_print_nightmare_logs(min_age_days: int = 0) -> ScanResult:
             result.items.append(item)
             result.total_size += item.size
     return result
+
+def scan_print_nightmare_logs(min_age_days: int = 0) -> ScanResult:
+    """Print queue only, using the shared stopped-service check."""
+    return scan_print_spooler(min_age_days)
+
 
 def scan_msi_logs(min_age_days: int = 0) -> ScanResult:
     r"""MSI installer verbose logs in Windows\Logs\MSI and Temp."""
@@ -907,12 +865,12 @@ def scan_msi_logs(min_age_days: int = 0) -> ScanResult:
         if not os.path.isdir(t):
             continue
         for f in glob.glob(os.path.join(t, "*.log")):
-            item = _make_item_with_age(f, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
             if item:
                 result.items.append(item)
                 result.total_size += item.size
         for f in glob.glob(os.path.join(t, "*.etl")):
-            item = _make_item_with_age(f, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
             if item:
                 result.items.append(item)
                 result.total_size += item.size
@@ -976,22 +934,12 @@ def scan_iso_vhd_files(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_msp_patches(min_age_days: int = 0) -> ScanResult:
-    """Orphaned Windows Installer .msp patch files."""
-    result = ScanResult()
-    windir = os.environ.get("windir", r"C:\Windows")
-    targets = [
-        os.path.join(windir, r"Installer\*.msp"),
-    ]
-    for t in targets:
-        dir_path, pattern = os.path.split(t)
-        if not os.path.isdir(dir_path):
-            continue
-        for f in glob.glob(os.path.join(dir_path, pattern)):
-            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
-            if item:
-                result.items.append(item)
-                result.total_size += item.size
+    """Only patch packages proven orphaned by the shared registry check."""
+    result = scan_orphaned_installer_packages(min_age_days)
+    result.items = [item for item in result.items if item.path.lower().endswith('.msp')]
+    result.total_size = sum(item.size for item in result.items)
     return result
+
 
 def scan_font_files_temp(min_age_days: int = 0) -> ScanResult:
     """Windows Font loader temp staging and fontinstaller temp files."""
@@ -1012,38 +960,14 @@ def scan_font_files_temp(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_windows_optional_features(min_age_days: int = 0) -> ScanResult:
-    """Windows optional features manifests backup (danger) and install temp (safe)."""
-    result = ScanResult()
-    windir = os.environ.get("windir", r"C:\Windows")
-    targets = [
-        (os.path.join(windir, r"WinSxS\ManifestBackup"), "danger"),
-        (os.path.join(windir, r"WinSxS\InstallTemp"), "safe"),
-    ]
-    for t, safety in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety=safety, min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
+    """Optional-feature payloads belong to Windows servicing, never file deletion."""
+    return ScanResult()
+
 
 def scan_printer_driver_cache(min_age_days: int = 0) -> ScanResult:
-    """Orphaned printer driver files and print capture archives."""
-    result = ScanResult()
-    windir = os.environ.get("windir", r"C:\Windows")
-    targets = [
-        os.path.join(windir, r"System32\spool\drivers"),
-        os.path.join(windir, r"System32\spool\PRINTERS"),
-    ]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety="caution", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
+    """Print queue only, using the shared stopped-service check."""
+    return scan_print_spooler(min_age_days)
+
 
 def scan_dns_cache(min_age_days: int = 0) -> ScanResult:
     """Flush DNS resolver cache — safe operation, no file deletion needed."""
@@ -1142,21 +1066,20 @@ def scan_network_debug_logs(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_powershell_modules_cache(min_age_days: int = 0) -> ScanResult:
-    """PowerShell module telemetry, PSModulePath download cache, and transcript logs."""
+    """Downloaded PowerShell modules. Never the PSReadLine command history
+    (ConsoleHost_history.txt is user data; see scan_powershell_logs)."""
     result = ScanResult()
     appdata = os.environ.get("APPDATA", "")
-    local = os.environ.get("LOCALAPPDATA", "")
     targets = [
         os.path.join(appdata, r"PowerShell\DownloadedModules"),
-        os.path.join(local, r"Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt"),
     ]
     for t in targets:
         if not os.path.exists(t):
             continue
         if os.path.isfile(t):
-            item = _make_item_with_age(t, safety="safe", min_age_days=min_age_days)
+            item = _make_item_with_age(t, safety="caution", min_age_days=min_age_days)
         else:
-            item = _make_item(t, safety="safe", min_age_days=min_age_days)
+            item = _make_item(t, safety="caution", min_age_days=min_age_days)
         if item and item.size > 0:
             result.items.append(item)
             result.total_size += item.size
@@ -1180,22 +1103,9 @@ def scan_windows_insider_logs(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_winSxS_temp(min_age_days: int = 0) -> ScanResult:
-    """WinSxS pending file rename operations and install temp."""
-    result = ScanResult()
-    windir = os.environ.get("windir", r"C:\Windows")
-    targets = [
-        os.path.join(windir, r"WinSxS\InstallTemp"),
-        os.path.join(windir, r"WinSxS\Temp"),
-        os.path.join(windir, r"WinSxS\pisi.graph"),
-    ]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety="caution", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
+    """Servicing owns all WinSxS contents; use DISM in System Health."""
+    return ScanResult()
+
 
 def scan_userprofile_temp(min_age_days: int = 0) -> ScanResult:
     r"""Per-user profile temp files scattered across AppData\Local\Temp."""
@@ -1229,7 +1139,7 @@ def scan_downloads_folder_old(min_age_days: int = 0) -> ScanResult:
                     mtime = os.path.getmtime(entry.path)
                     if (time.time() - mtime) < min_age_days * 86400:
                         continue
-                size = os.path.getsize(entry.path)
+                size = on_disk_size_of(entry.path)
                 result.items.append(ScanItem(path=entry.path, size=size, is_dir=False, safety="caution"))
                 result.total_size += size
         except OSError:
@@ -1418,34 +1328,14 @@ def scan_powershell_ise_cache(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_windows_terminal_settings_cache(min_age_days: int = 0) -> ScanResult:
-    """Windows Terminal settings JSON cache and theme cache."""
-    result = ScanResult()
-    local = os.environ.get("LOCALAPPDATA", "")
-    targets = [os.path.join(local, r"Microsoft\WindowsTerminal")]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety="safe", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
+    """Terminal settings are personal configuration, not cache."""
+    return ScanResult()
+
 
 def scan_windows_printer_migration_cache(min_age_days: int = 0) -> ScanResult:
-    """Printer migration XML backup files from printmanagement snapshots."""
-    result = ScanResult()
-    windir = os.environ.get("windir", r"C:\Windows")
-    targets = [
-        os.path.join(windir, r"System32\spool\PRINTERS"),
-    ]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety="caution", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
+    """Print queue only, using the shared stopped-service check."""
+    return scan_print_spooler(min_age_days)
+
 
 def scan_ndis_cache(min_age_days: int = 0) -> ScanResult:
     """Network adapter configuration and protocol binding cache (NDIS intermediate drivers)."""
@@ -1509,13 +1399,15 @@ def _scan_large_recursive(result: ScanResult, dirs: list, min_bytes: int, min_ag
             with os.scandir(directory) as it:
                 for entry in it:
                     try:
+                        if entry.is_junction():
+                            continue  # never follow a junction (Application Data -> itself)
                         if entry.is_dir(follow_symlinks=False):
                             if entry.name in (".git", "node_modules", "__pycache__", ".venv", "venv"):
                                 continue  # skip known huge dirs that aren't our target
                             _scan_large_recursive(result, [entry.path], min_bytes, min_age_days, depth - 1)
                         elif entry.is_file(follow_symlinks=False):
                             try:
-                                size = entry.stat().st_size
+                                size = on_disk_size(entry.path, entry.stat())
                                 if size < min_bytes:
                                     continue
                                 mtime = entry.stat().st_mtime
@@ -1574,7 +1466,13 @@ def scan_duplicate_files(min_age_days: int = 0, min_size_kb: int = 100, max_dept
         for file_hash, dup_paths in hash_groups.items():
             if len(dup_paths) < 2:
                 continue
-            wasted = size * (len(dup_paths) - 1)
+            # Grouped by LOGICAL size (content), but what deleting a copy frees
+            # is what it occupies on disk.
+            try:
+                copy_size = on_disk_size_of(dup_paths[0])
+            except OSError:
+                copy_size = size
+            wasted = copy_size * (len(dup_paths) - 1)
             # Create one item per duplicate set — path is the group name
             result.items.append(ScanItem(
                 path=f"[{len(dup_paths)} duplicates] {dup_paths[0]}",
@@ -1595,6 +1493,8 @@ def _group_by_size_recursive(directory: str, size_groups: dict, min_bytes: int, 
         with os.scandir(directory) as it:
             for entry in it:
                 try:
+                    if entry.is_junction():
+                        continue  # never follow a junction (Application Data -> itself)
                     if entry.is_dir(follow_symlinks=False):
                         _group_by_size_recursive(entry.path, size_groups, min_bytes, depth - 1)
                     elif entry.is_file(follow_symlinks=False):
@@ -1659,7 +1559,9 @@ def _find_empty_folders(result: ScanResult, dirs: list, min_depth: int, max_dept
             with os.scandir(directory) as it:
                 for entry in it:
                     try:
-                        if entry.is_dir(follow_symlinks=False):
+                        if entry.is_junction():
+                            is_empty = False  # never follow a junction (Application Data -> itself)
+                        elif entry.is_dir(follow_symlinks=False):
                             subdirs.append(entry.path)
                             is_empty = False
                         elif entry.is_file(follow_symlinks=False):
@@ -1710,13 +1612,15 @@ def _scan_old_recursive(result: ScanResult, dirs: list, min_age_seconds: float, 
             with os.scandir(directory) as it:
                 for entry in it:
                     try:
+                        if entry.is_junction():
+                            continue  # never follow a junction (Application Data -> itself)
                         if entry.is_dir(follow_symlinks=False):
                             _scan_old_recursive(result, [entry.path], min_age_seconds, depth - 1)
                         elif entry.is_file(follow_symlinks=False):
                             try:
                                 mtime = entry.stat().st_mtime
                                 if mtime < cutoff:
-                                    size = entry.stat().st_size
+                                    size = on_disk_size(entry.path, entry.stat())
                                     result.items.append(ScanItem(
                                         path=entry.path,
                                         size=size,
@@ -1778,22 +1682,9 @@ def scan_uwp_all_apps_cache(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_windows_installer_rollback(min_age_days: int = 0) -> ScanResult:
-    """Windows Installer rollback/backout files (caution — may be needed)."""
-    result = ScanResult()
-    targets = [
-        r"C:\Windows\Installer\Patch",
-        r"C:\Windows\Installer\001",
-    ]
-    import glob as _glob
-    for pattern in targets:
-        for t in _glob.glob(pattern):
-            if not os.path.isdir(t):
-                continue
-            item = _make_item(t, safety="caution", min_age_days=min_age_days)
-            if item and item.size > 0:
-                result.items.append(item)
-                result.total_size += item.size
-    return result
+    """Installer rollback state is not disposable cache."""
+    return ScanResult()
+
 
 def scan_windows_app_extensions_cache(min_age_days: int = 0) -> ScanResult:
     """Windows App Extensions cache database."""
@@ -1812,20 +1703,9 @@ def scan_windows_app_extensions_cache(min_age_days: int = 0) -> ScanResult:
     return result
 
 def scan_windows_connected_accounts_cache(min_age_days: int = 0) -> ScanResult:
-    """Connected accounts (email, Azure AD) cached tokens and identity data."""
-    result = ScanResult()
-    local = os.environ.get("LOCALAPPDATA", "")
-    targets = [
-        os.path.join(local, r"Microsoft\IdentityOLTCache"),
-    ]
-    for t in targets:
-        if not os.path.isdir(t):
-            continue
-        item = _make_item(t, safety="safe", min_age_days=min_age_days)
-        if item and item.size > 0:
-            result.items.append(item)
-            result.total_size += item.size
-    return result
+    """IdentityOLTCache holds account tokens and must be preserved."""
+    return ScanResult()
+
 
 def scan_windows_compatibility_cache(min_age_days: int = 0) -> ScanResult:
     """Windows compatibility fixer's database cache."""
@@ -1911,7 +1791,7 @@ def protected_user_data_dirs() -> List[str]:
 #: What a signed-in app keeps: a browser profile's IndexedDB / Local Storage
 #: (WhatsApp, Teams, Slack, Discord ...), its Cookies and saved logins. A
 #: folder holding any of these is never deleted, whichever scanner offered it.
-SIGN_IN_DIRS = {"indexeddb", "local storage", "session storage"}
+SIGN_IN_DIRS = {"indexeddb", "local storage", "session storage", "blob_storage"}
 SIGN_IN_FILES = {"cookies", "login data"}
 #: Sign-ins kept as ordinary files, which no folder or file NAME gives away:
 #: cloud CLI tokens and Windows' own account token caches. Never deleted, nor
@@ -1919,6 +1799,7 @@ SIGN_IN_FILES = {"cookies", "login data"}
 SIGN_IN_STORES = (r"%USERPROFILE%\.aws", r"%USERPROFILE%\.azure", r"%APPDATA%\gcloud",
                   r"%LOCALAPPDATA%\Microsoft\TokenBroker",
                   r"%LOCALAPPDATA%\Microsoft\IdentityCache",
+                  r"%LOCALAPPDATA%\Microsoft\IdentityOLTCache",
                   r"%LOCALAPPDATA%\Microsoft\OneAuth")
 
 
@@ -1927,12 +1808,138 @@ def sign_in_stores() -> List[str]:
     return [path for path in expanded if "%" not in path]
 
 
+def protected_state_dirs() -> List[str]:
+    r"""System databases and personal state the research audit (2026-10-21)
+    found offered as junk. Never deleted, nor any folder above them.
+
+    Installed printer drivers, the WMI repository, everything servicing owns
+    under WinSxS, the COM+ database, classic Outlook's opened-attachment
+    copies, Notepad++'s unsaved tabs and FileZilla's saved sites/passwords.
+    """
+    windir = os.environ.get("windir", r"C:\Windows")
+    roots = [os.path.join(windir, tail) for tail in (
+        r"System32\spool\drivers", r"System32\wbem\Repository",
+        "WinSxS", "Registration")]
+    for raw in (r"%APPDATA%\Notepad++\backup", r"%APPDATA%\FileZilla",
+                r"%LOCALAPPDATA%\Microsoft\Windows\INetCache\Content.Outlook"):
+        path = os.path.expandvars(raw)
+        if "%" not in path:
+            roots.append(path)
+    return roots
+
+
+def _norm(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _inside_norm(path: str, folder: str) -> bool:
+    """_is_inside for two already-normalised paths (the per-entry hot path)."""
+    return path == folder or path.startswith(folder.rstrip(os.sep) + os.sep)
+
+
+_GUARD_ENV = ("windir", "APPDATA", "LOCALAPPDATA", "USERPROFILE")
+_guard_cache: dict = {}
+
+
+def _guard_roots() -> Tuple[Tuple[str, ...], str, str]:
+    """(protected roots, Installer folder, VisualStudio folder), normalised.
+
+    Computed once per environment rather than once per walked entry: the
+    deleting walk asks for every file, and %TEMP% here is 100k entries.
+    """
+    key = tuple(os.environ.get(name, "") for name in _GUARD_ENV)
+    found = _guard_cache.get(key)
+    if found is None:
+        local = os.environ.get("LOCALAPPDATA", "")
+        found = (tuple(_norm(r) for r in protected_state_dirs() + sign_in_stores()),
+                 _norm(_installer_cache_dir()),
+                 _norm(os.path.join(local, "Microsoft", "VisualStudio")) if local else "")
+        _guard_cache.clear()
+        _guard_cache[key] = found
+    return found
+
+
+#: Folder names that are installed games or launcher state wherever they sit.
+_STATE_DIR_NAMES = frozenset({"steamapps", "xboxlivedeviceinfo"})
+#: Consecutive folder names that are state, not cache, at any install location.
+_STATE_SEQUENCES = (("steam", "downloads"),
+                    ("epic", "epicgameslauncher", "data", "manifests"),
+                    ("inetcache", "content.outlook"),
+                    ("service worker", "scriptcache"),
+                    ("service worker", "cachestorage"))
+#: The only things a Chromium-style profile under ``htmlcache`` may lose.
+_HTMLCACHE_LEAVES = frozenset({"cache", "code cache", "gpucache"})
+
+
+def _named_user_data(path: str) -> bool:
+    """State recognised by its folder NAMES, so a custom install location
+    (a Steam library on D:, a portable Epic) is guarded too. Never a guess
+    from the word 'cache'."""
+    norm = _norm(path)
+    parts = norm.split(os.sep)
+    if any(part in SIGN_IN_DIRS or part in _STATE_DIR_NAMES for part in parts):
+        return True
+    for seq in _STATE_SEQUENCES:
+        width = len(seq)
+        if any(tuple(parts[i:i + width]) == seq for i in range(len(parts) - width + 1)):
+            return True
+    # htmlcache itself and its Default profile are a whole browser profile
+    # (Steam's web helper); only the rebuildable cache leaves may go.
+    if "htmlcache" in parts:
+        tail = parts[parts.index("htmlcache") + 1:]
+        if not tail or (tail[0] == "default" and
+                        (len(tail) == 1 or tail[1] not in _HTMLCACHE_LEAVES)):
+            return True
+    vs = _guard_roots()[2]
+    if vs and _inside_norm(norm, vs):
+        relative = norm[len(vs):].strip(os.sep).split(os.sep)
+        if len(relative) >= 2 and relative[1] == "settings":
+            return True
+    return False
+
+
+def _installer_orphan(path: str, is_dir: bool) -> bool:
+    """Recheck the orphan scanner's registry evidence at deletion time: only
+    a .msi/.msp directly in the Installer folder that no installed product
+    references may go. Fails closed when the references cannot be read."""
+    if (is_dir or _norm(os.path.dirname(_norm(path))) != _guard_roots()[1] or
+            os.path.splitext(path)[1].lower() not in (".msi", ".msp")):
+        return False
+    referenced = _referenced_installer_packages()
+    return (referenced is not None and
+            os.path.normcase(os.path.normpath(path)) not in referenced)
+
+
+def _state_path_protected(path: str, is_dir: bool, *, contains: bool = False,
+                          resolved: Optional[str] = None) -> bool:
+    """Path guards shared by the refusal check and every deleting-walk entry:
+    the path as written AND as resolved (``resolved`` when the caller already
+    knows it) is, or is inside -- or with ``contains``, holds -- protected state."""
+    candidates = [_norm(path)]
+    real = _norm(resolved if resolved is not None else _resolved(path))
+    if real != candidates[0]:
+        candidates.append(real)
+    roots, installer, _vs = _guard_roots()
+    for candidate in candidates:
+        if any(_inside_norm(candidate, root) or
+               (contains and is_dir and _inside_norm(root, candidate)) for root in roots):
+            return True
+        if _named_user_data(candidate):
+            return True
+        if _inside_norm(candidate, installer):
+            if not _installer_orphan(candidate, is_dir):
+                return True
+        elif contains and is_dir and _inside_norm(installer, candidate):
+            return True
+    return False
+
+
 def held_user_data(path: str, is_dir: bool, first_only: bool = False) -> Tuple[bool, bool]:
     """(holds Outlook data, holds sign-in data) -- what one walk SAW. An unreadable folder is logged; it cannot be deleted either (deleter.py lists it as denied).
 
     ``first_only`` stops at the first finding, for a caller that refuses either way.
     """
-    inside_sign_in = any(part.lower() in SIGN_IN_DIRS for part in Path(path).parts)
+    inside_sign_in = _state_path_protected(path, is_dir)
     if not is_dir:
         name = os.path.basename(path).lower()
         return name.endswith(OUTLOOK_DATA_EXTENSIONS), inside_sign_in or name in SIGN_IN_FILES
@@ -1947,7 +1954,8 @@ def held_user_data(path: str, is_dir: bool, first_only: bool = False) -> Tuple[b
     for _root, dirs, files in os.walk(path, onerror=onerror):
         lowered = [f.lower() for f in files]
         outlook = outlook or any(f.endswith(OUTLOOK_DATA_EXTENSIONS) for f in lowered)
-        sign_in = (sign_in or any(d.lower() in SIGN_IN_DIRS for d in dirs)
+        sign_in = (sign_in or _named_user_data(_root)
+                   or any(_state_path_protected(os.path.join(_root, d), True) for d in dirs)
                    or any(f in SIGN_IN_FILES for f in lowered))
         if (outlook and sign_in) or (first_only and (outlook or sign_in)):
             break
@@ -2009,11 +2017,14 @@ def _refusal_reason(item: ScanItem) -> Optional[str]:
         return "it is, or holds, a sign-in token store"
     if is_or_holds(protected_user_data_dirs()):
         return "it is, or holds, Outlook mailbox data (.ost/.pst)"
-    outlook, sign_in = held_user_data(item.path, item.is_dir, first_only=True)
-    if outlook:
-        return "it is, or holds, Outlook mailbox data (.ost/.pst)"
-    if sign_in:
-        return "it is, or holds, an app's sign-in (IndexedDB / Local Storage / Cookies)"
+    if any(_state_path_protected(path, item.is_dir, contains=True) for path in paths):
+        return "it is, or holds, installed software, system databases or personal state"
+    for path in paths:
+        outlook, sign_in = held_user_data(path, item.is_dir, first_only=True)
+        if outlook:
+            return "it is, or holds, Outlook mailbox data (.ost/.pst)"
+        if sign_in:
+            return "it is, or holds, an app's sign-in or site data"
     return None
 
 
@@ -2077,9 +2088,14 @@ class _ServiceStopped:
         return False  # do not suppress exceptions
 
 
-def _protected_entry(path: str, is_dir: bool) -> bool:
-    """An entry the deleting walk must leave, whatever the checking walk saw."""
+def _protected_entry(path: str, is_dir: bool, resolved: Optional[str] = None) -> bool:
+    """An entry the deleting walk must leave, whatever the checking walk saw.
+
+    ``resolved`` is where the entry really leads, when the caller knows it
+    without asking the file system (see ``_skip_for``)."""
     name = os.path.basename(path).lower()
+    if _state_path_protected(path, is_dir, resolved=resolved):
+        return True
     if is_dir:
         return name in SIGN_IN_DIRS
     return name.endswith(OUTLOOK_DATA_EXTENSIONS) or name in SIGN_IN_FILES
@@ -2127,10 +2143,22 @@ def delete_items_report(items: List[ScanItem],
     # an app left open over a day -- were deletable there.
     own_dirs = protected_app_dirs()
 
-    def _skip(path: str, is_dir: bool) -> bool:
-        return (_protected_entry(path, is_dir)
-                or (bool(own_dirs) and any(_is_inside(path, d) for d in own_dirs))
-                or (bool(exclusions) and is_excluded(path, exclusions)))
+    def _skip_for(item: ScanItem):
+        # The walk never follows a link, so below the root an entry resolves
+        # to the root's resolved path plus the same tail: one realpath per
+        # item, not one per file (~90 us each, measured; %TEMP% is 100k).
+        root = os.path.abspath(item.path)
+        root_norm = os.path.normcase(root)
+        root_real = _resolved(root)
+
+        def _skip(path: str, is_dir: bool) -> bool:
+            resolved = None
+            if _inside_norm(os.path.normcase(path), root_norm):
+                resolved = root_real + path[len(root):]
+            return (_protected_entry(path, is_dir, resolved=resolved)
+                    or (bool(own_dirs) and any(_is_inside(path, d) for d in own_dirs))
+                    or (bool(exclusions) and is_excluded(path, exclusions)))
+        return _skip
 
     def _do_delete(service=None):
         report, refused, per_item = DeleteReport(), [], []
@@ -2162,7 +2190,7 @@ def delete_items_report(items: List[ScanItem],
                 continue
             one = delete_path(item.path, item.is_dir, keep_root=item.keep_root,
                               keep_newer_than_s=item.keep_newer_than_hours * 3600,
-                              cancelled=cancelled, skip=_skip)
+                              cancelled=cancelled, skip=_skip_for(item))
             per_item.append((item.path, one))
             report.merge(one)
         from modules.cleanup import cleanup_history
@@ -2361,7 +2389,7 @@ def _collect_virtual_disks(min_age_days: int = 0):
                     continue
                 path = os.path.join(directory, name)
                 try:
-                    size = os.path.getsize(path)
+                    size = on_disk_size_of(path)   # a sparse WSL/VM disk frees what it allocates
                 except OSError:
                     logger.debug("Could not size %s", path, exc_info=True)
                     continue

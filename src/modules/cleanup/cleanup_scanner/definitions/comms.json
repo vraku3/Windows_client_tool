@@ -14,14 +14,14 @@
     },
     {
       "id": "zoom_cache",
-      "label": "Zoom video meeting recordings temp files and cache",
+      "label": "Zoom named cache and logs",
       "paths": [
         "%LOCALAPPDATA%\\Zoom\\cache",
         "%LOCALAPPDATA%\\Zoom\\thumbnail",
         "%LOCALAPPDATA%\\Zoom\\logs"
       ],
       "safety": "safe",
-      "description": "Zoom video meeting recordings temp files and cache."
+      "description": "Zoom named cache and logs."
     },
     {
       "id": "slack_cache",
@@ -36,24 +36,24 @@
     },
     {
       "id": "telegram_cache",
-      "label": "Telegram cache, video stamps, and session data (keeps messages/contacts)",
+      "label": "Telegram named cache and emoji folders",
       "paths": [
         "%APPDATA%\\Telegram Desktop\\cache",
         "%APPDATA%\\Telegram Desktop\\emoji",
         "%LOCALAPPDATA%\\Telegram Desktop\\cache"
       ],
       "safety": "safe",
-      "description": "Telegram cache, video stamps, and session data (keeps messages/contacts)."
+      "description": "Telegram named cache and emoji folders."
     },
     {
       "id": "signal_cache",
-      "label": "Signal cache, attachment temp, and sticker downloads",
+      "label": "Signal rebuildable browser caches",
       "paths": [
         "%APPDATA%\\Signal\\Cache",
         "%APPDATA%\\Signal\\Logs"
       ],
       "safety": "safe",
-      "description": "Signal cache, attachment temp, and sticker downloads."
+      "description": "Signal rebuildable browser caches."
     },
     {
       "id": "whatsapp_cache",
@@ -66,12 +66,12 @@
     },
     {
       "id": "skype_cache",
-      "label": "Skype cache, shared files temp, and media cache",
+      "label": "Skype named cache and logs",
       "paths": [
         "%APPDATA%\\Skype\\Caches"
       ],
       "safety": "safe",
-      "description": "Skype cache, shared files temp, and media cache."
+      "description": "Skype named cache and logs."
     },
     {
       "id": "viber_cache",
@@ -101,11 +101,11 @@
       "paths": [
         "%APPDATA%\\Slack\\Cache",
         "%APPDATA%\\Slack\\Code Cache",
-        "%APPDATA%\\Slack\\GPUCache",
-        "%APPDATA%\\Slack\\blob_storage"
+        "%APPDATA%\\Slack\\GPUCache"
       ],
-      "safety": "safe",
-      "description": "Slack full cache: cache, code cache, GPU cache, blob storage — NOT Local Storage/IndexedDB/databases."
+      "safety": "caution",
+      "description": "Slack full cache: cache, code cache, GPU cache, blob storage — NOT Local Storage/IndexedDB/databases.",
+      "disabled_reason": "duplicate of slack_cache"
     },
     {
       "id": "discord_full_cache",
@@ -113,11 +113,11 @@
       "paths": [
         "%APPDATA%\\discord\\Cache",
         "%APPDATA%\\discord\\Code Cache",
-        "%APPDATA%\\discord\\GPUCache",
-        "%APPDATA%\\discord\\blob_storage"
+        "%APPDATA%\\discord\\GPUCache"
       ],
-      "safety": "safe",
-      "description": "Discord full cache: video, voice, GPU cache — keeps login/servers."
+      "safety": "caution",
+      "description": "Discord full cache: video, voice, GPU cache — keeps login/servers.",
+      "disabled_reason": "duplicate of discord_cache"
     },
     {
       "id": "mumble_cache",
@@ -131,22 +131,22 @@
     },
     {
       "id": "teamspeak_cache",
-      "label": "TeamSpeak 3/5 cache, logs, and client query interface",
+      "label": "TeamSpeak client logs",
       "paths": [
         "%APPDATA%\\TS3Client\\logs",
         "%APPDATA%\\TeamSpeak\\logs"
       ],
       "safety": "safe",
-      "description": "TeamSpeak 3/5 cache, logs, and client query interface."
+      "description": "TeamSpeak client logs."
     },
     {
       "id": "rdp_cache",
-      "label": "Remote Desktop Protocol clipboard temp and redirected drive cache",
+      "label": "Remote Desktop bitmap cache",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\Terminal Server Client\\Cache"
       ],
       "safety": "safe",
-      "description": "Remote Desktop Protocol clipboard temp and redirected drive cache. NOT the Vault."
+      "description": "Remote Desktop bitmap cache."
     },
     {
       "id": "teamviewer_cache",
@@ -194,13 +194,13 @@
     },
     {
       "id": "discord_canary_cache",
-      "label": "Discord Canary / PTB beta cache and crash reports",
+      "label": "Discord Canary HTTP cache",
       "paths": [
         "%APPDATA%\\discordcanary\\Cache",
         "%APPDATA%\\discordptb\\Cache"
       ],
       "safety": "safe",
-      "description": "Discord Canary / PTB beta cache and crash reports."
+      "description": "Discord Canary HTTP cache."
     },
     {
       "id": "mattermost_cache",
@@ -300,24 +300,24 @@
     },
     {
       "id": "zoom_recordings_cache",
-      "label": "Zoom cloud recording staging and local recording temp",
+      "label": "Zoom diagnostic logs",
       "paths": [
         "%LOCALAPPDATA%\\Zoom\\logs"
       ],
       "safety": "safe",
-      "description": "Zoom cloud recording staging and local recording temp."
+      "description": "Zoom diagnostic logs.",
+      "disabled_reason": "duplicate of zoom_cache"
     },
     {
       "id": "microsoft_teams_full_cache",
       "label": "Microsoft Teams full cache: GPUCache, blob_storage, Cache — NOT databases/IndexedDB/Local Storage",
       "paths": [
         "%APPDATA%\\Microsoft\\Teams\\Cache",
-        "%APPDATA%\\Microsoft\\Teams\\blob_storage",
         "%APPDATA%\\Microsoft\\Teams\\GPUCache",
         "%LOCALAPPDATA%\\Microsoft\\Teams\\Cache"
       ],
       "safety": "safe",
-      "description": "Microsoft Teams full cache: GPUCache, blob_storage, Cache — NOT databases/IndexedDB/Local Storage."
+      "description": "Only the named rebuildable cache leaves; profile state and blob storage are preserved."
     },
     {
       "id": "ms_teams_npc_cache",

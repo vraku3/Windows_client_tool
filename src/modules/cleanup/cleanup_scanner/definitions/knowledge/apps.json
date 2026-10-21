@@ -1,0 +1,800 @@
+{
+  "7zip_cache": {
+    "what": "Not documented by the vendor. 7-Zip keeps its settings and history in the registry (HKCU\\Software\\7-Zip); an %APPDATA%\\7-Zip folder is not a standard 7-Zip cache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Whatever another tool or a portable setup put there (settings, language files) would be lost; no cache benefit.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Path is a whole app folder, not a cache. Label (history/extraction output) does not match 7-Zip's real behaviour; extraction temp goes to %TEMP%."
+  },
+  "acronis_cache": {
+    "what": "Not documented by the vendor for this exact path. Acronis True Image writes operation logs; this targets only a Logs subfolder of the user's Acronis data.",
+    "used_for": "Logs are read only when troubleshooting or by Acronis support. Deleting them does not affect backups; new logs are written on the next operation.",
+    "verdict": "caution",
+    "risk": "Lost diagnostics: you cannot show support what happened on a failed backup. Backup archives and catalogs are not in this folder.",
+    "before_cleaning": "Close Acronis and make sure no backup is running.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label says 'backup catalog' but the path is Logs only, which is the right, narrow choice. Acronis' main logs live under ProgramData, so this may find little."
+  },
+  "aida64_cache": {
+    "what": "Not documented by the vendor. AIDA64 normally keeps its settings and license next to its program files; %APPDATA%\\AIDA64 is not a documented cache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Possible loss of settings, sensor-panel layouts or saved reports.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "aomei_cache": {
+    "what": "Not documented by the vendor. A whole AOMEI data folder can hold backup task definitions and history that Backupper needs to find and restore its images.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Backup tasks and their history could disappear from the app, making scheduled backups stop or restores harder.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder holding backup task configuration; correctly disabled."
+  },
+  "auslogics_cache": {
+    "what": "Not documented by the vendor. Auslogics tools keep 'Rescue Center' backups (registry and file backups made before changes) under their data folder.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses the ability to undo changes Auslogics made to the registry or system.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Registry backups are undo data, not cache; correctly disabled."
+  },
+  "bandizip_cache": {
+    "what": "Not documented by the vendor. A whole Bandizip settings folder, not a known cache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses Bandizip settings and preferences.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "bitwarden_desktop_cache": {
+    "what": "The Chromium (Electron) HTTP cache of the Bitwarden desktop app. The encrypted vault itself is data.json in %APPDATA%\\Bitwarden, a sibling of this folder, and is not targeted.",
+    "used_for": "Speeds up loading the app's web resources. Rebuilt automatically the next time Bitwarden runs.",
+    "verdict": "safe",
+    "risk": "None known for the cache folder. Never widen the path to the parent folder: that holds data.json (offline vault, login state).",
+    "before_cleaning": "Close Bitwarden first.",
+    "regenerates": true,
+    "sources": [
+      "https://bitwarden.com/help/data-storage/"
+    ],
+    "catalog_concern": "Only 'cache' is targeted, good. The Microsoft Store build lives under Packages\\8bitSolutionsLLC.bitwardendesktop_*\\LocalCache\\Roaming\\Bitwarden and is not covered. Label mentions logs, which are not targeted."
+  },
+  "bleachbit_cache": {
+    "what": "BleachBit's own data folder: its settings file (bleachbit.ini) and downloaded/custom cleaner definitions (CleanerML).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses BleachBit settings, whitelists and custom cleaners.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "bluetooth_cache": {
+    "what": "Not documented by Microsoft. Bluetooth pairings are stored in the registry (BTHPORT\\Parameters\\Keys), and %LOCALAPPDATA%\\Microsoft\\Windows\\INF is not a documented Bluetooth location.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Unknown contents under a Windows folder; no documented cache benefit. Label suggests pairing records, which would mean re-pairing devices.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Paths and label are not backed by any Microsoft documentation; keep disabled."
+  },
+  "ccleaner_cache": {
+    "what": "CCleaner's own data/settings folder (settings, custom include/exclude rules), not a documented cache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses CCleaner settings and custom cleaning rules.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "clevo_ControlCenter_cache": {
+    "what": "Not documented by the vendor. A whole Clevo Control Center data folder, which may include fan profiles.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Possible loss of custom fan/power profiles.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "clipboard": {
+    "what": "Not documented by Microsoft. Temporary 'pending'/'inProgress' .tmp files in the Windows clipboard history folder, apparently left over from items being written to clipboard history.",
+    "used_for": "Windows creates such temporary files while saving clipboard history items. Leftovers are not used again.",
+    "verdict": "safe",
+    "risk": "A file matching the pattern could belong to an item being copied at that moment; that one clipboard item might not be saved to history.",
+    "before_cleaning": "Avoid cleaning while copying large items.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Narrow file patterns only (pending*.tmp, inProgress*.tmp), not the whole Clipboard folder (which holds pinned items). Good."
+  },
+  "complus_cache": {
+    "what": "%windir%\\Registration holds the COM+ catalog (R0000000000xx.clb files), the database of registered COM+ applications.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Deleting it corrupts COM+: Windows logs COM+ catalog errors, and services and installers that use COM+ can fail; repair needs a catalog restore or rebuild.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/archive/blogs/distributedservices/w2k8-com-catalog-backup-restore",
+      "https://itprotoday.com/it-infrastructure/jsi-tip-4748-how-do-i-recover-from-a-corrupted-com-catalog-"
+    ],
+    "catalog_concern": "Not a cache at all; a system database. Correctly disabled; it should arguably be on the deleter's refuse list."
+  },
+  "coretemp_logs": {
+    "what": "Not documented. The path (Realtech\\OpenHardwareMonitor) does not match Core Temp (by ALCPU) at all; it looks like a mistaken path.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Unknown contents; no documented cache.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Label and path refer to different products."
+  },
+  "corsair_logs": {
+    "what": "Not documented by the vendor in detail. Log files written by Corsair iCUE.",
+    "used_for": "Used for troubleshooting and by Corsair support. iCUE writes new logs as it runs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics if you need to report an iCUE problem.",
+    "before_cleaning": "Close iCUE first; files in use will be skipped.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "crystaldiskinfo_cache": {
+    "what": "Not documented by the vendor. CrystalDiskInfo normally stores settings and its S.M.A.R.T. history next to its program; an %APPDATA% folder is not documented.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "If present, loses drive health history graphs and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder; health history is user data."
+  },
+  "defraggler_logs": {
+    "what": "Not documented by the vendor. A whole Defraggler settings folder (exclusions, schedules).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses Defraggler settings and exclude lists.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "disk_nuker_cache": {
+    "what": "Not documented by the vendor. A whole Disk Pulse data folder (monitoring configuration and history).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses monitoring setup and change history.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder; label names a different product (Disk Ninja)."
+  },
+  "duplicate_cleaner_cache": {
+    "what": "Not documented by the vendor. A whole Duplicate Cleaner data folder (settings, saved scans).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses settings and saved scan results.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder, not a cache."
+  },
+  "easeus_cache": {
+    "what": "Not documented by the vendor. A whole EaseUS data folder, which can include backup plan definitions and history.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Backup plans and history could disappear from the app.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Backup configuration, not cache; correctly disabled."
+  },
+  "electron_updater_leftovers": {
+    "what": "Update installers downloaded by electron-updater (used by many Electron apps) into %LOCALAPPDATA%\\<app>-updater\\pending, plus a copied installer.exe.",
+    "used_for": "electron-updater installs a downloaded update when the app quits (autoInstallOnAppQuit). After deletion the app simply downloads the update again.",
+    "verdict": "caution",
+    "risk": "An update that is downloaded and waiting to install on quit is lost and re-downloaded; deleting during installation could interrupt it.",
+    "before_cleaning": "Close the app; do not clean while it is updating.",
+    "regenerates": true,
+    "sources": [
+      "https://juejin.cn/post/7054811432714108936",
+      "https://www.electron.build/electron-updater.class.appupdater"
+    ],
+    "catalog_concern": "Listed safe; caution for the pending-install case. Folder is a real download cache, so re-download is the only cost."
+  },
+  "em_client_cache": {
+    "what": "Not documented by the vendor for these subfolders. eM Client's log files and a temp folder inside its data folder (%APPDATA%\\eM Client), which otherwise holds the mail database.",
+    "used_for": "Logs are for troubleshooting; temp holds files staged while opening or sending attachments. Both are recreated as needed.",
+    "verdict": "caution",
+    "risk": "An attachment you opened and edited from eM Client may live in temp until saved; deleting it loses those edits. Lost diagnostics.",
+    "before_cleaning": "Close eM Client first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Listed 'safe'; caution is better because temp can hold attachments being edited. Never widen the path: the parent folder is the mail database."
+  },
+  "evernote_cache": {
+    "what": "Evernote's activity logs (%APPDATA%\\Evernote\\logs) and its Chromium/Electron HTTP cache folder.",
+    "used_for": "Logs record sync operations and errors for support; the cache speeds loading. Both are recreated. Notes (and unsynced changes) are stored elsewhere in the Evernote folder and are not targeted.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics; logs can contain note titles, so deleting them is also a privacy plus. Never widen to %APPDATA%\\Evernote: Evernote says unsynced notes live there.",
+    "before_cleaning": "Close Evernote first.",
+    "regenerates": true,
+    "sources": [
+      "https://help.evernote.com/hc/en-us/articles/1500004231762-Remove-Evernote-data-from-your-Mac-or-Windows-device",
+      "https://kb.binalyze.com/air/features/acquisition/supported-evidence/windows-collections-detail/evernote-logs"
+    ],
+    "catalog_concern": "Store version (Packages\\Evernote.Evernote_*\\LocalCache\\Roaming\\Evernote) is not covered."
+  },
+  "evernote_full_cache": {
+    "what": "Same logs and cache as evernote_cache, plus a Thumbnails folder of note preview images.",
+    "used_for": "Thumbnails are regenerated from the notes. Note databases are NOT targeted, despite the label.",
+    "verdict": "safe",
+    "risk": "Same as evernote_cache; thumbnails redraw slowly at first.",
+    "before_cleaning": "Close Evernote first.",
+    "regenerates": true,
+    "sources": [
+      "https://help.evernote.com/hc/en-us/articles/1500004231762-Remove-Evernote-data-from-your-Mac-or-Windows-device"
+    ],
+    "catalog_concern": "Duplicates evernote_cache (same two paths). Label claims 'databases' but none are targeted, which is correct; fix the label so nobody adds them."
+  },
+  "fax_account_cache": {
+    "what": "Not documented by Microsoft. Windows Fax and Scan keeps faxes and cover pages under ProgramData\\Microsoft\\Windows NT\\MSFax and Documents\\Fax; this path is not a documented cache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Could hold received faxes or personal cover pages.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Label says 'received fax staging' = user data."
+  },
+  "filezilla_cache": {
+    "what": "FileZilla's settings folder: sitemanager.xml (saved servers, often with stored passwords), recentservers.xml, filezilla.xml and the transfer queue.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Deletes all saved FTP/SFTP sites and their credentials and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://www.mysysadmintips.com/filezilla-ftp-client-stores-passwords-in-plain-text/"
+    ],
+    "catalog_concern": "The label itself names sitemanager.xml; this is a credential store. Correctly disabled."
+  },
+  "glary_utilities_cache": {
+    "what": "Not documented by the vendor. Glary Utilities keeps undo backups (registry backups made before repairs) in its data folder.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses the ability to undo registry repairs Glary made.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Undo data, not cache."
+  },
+  "hdtune_logs": {
+    "what": "Not documented by the vendor. A whole HD Tune data folder (settings, saved results).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses settings and saved benchmark/health results.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "hwinfo64_cache": {
+    "what": "Not documented by the vendor. HWiNFO keeps settings in HWiNFO64.INI next to its program; an %APPDATA% folder is not documented.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "If present, loses sensor layouts and logging settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "logseq_cache": {
+    "what": "Not documented by the vendor. The Electron HTTP cache and log files of the Logseq desktop app (%APPDATA%\\Logseq).",
+    "used_for": "Cache speeds loading; logs are for troubleshooting. Recreated automatically. Your graph (the markdown files and ~/.logseq) is elsewhere and not touched.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics only.",
+    "before_cleaning": "Close Logseq first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label says 'graph database' but no graph data is targeted (good); fix the label."
+  },
+  "m365_app_webview_cache": {
+    "what": "The Chromium Cache and Code Cache of the WebView2 browser inside the Microsoft 365 (Office) app package.",
+    "used_for": "Speeds loading of the app's web pages; rebuilt automatically.",
+    "verdict": "safe",
+    "risk": "None known; Local Storage/IndexedDB/cookies in the same EBWebView folder are not targeted.",
+    "before_cleaning": "Close the Microsoft 365 app first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-nz/Microsoft-edge/webview2/concepts/user-data-folder",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": ""
+  },
+  "macrium_cache": {
+    "what": "Not documented by the vendor for this path. Log files of Macrium Reflect in the user's profile.",
+    "used_for": "Logs describe past backup/restore runs. Deleting them does not affect image files or backup definitions.",
+    "verdict": "caution",
+    "risk": "Lost history of past backup jobs (what ran, what failed). Differential-chain metadata is in the image files, not here.",
+    "before_cleaning": "Close Macrium Reflect; no backup running.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label says 'differential chain metadata' but only Logs is targeted; Macrium's main logs are under ProgramData, so this may find little."
+  },
+  "macrium_reflect_logs": {
+    "what": "Not documented by the vendor. The whole %APPDATA%\\Macrium folder (settings, backup definitions/XML, logs).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Could remove saved backup definitions and schedules.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder; macrium_cache already covers the Logs subfolder safely."
+  },
+  "mendeley_cache": {
+    "what": "Mendeley Desktop's data folder: its local library database (references, annotations, highlights).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses unsynced references and PDF annotations; forces a full re-sync.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "User library, not cache."
+  },
+  "minitool_cache": {
+    "what": "Not documented by the vendor. A whole MiniTool data folder (settings, saved recovery scan results).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Could lose a saved data-recovery scan you still need.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "msi_afterburner_cache": {
+    "what": "Not documented by the vendor. Afterburner keeps profiles in its program folder; this %APPDATA% folder is not a documented cache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "If present, could hold overclock/fan profiles or monitoring logs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "notezilla_cache": {
+    "what": "Not documented by the vendor. A cache and a logs subfolder inside Notezilla's data folder.",
+    "used_for": "Presumably rebuilt by the app; logs are for troubleshooting.",
+    "verdict": "caution",
+    "risk": "Unverified: if Notezilla keeps anything other than cache in 'cache', notes could be affected. Notes themselves are in its database files elsewhere.",
+    "before_cleaning": "Close Notezilla first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Listed safe with no vendor documentation for what 'cache' holds in a notes app; caution until verified on a real install."
+  },
+  "notion_cache": {
+    "what": "Notion desktop is Electron: %APPDATA%\\Notion holds Local Storage, IndexedDB, cookies (sign-in) and an offline copy of pages; %LOCALAPPDATA%\\Notion holds app/updater files.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Signs you out and drops offline pages and unsynced edits.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Label itself names IndexedDB; correctly disabled. A narrower entry could target %APPDATA%\\Notion\\Cache, Code Cache and GPUCache only."
+  },
+  "nzxt_cam_cache": {
+    "what": "Not documented by the vendor. Whole NZXT CAM data folder (profiles, settings, possibly sign-in).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses RGB/fan profiles and may sign you out of CAM.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "obsidian_cache": {
+    "what": "The Chromium HTTP cache ('Cache') and logs of the Obsidian desktop app in %APPDATA%\\obsidian. The same folder also holds obsidian.json (your vault list), IndexedDB and Local Storage, which are not targeted.",
+    "used_for": "Cache speeds loading of the app's resources and is rebuilt. Vault notes and plugins live inside each vault, not here.",
+    "verdict": "safe",
+    "risk": "None known for Cache/logs. Never widen to the parent: deleting obsidian.json makes Obsidian forget your vaults; IndexedDB holds the metadata cache and sync state.",
+    "before_cleaning": "Close Obsidian first.",
+    "regenerates": true,
+    "sources": [
+      "https://forum.obsidian.md/t/stuck-on-loading-cache/42253?page=2"
+    ],
+    "catalog_concern": "Label mentions 'plugins' and 'vault cache' but neither is targeted (good); fix the label."
+  },
+  "office_cache_extended": {
+    "what": "Cache, blob_storage and GPUCache of classic Microsoft Teams (%APPDATA%\\Microsoft\\Teams), an Electron app.",
+    "used_for": "Microsoft's own fix for Teams problems is to delete everything in this folder; Teams rebuilds it, and the next start is slower. Classic Teams is retired; new Teams uses Packages\\MSTeams_8wekyb3d8bbwe.",
+    "verdict": "safe",
+    "risk": "None known for these three subfolders; first start is slower.",
+    "before_cleaning": "Quit Teams (including the tray icon) first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-administration/clear-teams-cache"
+    ],
+    "catalog_concern": "Label promises OneNote, Publisher and Visio caches but only classic Teams paths are listed. New Teams is not covered."
+  },
+  "office_clicktorun_cache": {
+    "what": "Not documented by Microsoft as a user-cleanable cache. Click-to-Run folders hold Office's update and setup pipeline state.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Can break or stall Office updates and repairs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Servicing state for Office; correctly disabled."
+  },
+  "office_temp": {
+    "what": "Not documented by Microsoft. Matches Excel*.tmp and Word*.tmp files in %TEMP% left behind by Office.",
+    "used_for": "Office creates temporary files while editing and saving; leftovers after a crash are not reused. AutoRecover files live elsewhere (%APPDATA%\\Microsoft\\Word/Excel) and are not targeted.",
+    "verdict": "safe",
+    "risk": "A matching file could belong to a document open right now; locked files are skipped by the deleter.",
+    "before_cleaning": "Close Word and Excel first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label promises 'unsaved files and OfficeFileCache' but neither is targeted; good, those are user data and Office's upload cache. Fix the label."
+  },
+  "outlook_new_webview_cache": {
+    "what": "The Chromium Cache, Code Cache and GPUCache of the WebView2 browser that new Outlook (olk.exe) uses to show its interface.",
+    "used_for": "Speeds loading of Outlook's web interface; rebuilt on the next start. Mail is in Exchange/Outlook.com, not here.",
+    "verdict": "safe",
+    "risk": "None known for these three folders. Deleting the whole EBWebView folder (not done here) would also clear add-in data and sign-ins.",
+    "before_cleaning": "Close new Outlook first.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.inloox.com/outlook/troubleshooting/clear-cache-new-outlook/",
+      "https://learn.microsoft.com/en-nz/Microsoft-edge/webview2/concepts/user-data-folder",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": "Correctly scoped to Cache/Code Cache/GPUCache, not EBWebView as a whole."
+  },
+  "outlook_temp_cache": {
+    "what": "Classic Outlook's data folders: %LOCALAPPDATA%\\Microsoft\\Outlook holds .ost/.pst mail files; %APPDATA%\\Microsoft\\Outlook holds signatures-related settings, nicknames and rules exports.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Deletes mail stores (.pst = possibly the only copy of mail) and offline caches; Outlook must re-download everything or mail is lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Consistent with the CLAUDE.md rule: .pst/.ost and Outlook data folders are always refused."
+  },
+  "papers_cache": {
+    "what": "Not documented by the vendor. The Papers (ReadCube) library folder: PDF library index, annotations, sync state.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses unsynced papers and annotations.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "User library, not cache."
+  },
+  "paragon_cache": {
+    "what": "Not documented by the vendor. Whole Paragon data folder: backup catalog and job settings.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Backup jobs/catalog could be lost, making restores harder.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Backup configuration, not cache."
+  },
+  "peazip_cache": {
+    "what": "Not documented by the vendor. PeaZip's settings folder (configuration, bookmarks); extraction temp normally goes to %TEMP%.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses PeaZip settings and bookmarks.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "privacy_guardian_cache": {
+    "what": "Not documented by the vendor. Whole data folder of a 'Privacy Guardian' app.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses that app's settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "putty_cache": {
+    "what": "PuTTY stores sessions and SSH host keys in the registry (HKCU\\Software\\SimonTatham\\PuTTY), not in this folder; its random seed file PUTTY.RND lives in Application Data.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Nothing cache-like to gain; the label's 'host keys and sessions' would be configuration if they were here.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://wa2l-wintools.sourceforge.net/chm/PuTTY/html/faq-settings.html"
+    ],
+    "catalog_concern": "Label is wrong about where PuTTY keeps sessions; keep disabled."
+  },
+  "quickbooks_cache": {
+    "what": "Not documented by Intuit as a cache. %APPDATA%\\Intuit holds QuickBooks and other Intuit app data (license/entitlement and settings).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Can break QuickBooks licensing/registration and settings; label even names the audit trail.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole vendor folder."
+  },
+  "readcube_cache": {
+    "what": "Not documented by the vendor. ReadCube data folder with library cache and annotations.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses unsynced annotations.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Label itself says 'annotation data'."
+  },
+  "rufus_logs": {
+    "what": "Since Rufus 3.15, %LOCALAPPDATA%\\Rufus holds the files Rufus downloads on demand (extra GRUB/Syslinux versions) and a log saved on exit.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. It could be re-enabled with a narrower path.",
+    "verdict": "safe",
+    "risk": "Rufus re-downloads those files when needed and falls back to its built-in copies offline. Settings are not stored here by default.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://github.com/pbatard/rufus/wiki/Usage-Notes",
+      "https://newreleases.io/project/github/pbatard/rufus/release/v3.15"
+    ],
+    "catalog_concern": "Disabling was over-cautious: per Rufus's own notes this folder is downloads + log. Could be re-enabled as safe."
+  },
+  "simplenote_cache": {
+    "what": "Simplenote desktop (Electron) data folder: local notes database and sign-in state.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Signs you out and loses unsynced notes.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Label itself says 'local database'."
+  },
+  "sparkle_logs": {
+    "what": "Not documented by any vendor. Sparkle is a macOS update framework; a %APPDATA%\\sparkle\\logs folder is not a known Windows location.",
+    "used_for": "If it exists, presumably update-check logs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics only.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Likely matches nothing on Windows; harmless but dead."
+  },
+  "ssh_keys_cache": {
+    "what": "known_hosts.old is the single backup copy OpenSSH's ssh-keygen writes when it edits known_hosts (ssh-keygen -R or -H).",
+    "used_for": "Only useful to undo the last ssh-keygen edit. Nothing reads it automatically.",
+    "verdict": "safe",
+    "risk": "You lose the ability to restore a host entry you just removed. It may contain unhashed host names, so deleting it is a privacy plus.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://lists.mindrot.org/pipermail/openssh-unix-dev/2024-February/041178.html",
+      "https://www.oreilly.com/library/view/ssh-the-secure/0596008953/apas03.html"
+    ],
+    "catalog_concern": "Path is exactly the .old file; private keys, known_hosts and authorized_keys are not touched. Good."
+  },
+  "sticky_notes": {
+    "what": "%APPDATA%\\Microsoft\\Sticky Notes is the LEGACY Sticky Notes folder; it holds StickyNotes.snt, the notes file of Windows 7/8 and early Windows 10. The entry targets only StickyNotes.sqm (usage data).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "The .sqm file itself is harmless; but the folder's .snt file may be the only copy of old notes not yet migrated to the new app.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://answers.microsoft.com/en-us/windows/forum/windows_10-files/sticky-note-location/4da6257a-cd82-4644-81a3-703442a3a797",
+      "https://helpdesk.woodward.edu/support/solutions/articles/6000015726-sticky-notes-from-windows-7-to-windows-10"
+    ],
+    "catalog_concern": "The narrow .sqm pattern would be safe, but keeping the whole entry off avoids any risk to StickyNotes.snt."
+  },
+  "stremio_webview_cache": {
+    "what": "The Chromium Cache and Code Cache of Stremio's WebView2 user data folder.",
+    "used_for": "Speeds loading of Stremio's interface; rebuilt automatically. Sign-in lives in Local Storage/cookies, which are not targeted.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close Stremio first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-nz/Microsoft-edge/webview2/concepts/user-data-folder",
+      "https://github.com/MicrosoftEdge/WebView2Feedback/issues/2023"
+    ],
+    "catalog_concern": ""
+  },
+  "thrustmaster_cache": {
+    "what": "Not documented by the vendor. Thrustmaster T.A.R.G.E.T data folder: user scripts and controller profiles.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses custom joystick/HOTAS profiles and scripts.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "User data."
+  },
+  "thunderbird_cache": {
+    "what": "Thunderbird's network cache (cache2) and startup cache in each profile. The mail, address books and settings are elsewhere in the profile and are not targeted.",
+    "used_for": "cache2 holds downloaded remote content (images in messages, web pages); startupCache speeds start-up. Thunderbird recreates both.",
+    "verdict": "safe",
+    "risk": "None known; remote images re-download.",
+    "before_cleaning": "Close Thunderbird first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.mozilla.org/questions/1242460",
+      "https://support.mozilla.org/ar/questions/1490363"
+    ],
+    "catalog_concern": "Thunderbird's cache normally lives in %LOCALAPPDATA%\\Thunderbird\\Profiles\\*, which is not listed, so this finds little. Label mentions panacea.db/global inbox, which are NOT targeted (good; panacea.db holds folder data)."
+  },
+  "veeam_cache": {
+    "what": "Not documented by the vendor for this path. Log files of a Veeam product in the user profile; Veeam Agent's main logs are under ProgramData.",
+    "used_for": "Logs are used for troubleshooting and by Veeam support; backups and catalogs are not here.",
+    "verdict": "caution",
+    "risk": "Lost diagnostics for failed backup jobs.",
+    "before_cleaning": "No backup running.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label says 'metadata cache and catalog' but only Logs is targeted; fine, and probably finds little."
+  },
+  "ventoy_cache": {
+    "what": "Not documented by the vendor. Ventoy is mostly portable and keeps its plugin config (ventoy.json) on the USB drive; this local folder's purpose is undocumented.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Unknown; possibly Ventoy settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Undocumented whole app folder."
+  },
+  "voice_recorder_cache": {
+    "what": "LocalState of the Windows Voice Recorder / Sound Recorder app: app settings and state, possibly recordings depending on version.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Could delete recordings and app settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Label itself says 'recordings'."
+  },
+  "vscode_crashpad": {
+    "what": "Crash reports (minidumps) collected by Crashpad, the crash reporter built into VS Code (Electron).",
+    "used_for": "Pending reports wait to be uploaded or are kept for local analysis; nothing else needs them. New ones appear only after a crash.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics: you cannot attach a recent crash dump to a VS Code bug report.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://crashpad.chromium.org/doxygen/classcrashpad_1_1CrashReportUploadThread.html"
+    ],
+    "catalog_concern": ""
+  },
+  "wifi_profiles_cache": {
+    "what": "Saved Wi-Fi profiles are kept by Windows in C:\\ProgramData\\Microsoft\\Wlansvc\\Profiles\\Interfaces (XML per network). %APPDATA%\\Microsoft\\Windows\\WLAN is not that location.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "If it did target the real profiles, every saved Wi-Fi network and password would be forgotten.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://docs.specterops.io/ghostpack-docs/Seatbelt-mdx/commands/wifiprofile"
+    ],
+    "catalog_concern": "Path is wrong and the intent (deleting saved Wi-Fi) is never a cleanup; keep disabled. Use 'netsh wlan delete profile' for that."
+  },
+  "windows_camera_cache": {
+    "what": "LocalState of the Windows Camera app: settings and app state. Photos and videos are saved to Pictures\\Camera Roll, not here.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Resets camera app settings; little space to gain.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app LocalState."
+  },
+  "windows_photo_viewer_cache": {
+    "what": "Not documented by Microsoft. Classic Windows Photo Viewer has no documented cache folder here; thumbnails are in Explorer's thumbcache.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Unknown contents.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Undocumented path."
+  },
+  "windows_photos_cache": {
+    "what": "LocalCache of the Microsoft Photos app package. Not documented in detail by Microsoft; packaged apps may keep WebView2 or sign-in data here (WhatsApp keeps its login under LocalCache).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Possible sign-out of OneDrive/Microsoft account in Photos, or loss of its index; would rebuild slowly.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Consistent with the 2026-10-11 WhatsApp incident: a whole LocalCache is not proof of a cache. Only specific cache subfolders should be offered."
+  },
+  "winrar_cache": {
+    "what": "%APPDATA%\\WinRAR is one of the two places WinRAR reads its license file rarreg.key from; it can also hold settings/themes.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Deleting it can un-register a paid WinRAR licence.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://sources.debian.org/src/rar/2%3A7.20-1/order.htm"
+    ],
+    "catalog_concern": "License store, not cache."
+  },
+  "winscp_cache": {
+    "what": "A temp and a Logs folder under %APPDATA%\\WinSCP. By default WinSCP puts temporary copies of remote files in the system %TEMP%, so these exist only if configured.",
+    "used_for": "Temp holds local copies of remote files opened for editing; WinSCP uploads changes from there. Logs are session logs.",
+    "verdict": "caution",
+    "risk": "A remote file open in an editor whose changes have not been uploaded yet would be lost. Lost session logs.",
+    "before_cleaning": "Close WinSCP and any files opened from it.",
+    "regenerates": true,
+    "sources": [
+      "https://winscp.net/eng/docs/temp_folders"
+    ],
+    "catalog_concern": "Listed safe; temp can hold edits not yet uploaded, so caution."
+  },
+  "winzip_cache": {
+    "what": "Not documented by the vendor. WinZip's data folder (settings, history and possibly licence/registration data).",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Loses settings; may affect registration.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder."
+  },
+  "wise_cache360_cache": {
+    "what": "The path is Wise Folder Hider's data folder, not Wise Care 365's. Wise Folder Hider hides and encrypts files and folders.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Users report hidden data can become inaccessible if the program's state is lost; deleting its data could cut you off from hidden files.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://malwaretips.com/threads/wise-folder-hider-pro.65295"
+    ],
+    "catalog_concern": "Label names a different product; the folder belongs to a file-hiding tool. Keep disabled."
+  },
+  "zotero_cache": {
+    "what": "%APPDATA%\\Zotero is Zotero's profile folder (settings, and on old versions the library itself); the library (zotero.sqlite + storage\\ PDFs) is normally in C:\\Users\\<you>\\Zotero.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "danger",
+    "risk": "Loses Zotero settings and, on older installs, the entire library and attachments.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://www.zotero.org/support/zotero_data"
+    ],
+    "catalog_concern": "Whole profile folder; old installs keep zotero.sqlite inside it."
+  },
+  "squirrel_installer_temp": {
+    "what": "%LOCALAPPDATA%\\SquirrelTemp: the working folder of Squirrel.Windows Setup.exe installers (used by many Electron apps). Vendors such as UiPath document SquirrelSetup.log there as the setup log.",
+    "used_for": "Installing or updating apps such as Discord or Slack. Nothing reads it after the install has finished.",
+    "verdict": "safe",
+    "risk": "SquirrelSetup.log, which explains a failed install, is lost. Installed apps are under their own folders and are not touched.",
+    "before_cleaning": "Do not clean while an app installer is running; files younger than a day are kept for that reason.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.uipath.com/studio/standalone/2023.10/user-guide/setup-logs",
+      "https://github.com/Squirrel/Squirrel.Windows/blob/develop/src/Squirrel/Utility.cs"
+    ],
+    "catalog_concern": ""
+  }
+}

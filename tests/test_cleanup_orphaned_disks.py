@@ -27,8 +27,14 @@ import os
 
 import pytest
 
-from _sparse import make_sparse
+from _sparse import count_logical, make_sparse
 from modules.cleanup.cleanup_scanner import virtual_disks
+
+
+@pytest.fixture(autouse=True)
+def _sparse_disks_count_full(monkeypatch):
+    """The fixtures are sparse stand-ins for real multi-GB images."""
+    count_logical(monkeypatch)
 
 
 def _make_disk(directory, name, gigabytes=2):

@@ -1,0 +1,534 @@
+{
+  "ableton_cache": {
+    "what": "%APPDATA%\\Ableton: Live's Preferences, database, crash reports and unlock data.",
+    "used_for": "Live reads preferences and authorization from here.",
+    "verdict": "danger",
+    "risk": "Lost preferences and possibly re-authorization.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folder."
+  },
+  "aftereffects_cache": {
+    "what": "Adobe's shared Media Cache Files (conformed audio, indexes) used by After Effects, Premiere Pro and Media Encoder.",
+    "used_for": "Adobe apps rebuild these when the footage is next opened; Adobe offers 'Clean Database & Cache' for the same files.",
+    "verdict": "safe",
+    "risk": "Projects open slower while media is re-conformed and re-indexed. Footage and projects are not here.",
+    "before_cleaning": "Close After Effects, Premiere Pro and Media Encoder first.",
+    "regenerates": true,
+    "sources": [
+      "https://helpx.adobe.com/au/premiere/desktop/troubleshooting/media-issues/automatically-manage-your-media-cache-files.html",
+      "https://community.adobe.com/t5/after-effects-discussions/faq-how-to-clear-delete-or-trash-media-cache-files-in-after-effects/m-p/10634312",
+      "https://helpx.adobe.com/vn_vi/after-effects/desktop/troubleshooting/fixed-and-known-issues/allocate-memory-error.html"
+    ],
+    "catalog_concern": "Same paths as premiere_cache (duplicate). After Effects' Disk Cache is separate and not listed."
+  },
+  "amd_dvr_cache": {
+    "what": "AMD ReLive instant-replay buffer folders.",
+    "used_for": "Temporary recording buffer; can hold a just-saved clip.",
+    "verdict": "caution",
+    "risk": "A clip not yet moved could be lost.",
+    "before_cleaning": "Turn off Instant Replay first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling is reasonable."
+  },
+  "amd_radeon_cache": {
+    "what": "Not documented by the vendor. AMD log folders; one path has a stray space ('AMD\\ Radeon') and the AGESA path is not a known AMD location.",
+    "used_for": "Diagnostics.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Likely matches nothing. Correctly avoids %LOCALAPPDATA%\\AMD\\DxCache/DxcCache/VkCache (game shader caches -- deleting them causes stutter)."
+  },
+  "audacity_cache": {
+    "what": "Audacity's temporary folder. In Audacity 3 the temporary/unsaved project data (SessionData) is where crash recovery finds unsaved work.",
+    "used_for": "Audacity deletes its temp project files itself on a normal close; after a crash they are what 'Recover Selected' restores.",
+    "verdict": "caution",
+    "risk": "Deleting after a crash, or while Audacity runs, destroys recoverable unsaved recordings.",
+    "before_cleaning": "Close Audacity normally first, and recover any crashed project before cleaning.",
+    "regenerates": false,
+    "sources": [
+      "https://manual.audacityteam.org/man/error_disk_full_or_not_writable.html",
+      "https://forum.audacityteam.org/t/audacity-behavior-regarding-c-users-mywindowsuserid-appdata-local-audacity-sessiondata/65954"
+    ],
+    "catalog_concern": "Should be 'caution': this temp folder can hold the only copy of an unsaved or crashed recording."
+  },
+  "blender_cache": {
+    "what": "Not documented by the vendor. Per-version 'cache' folders under %LOCALAPPDATA%\\Blender Foundation\\Blender.",
+    "used_for": "Rebuildable caches for that Blender version.",
+    "verdict": "safe",
+    "risk": "Slower first use of the cached feature.",
+    "before_cleaning": "Close Blender first.",
+    "regenerates": true,
+    "sources": [
+      "https://projects.blender.org/archive/blender-archive/commit/414c70435dcd52eb67df59f56132837de0a63b64"
+    ],
+    "catalog_concern": "Label says 'render output temp and autosave' -- Blender's autosaves and quit.blend go to the temp directory, not here. Never target %APPDATA%\\Blender Foundation (config, scripts, add-ons)."
+  },
+  "blender_full_cache": {
+    "what": "Not documented by the vendor. Blender per-version cache and tmp folders.",
+    "used_for": "tmp can be configured as Blender's temp directory, where autosaves and quit.blend live.",
+    "verdict": "caution",
+    "risk": "If tmp is used as Blender's temp folder, the autosave/quit.blend recovery files are lost.",
+    "before_cleaning": "Close Blender; recover any autosave first.",
+    "regenerates": true,
+    "sources": [
+      "https://projects.blender.org/archive/blender-archive/commit/414c70435dcd52eb67df59f56132837de0a63b64"
+    ],
+    "catalog_concern": "The 'tmp' path may hold autosave recovery files; caution, not safe."
+  },
+  "camtasia_cache": {
+    "what": "TechSmith Camtasia's whole data folders (recordings in progress, preferences, library).",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Lost recordings/settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folders."
+  },
+  "capture_one_cache": {
+    "what": "Not documented by the vendor. Cache, logs and thumbnails folders under Capture One's app data. Capture One documents its real cache as living INSIDE each catalog or session.",
+    "used_for": "Capture One: deleting the Cache does not remove images or adjustments; thumbnails and previews are rebuilt.",
+    "verdict": "safe",
+    "risk": "Slow browsing while previews regenerate; lost logs.",
+    "before_cleaning": "Close Capture One first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.captureone.com/hc/en-us/articles/30111725200413-The-Cache-folder-in-Capture-One"
+    ],
+    "catalog_concern": "These %APPDATA% paths may not be where the cache is. Never target a catalog's .cocatalogdb or a session's Settings folders."
+  },
+  "cubase_cache": {
+    "what": "Steinberg's whole data folders (Cubase preferences, key commands, templates).",
+    "used_for": "User settings.",
+    "verdict": "danger",
+    "risk": "Lost preferences and templates.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folders."
+  },
+  "davinci_cache": {
+    "what": "DaVinci Resolve logs, CacheClip (render cache), OptimizedMedia and Render Cache folders.",
+    "used_for": "Render cache and optimized media are regenerable from source footage; Resolve has Playback > Delete Render Cache for the same purpose.",
+    "verdict": "caution",
+    "risk": "Playback is choppy until caches/optimized media are re-rendered (can take hours); support logs lost. Source media is unaffected.",
+    "before_cleaning": "Close Resolve first.",
+    "regenerates": true,
+    "sources": [
+      "https://forum.blackmagicdesign.com/viewtopic.php?p=749669"
+    ],
+    "catalog_concern": "Resolve's cache location is per project (Working Folders); these %LOCALAPPDATA% paths may not be the real one."
+  },
+  "deezer_cache": {
+    "what": "Deezer's whole data folder, including offline downloads and sign-in.",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Sign-out and lost offline music.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folder."
+  },
+  "emby_cache": {
+    "what": "Emby Server cache (image cache) and transcoding temp segments. On Windows Emby uses %APPDATA%\\Emby-Server\\programdata, so these paths may not exist.",
+    "used_for": "Transcoding segments are temporary and normally cleaned by Emby; cached images are re-generated.",
+    "verdict": "safe",
+    "risk": "An active stream breaks if its segments are deleted; images regenerate.",
+    "before_cleaning": "Stop playback or the Emby service first.",
+    "regenerates": true,
+    "sources": [
+      "https://emby.media/community/topic/92836-transcoding-temp-file/"
+    ],
+    "catalog_concern": "Never widen to programdata\\data or metadata (library database and artwork)."
+  },
+  "ffmpeg_cache": {
+    "what": "Not documented by the vendor. Folders named ffmpeg and MediaFire inside %TEMP%. FFmpeg itself has no standard temp folder.",
+    "used_for": "Leftover temporary files of whatever tool created them.",
+    "verdict": "safe",
+    "risk": "If a conversion is running, its output could be lost.",
+    "before_cleaning": "Make sure no conversion/download is running.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "The MediaFire folder is not FFmpeg-related; the label is misleading."
+  },
+  "filmora_cache": {
+    "what": "Wondershare Filmora's whole data folders.",
+    "used_for": "Projects, settings and caches mixed.",
+    "verdict": "danger",
+    "risk": "Lost settings or projects.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folders."
+  },
+  "flstudio_cache": {
+    "what": "FL Studio's FL64 folder and Image-Line app data (settings, autosaves, plugin database).",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Lost settings, plugin database, autosaves.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: user data."
+  },
+  "foobar_cache": {
+    "what": "Not documented by the vendor. A 'cache' folder in foobar2000's profile (foobar2000 v2 uses %APPDATA%\\foobar2000-v2).",
+    "used_for": "Probably rebuildable image/thumbnail cache.",
+    "verdict": "safe",
+    "risk": "Album art reloads.",
+    "before_cleaning": "Close foobar2000 first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Never widen to the profile root: it holds the configuration, library and playlists."
+  },
+  "greenshot_cache": {
+    "what": "Greenshot's settings folder (Greenshot.ini) and plugin data.",
+    "used_for": "Settings.",
+    "verdict": "caution",
+    "risk": "Lost settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: settings, not cache."
+  },
+  "handbrake_cache": {
+    "what": "HandBrake activity logs; 'cache' is not a documented HandBrake folder.",
+    "used_for": "Logs explain past encodes.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close HandBrake first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Same folder holds settings.json and presets.json -- never widen to the root."
+  },
+  "illustrator_cache": {
+    "what": "Not documented by the vendor. Cache/Temp under %APPDATA%\\Adobe\\Illustrator*. Illustrator's real folder is 'Adobe Illustrator NN Settings', so this pattern probably matches nothing.",
+    "used_for": "The label says it contains 'saved recovery data' -- Illustrator's DataRecovery folder is the only copy of unsaved work after a crash.",
+    "verdict": "caution",
+    "risk": "If it ever matches DataRecovery, unsaved artwork after a crash is lost.",
+    "before_cleaning": "Close Illustrator; recover documents after a crash first.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "A 'safe' entry described as holding recovery data contradicts itself. Keep DataRecovery out explicitly."
+  },
+  "infuse_cache": {
+    "what": "Infuse's whole data folder.",
+    "used_for": "Metadata and settings.",
+    "verdict": "caution",
+    "risk": "Lost settings/metadata.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folder."
+  },
+  "intel_graphics_cache": {
+    "what": "Intel graphics logs and a shader cache folder. Intel's driver shader cache is reported at %USERPROFILE%\\AppData\\LocalLow\\Intel\\ShaderCache.",
+    "used_for": "Compiled shaders are regenerated; expect a brief slowdown the next time games or apps load.",
+    "verdict": "caution",
+    "risk": "Stutter / slower loads in games until shaders recompile; lost logs.",
+    "before_cleaning": "Close games and graphics apps first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/a/7789987",
+      "https://community.intel.com/t5/Graphics/Wrong-cache-location/td-p/1563533"
+    ],
+    "catalog_concern": "Shader cache should be 'caution' (rebuild stutter); the LOCALAPPDATA path may not be the real one."
+  },
+  "jellyfin_cache": {
+    "what": "Jellyfin Server's cache folder (resized images, transcode temp, other temp data); on Windows its data lives under %LOCALAPPDATA%\\jellyfin.",
+    "used_for": "Transcode segments are temporary; image cache is regenerated.",
+    "verdict": "safe",
+    "risk": "An active stream breaks; images regenerate.",
+    "before_cleaning": "Stop playback or the Jellyfin server first.",
+    "regenerates": true,
+    "sources": [
+      "https://forum.jellyfin.org/t-transcode-data-and-cache"
+    ],
+    "catalog_concern": "Never widen to the data, metadata or config folders (library database, artwork, trickplay, users)."
+  },
+  "kodi_cache": {
+    "what": "Kodi's temp folder (%APPDATA%\\Kodi\\cache = special://temp) and a 'thumbnails' folder.",
+    "used_for": "Temp files are recreated. Kodi's real artwork cache is userdata\\Thumbnails, indexed by Textures13.db.",
+    "verdict": "safe",
+    "risk": "Temp: none known. Artwork cache: deleted without its database, Kodi shows missing artwork.",
+    "before_cleaning": "Close Kodi first.",
+    "regenerates": true,
+    "sources": [
+      "https://kodi.wiki/view/ThumbnailCache",
+      "https://kodi.wiki/view/Kodi_data_folder"
+    ],
+    "catalog_concern": "%APPDATA%\\Kodi\\thumbnails does not exist; if corrected to userdata\\Thumbnails it must be deleted together with Database\\Textures13.db."
+  },
+  "lightshot_cache": {
+    "what": "Lightshot's data folder (settings, history).",
+    "used_for": "User data.",
+    "verdict": "caution",
+    "risk": "Lost settings/history.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: user data."
+  },
+  "mpc_cache": {
+    "what": "MPC-HC/BE data folder (settings, shaders, history).",
+    "used_for": "Settings.",
+    "verdict": "caution",
+    "risk": "Lost settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: settings."
+  },
+  "mpv_cache": {
+    "what": "mpv's config folder (mpv.conf, input.conf, scripts, watch_later).",
+    "used_for": "User configuration and resume positions.",
+    "verdict": "danger",
+    "risk": "Lost configuration and scripts.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: user configuration."
+  },
+  "nvidia_display_cache": {
+    "what": "NVIDIA driver shader caches: DXCache (DirectX) and GLCache (OpenGL/Vulkan).",
+    "used_for": "Compiled game shaders; Epic's Fortnite guide clears DXCache only to fix shader stutter, warning the first match will stutter while shaders rebuild.",
+    "verdict": "caution",
+    "risk": "Stutter and longer loads in every game until shaders recompile. Nothing is lost permanently.",
+    "before_cleaning": "Close all games first; delete only when shader corruption is suspected.",
+    "regenerates": true,
+    "sources": [
+      "https://www.epicgames.com/help/c-202300000001636/c-202300000001719/fortnite-stutters-heavily-and-has-below-expected-performance-on-directx-12-a202300000018050?lang=en-US"
+    ],
+    "catalog_concern": "Should be 'caution' (rebuild stutter). The label's 'DRS database' (driver profiles, in ProgramData) is not here and must stay untouched."
+  },
+  "nvidia_experience_cache": {
+    "what": "GeForce Experience's whole data folder (CefCache plus settings).",
+    "used_for": "Mixed cache and settings.",
+    "verdict": "caution",
+    "risk": "Lost settings / sign-in.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole folder; only CefCache would be a cache."
+  },
+  "nvidia_geforce_cache": {
+    "what": "GeForce Experience logs and its update download staging (UpdateTemp).",
+    "used_for": "Logs are diagnostics; UpdateTemp is re-downloaded.",
+    "verdict": "safe",
+    "risk": "Lost logs; an update may download again.",
+    "before_cleaning": "No driver update installing.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label mentions a 'screenshot folder' -- captures are user data; none is listed."
+  },
+  "nvidia_shadowplay_cache": {
+    "what": "ShadowPlay capture folder.",
+    "used_for": "Recordings.",
+    "verdict": "danger",
+    "risk": "Lost recordings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: recordings."
+  },
+  "obs_cache": {
+    "what": "OBS Studio log files (%APPDATA%\\obs-studio\\logs). The OBS\\logs and OBS\\crashreports paths are not OBS's (crash reports are in obs-studio\\crashes).",
+    "used_for": "Logs are what the OBS forum asks for when troubleshooting; new ones are written each session.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close OBS first.",
+    "regenerates": true,
+    "sources": [
+      "https://obsproject.com/forum/threads/need-help-obs-is-crashing-on-startup-noob-here.59012/post-256901"
+    ],
+    "catalog_concern": "Label promises 'recording temp, replay buffer' -- recordings are user files and the replay buffer is in memory; not targeted. Never widen to obs-studio\\basic (scenes, profiles, stream keys)."
+  },
+  "peertube_cache": {
+    "what": "PeerTube's data folder.",
+    "used_for": "Unknown mix.",
+    "verdict": "caution",
+    "risk": "Unknown.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folder."
+  },
+  "photoshop_cache": {
+    "what": "Not documented by the vendor. Cache under Adobe\\Photoshop\\* (Photoshop's folders are named 'Adobe Photoshop <year>', so this probably matches nothing).",
+    "used_for": "Photoshop's scratch files are 'Photoshop Temp*' files in %TEMP% and are released on close.",
+    "verdict": "safe",
+    "risk": "None known for this path.",
+    "before_cleaning": "Close Photoshop first.",
+    "regenerates": true,
+    "sources": [
+      "https://community.adobe.com/t5/photoshop-ecosystem-discussions/how-do-i-set-the-location-for-photoshop-temp-files/m-p/6595003/highlight/true"
+    ],
+    "catalog_concern": "Label says 'history' -- AutoRecover (in 'Adobe Photoshop <year>\\AutoRecover') holds crash recovery and must never be targeted."
+  },
+  "plex_cache": {
+    "what": "Plex Media Server's whole data folder: library database, metadata, artwork, preferences (and the server's identity).",
+    "used_for": "The server's entire state.",
+    "verdict": "danger",
+    "risk": "The library and server setup are lost; the server must be set up again.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: only its Cache and Codecs subfolders would be rebuildable."
+  },
+  "potplayer_cache": {
+    "what": "PotPlayer's Daum folder (settings, playlists).",
+    "used_for": "Settings.",
+    "verdict": "caution",
+    "risk": "Lost settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: settings."
+  },
+  "premiere_cache": {
+    "what": "Adobe's shared Media Cache Files and Peak Files (.pek audio waveforms, .cfa conformed audio).",
+    "used_for": "Rebuilt when media is next used; Premiere can delete them automatically by age or size.",
+    "verdict": "safe",
+    "risk": "Projects open slower while audio is re-conformed and waveforms redrawn.",
+    "before_cleaning": "Close Premiere Pro, After Effects and Media Encoder first.",
+    "regenerates": true,
+    "sources": [
+      "https://helpx.adobe.com/au/premiere/desktop/troubleshooting/media-issues/automatically-manage-your-media-cache-files.html",
+      "https://community.adobe.com/t5/after-effects-discussions/faq-how-to-clear-delete-or-trash-media-cache-files-in-after-effects/m-p/10634312"
+    ],
+    "catalog_concern": "Label says 'auto-save' -- Premiere's Auto-Save folder sits beside the project and is not listed, correctly."
+  },
+  "qobuz_cache": {
+    "what": "Qobuz's whole data folder, including offline tracks.",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Lost offline music, sign-out.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: offline tracks."
+  },
+  "reaper_cache": {
+    "what": "REAPER's resource folders (reaper.ini, configs, scripts, project backups).",
+    "used_for": "User configuration.",
+    "verdict": "danger",
+    "risk": "Lost configuration and backups.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: user configuration."
+  },
+  "sharex_cache": {
+    "what": "ShareX's folder: screenshots, history, settings and uploader credentials.",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Lost screenshots, history and uploader keys.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: screenshots and credentials."
+  },
+  "snagit_cache": {
+    "what": "Snagit's data folder (library of captures, settings).",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Lost captures.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: captures."
+  },
+  "spotify_app_cache": {
+    "what": "Not documented by the vendor. Cache and logs under %APPDATA%\\Spotify (where the desktop app installs itself; its main cache is in %LOCALAPPDATA%\\Spotify).",
+    "used_for": "Cached song parts are re-downloaded when played.",
+    "verdict": "safe",
+    "risk": "More streaming data use for a while; lost logs.",
+    "before_cleaning": "Quit Spotify first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.spotify.com/us/using_spotify/system_settings/storage-and-data-information/"
+    ],
+    "catalog_concern": "Never widen to %APPDATA%\\Spotify itself (the program and its prefs)."
+  },
+  "spotify_cache": {
+    "what": "Spotify's local streaming cache (parts of songs/podcasts already played).",
+    "used_for": "Spotify uses it to play without lag; its own Settings > Storage > Clear cache does the same. Re-filled as you listen.",
+    "verdict": "safe",
+    "risk": "Songs re-download when played. Spotify stores downloads for offline play in its storage location too, so deleting folders by hand may remove offline downloads.",
+    "before_cleaning": "Quit Spotify first; prefer Spotify's own Clear cache button.",
+    "regenerates": true,
+    "sources": [
+      "https://support.spotify.com/us/using_spotify/system_settings/storage-and-data-information/"
+    ],
+    "catalog_concern": ""
+  },
+  "spotify_full_cache": {
+    "what": "Same %LOCALAPPDATA%\\Spotify\\Cache as spotify_cache.",
+    "used_for": "See spotify_cache.",
+    "verdict": "safe",
+    "risk": "See spotify_cache.",
+    "before_cleaning": "Quit Spotify first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.spotify.com/us/using_spotify/system_settings/storage-and-data-information/"
+    ],
+    "catalog_concern": "Disabling as a duplicate is fine; the label ('users') suggested profile data."
+  },
+  "stremio_cache_full": {
+    "what": "Stremio's whole data folder (add-ons, settings, sign-in, cache).",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Sign-out, lost add-ons.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folder."
+  },
+  "tidal_cache": {
+    "what": "TIDAL's whole data folder, including offline tracks and sign-in.",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Sign-out, lost offline music.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folder."
+  },
+  "vegas_cache": {
+    "what": "Not documented by the vendor. A 'VEGASTemp' folder. VEGAS Pro writes its temporary files AND its 5-minute autosaves (*.autosave.veg) to the 'Temporary files folder' set in Preferences.",
+    "used_for": "Autosaves are deleted on a normal exit; after a crash they are the recovery copy.",
+    "verdict": "caution",
+    "risk": "After a crash, the autosave recovery copy of the project is lost; rendering temp files in use break a render.",
+    "before_cleaning": "Close VEGAS normally; recover a crashed project first.",
+    "regenerates": false,
+    "sources": [
+      "https://www.vegascreativesoftware.info/us/forum/autosave-does-not-work--132082"
+    ],
+    "catalog_concern": "The label itself says 'autosave' -- that cannot be 'safe'."
+  },
+  "vlc_cache": {
+    "what": "VLC's settings folder (vlcrc, media library, recent list).",
+    "used_for": "Settings.",
+    "verdict": "caution",
+    "risk": "Lost settings and library.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: settings."
+  },
+  "vst_cache": {
+    "what": "VST3 folders. Real VST3 plugins are installed under Common Files\\VST3.",
+    "used_for": "Plugin binaries/presets.",
+    "verdict": "danger",
+    "risk": "Uninstalled plugins; broken projects.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: VST3 folders hold plugins, not caches."
+  }
+}

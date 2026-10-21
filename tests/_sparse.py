@@ -23,3 +23,14 @@ def make_sparse(path, size: int) -> None:
         # If the volume refuses sparse files the file is still correct, just not small.
         handle.seek(size - 1)
         handle.write(b"\0")
+
+
+def count_logical(monkeypatch) -> None:
+    """Make Cleanup's sizes count a sparse stand-in at its LOGICAL size.
+
+    Cleanup reports what a file occupies on disk (`disk_size.on_disk_size`), so a
+    sparse 2 GB fixture measures ~4 KB -- correct for real leftovers, but a test
+    that uses one to stand in for a genuinely big file needs the logical size.
+    """
+    from modules.cleanup.cleanup_scanner import disk_size
+    monkeypatch.setattr(disk_size, "_get_compressed_size", None)

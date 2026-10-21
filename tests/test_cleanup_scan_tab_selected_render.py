@@ -100,7 +100,7 @@ def test_an_unchecked_item_is_excluded_from_clean_selected(qapp):
         "what Clean Selected gathers for deletion")
 
 
-def test_a_mixed_group_parent_checkbox_is_partially_checked(qapp):
+def test_caution_group_parent_starts_unticked(qapp):
     """A group can hold a mix of selected and unselected children. The
     parent's initial render must reflect that (PartiallyChecked), not
     force Checked regardless of the children underneath it."""
@@ -120,4 +120,5 @@ def test_a_mixed_group_parent_checkbox_is_partially_checked(qapp):
 
     assert tab._tree.topLevelItemCount() == 1
     parent = tab._tree.topLevelItem(0)
-    assert parent.checkState(0) == Qt.CheckState.PartiallyChecked
+    # Owner decision, 2026-10-21: caution and danger start unticked.
+    assert parent.checkState(0) == Qt.CheckState.Unchecked

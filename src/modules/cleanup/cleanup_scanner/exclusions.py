@@ -70,6 +70,18 @@ def list_exclusions() -> List[str]:
     return [str(p) for p in data]
 
 
+def list_exclusions_strict() -> List[str]:
+    """Read action guards without treating a damaged or refused file as empty."""
+    try:
+        with open(_config_path(), encoding="utf-8") as stream:
+            data = json.load(stream)
+    except FileNotFoundError:
+        return []
+    if not isinstance(data, list) or any(not isinstance(p, str) or not p.strip() for p in data):
+        raise ValueError("Cleanup exclusions must be a list of non-empty paths")
+    return data
+
+
 def add_exclusion(path: str) -> bool:
     """Add `path` to the exclusion list.
 

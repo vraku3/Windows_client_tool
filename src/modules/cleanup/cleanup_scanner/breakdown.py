@@ -19,6 +19,7 @@ import os
 from typing import List, Tuple
 
 from modules.cleanup.cleanup_scanner._common import ScanItem, get_dir_size
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ def children_by_size(path: str, limit: int = DEFAULT_LIMIT
             if entry.is_dir(follow_symlinks=False):
                 rows.append((entry.path, get_dir_size(entry.path)))
             elif entry.is_file(follow_symlinks=False):
-                rows.append((entry.path, entry.stat(follow_symlinks=False).st_size))
+                rows.append((entry.path, on_disk_size(entry.path, entry.stat(follow_symlinks=False))))
         except OSError:
             logger.debug("Skipped %s during breakdown", entry, exc_info=True)
 

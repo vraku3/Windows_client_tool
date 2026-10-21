@@ -16,6 +16,8 @@ itself so each outcome is measured:
   and listed in `locked`; a refusal is listed in `denied`;
 * read-only files are cleared and deleted; paths over MAX_PATH go through
   the `\\?\` prefix;
+* `freed` counts ALLOCATED bytes (`disk_size.on_disk_size`): a sparse
+  2 GB file frees ~4 KB, not 2 GB;
 * files newer than `keep_newer_than_s` are kept -- an installer
   extracting into %TEMP% reads its files back minutes later.
 
@@ -26,6 +28,8 @@ import os
 import stat
 from dataclasses import dataclass, field
 from typing import Callable, List
+
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +228,7 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
         if floor and now - st.st_mtime < floor:
             report.kept_recent += 1
             continue
-        _remove_file(entry.path, st.st_size, report)
+        _remove_file(entry.path, on_disk_size(entry.path, st), report)
 
 
 def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
@@ -261,7 +265,7 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
         if keep_newer_than_s and now - st.st_mtime < keep_newer_than_s:
             report.kept_recent += 1
         else:
-            _remove_file(target, st.st_size, report)
+            _remove_file(target, on_disk_size(target, st), report)
         return report
     _clear(target, keep_newer_than_s, now, cancelled, report, skip)
     if not keep_root and not report.cancelled:

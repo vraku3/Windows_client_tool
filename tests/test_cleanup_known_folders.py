@@ -27,7 +27,7 @@ import os
 
 import pytest
 
-from _sparse import make_sparse
+from _sparse import count_logical, make_sparse
 from modules.cleanup.cleanup_scanner import known_folders as kf
 
 
@@ -108,6 +108,7 @@ def test_the_user_data_scanners_find_a_redirected_folder(
     from modules.cleanup.cleanup_scanner import scanners_system as ss
 
     target = str(redirected_folder)
+    count_logical(monkeypatch)                     # big.iso is a sparse stand-in
     monkeypatch.setattr(ss.known_folders, "known_folder", lambda name: target)
     # scan_large_files/scan_duplicate_files/scan_old_files now call
     # user_data_dirs(FILE_SWEEP_SAFE_FOLDERS) with an explicit folder list

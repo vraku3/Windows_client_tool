@@ -1,0 +1,417 @@
+{
+  "aws_cli_cache": {
+    "what": "cli\\cache holds temporary credentials from assumed IAM roles; sso\\cache holds IAM Identity Center (SSO) access tokens.",
+    "used_for": "Lets the AWS CLI call AWS without signing in again. After deletion the CLI asks you to run 'aws sso login' or re-assume the role.",
+    "verdict": "danger",
+    "risk": "Signs you out of the AWS CLI/SDKs; scripts and scheduled jobs using SSO profiles fail until you sign in again.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html",
+      "https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-role.html"
+    ],
+    "catalog_concern": "Disabling was right. These are credential caches, not junk; the catalog label 'config' is also wrong (config is not in these paths). Keep .aws refused by delete_items."
+  },
+  "aws_toolkit_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\AWStoolkit is the AWS Toolkit extension's data folder (settings, telemetry ids, possibly SSO/session state).",
+    "used_for": "Used by the VS Code AWS Toolkit; removing it resets the extension.",
+    "verdict": "danger",
+    "risk": "May sign you out of AWS connections and reset extension settings.",
+    "before_cleaning": "Close VS Code first",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "box_cache": {
+    "what": "Box Drive's local cache of files you opened, moved or marked for offline use, plus Box Drive logs.",
+    "used_for": "Box keeps a copy so files open quickly and offline. Cached files are downloaded again from Box when next opened; logs are diagnostics only.",
+    "verdict": "caution",
+    "risk": "If Box Drive has changes not yet uploaded, the only copy may be in this cache and could be lost. Offline-marked files must re-download.",
+    "before_cleaning": "Quit Box Drive completely and make sure it shows no pending uploads",
+    "regenerates": true,
+    "sources": [
+      "https://support.box.com/hc/en-us/community/posts/4408075518867/comments/4408119948179",
+      "https://support.box.com/hc/en-us/community/posts/360049226293-Cache-Files-using-Box-Drive/comments/1500000252702"
+    ],
+    "catalog_concern": "Catalog says 'safe'. The cache folder can hold not-yet-uploaded edits, so it should be 'caution' (logs alone are safe)."
+  },
+  "cloudflare_warp_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Cloudflare is the WARP client's per-user data folder (settings, registration).",
+    "used_for": "Used by the WARP client; deleting it can force re-registration.",
+    "verdict": "danger",
+    "risk": "Possible loss of WARP/Zero Trust enrollment and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "cyberghost_cache": {
+    "what": "CyberGhost's API response cache plus the Cache / Code Cache / GPUCache subfolders of its WebView2 interface profile.",
+    "used_for": "API cache is refetched; the WebView2 caches are rebuilt on next start.",
+    "verdict": "safe",
+    "risk": "None known; the profile's Login Data and VPN tokens are NOT targeted (correctly).",
+    "before_cleaning": "Close CyberGhost",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Consistent with CLAUDE.md: BrowserCache is a whole WebView2 profile, so only its Cache subfolders are listed - keep it that way."
+  },
+  "dropbox_cache": {
+    "what": "Dropbox's documented cache is a hidden '.dropbox.cache' folder inside your Dropbox folder. The catalog's AppData 'cache' and 'logs' subfolders are not documented; logs are diagnostics.",
+    "used_for": "Dropbox's cache holds temporary files for uploads/downloads and is auto-cleared every three days.",
+    "verdict": "safe",
+    "risk": "Low for logs. The AppData Dropbox folders around these paths hold the instance databases and sign-in; they must never be targeted.",
+    "before_cleaning": "Close the Dropbox app completely",
+    "regenerates": true,
+    "sources": [
+      "https://help.dropbox.com/delete-restore/cache-folder"
+    ],
+    "catalog_concern": "Paths do not match Dropbox's documented cache (%HOMEPATH%\\Dropbox\\.dropbox.cache), so this likely finds little. Description mentions 'cache.db' - never widen to the parent AppData\\Dropbox folders (instance1 DBs, sign-in)."
+  },
+  "expressvpn_cache": {
+    "what": "Not documented by the vendor. A folder of ExpressVPN diagnostic log files.",
+    "used_for": "Logs help support diagnose connection problems; new logs are written as the app runs.",
+    "verdict": "safe",
+    "risk": "Lose diagnostics for past connection problems.",
+    "before_cleaning": "Disconnect / close ExpressVPN",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Description mentions 'split-tunneling config cache' - the path is a logs folder; if it ever held config, deletion would reset split tunneling."
+  },
+  "firebase_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\firebase can hold the Firebase CLI's sign-in tokens and emulator data.",
+    "used_for": "Firebase CLI state; deletion means 'firebase login' again and lost local emulator data.",
+    "verdict": "danger",
+    "risk": "Sign-out of Firebase CLI; loss of emulator exports.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "google_drive_cache": {
+    "what": "Google Drive for desktop keeps its data under %LOCALAPPDATA%\\Google\\DriveFS: per-account content cache (including files waiting to upload) and Logs. A top-level 'Cache' subfolder is not documented.",
+    "used_for": "The content cache makes streamed files open fast and holds files before upload. Logs are diagnostics, rebuilt as Drive runs.",
+    "verdict": "caution",
+    "risk": "Google warns: files are moved into the cache before upload; clearing it before upload completes loses that file. Logs: lost diagnostics only.",
+    "before_cleaning": "Quit Google Drive and confirm all uploads are finished",
+    "regenerates": true,
+    "sources": [
+      "https://knowledge.workspace.google.com/admin/drive/advanced-drive-for-desktop-configuration"
+    ],
+    "catalog_concern": "Catalog says 'safe'. Logs are safe, but DriveFS cache data can contain unsynced uploads; never widen this to DriveFS or <account>\\content_cache."
+  },
+  "heroku_cli_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Heroku is the Heroku CLI's data folder (config, plugins, possibly auth).",
+    "used_for": "Deleting it resets the CLI and its plugins.",
+    "verdict": "danger",
+    "risk": "Lost CLI config/plugins; possible sign-out.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "icloud_cache": {
+    "what": "Not documented by the vendor. A cache subfolder of iCloud for Windows.",
+    "used_for": "Presumably temporary data the iCloud client re-downloads as needed.",
+    "verdict": "safe",
+    "risk": "Unknown; iCloud may re-download data. iCloud Drive files themselves live elsewhere.",
+    "before_cleaning": "Quit iCloud for Windows",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Undocumented path; the Microsoft Store version of iCloud keeps data under %LOCALAPPDATA%\\Packages, so this may find nothing."
+  },
+  "ipvanish_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\IPVanish is the client's whole data folder (settings, profiles, logs).",
+    "used_for": "Deletion resets the VPN client.",
+    "verdict": "danger",
+    "risk": "Lost settings and saved login.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "mega_cache": {
+    "what": "MEGA desktop app's logs (Local\\Mega Limited\\MEGAsync\\logs) and temporary transfer files; the 'cache' under Roaming is not documented.",
+    "used_for": "Logs are diagnostics; temp files are partial transfers the app restarts.",
+    "verdict": "safe",
+    "risk": "An in-progress transfer may restart. The sync database in the same parent folder must not be touched (description wrongly says 'sync database').",
+    "before_cleaning": "Quit MEGA and make sure no transfers are running",
+    "regenerates": true,
+    "sources": [
+      "https://docs.velociraptor.app/artifact_references/pages/windows.applications.megasync"
+    ],
+    "catalog_concern": "Description says 'sync database' - the listed paths do not include it and must not: deleting MEGAsync's DB forces a full rescan or re-login."
+  },
+  "mullvad_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Mullvad VPN is the GUI's data folder (settings, gui state).",
+    "used_for": "Deletion resets the app's GUI settings.",
+    "verdict": "danger",
+    "risk": "Lost settings; possibly account login.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "netlify_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\netlify holds the Netlify CLI config including its auth token.",
+    "used_for": "Deletion means 'netlify login' again.",
+    "verdict": "danger",
+    "risk": "Sign-out of Netlify CLI; lost linked-site config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "ngrok_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\ngrok can hold ngrok.yml with your authtoken.",
+    "used_for": "Deletion removes the authtoken; tunnels fail until re-configured.",
+    "verdict": "danger",
+    "risk": "Lost authtoken and tunnel config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "nordvpn_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\NordVPN is the client's data folder; the second path is malformed (Roaming twice).",
+    "used_for": "Deletion resets the client.",
+    "verdict": "danger",
+    "risk": "Lost settings and possibly the saved login.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache. The path '%APPDATA%\\Roaming\\ClientConfig' is also malformed."
+  },
+  "onedrive_cache": {
+    "what": "OneDrive sync client's diagnostic logs (Personal/Business subfolders, binary format). A 'cache' subfolder is not documented and does not exist here.",
+    "used_for": "Logs are used only for troubleshooting; OneDrive writes new ones as it runs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics for past sync problems. Files and settings are elsewhere (settings folder).",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/2100978/microsoft-onedrive-logs-information-for-it-adminis"
+    ],
+    "catalog_concern": "Description ('known folder mask and sync conflict files') is wrong: these are logs. Overlaps 'onedrive_logs'. Never widen to OneDrive\\settings (account and sync state)."
+  },
+  "onedrive_commercial_cache": {
+    "what": "Same folders as 'onedrive_cache': OneDrive sync client logs.",
+    "used_for": "Diagnostics only; rewritten as OneDrive runs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/2100978/microsoft-onedrive-logs-information-for-it-adminis"
+    ],
+    "catalog_concern": "Disabled only as a duplicate of 'onedrive_cache' - correct."
+  },
+  "onedrive_full_cache": {
+    "what": "Same folders as 'onedrive_cache': OneDrive sync client logs.",
+    "used_for": "Diagnostics only; rewritten as OneDrive runs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/2100978/microsoft-onedrive-logs-information-for-it-adminis"
+    ],
+    "catalog_concern": "Disabled only as a duplicate of 'onedrive_cache' - correct."
+  },
+  "onedrive_logs": {
+    "what": "The *.log files in OneDrive's logs folder.",
+    "used_for": "Troubleshooting only; OneDrive writes new logs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics for past sync problems.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/2100978/microsoft-onedrive-logs-information-for-it-adminis"
+    ],
+    "catalog_concern": "Overlaps 'onedrive_cache' (same folder)."
+  },
+  "openvpn_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\OpenVPN and OpenVPN Connect hold imported profiles (.ovpn, sometimes with keys/certificates), settings and logs.",
+    "used_for": "Deletion removes your VPN profiles.",
+    "verdict": "danger",
+    "risk": "Lost VPN profiles, keys and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "pcloud_cache": {
+    "what": "pCloud Drive's local cache (default %LOCALAPPDATA%\\pCloud\\Cache), temp files and logs.",
+    "used_for": "pCloud caches files you open and stages uploads so they survive a dropped connection; cached copies are re-downloaded later.",
+    "verdict": "caution",
+    "risk": "Uploads still pending may exist only in the cache and could be lost; files re-download on next open.",
+    "before_cleaning": "Quit pCloud Drive after it shows everything uploaded",
+    "regenerates": true,
+    "sources": [
+      "https://blog.pcloud.com/?p=51601"
+    ],
+    "catalog_concern": "Catalog says 'safe'. pCloud's cache stages uploads, so Cache should be 'caution'; temp and Logs are safe."
+  },
+  "planetscale_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\planetscale holds the pscale CLI config and auth.",
+    "used_for": "Deletion means 'pscale auth login' again.",
+    "verdict": "danger",
+    "risk": "Sign-out of the CLI.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "sharepoint_cache": {
+    "what": "Office Document Cache (OfficeFileCache): Office's local copy of cloud documents, including edits not yet uploaded to OneDrive/SharePoint.",
+    "used_for": "Lets Office open and save cloud files quickly; Office's own 'Delete cached files' option is the supported way to clear it.",
+    "verdict": "danger",
+    "risk": "Unsaved/unuploaded changes to OneDrive or SharePoint documents can be lost; upload-pending items vanish.",
+    "before_cleaning": "Use Office Upload Center / Office settings instead",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the Office cache can hold pending uploads. Description ('Known folder mask') is wrong."
+  },
+  "sharepoint_desktop_cache": {
+    "what": "Same OfficeFileCache folders as 'sharepoint_cache'.",
+    "used_for": "Office's local document cache with pending uploads.",
+    "verdict": "danger",
+    "risk": "Loss of not-yet-uploaded document changes.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right; duplicate of 'sharepoint_cache'. Description ('SharePoint Designer workflow cache') is wrong."
+  },
+  "stripe_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\stripe may hold the Stripe CLI config with API keys.",
+    "used_for": "Deletion means 'stripe login' again.",
+    "verdict": "danger",
+    "risk": "Lost CLI keys/config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "supabase_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Supabase holds CLI auth and local state.",
+    "used_for": "Deletion signs the CLI out.",
+    "verdict": "danger",
+    "risk": "Sign-out; lost local dev data.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "tailscale_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Tailscale is the per-user Tailscale data folder (GUI state, logs, possibly node identity).",
+    "used_for": "Deletion can force re-login of the device to the tailnet.",
+    "verdict": "danger",
+    "risk": "Device may leave the tailnet / need re-authentication.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "tresorit_cache": {
+    "what": "Tresorit's cache and logs. Tresorit documents its logs at %LOCALAPPDATA%\\Tresorit\\v0.8\\Logs, not under %APPDATA%.",
+    "used_for": "Logs are diagnostics (may contain file names); the cache is rebuilt.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics; little else for logs.",
+    "before_cleaning": "Quit Tresorit",
+    "regenerates": true,
+    "sources": [
+      "https://support.tresorit.com/hc/en-us/articles/115007057867-Access-and-view-your-Tresorit-logs"
+    ],
+    "catalog_concern": "Paths are under Roaming (%APPDATA%) but Tresorit documents Local\\Tresorit\\v0.8; this likely finds nothing."
+  },
+  "vercel_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\vercel (com.vercel.cli) holds the CLI auth token and config.",
+    "used_for": "Deletion signs the CLI out.",
+    "verdict": "danger",
+    "risk": "Sign-out of Vercel CLI.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "virtualbox_cache": {
+    "what": "%APPDATA%\\VirtualBox (VirtualBox.xml machine registry) and %USERPROFILE%\\VirtualBox VMs (the virtual machines themselves: disk images, snapshots, settings, logs).",
+    "used_for": "This is where VirtualBox stores your VMs by default. Nothing here is rebuilt.",
+    "verdict": "danger",
+    "risk": "Permanent loss of virtual machines and everything inside them.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://www.virtualbox.org/manual/"
+    ],
+    "catalog_concern": "Disabling was right - this is user data, not a cache."
+  },
+  "wg_easy_cache": {
+    "what": "Not documented by the vendor (wg-easy is normally a server/Docker tool). Would hold WireGuard peer configs/keys.",
+    "used_for": "Deletion would lose peer configurations.",
+    "verdict": "danger",
+    "risk": "Lost WireGuard keys/config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "windows_sandbox_cache": {
+    "what": "Not documented by Microsoft. LocalState of the Windows Sandbox app package (app state). The sandbox itself discards its contents on close.",
+    "used_for": "App state for Windows Sandbox; the sandbox environment is rebuilt each launch anyway.",
+    "verdict": "caution",
+    "risk": "Unknown; may reset the Sandbox app or break it until repaired. Little space to gain.",
+    "before_cleaning": "Close Windows Sandbox",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/security/application-security/application-isolation/windows-sandbox/windows-sandbox-configure-using-wsb-file"
+    ],
+    "catalog_concern": "Disabling was right: an undocumented package LocalState, not a cache."
+  },
+  "wireguard_cache": {
+    "what": "Not documented by the vendor. WireGuard for Windows stores tunnel configs (with private keys) - normally under Program Files\\WireGuard\\Data; these per-user folders are not documented.",
+    "used_for": "Deletion could remove tunnels.",
+    "verdict": "danger",
+    "risk": "Lost tunnels and private keys if present.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "box_logs": {
+    "what": "Box Drive's own log files in %LOCALAPPDATA%\\Box\\Box\\logs, one of the folders Box lists for collecting Box Drive logs by hand.",
+    "used_for": "Troubleshooting: Box Product Support may ask for these logs (Help > Send Logs) when you file a case about a Box Drive error.",
+    "verdict": "safe",
+    "risk": "You lose the history you would send to Box support for a past problem. Files, the sync database (Box\\Box\\data) and unsynced files are in other folders and are not touched.",
+    "before_cleaning": "If you have an open Box support case, send the logs first (Box Drive > gear > Help > Send Logs).",
+    "regenerates": true,
+    "sources": [
+      "https://support.box.com/hc/en-us/articles/360044193913-Submitting-Box-Drive-Logs"
+    ],
+    "catalog_concern": ""
+  },
+  "google_drive_logs": {
+    "what": "Google Drive for desktop (DriveFS) log files in %LOCALAPPDATA%\\Google\\DriveFS\\Logs. Google's support article has you zip exactly this Logs folder to send to support.",
+    "used_for": "Diagnosing sync, sign-in and sign-out problems. Google prefers Settings > Generate Diagnostic Info, but the folder is used when the app will not open.",
+    "verdict": "safe",
+    "risk": "Past diagnostic history is lost. Your Drive files and the local content cache are elsewhere under DriveFS and are not touched.",
+    "before_cleaning": "If you are working with Google support on a Drive problem, collect the logs first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.google.com/a/answer/7582171",
+      "https://knowledge.workspace.google.com/admin/drive/capture-google-drive-for-desktop-logs-for-support"
+    ],
+    "catalog_concern": "The label still names Backup and Sync, which Google replaced with Drive for desktop; only the DriveFS Logs folder is targeted."
+  },
+  "pcloud_logs": {
+    "what": "Diagnostic logs in the catalog's pCloud Logs folder. pCloud support asks for Drive logs when investigating sync failures, but its public article does not confirm this Windows folder path.",
+    "used_for": "Troubleshooting sync problems with pCloud support. The app does not need old logs to run.",
+    "verdict": "safe",
+    "risk": "Past diagnostic history is lost. Only the Logs folder is targeted, never the pCloud Drive cache or settings beside it.",
+    "before_cleaning": "Close pCloud Drive if you want every log removed; files it holds open are skipped.",
+    "regenerates": true,
+    "sources": [
+      "https://help.pcloud.com/article/troubleshooting-sync-back-up-and-upload-issues"
+    ],
+    "catalog_concern": "Vendor documentation confirms the support purpose, not the exact path. Keep this limited to Logs; never widen to the pCloud profile, cache or upload staging."
+  }
+}

@@ -86,6 +86,8 @@ def test_every_path_uses_a_variable_that_exists_on_windows(catalog):
         # per fixed volume", expanded by drives.expand_fixed_drives before
         # expandvars ever sees the path. See test_cleanup_drive_aware.py.
         "FIXED_DRIVES",
+        # Resolved through SHGetKnownFolderPath, including redirected Documents.
+        "DOCUMENTS",
     }
     import re
     bad = []
@@ -375,7 +377,10 @@ def test_no_scanner_lists_the_same_path_twice(catalog):
 #: tools/cleanup_catalog_add_2026_10_10.py). The same day's audit disabled
 #: 224 entries rather than deleting them, so they still count here.
 # Superseded App Versions adds one rule-based scanner beyond the path catalog.
-REACHABLE_SCANNERS = 537
+# Research audit: three cloud-log splits and separate Firefox crash diagnostics.
+# 545 after four cache leaves checked on the real machine (2026-10-21, WP11):
+# AMD shader caches, Steam httpcache and depotcache, SquirrelTemp.
+REACHABLE_SCANNERS = 545
 
 
 def _scanners_the_tabs_offer():

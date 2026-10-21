@@ -1,0 +1,277 @@
+{
+  "browser:Cache": {
+    "what": "Chromium's HTTP disk cache: copies of web pages, images and scripts downloaded while browsing.",
+    "used_for": "Lets pages load faster on the next visit. Rebuilt automatically as you browse.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:Cache2": {
+    "what": "Not a Chromium folder; 'cache2' is Firefox's cache name. In a Chromium profile this matches nothing.",
+    "used_for": "No effect.",
+    "verdict": "safe",
+    "risk": "None.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://www.foxtonforensics.com/browser-history-examiner/firefox-data"
+    ],
+    "catalog_concern": "Dead entry in CHROMIUM_CACHE_SUBDIRS/CATEGORIES; harmless."
+  },
+  "browser:Code Cache": {
+    "what": "V8's on-disk cache of compiled JavaScript and WebAssembly, keyed by script URL.",
+    "used_for": "Skips re-parsing and re-compiling scripts on repeat visits. Rebuilt after a script is seen again.",
+    "verdict": "safe",
+    "risk": "None known; sites start a little slower until re-cached.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://v8.dev/blog/code-caching-for-devs",
+      "https://v8.dev/blog/improved-code-caching"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:Crashpad\\pending": {
+    "what": "Crashpad's queue of crash reports not yet uploaded.",
+    "used_for": "Crashpad retries uploading them later. After deletion those crashes are never reported.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics; unsent reports are gone.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://crashpad.chromium.org/doxygen/classcrashpad_1_1CrashReportUploadThread.html"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:Crashpad\\reports": {
+    "what": "Crash reports (minidumps) written by Crashpad, Chromium's crash reporter.",
+    "used_for": "Kept until uploaded (if crash reporting is on) or for local analysis. Nothing else needs them.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics for recent browser crashes.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://crashpad.chromium.org/doxygen/classcrashpad_1_1CrashReportUploadThread.html"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:DawnCache": {
+    "what": "Cache of Dawn, Chrome's WebGPU implementation (compiled WebGPU shaders/pipelines).",
+    "used_for": "Rebuilt automatically when WebGPU content runs again.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://knowledgebase.bison.co.in/view_article.php?id=1280"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:Extension Cache": {
+    "what": "Not documented by Google for desktop Chrome (an 'Extension Cache' is a ChromeOS concept). Probably matches nothing on Windows.",
+    "used_for": "No effect if absent.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "browser:GPU Cache": {
+    "what": "Not a real Chromium folder name (the real one is 'GPUCache', no space).",
+    "used_for": "No effect.",
+    "verdict": "safe",
+    "risk": "None.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html"
+    ],
+    "catalog_concern": "CHROMIUM_CACHE_CATEGORIES uses 'GPU Cache' with a space, so EnhancedBrowserScanner never finds the real GPUCache. Rename it to 'GPUCache'."
+  },
+  "browser:GPUCache": {
+    "what": "Compiled GPU shader programs for the browser's graphics (per profile).",
+    "used_for": "Avoids recompiling shaders; rebuilt automatically. First page renders can be slightly slower.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://knowledgebase.bison.co.in/view_article.php?id=1280"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:GrShaderCache": {
+    "what": "Skia's cache of compiled GPU shaders (Skia is Chrome's graphics engine), stored under User Data.",
+    "used_for": "Avoids shader recompilation; Chrome recreates it. Known to accumulate huge numbers of tiny files.",
+    "verdict": "safe",
+    "risk": "None known; slightly slower first renders.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src/+/94dea2e9e46997a7473047be3f7fd213e08ee48d/gpu/command_buffer/service/gr_shader_cache.cc",
+      "https://knowledgebase.bison.co.in/view_article.php?id=1280"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:GrShaderCache\\GPUCache": {
+    "what": "Older layout of Skia's shader cache (a GPUCache inside GrShaderCache).",
+    "used_for": "Rebuilt automatically.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src/+/94dea2e9e46997a7473047be3f7fd213e08ee48d/gpu/command_buffer/service/gr_shader_cache.cc"
+    ],
+    "catalog_concern": "Nested inside browser:GrShaderCache; avoid counting it twice."
+  },
+  "browser:Media Cache": {
+    "what": "Old Chromium cache for audio/video media. Modern Chromium no longer creates it; media goes into the normal Cache.",
+    "used_for": "Leftovers are unused.",
+    "verdict": "safe",
+    "risk": "None.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "browser:ShaderCache": {
+    "what": "Chromium's shared GPU shader cache under User Data (with a GPUCache subfolder).",
+    "used_for": "Avoids recompiling shaders; rebuilt automatically.",
+    "verdict": "safe",
+    "risk": "None known; brief extra GPU work after cleaning.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://knowledgebase.bison.co.in/view_article.php?id=1280"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:ShaderCache\\GPUCache": {
+    "what": "Older layout of the shared shader cache (a GPUCache inside ShaderCache).",
+    "used_for": "Rebuilt automatically.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html"
+    ],
+    "catalog_concern": "Nested inside browser:ShaderCache; avoid counting it twice."
+  },
+  "browser:blob_storage": {
+    "what": "Not documented by Google in detail. On-disk backing files for large 'Blob' objects web pages create (temporary binary data such as file uploads/downloads in progress).",
+    "used_for": "Used while the pages that created the blobs are open. Blobs are temporary; nothing persistent is kept here.",
+    "verdict": "safe",
+    "risk": "A download or upload in progress in an open tab could fail.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "browser:firefox:cache": {
+    "what": "Firefox's cache folder from versions before 32 (renamed cache2 since).",
+    "used_for": "Unused by modern Firefox.",
+    "verdict": "safe",
+    "risk": "None.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://www.foxtonforensics.com/browser-history-examiner/firefox-data"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:firefox:cache2": {
+    "what": "Firefox's network (HTTP) cache, in the Local profile folder.",
+    "used_for": "Speeds page loads; rebuilt as you browse.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close Firefox first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.foxtonforensics.com/browser-history-examiner/firefox-data",
+      "https://support.mozilla.org/questions/1242460"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:firefox:crashes\\pending": {
+    "what": "Crash reports (.dmp + .extra) Firefox has not yet sent.",
+    "used_for": "Firefox offers to submit them later. Deleted reports are never sent.",
+    "verdict": "caution",
+    "risk": "Lost diagnostics: unsent crash reports are gone.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://firefox-source-docs.mozilla.org/toolkit/crashreporter/crashreporter/index.html",
+      "https://firefox-source-docs.mozilla.org/testing/geckodriver/CrashReports.html"
+    ],
+    "catalog_concern": "Path note: Firefox keeps Crash Reports under %APPDATA%\\Mozilla\\Firefox\\Crash Reports, not inside each profile, so a profile-relative path may match nothing. Mark caution in the UI: it is diagnostic data, not cache."
+  },
+  "browser:firefox:crashes\\submitted": {
+    "what": "Small .txt receipts with the crash ID of each crash report Firefox already sent to Mozilla.",
+    "used_for": "Used by about:crashes to list your submitted reports. The reports themselves are on Mozilla's servers.",
+    "verdict": "safe",
+    "risk": "about:crashes no longer lists past crash IDs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://firefox-source-docs.mozilla.org/testing/geckodriver/CrashReports.html"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:firefox:minidumps": {
+    "what": "Crash dump files written into the profile when Firefox or a plugin crashes, before they are sent.",
+    "used_for": "Used to build crash reports. After deletion those crashes cannot be reported.",
+    "verdict": "caution",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://firefox-source-docs.mozilla.org/toolkit/crashreporter/crashreporter/index.html"
+    ],
+    "catalog_concern": "Diagnostic data rather than cache; caution is more accurate than safe."
+  },
+  "browser:firefox:offlineCache": {
+    "what": "Firefox's store for the old HTML5 AppCache (offline website data), a feature deprecated in Firefox 44 and since removed from browsers.",
+    "used_for": "Unused by current Firefox; leftovers only.",
+    "verdict": "safe",
+    "risk": "None for current Firefox.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://web.dev/articles/appcache-removal"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:firefox:startupCache": {
+    "what": "Firefox's start-up cache of pre-compiled internal code.",
+    "used_for": "Speeds up start-up; recreated on the next launch (first start is slower). Deleting it is a standard fix after bad updates.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "Close Firefox first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.mozilla.org/questions/1242460"
+    ],
+    "catalog_concern": ""
+  },
+  "browser:firefox:thumbnails": {
+    "what": "Not documented by Mozilla in detail. Screenshots of sites shown on the New Tab page tiles.",
+    "used_for": "Firefox re-captures them as you visit sites.",
+    "verdict": "safe",
+    "risk": "Blank New Tab tiles until sites are visited again.",
+    "before_cleaning": "Close Firefox first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  }
+}

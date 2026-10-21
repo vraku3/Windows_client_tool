@@ -30,6 +30,10 @@ REVIEWED_KEEP = {p.lower() for p in [
     r"%APPDATA%\Mozilla\Firefox\Profiles\*\startupCache",
     r"%APPDATA%\Thunderbird\Profiles\*\cache2", r"%APPDATA%\Thunderbird\Profiles\*\startupCache",
     r"%LOCALAPPDATA%\Microsoft\Windows\INetCache",
+    # 2026-10-21: the whole INetCache holds Content.Outlook (opened Outlook
+    # attachments), which the deleter refuses -- and so the whole folder with it.
+    r"%LOCALAPPDATA%\Microsoft\Windows\INetCache\IE",
+    r"%LOCALAPPDATA%\Microsoft\Windows\INetCache\Low\IE",
     # build / shader / GPU caches
     r"%USERPROFILE%\.cache\clang", r"%USERPROFILE%\.cache\meson", r"%USERPROFILE%\.cache\wine",
     r"%LOCALAPPDATA%\FortniteGame\Saved\D3DCache", r"%APPDATA%\Ubisoft\Connect\shader-cache",
@@ -82,6 +86,42 @@ REVIEWED_KEEP |= {p.lower() for p in [
 ]}
 REVIEWED = REVIEWED_KEEP | REVIEWED_CAUTION
 
+# The research audit distinguishes rebuildable bytes from cost-free deletion:
+# shaders recompile, cloud/temp caches can hold edits, and diagnostics/history
+# are irreplaceable. Re-running this tool must preserve those caution tiers.
+RESEARCH_CAUTION = frozenset("""
+d3d_shader_cache directx_shader_cache iis_logs windows_cbs_logs golang_cache
+em_client_cache notezilla_cache winscp_cache electron_updater_leftovers inetcache_ietlc
+chromium_service_worker_scripts chromium_service_worker_storage fortnite_cache path_of_exile_cache
+steam_cache steam_download_cache steam_full_cache steam_webhelper_cache ubisoft_cache
+audacity_cache blender_full_cache illustrator_cache intel_graphics_cache nvidia_display_cache
+vegas_cache box_cache google_drive_cache pcloud_cache slack_cache_full discord_full_cache
+""".split())
+
+# 2026-10-21 research audit: Mozilla documents cache2/startupCache in
+# LocalAppData, separate from the Thunderbird mail profile. MySQL *.err
+# is an error-log pattern, never the replication/recovery-critical binlog.*.
+REVIEWED_KEEP |= {p.lower() for p in [
+    r"%LOCALAPPDATA%\Thunderbird\Profiles\*\cache2",
+    r"%LOCALAPPDATA%\Thunderbird\Profiles\*\startupCache",
+]}
+REVIEWED_CAUTION |= {r"%ProgramFiles%\MySQL\MySQL Server*\logs\*.err".lower()}
+REVIEWED = REVIEWED_KEEP | REVIEWED_CAUTION
+
+# 2026-10-21 new cache leaves (WP11), each checked read-only on a real PC.
+# AMD's per-API shader caches are what AMD Software's Reset Shader Cache
+# deletes (caution: games stutter while they rebuild); Steam's depotcache
+# holds download manifests (caution: a queued download may restart);
+# SquirrelTemp is Squirrel.Windows Setup.exe's extraction folder.
+REVIEWED_KEEP |= {p.lower() for p in [
+    r"%LOCALAPPDATA%\SquirrelTemp",
+]}
+REVIEWED_CAUTION |= {p.lower() for p in [
+    r"%LOCALAPPDATA%\AMD\DxcCache", r"%LOCALAPPDATA%\AMD\DX9Cache",
+    r"%LOCALAPPDATA%\AMD\OglpCache", r"%ProgramFiles(x86)%\Steam\depotcache",
+]}
+REVIEWED = REVIEWED_KEEP | REVIEWED_CAUTION
+
 REASON = ("Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in "
           "store or user data (settings, accounts, saves, recordings, unsynced files), not a "
           "cache. Deleting it signs you out or loses data. Add only genuine cache subfolders.")
@@ -95,6 +135,10 @@ def main() -> int:
         for spec in data["scanners"]:
             if spec.get("disabled_reason"):
                 continue
+            if spec["id"] in RESEARCH_CAUTION and spec["safety"] == "safe":
+                spec["safety"] = "caution"
+                cautioned += 1
+                changed = True
             new_paths, make_caution = [], False
             for p in spec["paths"]:
                 key = p.lower()

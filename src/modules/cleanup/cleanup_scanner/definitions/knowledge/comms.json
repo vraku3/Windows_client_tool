@@ -1,0 +1,397 @@
+{
+  "anydesk_cache": {
+    "what": "AnyDesk's config and trace folders: user.conf/system.conf (settings, ID/alias), ad.trace logs, connection_trace.txt.",
+    "used_for": "Deleting can reset AnyDesk settings and, for portable use, its ID.",
+    "verdict": "danger",
+    "risk": "Lost settings, address book, possibly a new AnyDesk ID; lost logs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://support.anydesk.com/knowledge/trace-files"
+    ],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "anydesk_thumbnails": {
+    "what": "Not documented by the vendor. Thumbnail images AnyDesk shows for recent sessions.",
+    "used_for": "Recreated after the next connection to each machine.",
+    "verdict": "safe",
+    "risk": "Thumbnails show blank until re-made.",
+    "before_cleaning": "Quit AnyDesk",
+    "regenerates": true,
+    "sources": [
+      "https://support.anydesk.com/knowledge/trace-files"
+    ],
+    "catalog_concern": ""
+  },
+  "discord_cache": {
+    "what": "Discord's Chromium/Electron disk caches: HTTP cache (Cache), compiled JavaScript (Code Cache) and compiled GPU shaders (GPUCache).",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower.",
+    "verdict": "safe",
+    "risk": "None known; login token lives in Local Storage, which is not touched. First start slightly slower.",
+    "before_cleaning": "Quit Discord completely (also from the tray)",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "discord_canary_cache": {
+    "what": "The HTTP Cache folder of Discord Canary and Discord PTB (test builds).",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower.",
+    "verdict": "safe",
+    "risk": "None known; login in Local Storage is untouched.",
+    "before_cleaning": "Quit Discord Canary/PTB",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Description mentions 'crash reports' - the path is only Cache."
+  },
+  "discord_developer_logs": {
+    "what": "Not documented by the vendor. Discord desktop's log folder.",
+    "used_for": "Diagnostics only; new logs are written as Discord runs.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "Quit Discord",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "discord_full_cache": {
+    "what": "Discord's Chromium/Electron disk caches: HTTP cache (Cache), compiled JavaScript (Code Cache) and compiled GPU shaders (GPUCache). Also blob_storage (Chromium Blob store).",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower.",
+    "verdict": "caution",
+    "risk": "blob_storage is managed storage rather than a plain cache; small risk of breaking data the app references. Login (Local Storage) is not touched.",
+    "before_cleaning": "Quit Discord completely",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src/+show/e9b1018/content/browser/indexed_db/docs/README.md"
+    ],
+    "catalog_concern": "Catalog says 'safe'. Same blob_storage concern as slack_cache_full; overlaps discord_cache paths (double counting)."
+  },
+  "element_cache": {
+    "what": "Not documented by the vendor. Element's whole data folder, including the encryption keys store (IndexedDB) for Matrix end-to-end encryption.",
+    "used_for": "Deleting signs out and can lose message keys.",
+    "verdict": "danger",
+    "risk": "Sign-out and possibly permanent loss of encrypted message history without key backup.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "mattermost_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Mattermost is the desktop app's whole data folder (server list, sessions, Local Storage).",
+    "used_for": "Deleting signs you out and removes servers.",
+    "verdict": "danger",
+    "risk": "Sign-out; lost server list and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "microsoft_teams_full_cache": {
+    "what": "Classic Teams' Cache, blob_storage and GPUCache folders under %APPDATA%\\Microsoft\\Teams, and %LOCALAPPDATA%\\Microsoft\\Teams\\Cache.",
+    "used_for": "Microsoft documents clearing everything in %appdata%\\Microsoft\\Teams for classic Teams; it rebuilds. Classic Teams is retired, so this is often leftovers.",
+    "verdict": "safe",
+    "risk": "Slower first start; no sign-in loss from these subfolders.",
+    "before_cleaning": "Quit Teams",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-administration/clear-teams-cache"
+    ],
+    "catalog_concern": ""
+  },
+  "ms_teams_npc_cache": {
+    "what": "The whole LocalCache of a Teams package (MSTeamsNPC*), which contains WebView2 profiles with IndexedDB/Local Storage.",
+    "used_for": "Deleting it amounts to resetting Teams.",
+    "verdict": "danger",
+    "risk": "Sign-out and loss of personalization, like an app reset.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-administration/clear-teams-cache"
+    ],
+    "catalog_concern": "Disabling was right; only the Cache subfolders are safe (see teams_new_webview_cache)."
+  },
+  "mumble_cache": {
+    "what": "Not documented by the vendor. Mumble client and overlay log folders.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "Quit Mumble",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "mumble_full_cache": {
+    "what": "Not documented by the vendor. Mumble's whole data folders, including mumble.sqlite (favourite servers, settings) and your certificate (your identity on servers).",
+    "used_for": "Deleting loses your identity certificate - registered usernames on servers can no longer be claimed.",
+    "verdict": "danger",
+    "risk": "Permanent loss of Mumble identity certificate and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "nomachine_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\NoMachine holds connection files and settings.",
+    "used_for": "Deleting removes saved connections.",
+    "verdict": "danger",
+    "risk": "Lost saved connections and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "parsec_cache": {
+    "what": "Not documented by the vendor. Parsec 'logs' and 'cache' subfolders; Parsec's config.txt/config.json and sign-in are in %APPDATA%\\Parsec itself, not these.",
+    "used_for": "Logs are diagnostics.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "Quit Parsec",
+    "regenerates": true,
+    "sources": [
+      "https://support.parsec.app/hc/en-us/articles/360001562772-All-Advanced-Configuration-Options"
+    ],
+    "catalog_concern": "Never widen to %APPDATA%\\Parsec (config and session)."
+  },
+  "rdp_cache": {
+    "what": "Remote Desktop Connection's persistent bitmap cache (bcache*.bmc, Cache*.bin): screen tiles from past RDP sessions.",
+    "used_for": "mstsc reuses cached tiles to draw remote screens faster; rebuilt during the next session. Clearing also removes a privacy/forensic trace.",
+    "verdict": "safe",
+    "risk": "Slightly slower first redraw in the next RDP session.",
+    "before_cleaning": "Close Remote Desktop sessions",
+    "regenerates": true,
+    "sources": [
+      "https://www.pentestpartners.com/security-blog/the-remote-desktop-puzzle-dfir-techniques-for-dealing-with-rdp-bitmap-cache/",
+      "https://devolutions.net/blog/using-rdp-without-leaving-traces-the-mstsc-public-mode/"
+    ],
+    "catalog_concern": "Description ('clipboard temp and redirected drive cache') is wrong: it is the bitmap cache."
+  },
+  "remote_desktop_cache": {
+    "what": "The whole Terminal Server Client folder; here it contains only the bitmap Cache folder.",
+    "used_for": "Same as rdp_cache.",
+    "verdict": "safe",
+    "risk": "Slower first redraw; the folder itself is recreated.",
+    "before_cleaning": "Close Remote Desktop sessions",
+    "regenerates": true,
+    "sources": [
+      "https://www.pentestpartners.com/security-blog/the-remote-desktop-puzzle-dfir-techniques-for-dealing-with-rdp-bitmap-cache/"
+    ],
+    "catalog_concern": "Disabling is conservative but defensible; it duplicates rdp_cache. Saved RDP credentials are in Credential Manager and Default.rdp in Documents - neither is here."
+  },
+  "signal_cache": {
+    "what": "Signal Desktop's Electron HTTP Cache and its logs folder. Messages are in Signal\\sql (encrypted database) with its key in config.json - not targeted.",
+    "used_for": "Cache rebuilds on start; logs are diagnostics (used for Signal debug logs).",
+    "verdict": "safe",
+    "risk": "Lost diagnostics only. Deleting sql, config.json or attachments.noindex would lose all messages - never target them.",
+    "before_cleaning": "Quit Signal",
+    "regenerates": true,
+    "sources": [
+      "https://www.bleepingcomputer.com/news/security/signal-desktop-leaves-message-decryption-key-in-plain-sight/"
+    ],
+    "catalog_concern": "Description mentions 'attachment temp and sticker downloads' - not in these paths, and Signal attachments are user data."
+  },
+  "skype_cache": {
+    "what": "Not documented by the vendor. A cache folder of the (retired) Skype desktop app.",
+    "used_for": "Temporary data refetched by Skype. Microsoft retired Skype in May 2025.",
+    "verdict": "safe",
+    "risk": "None known for a cache folder.",
+    "before_cleaning": "Quit Skype",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Description mentions 'shared files temp' - not documented."
+  },
+  "skype_for_business_cache": {
+    "what": "Not documented by the vendor here. The Lync folders hold the Skype for Business sign-in info folder (sip_*), contact cache and logs.",
+    "used_for": "Microsoft's sign-in fixes delete the sip_ folder deliberately, which forces re-download of contacts and re-sign-in.",
+    "verdict": "caution",
+    "risk": "Sign-in information and local conversation/contact cache reset.",
+    "before_cleaning": "Quit Skype for Business",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right for an automatic clean: it resets sign-in. Description ('meeting recordings') is wrong."
+  },
+  "slack_cache": {
+    "what": "Slack's Chromium/Electron disk caches: HTTP cache (Cache), compiled JavaScript (Code Cache) and compiled GPU shaders (GPUCache).",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower.",
+    "verdict": "safe",
+    "risk": "None known; sign-in lives in Local Storage/IndexedDB, not touched. Slack's own 'Clear Cache and Restart' does the same.",
+    "before_cleaning": "Quit Slack completely (also from the tray)",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "slack_cache_full": {
+    "what": "Slack's Chromium/Electron disk caches: HTTP cache (Cache), compiled JavaScript (Code Cache) and compiled GPU shaders (GPUCache). Also blob_storage: Chromium's on-disk store for Blob data used by the web app.",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower. blob_storage is managed by Chromium's storage system, not a plain cache.",
+    "verdict": "caution",
+    "risk": "blob_storage may back data the app still references (e.g. queued uploads, IndexedDB blobs); deleting it can make such data unreadable. Gain is usually small.",
+    "before_cleaning": "Quit Slack completely",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src/+show/e9b1018/content/browser/indexed_db/docs/README.md"
+    ],
+    "catalog_concern": "Catalog says 'safe'. blob_storage is not a documented rebuildable cache; Cache/Code Cache/GPUCache alone ('slack_cache') are safe. Duplicates slack_cache's paths (double counting)."
+  },
+  "sunshine_cache": {
+    "what": "Not documented by the vendor. Sunshine normally writes sunshine.log next to its config in %ProgramFiles%\\Sunshine\\config; %APPDATA%\\Sunshine\\logs is not documented.",
+    "used_for": "Logs are diagnostics.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://docs.lizardbyte.dev/projects/sunshine/v0.21.0/about/advanced_usage.html"
+    ],
+    "catalog_concern": "Path likely matches nothing; never target Sunshine's config folder (sunshine.conf, apps.json, paired clients)."
+  },
+  "teams_cache": {
+    "what": "Classic Teams' Cache, blob_storage and GPUCache (Roaming) plus a Local Cache folder.",
+    "used_for": "Microsoft's own fix is to delete everything in %appdata%\\Microsoft\\Teams for classic Teams; it is rebuilt.",
+    "verdict": "safe",
+    "risk": "Slower first start; classic Teams is retired, so this is usually leftovers.",
+    "before_cleaning": "Quit Teams",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-administration/clear-teams-cache"
+    ],
+    "catalog_concern": "Disabled only as a duplicate of 'microsoft_teams_full_cache' - correct."
+  },
+  "teams_new_webview_cache": {
+    "what": "New Teams' WebView2 Cache/Code Cache/GPUCache for every profile, plus its Logs folder.",
+    "used_for": "Microsoft documents deleting files in the new Teams cache folder; caches rebuild. Logs are diagnostics used by support.",
+    "verdict": "safe",
+    "risk": "Lost Teams diagnostics; slightly slower first start. Sign-in stays (IndexedDB/Local Storage untouched).",
+    "before_cleaning": "Quit Teams (right-click tray icon > Quit)",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-administration/clear-teams-cache"
+    ],
+    "catalog_concern": ""
+  },
+  "teamspeak5_cache": {
+    "what": "Not documented by the vendor. TeamSpeak 5's whole data folders, including identities and settings.",
+    "used_for": "Deleting can lose your TeamSpeak identity.",
+    "verdict": "danger",
+    "risk": "Lost identity (server permissions tied to it) and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "teamspeak_cache": {
+    "what": "Not documented by the vendor. TeamSpeak 3 / TeamSpeak log folders.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "Quit TeamSpeak",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Description mentions 'client query interface' - unrelated to logs."
+  },
+  "teamviewer_cache": {
+    "what": "Not documented by the vendor here. %APPDATA%\\TeamViewer* hold connection logs and per-user settings/partner data.",
+    "used_for": "Deletion resets TeamViewer settings and history.",
+    "verdict": "danger",
+    "risk": "Lost settings, history; possible sign-out.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "telegram_cache": {
+    "what": "Telegram Desktop keeps its cache under %APPDATA%\\Telegram Desktop\\tdata\\user_data (media cache) and tdata\\emoji. The catalog's 'cache' and 'emoji' folders directly under 'Telegram Desktop' are not where it stores them.",
+    "used_for": "Media/emoji caches are re-downloaded from Telegram's servers when needed.",
+    "verdict": "safe",
+    "risk": "For the real cache: re-downloads only. Everything else in tdata (key_datas, session files) is the login - never delete it.",
+    "before_cleaning": "Quit Telegram",
+    "regenerates": true,
+    "sources": [
+      "https://opentele.readthedocs.io/en/latest/documentation/telegram-desktop/tdesktop/"
+    ],
+    "catalog_concern": "Paths likely match nothing (cache is inside tdata\\user_data). Description says 'session data' - wrong and alarming: session data is the login. If corrected, target only tdata\\user_data and tdata\\emoji, never tdata."
+  },
+  "viber_cache": {
+    "what": "Not documented by the vendor. A 'cache' folder in ViberPC; chat history is in ViberPC\\<phone number>\\viber.db.",
+    "used_for": "Presumably media/thumbnail cache refetched as needed.",
+    "verdict": "safe",
+    "risk": "Low for 'cache'. Never widen to ViberPC or the phone-number folder: that deletes message history and forces re-activation.",
+    "before_cleaning": "Quit Viber",
+    "regenerates": true,
+    "sources": [
+      "https://medium.com/hetman-software/how-to-recover-message-history-contacts-and-viber-files-on-android-or-windows-27bdbad60bef"
+    ],
+    "catalog_concern": "Undocumented subfolder; acceptable only as a named cache folder."
+  },
+  "vnc_cache": {
+    "what": "Not documented by the vendor. Per-user data of RealVNC/TightVNC/UltraVNC: settings, address books, possibly saved passwords and sign-in.",
+    "used_for": "Deleting resets the viewers.",
+    "verdict": "danger",
+    "risk": "Lost address books, settings, RealVNC sign-in.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  },
+  "whatsapp_cache": {
+    "what": "The HTTP Cache folder of the old Electron WhatsApp Desktop (%LOCALAPPDATA%\\WhatsApp).",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower.",
+    "verdict": "safe",
+    "risk": "None known; login lives in that profile's IndexedDB/Local Storage, which is not targeted.",
+    "before_cleaning": "Quit WhatsApp",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Legacy app; current WhatsApp is the Store app (see whatsapp_store_webview_cache)."
+  },
+  "whatsapp_store_webview_cache": {
+    "what": "Cache, Code Cache and GPUCache of the WhatsApp Store app's WebView2 profile.",
+    "used_for": "Speeds up loading the app's interface. Rebuilt automatically on next start; the first launch is a little slower.",
+    "verdict": "safe",
+    "risk": "None known; IndexedDB/Local Storage (login, messages) in the same profile are not targeted.",
+    "before_cleaning": "Quit WhatsApp",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "whatsapp_uwp_cache": {
+    "what": "The whole LocalCache of the WhatsApp Store app, which includes its WebView2 profile's IndexedDB and Local Storage - where the login and messages live.",
+    "used_for": "Deleting it signs WhatsApp out and drops local chats until re-linked.",
+    "verdict": "danger",
+    "risk": "Sign-out; must re-link with phone; local chat history lost. This happened on this machine (CLAUDE.md).",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right. Only EBWebView\\Default\\Cache, Code Cache, GPUCache are safe."
+  },
+  "zoom_cache": {
+    "what": "Zoom's per-user data lives in %APPDATA%\\Zoom (logs in %APPDATA%\\Zoom\\logs). These %LOCALAPPDATA%\\Zoom cache/thumbnail/logs folders are not documented.",
+    "used_for": "Logs are diagnostics; thumbnails/caches would be refetched.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics. Local recordings are in Documents\\Zoom and are not targeted.",
+    "before_cleaning": "Quit Zoom",
+    "regenerates": true,
+    "sources": [
+      "https://community.zoom.com/t5/Zoom-Meetings/Zoom-crash-logs-in-windows/m-p/122612"
+    ],
+    "catalog_concern": "Paths are under %LOCALAPPDATA% while Zoom uses %APPDATA%; likely finds nothing. Description ('meeting recordings temp files') is misleading."
+  },
+  "zoom_recordings_cache": {
+    "what": "Despite the label, the path is a Zoom logs folder (%LOCALAPPDATA%\\Zoom\\logs), not recordings.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics; no recordings are touched.",
+    "before_cleaning": "Quit Zoom",
+    "regenerates": true,
+    "sources": [
+      "https://community.zoom.com/t5/Zoom-Meetings/Zoom-crash-logs-in-windows/m-p/122612"
+    ],
+    "catalog_concern": "Label/description say 'recordings' - misleading; a user may fear losing recordings or expect space from them. Duplicates zoom_cache's logs path. Zoom documents logs under %APPDATA%\\Zoom\\logs."
+  },
+  "zulip_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Zulip is the whole Electron data folder.",
+    "used_for": "Deleting signs you out.",
+    "verdict": "danger",
+    "risk": "Sign-out; lost organizations list.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is the app's whole data folder, which holds settings, sign-in tokens or keys, not a cache."
+  }
+}

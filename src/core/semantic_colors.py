@@ -14,7 +14,7 @@ Every value here is held to 4.5:1 against its own theme's pane background by
 `tests/test_semantic_colors.py`, which computes the ratios rather than
 trusting this comment.
 """
-from typing import Dict
+from typing import Dict, List
 
 #: What each theme paints a pane, and therefore what these colours sit on.
 PANE_BACKGROUND: Dict[str, str] = {
@@ -98,6 +98,63 @@ for _name in _phosphor.PHOSPHOR_THEMES:
     CHROME_PALETTES[_name] = _chr
     PANE_BACKGROUND[_name] = _bg
 
+#: Categorical colours for charts (Cleanup's donut, bars and trend): eight
+#: series plus a ninth, neutral one for the folded "Other (N)" slice.
+#:
+#: These are graphics, not text, so the rule is WCAG 2.x 1.4.11 (non-text
+#: contrast): every one is held to 3:1 against `chrome("surface")`, the
+#: colour charts are painted on, and neighbouring series are held apart, by
+#: `tests/test_chart_palette.py`. The ORDER is part of the design: it puts
+#: unlike hues next to each other, because neighbours are what share an edge
+#: in a donut. Light is the dark set darkened, not recoloured, so a category
+#: keeps its hue across a theme switch.
+CHART_SERIES: Dict[str, List[str]] = {
+    "dark": [
+        "#5b9cf6",  # blue
+        "#e8a33d",  # amber
+        "#3fb68b",  # teal green
+        "#d673b0",  # magenta
+        "#45c0d6",  # cyan
+        "#e5705f",  # coral
+        "#9d84f2",  # violet
+        "#b5ad3c",  # olive
+        "#8c8c8c",  # Other: neutral grey
+    ],
+    "light": [
+        "#1f66c9",
+        "#b05f00",
+        "#137a55",
+        "#a63a78",
+        "#0a7891",
+        "#bf3b2a",
+        "#6a48c9",
+        "#6e6a00",
+        "#6b6b6b",
+    ],
+}
+
+#: How many distinct series there are before the palette repeats.
+CHART_SERIES_COUNT = 8
+
+#: A phosphor theme has one hue by definition, so its series are that hue at
+#: alternating brightness ("r", along the background->foreground ramp) and
+#: alternating paleness ("w", the foreground mixed toward white). Neighbours
+#: alternate dark/light so a shared edge is always visible; nothing goes below
+#: about 0.55 on the ramp, which is where amber drops under 3:1.
+_PHOSPHOR_CHART_SPEC = (("r", 1.0), ("r", 0.58), ("w", 0.45), ("r", 0.82), ("w", 0.22),
+                        ("r", 0.62), ("w", 0.66), ("r", 0.74), ("r", 0.55))
+#: Monochrome's foreground is already near white, so paleness cannot tell its
+#: series apart (#ececec vs #f1f1f1): it uses brightness alone.
+_MONO_CHART_SPEC = (("r", 1.0), ("r", 0.52), ("r", 0.86), ("r", 0.44), ("r", 0.74),
+                    ("r", 0.6), ("r", 0.94), ("r", 0.48), ("r", 0.67))
+
+for _name, (_fg, _bg) in _phosphor.PHOSPHOR_THEMES.items():
+    _spec = _MONO_CHART_SPEC if _name == "mono" else _PHOSPHOR_CHART_SPEC
+    CHART_SERIES[_name] = [
+        _phosphor.mix(_bg, _fg, _t) if _kind == "r" else _phosphor.mix(_fg, "#ffffff", _t)
+        for _kind, _t in _spec
+    ]
+
 #: Script Library console colour schemes. Roles: background, text, selection,
 #: ok / warn / error / info / muted (span foregrounds), and warn_back /
 #: error_back -- a span BACKGROUND ("" = none). "PowerShell" is Windows
@@ -160,3 +217,18 @@ def chrome(role: str) -> str:
     looking at it is exactly what this module exists to avoid.
     """
     return CHROME_PALETTES[_current_theme][role]
+
+
+def chart(index: int) -> str:
+    """Series colour `index` for a chart in the current theme.
+
+    Cycles after CHART_SERIES_COUNT, so any index is valid. A chart with more
+    series than that should fold the rest into "Other" (`chart_other()`)
+    rather than repeat a colour two slices apart.
+    """
+    return CHART_SERIES[_current_theme][index % CHART_SERIES_COUNT]
+
+
+def chart_other() -> str:
+    """The neutral colour of a chart's folded "Other" series."""
+    return CHART_SERIES[_current_theme][CHART_SERIES_COUNT]

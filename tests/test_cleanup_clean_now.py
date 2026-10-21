@@ -57,7 +57,7 @@ def _module(qapp):
 def test_clean_now_button_exists_and_is_wired(qapp):
     module, app = _module(qapp)
     try:
-        assert module._clean_now_btn.text() == "🧹  Clean Now"
+        assert module._clean_now_btn.text() == "Clean safe items (Light)"
         assert module._clean_now_btn.objectName() == "accentButton"
     finally:
         app.shutdown()

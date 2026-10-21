@@ -3,12 +3,13 @@
   "scanners": [
     {
       "id": "apex_cache",
-      "label": "Apex Legends shader preload and Respawn log files",
+      "label": "Apex Legends logs",
+      "short_label": "Apex Legends logs",
       "paths": [
         "%LOCALAPPDATA%\\Respawn\\Apex\\logs"
       ],
       "safety": "safe",
-      "description": "Apex Legends shader preload and Respawn log files."
+      "description": "Apex Legends logs."
     },
     {
       "id": "arma_cache",
@@ -17,20 +18,21 @@
         "%APPDATA%\\Arma 3",
         "%LOCALAPPDATA%\\Arma 3"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Arma 3 profile logs, mission temp, and BattlEye filter cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "battle_net_auth_cache",
-      "label": "Battle.net authentication ticket cache and launcher webcache data",
+      "label": "Battle.net named caches and logs",
+      "short_label": "Battle.net legacy caches",
       "paths": [
         "%APPDATA%\\Blizzard\\Battle.net\\Cache",
         "%APPDATA%\\Blizzard\\Battle.net\\WebCache",
         "%LOCALAPPDATA%\\Blizzard\\Battle.net\\logs"
       ],
       "safety": "safe",
-      "description": "Battle.net authentication ticket cache and launcher webcache data."
+      "description": "Battle.net named caches and logs."
     },
     {
       "id": "battlenet_cache",
@@ -42,11 +44,13 @@
         "%LOCALAPPDATA%\\Blizzard\\Battle.net\\logs"
       ],
       "safety": "safe",
-      "description": "Battle.net cache, webcache, and agent logs."
+      "description": "Battle.net cache, webcache, and agent logs.",
+      "disabled_reason": "duplicate of battle_net_auth_cache"
     },
     {
       "id": "beamng_cache",
       "label": "BeamNG.drive logs",
+      "short_label": "BeamNG.drive logs",
       "paths": [
         "%APPDATA%\\BeamNG\\logs"
       ],
@@ -55,13 +59,13 @@
     },
     {
       "id": "blizzard_downloads_cache",
-      "label": "Blizzard games downloaded patch staging and content manifest cache",
+      "label": "Blizzard launcher logs",
+      "short_label": "Blizzard launcher logs",
       "paths": [
-        "%LOCALAPPDATA%\\Blizzard\\Battle.net\\logs",
         "%APPDATA%\\Blizzard\\Diablo III\\Logs"
       ],
       "safety": "safe",
-      "description": "Blizzard games downloaded patch staging and content manifest cache."
+      "description": "Blizzard launcher logs."
     },
     {
       "id": "bsd_wine_cache",
@@ -78,6 +82,7 @@
     {
       "id": "cities_skylines_cache",
       "label": "Cities: Skylines logs",
+      "short_label": "Cities: Skylines logs",
       "paths": [
         "%APPDATA%\\Colossal Order\\Cities Skylines\\logs"
       ],
@@ -86,16 +91,18 @@
     },
     {
       "id": "ck2_cache",
-      "label": "Crusader Kings II replay cache and DLC download staging",
+      "label": "Crusader Kings II logs",
+      "short_label": "Crusader Kings II logs",
       "paths": [
         "%APPDATA%\\Paradox Interactive\\Crusader Kings II\\logs"
       ],
       "safety": "safe",
-      "description": "Crusader Kings II replay cache and DLC download staging."
+      "description": "Crusader Kings II logs."
     },
     {
       "id": "ck3_cache",
       "label": "Crusader Kings III Paradox Launcher logs",
+      "short_label": "Crusader Kings III logs",
       "paths": [
         "%APPDATA%\\Paradox Interactive\\Crusader Kings III\\logs"
       ],
@@ -108,7 +115,7 @@
       "paths": [
         "%APPDATA%\\Steam\\steamapps\\common\\Counter-Strike Global Offensive\\csgo\\local\\cfg"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "CS2/CS:GO shader cache, demo temp, and console logs.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -119,23 +126,25 @@
         "%APPDATA%\\Bungie\\DestinyActivityFeed",
         "%LOCALAPPDATA%\\Bungie\\Destiny2"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Destiny 2 shader preload, logs, and Bungie.net manifest cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "diablo4_cache",
-      "label": "Diablo IV shader cache and Blizzard Battle.net game session logs",
+      "label": "Diablo IV logs",
+      "short_label": "Diablo IV logs",
       "paths": [
         "%APPDATA%\\Blizzard\\Diablo IV\\Logs",
         "%LOCALAPPDATA%\\Blizzard\\Diablo IV\\Logs"
       ],
       "safety": "safe",
-      "description": "Diablo IV shader cache and Blizzard Battle.net game session logs."
+      "description": "Diablo IV logs."
     },
     {
       "id": "ea_app_cache",
       "label": "EA app (new) and Origin cache — download cache and web data",
+      "short_label": "EA app and Origin cache",
       "paths": [
         "%APPDATA%\\EA Desktop\\Cache",
         "%APPDATA%\\EA Desktop\\logs",
@@ -148,25 +157,25 @@
     },
     {
       "id": "ea_desktop_full_cache",
-      "label": "EA app (new) download cache, web cache, and game content staging",
+      "label": "EA Desktop named caches and logs",
+      "short_label": "EA Desktop cache",
       "paths": [
-        "%APPDATA%\\EA Desktop\\Cache",
-        "%APPDATA%\\EA Desktop\\logs",
         "%LOCALAPPDATA%\\EA Desktop\\Cache"
       ],
       "safety": "safe",
-      "description": "EA app (new) download cache, web cache, and game content staging."
+      "description": "EA Desktop named caches and logs."
     },
     {
       "id": "epic_games_cache",
-      "label": "Epic Games Store shader compiler staging and manifest data",
+      "label": "Epic launcher named caches and logs",
+      "short_label": "Epic launcher cache, logs",
       "paths": [
         "%LOCALAPPDATA%\\EpicGamesLauncher\\Data\\Portal\\Cache",
         "%LOCALAPPDATA%\\EpicGamesLauncher\\Saved\\logs",
         "%LOCALAPPDATA%\\EpicGamesLauncher\\Saved\\webcache"
       ],
       "safety": "safe",
-      "description": "Epic Games Store shader compiler staging and manifest data."
+      "description": "Epic launcher named caches and logs."
     },
     {
       "id": "epic_launcher_cache",
@@ -182,25 +191,28 @@
     },
     {
       "id": "epic_manifest_cache",
-      "label": "Epic Games Launcher manifest data and download URL redirect cache",
+      "label": "Epic launcher logs",
       "paths": [
         "%LOCALAPPDATA%\\EpicGamesLauncher\\Saved\\logs"
       ],
       "safety": "safe",
-      "description": "Epic Games Launcher manifest data and download URL redirect cache."
+      "description": "Epic launcher logs.",
+      "disabled_reason": "duplicate of epic_games_cache"
     },
     {
       "id": "eso_cache",
-      "label": "Elder Scrolls Online logs, audio cache, and shader staging",
+      "label": "Elder Scrolls Online logs",
+      "short_label": "Elder Scrolls Online logs",
       "paths": [
-        "%LOCALAPPDATA%\\Documents\\Elder Scrolls Online\\live\\logs"
+        "%DOCUMENTS%\\Elder Scrolls Online\\live\\Logs"
       ],
       "safety": "safe",
-      "description": "Elder Scrolls Online logs, audio cache, and shader staging."
+      "description": "Elder Scrolls Online logs."
     },
     {
       "id": "eu4_cache",
       "label": "Europa Universalis IV logs",
+      "short_label": "Europa Universalis IV logs",
       "paths": [
         "%APPDATA%\\Paradox Interactive\\Europa Universalis IV\\logs"
       ],
@@ -210,12 +222,12 @@
     {
       "id": "fortnite_cache",
       "label": "Fortnite Epic Games cache, D3D shader cache, and reports",
+      "short_label": "Fortnite shader cache",
       "paths": [
-        "%LOCALAPPDATA%\\FortniteGame\\Saved\\D3DCache",
-        "%LOCALAPPDATA%\\Frostbite\\Cache"
+        "%LOCALAPPDATA%\\FortniteGame\\Saved\\D3DCache"
       ],
-      "safety": "safe",
-      "description": "Fortnite Epic Games cache, D3D shader cache, and reports."
+      "safety": "caution",
+      "description": "Fortnite Epic Games cache, D3D shader cache, and reports. Clearing shaders causes recompilation, slower launches and possible stutter; close games first."
     },
     {
       "id": "forza_cache",
@@ -224,7 +236,7 @@
         "%APPDATA%\\ForzaHorizon*",
         "%LOCALAPPDATA%\\ForzaHorizon*"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Forza Horizon / Motorsport logs, clips, and capture gallery.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -234,7 +246,7 @@
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\GameBar"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Xbox Game Bar widget logs and performance overlay cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -244,22 +256,24 @@
       "paths": [
         "%APPDATA%\\GameJolt"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "GameJolt client cache and game data staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "gamepass_cache",
-      "label": "Xbox Game Pass (PC) app cache, downloads, and shader cache",
+      "label": "Game Pass logs",
+      "short_label": "Game Bar logs",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\GameBar\\logs"
       ],
       "safety": "safe",
-      "description": "Xbox Game Pass (PC) app cache, downloads, and shader cache."
+      "description": "Game Pass logs."
     },
     {
       "id": "gog_cache",
       "label": "GOG Galaxy cache, web cache, and game manager data",
+      "short_label": "GOG Galaxy cache and logs",
       "paths": [
         "%APPDATA%\\GOG.com\\Galaxy\\Cache",
         "%APPDATA%\\GOG.com\\Galaxy\\WebCache",
@@ -284,26 +298,29 @@
     },
     {
       "id": "gog_offline_cache",
-      "label": "GOG Galaxy offline installer cache and game backup metadata",
+      "label": "GOG Galaxy named caches and logs",
       "paths": [
         "%APPDATA%\\GOG.com\\Galaxy\\Cache",
         "%APPDATA%\\GOG.com\\Galaxy\\logs"
       ],
       "safety": "safe",
-      "description": "GOG Galaxy offline installer cache and game backup metadata."
+      "description": "GOG Galaxy named caches and logs.",
+      "disabled_reason": "duplicate of gog_cache"
     },
     {
       "id": "hoi4_cache",
-      "label": "Hearts of Iron IV replay cache and DX12 diagnostic logs",
+      "label": "Hearts of Iron IV logs",
+      "short_label": "Hearts of Iron IV logs",
       "paths": [
         "%APPDATA%\\Paradox Interactive\\Hearts of Iron IV\\logs"
       ],
       "safety": "safe",
-      "description": "Hearts of Iron IV replay cache and DX12 diagnostic logs."
+      "description": "Hearts of Iron IV logs."
     },
     {
       "id": "humble_cache",
       "label": "Humble Bundle app cache and downloads",
+      "short_label": "Humble App cache and logs",
       "paths": [
         "%LOCALAPPDATA%\\Humble Bundle\\Humble App\\Cache",
         "%LOCALAPPDATA%\\Humble Bundle\\Humble App\\logs",
@@ -326,12 +343,13 @@
     },
     {
       "id": "itch_app_cache",
-      "label": "itch.io app cache, downloads, and community data",
+      "label": "itch application logs",
+      "short_label": "itch app logs",
       "paths": [
         "%LOCALAPPDATA%\\itch\\logs"
       ],
       "safety": "safe",
-      "description": "itch.io app cache, downloads, and community data."
+      "description": "itch application logs."
     },
     {
       "id": "itch_cache",
@@ -349,18 +367,19 @@
       "paths": [
         "%LOCALAPPDATA%\\Kongregate"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Kongregate game launcher cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "lol_cache",
-      "label": "League of Legends replay cache, logs, and Riot crash reports",
+      "label": "League of Legends logs",
+      "short_label": "League of Legends logs",
       "paths": [
         "%APPDATA%\\Riot Games\\League of Legends\\logs"
       ],
       "safety": "safe",
-      "description": "League of Legends replay cache, logs, and Riot crash reports."
+      "description": "League of Legends logs."
     },
     {
       "id": "lutris_cache",
@@ -369,7 +388,7 @@
         "%USERPROFILE%\\.lutris\\wine",
         "%USERPROFILE%\\.lutris\\runners"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Lutris wine prefix staging and runner install cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -381,24 +400,25 @@
         "%USERPROFILE%\\.lutris\\wine",
         "%USERPROFILE%\\.local\\share\\lutris"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Lutris wine runners, DXVK cache, and runtime environment.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "minecraft_cache",
-      "label": "Minecraft (Java + Bedrock) shader cache, resource packs staging, and logs",
+      "label": "Minecraft logs",
+      "short_label": "Minecraft logs",
       "paths": [
         "%APPDATA%\\.minecraft\\logs"
       ],
       "safety": "safe",
-      "description": "Minecraft (Java + Bedrock) shader cache, resource packs staging, and logs."
+      "description": "Minecraft logs."
     },
     {
       "id": "minecraft_launcher_cache",
       "label": "Minecraft Launcher game logs, crash reports, and resourcepack staging",
+      "short_label": "Minecraft Launcher logs",
       "paths": [
-        "%APPDATA%\\.minecraft\\logs",
         "%APPDATA%\\.minecraft\\crash-reports"
       ],
       "safety": "safe",
@@ -411,7 +431,7 @@
         "%LOCALAPPDATA%\\Microsoft\\Minesweeper",
         "%LOCALAPPDATA%\\Microsoft\\YourPhone"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Minesweeper and casual game app caches.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -422,13 +442,14 @@
         "%APPDATA%\\Software\\Microsoft\\Windows\\CurrentVersion\\Shell\\Oculus",
         "%LOCALAPPDATA%\\Oculus"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Meta/Oculus home environment cache and manifest staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "overwatch_cache",
       "label": "Overwatch 2 hero profile cache and Blizzard internal logs",
+      "short_label": "Overwatch cache and logs",
       "paths": [
         "%APPDATA%\\Blizzard\\Overwatch\\Logs",
         "%APPDATA%\\Blizzard\\Overwatch\\Cache"
@@ -443,19 +464,20 @@
         "%APPDATA%\\Paradox Interactive\\common\\apps",
         "%LOCALAPPDATA%\\Paradox Interactive\\mods"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Paradox Interactive launcher cache, mods, and save game staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "path_of_exile_cache",
       "label": "Path of Exile log files and shader cache",
+      "short_label": "Path of Exile logs, shaders",
       "paths": [
         "%APPDATA%\\Grinding Gear Games\\Path of Exile\\logs",
         "%APPDATA%\\Grinding Gear Games\\Path of Exile\\shaderCache"
       ],
-      "safety": "safe",
-      "description": "Path of Exile log files and shader cache."
+      "safety": "caution",
+      "description": "Path of Exile log files and shader cache. Clearing shaders causes recompilation, slower launches and possible stutter; close games first."
     },
     {
       "id": "protonvpn_cache",
@@ -463,13 +485,14 @@
       "paths": [
         "%APPDATA%\\ProtonVPN"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Proton VPN session logs and Network Lock cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "pubg_cache",
       "label": "PUBG lite/cache files and TslGame logs",
+      "short_label": "PUBG logs and crash files",
       "paths": [
         "%APPDATA%\\TslGame\\Saved\\Logs",
         "%LOCALAPPDATA%\\TslGame\\Saved\\CrashReportClient"
@@ -483,13 +506,14 @@
       "paths": [
         "%APPDATA%\\Ludeon Studios\\RimWorld by Ludeon Studios"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "RimWorld mod staging and Ludeon Studio debug logs.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "roblox_cache",
       "label": "Roblox player cache, shader cache, and logs",
+      "short_label": "Roblox logs and downloads",
       "paths": [
         "%LOCALAPPDATA%\\Roblox\\logs",
         "%LOCALAPPDATA%\\Roblox\\_downloads"
@@ -499,22 +523,24 @@
     },
     {
       "id": "rockstar_cache",
-      "label": "Rockstar Games Launcher cache, Social Club cache, and update downloads",
+      "label": "Rockstar launcher logs",
+      "short_label": "Rockstar launcher logs",
       "paths": [
         "%APPDATA%\\Rockstar Games\\Launcher\\logs"
       ],
       "safety": "safe",
-      "description": "Rockstar Games Launcher cache, Social Club cache, and update downloads."
+      "description": "Rockstar launcher logs."
     },
     {
       "id": "rust_game_cache",
-      "label": "Rust game logs, crash dumps, and shader cache",
+      "label": "Rust logs and crash reports",
+      "short_label": "Rust logs and crashes",
       "paths": [
         "%APPDATA%\\Facepunch Studios\\Rust\\logs",
         "%APPDATA%\\Facepunch Studios\\Rust\\crash-reports"
       ],
       "safety": "safe",
-      "description": "Rust game logs, crash dumps, and shader cache."
+      "description": "Rust logs and crash reports."
     },
     {
       "id": "steamCMD_cache",
@@ -523,19 +549,27 @@
         "%LOCALAPPDATA%\\steamcmd",
         "%LOCALAPPDATA%\\steam-console"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "steamcmd downloaded game content and workshop staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "steam_cache",
-      "label": "Steam download cache and update files",
+      "label": "Steam browser cache leaves (steam cache)",
       "paths": [
-        "%LOCALAPPDATA%\\Programs\\Steam\\shadercache",
-        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache"
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\GPUCache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\GPUCache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\GPUCache"
       ],
-      "safety": "safe",
-      "description": "Steam download cache and update files. Written by hand: the extractor recorded the loop variable names (steamapps, shadercache, htmlcache) as bare relative paths instead of joining them onto the Steam directory."
+      "safety": "caution",
+      "description": "Only HTTP, compiled code and GPU cache leaves; installed games, downloads and profile state are preserved.",
+      "disabled_reason": "duplicate of steam_webhelper_caches"
     },
     {
       "id": "steam_cloud_sync_cache",
@@ -543,7 +577,7 @@
       "paths": [
         "%LOCALAPPDATA%\\steamapps\\backups"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Steam Cloud sync conflict backups and pending upload staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -554,36 +588,50 @@
         "%LOCALAPPDATA%\\steamapps\\common",
         "%LOCALAPPDATA%\\steamdeck"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Steam Deck game mode logs, Proton prefix cache, and shader staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "steam_download_cache",
-      "label": "Steam downloaded game content and workshop item download staging",
+      "label": "Steam browser cache leaves (steam download cache)",
       "paths": [
-        "%LOCALAPPDATA%\\Programs\\Steam\\downloads",
-        "%APPDATA%\\Steam\\htmlcache"
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\GPUCache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\GPUCache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\GPUCache"
       ],
-      "safety": "safe",
-      "description": "Steam downloaded game content and workshop item download staging."
+      "safety": "caution",
+      "description": "Only HTTP, compiled code and GPU cache leaves; installed games, downloads and profile state are preserved.",
+      "disabled_reason": "duplicate of steam_webhelper_caches"
     },
     {
       "id": "steam_full_cache",
-      "label": "Steam download manifest cache, workshop staging, and shader pre-caching",
+      "label": "Steam browser cache leaves (steam full cache)",
       "paths": [
-        "%LOCALAPPDATA%\\Programs\\Steam\\logs",
-        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache",
-        "%LOCALAPPDATA%\\Programs\\Steam\\shadercache",
-        "%LOCALAPPDATA%\\Programs\\Steam\\downloads",
-        "%APPDATA%\\Steam\\htmlcache"
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\GPUCache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\GPUCache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\GPUCache"
       ],
-      "safety": "safe",
-      "description": "Steam download manifest cache, workshop staging, and shader pre-caching."
+      "safety": "caution",
+      "description": "Only HTTP, compiled code and GPU cache leaves; installed games, downloads and profile state are preserved.",
+      "disabled_reason": "duplicate of steam_webhelper_caches"
     },
     {
       "id": "steam_logs",
       "label": "Steam client logs — safe to clear",
+      "short_label": "Steam client logs",
       "paths": [
         "%ProgramFiles(x86)%\\Steam\\logs"
       ],
@@ -597,7 +645,7 @@
         "%LOCALAPPDATA%\\steamapps\\compatdata",
         "%LOCALAPPDATA%\\Steam\\steamapps\\compatdata"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Steam Proton (Linux game compatibility layer) prefix cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -608,18 +656,27 @@
         "%LOCALAPPDATA%\\Programs\\Steam\\shadercache",
         "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Steam per-game shader pre-caching and dx9shader cache.",
       "disabled_reason": "Same paths as 'steam_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
     {
       "id": "steam_webhelper_cache",
-      "label": "Steam WebHelper browser cache (htmlcache folder)",
+      "label": "Steam browser cache leaves (steam webhelper cache)",
       "paths": [
-        "%APPDATA%\\Steam\\htmlcache"
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\GPUCache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\GPUCache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\GPUCache"
       ],
-      "safety": "safe",
-      "description": "Steam WebHelper browser cache (htmlcache folder)."
+      "safety": "caution",
+      "description": "Only HTTP, compiled code and GPU cache leaves; installed games, downloads and profile state are preserved.",
+      "disabled_reason": "duplicate of steam_webhelper_caches"
     },
     {
       "id": "steamvr_cache",
@@ -628,18 +685,19 @@
         "%LOCALAPPDATA%\\SteamVR",
         "%APPDATA%\\Steam\\config"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "SteamVR logs, compositor cache, and tracked device config.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "stellaris_cache",
-      "label": "Stellaris game save staging and Paradox launcher update cache",
+      "label": "Stellaris logs",
+      "short_label": "Stellaris logs",
       "paths": [
         "%APPDATA%\\Paradox Interactive\\Stellaris\\logs"
       ],
       "safety": "safe",
-      "description": "Stellaris game save staging and Paradox launcher update cache."
+      "description": "Stellaris logs."
     },
     {
       "id": "terraria_cache",
@@ -647,13 +705,14 @@
       "paths": [
         "%APPDATA%\\Re-Logic"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Terraria player backup files and Re-Logic game logs.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "ubisoft_cache",
       "label": "Ubisoft Connect cache, download, and shader cache",
+      "short_label": "Ubisoft Connect caches",
       "paths": [
         "%APPDATA%\\Ubisoft\\Connect\\cache",
         "%APPDATA%\\Ubisoft\\Connect\\downloads",
@@ -662,12 +721,13 @@
         "%LOCALAPPDATA%\\Ubisoft\\Connect\\Cache",
         "%LOCALAPPDATA%\\Ubisoft\\Connect\\Logs"
       ],
-      "safety": "safe",
-      "description": "Ubisoft Connect cache, download, and shader cache."
+      "safety": "caution",
+      "description": "Ubisoft Connect cache, download, and shader cache. Clearing shaders causes recompilation, slower launches and possible stutter; close games first."
     },
     {
       "id": "unity_cache",
-      "label": "Unity Editor cache, library, and build cache folders",
+      "label": "Unity editor cache folders",
+      "short_label": "Unity editor cache",
       "paths": [
         "%LOCALAPPDATA%\\Unity\\Editor\\Cache",
         "%LOCALAPPDATA%\\Unity\\Editor\\logs",
@@ -675,17 +735,18 @@
         "%LOCALAPPDATA%\\Unity\\Hub\\Cache"
       ],
       "safety": "caution",
-      "description": "Unity Editor cache, library, and build cache folders."
+      "description": "Unity editor cache folders."
     },
     {
       "id": "unity_hub_cache",
-      "label": "Unity Hub cache, downloaded editor installs, and logs",
+      "label": "Unity Hub named caches and logs",
+      "short_label": "Unity Hub cache and logs",
       "paths": [
         "%LOCALAPPDATA%\\Unity Hub\\logs",
         "%LOCALAPPDATA%\\Unity Hub\\Cache"
       ],
       "safety": "caution",
-      "description": "Unity Hub cache, downloaded editor installs, and logs."
+      "description": "Unity Hub named caches and logs."
     },
     {
       "id": "unity_hub_full_cache",
@@ -700,29 +761,30 @@
     },
     {
       "id": "unreal_cache",
-      "label": "Unreal Engine build, intermediate, and saved folders",
+      "label": "Unreal Engine derived-data caches",
+      "short_label": "Unreal derived-data cache",
       "paths": [
         "%LOCALAPPDATA%\\UnrealEngine\\Engine\\DerivedDataCache"
       ],
       "safety": "caution",
-      "description": "Unreal Engine build, intermediate, and saved folders."
+      "description": "Unreal Engine derived-data caches."
     },
     {
       "id": "valorant_cache",
-      "label": "Valorant game logs and Riot Vanguard logs",
+      "label": "VALORANT diagnostic logs",
+      "short_label": "VALORANT logs",
       "paths": [
-        "%APPDATA%\\Riot Games\\Valorant\\logs",
-        "%APPDATA%\\Riot Games\\Signip\\Saved\\Logs"
+        "%LOCALAPPDATA%\\VALORANT\\Saved\\Logs"
       ],
       "safety": "safe",
-      "description": "Valorant game logs and Riot Vanguard logs."
+      "description": "VALORANT diagnostic logs."
     },
     {
       "id": "warcraft_cache",
       "label": "World of Warcraft, Diablo, Hearthstone logs and cache",
+      "short_label": "Blizzard game logs",
       "paths": [
         "%APPDATA%\\Blizzard\\World of Warcraft\\Logs",
-        "%APPDATA%\\Blizzard\\Diablo III\\Logs",
         "%APPDATA%\\Blizzard\\Hearthstone\\Logs",
         "%LOCALAPPDATA%\\Blizzard\\World of Warcraft\\Logs"
       ],
@@ -736,7 +798,7 @@
         "%APPDATA%\\Warframe",
         "%APPDATA%\\Digital Extremes\\Warframe"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Warframe shader cache, relay logs, and update staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -747,13 +809,14 @@
         "%LOCALAPPDATA%\\XboxLive",
         "%LOCALAPPDATA%\\Packages\\Microsoft.XboxGameOverlay*\\LocalCache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Xbox Game Bar and BarSvc cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "winehq_cache",
       "label": "WineHQ (Linux compatibility layer) prefix cache and logs",
+      "short_label": "Wine temp and cache",
       "paths": [
         "%USERPROFILE%\\.wine\\drive_c\\windows\\temp",
         "%USERPROFILE%\\.cache\\wine"
@@ -769,7 +832,7 @@
         "%USERPROFILE%\\.PlayOnLinux",
         "%USERPROFILE%\\.winetricks"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Wine/PlayOnLinux prefix cache and Winetricks download staging.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -781,7 +844,7 @@
         "%LOCALAPPDATA%\\Packages\\Microsoft.XboxGamingOverlay_*\\LocalCache",
         "%LOCALAPPDATA%\\MicrosoftGameBar"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Xbox app full cache: achievements, game clips, and social data.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -794,13 +857,14 @@
         "%LOCALAPPDATA%\\Packages\\FamilyNotifications.*\\LocalState",
         "%ProgramData%\\XboxLiveDeviceInfo"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Xbox Gaming Services, Xbox Gaming Overlay, FamilyNotifications cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "xbox_live_cache",
       "label": "Xbox Live device info cache, achievements staging, and gaming services logs",
+      "short_label": "Game Bar logs (legacy)",
       "paths": [
         "%LOCALAPPDATA%\\MicrosoftGameBar\\logs"
       ],
@@ -810,24 +874,31 @@
     {
       "id": "curseforge_cache",
       "label": "CurseForge cache, code cache, and GPU cache",
+      "short_label": "CurseForge caches",
       "paths": [
         "%APPDATA%\\CurseForge\\Cache",
         "%APPDATA%\\CurseForge\\Code Cache",
         "%APPDATA%\\CurseForge\\GPUCache",
         "%APPDATA%\\CurseForge\\DawnGraphiteCache",
-        "%APPDATA%\\CurseForge\\DawnWebGPUCache",
-        "%APPDATA%\\CurseForge\\blob_storage"
+        "%APPDATA%\\CurseForge\\DawnWebGPUCache"
       ],
       "safety": "safe",
-      "description": "CurseForge (Minecraft/WoW mod manager) is Electron-based, the same layout Discord/Slack use -- these are its cache directories only. NOT IndexedDB/Local Storage, which can hold real modpack/instance metadata."
+      "description": "Only the named rebuildable cache leaves; profile state and blob storage are preserved."
     },
     {
       "id": "steam_webhelper_caches",
       "label": "Steam browser caches (store and library pages)",
+      "short_label": "Steam browser caches",
       "paths": [
         "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Cache",
         "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
         "%LOCALAPPDATA%\\Steam\\htmlcache\\Default\\GPUCache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\Code Cache",
+        "%LOCALAPPDATA%\\Programs\\Steam\\htmlcache\\Default\\GPUCache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\Code Cache",
+        "%APPDATA%\\Steam\\htmlcache\\Default\\GPUCache",
         "%LOCALAPPDATA%\\Steam\\htmlcache\\GrShaderCache",
         "%LOCALAPPDATA%\\Steam\\htmlcache\\ShaderCache",
         "%LOCALAPPDATA%\\Steam\\htmlcache\\GraphiteDawnCache"
@@ -838,6 +909,7 @@
     {
       "id": "battlenet_local_caches",
       "label": "Battle.net app and browser caches",
+      "short_label": "Battle.net caches",
       "paths": [
         "%LOCALAPPDATA%\\Battle.net\\Cache",
         "%LOCALAPPDATA%\\Battle.net\\BrowserCaches\\*\\Cache",
@@ -847,6 +919,30 @@
       ],
       "safety": "safe",
       "description": "Only the caches; Local Storage, Network and Session Storage beside them keep you signed in and are never touched."
+    },
+    {
+      "id": "steam_appcache_httpcache",
+      "label": "Steam client HTTP download cache (appcache\\httpcache)",
+      "short_label": "Steam HTTP cache",
+      "paths": [
+        "%FIXED_DRIVES%\\Steam\\appcache\\httpcache",
+        "%FIXED_DRIVES%\\Program Files (x86)\\Steam\\appcache\\httpcache",
+        "%FIXED_DRIVES%\\Program Files\\Steam\\appcache\\httpcache"
+      ],
+      "safety": "safe",
+      "description": "Images and web content the Steam client downloaded for store and library pages. Only the httpcache leaf: appinfo.vdf, librarycache and stats beside it are left alone. Steam downloads what it needs again.",
+      "keep_newer_than_hours": 24
+    },
+    {
+      "id": "steam_depotcache",
+      "label": "Steam depot manifest cache (depotcache)",
+      "short_label": "Steam depot manifests",
+      "paths": [
+        "%ProgramFiles(x86)%\\Steam\\depotcache"
+      ],
+      "safety": "caution",
+      "description": "Manifests Steam keeps for game content it downloaded. Steam fetches them again when it next updates or verifies a game. Close Steam and make sure no download or update is running; manifests younger than a day are kept.",
+      "keep_newer_than_hours": 24
     }
   ]
 }

@@ -99,9 +99,11 @@ def test_summary_bar_shows_every_fixed_drive_and_the_last_clean(qapp, tmp_path, 
     bar.refresh()
     _wait_for(lambda: len(bar.bars) == 2)
     texts = [b.format() for b in bar.bars]
-    assert texts[0].startswith("C:") and "free of" in texts[0] and len(texts) == 2
+    # Redesign: compact free-space caption; exact free/total lives in its tooltip.
+    assert texts[0].startswith("C:") and "free" in texts[0] and len(texts) == 2
+    assert 'bytes free of' in bar.bars[0].toolTip()
     assert bar.bars[1].value() == 90                       # E: is 90 % used
-    assert bar.last.text().startswith("Last clean: Freed 3.0 GB")
+    assert bar.last.toolTip().startswith("Last clean: Freed 3.0 GB")
 
 
 def test_summary_bar_ignores_a_stale_generation(qapp, tmp_path, monkeypatch):

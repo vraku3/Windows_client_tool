@@ -66,6 +66,9 @@ class ScannerSpec:
     disabled_reason: str = ""
     #: Files modified more recently than this many hours are left alone.
     keep_newer_than_hours: int = 0
+    #: At most 28 characters, for rows, chips and chart legends; ``label``
+    #: stays the long description. Empty means "use the label".
+    short_label: str = ""
 
     def __post_init__(self) -> None:
         if self.safety not in SAFETY_LEVELS:
@@ -108,6 +111,12 @@ def expand(raw: str) -> Optional[str]:
     os.path.exists cheerfully answers False for — so the scanner silently
     finds nothing rather than saying it could not look.
     """
+    if "%DOCUMENTS%" in raw:
+        from modules.cleanup.cleanup_scanner import known_folders
+        documents = known_folders.known_folder("Documents")
+        if not documents:
+            return None
+        raw = raw.replace("%DOCUMENTS%", documents)
     expanded = os.path.expandvars(raw)
     if "%" in expanded:
         return None

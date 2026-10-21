@@ -13,25 +13,27 @@
     },
     {
       "id": "browser_caches",
-      "label": "Browser cache directories for Chrome, Edge, Firefox",
+      "label": "Chrome and Edge Default-profile HTTP caches",
+      "short_label": "Chrome/Edge default cache",
       "paths": [
         "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\Cache",
         "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\Cache"
       ],
       "safety": "safe",
-      "description": "Browser cache directories for Chrome, Edge, Firefox."
+      "description": "Chrome and Edge Default-profile HTTP caches."
     },
     {
       "id": "d3d_shader_cache",
       "label": "Direct3D and GPU shader cache directories left by games/graphics apps",
+      "short_label": "DirectX shader caches",
       "paths": [
         "%LOCALAPPDATA%\\D3DSCache",
         "%LOCALAPPDATA%\\NVIDIA\\DXCache",
         "%LOCALAPPDATA%\\NVIDIA\\GLCache",
         "%LOCALAPPDATA%\\AMD\\DXCache"
       ],
-      "safety": "safe",
-      "description": "Direct3D and GPU shader cache directories left by games/graphics apps."
+      "safety": "caution",
+      "description": "Direct3D and GPU shader cache directories left by games/graphics apps. Clearing shaders causes recompilation, slower launches and possible stutter; close games first."
     },
     {
       "id": "defender_history",
@@ -43,7 +45,7 @@
         "%ProgramData%\\Microsoft\\Windows Defender\\Scans\\History\\Results\\Quick",
         "%ProgramData%\\Microsoft\\Windows Defender\\Scans\\History\\Results\\System"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Windows Defender detection history and scan results — safe to delete.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -51,24 +53,21 @@
       "id": "dev_tool_caches",
       "label": "Developer tool caches: npm, pip, NuGet, Cargo, Gradle, Maven",
       "paths": [
-        "%APPDATA%\\npm-cache",
-        "%LOCALAPPDATA%\\npm-cache",
         "%LOCALAPPDATA%\\pip\\cache",
         "%APPDATA%\\pip\\cache",
-        "%LOCALAPPDATA%\\nuget\\cache",
-        "%USERPROFILE%\\.nuget\\packages",
         "%USERPROFILE%\\.cargo\\registry\\cache",
         "%USERPROFILE%\\.gradle\\caches",
-        "%USERPROFILE%\\.m2\\repository",
         "%LOCALAPPDATA%\\Yarn\\Cache",
         "%APPDATA%\\yarn\\cache"
       ],
       "safety": "caution",
-      "description": "Developer tool caches: npm, pip, NuGet, Cargo, Gradle, Maven."
+      "description": "Developer tool caches: npm, pip, NuGet, Cargo, Gradle, Maven.",
+      "disabled_reason": "duplicate of pip_cache"
     },
     {
       "id": "diag_logs",
       "label": "Windows Diagnostic logs: ETW trace logs, MSI install logs, DeviceMetaData",
+      "short_label": "Windows diagnostic logs",
       "paths": [
         "%windir%\\Logs\\CBS",
         "%windir%\\Logs\\DISM",
@@ -95,8 +94,9 @@
         "%LOCALAPPDATA%\\Intel\\GraphicsCache",
         "%LOCALAPPDATA%\\Intel\\GLCache"
       ],
-      "safety": "safe",
-      "description": "DirectX 11/12 shader cache, D3DSCache, and AMD/NVIDIA/Intel shader disks."
+      "safety": "caution",
+      "description": "DirectX 11/12 shader cache, D3DSCache, and AMD/NVIDIA/Intel shader disks. Clearing shaders causes recompilation, slower launches and possible stutter; close games first.",
+      "disabled_reason": "duplicate of d3d_shader_cache"
     },
     {
       "id": "driver_store",
@@ -120,7 +120,7 @@
         "%LOCALAPPDATA%\\Intel\\GraphicsCache",
         "%LOCALAPPDATA%\\Intel\\GLCache"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "DirectX Graphics Infrastructure cache — GPU-related temp data from games.",
       "disabled_reason": "Same paths as 'directx_shader_cache', which already covers them; kept once so the cleanup total is not counted twice."
     },
@@ -130,13 +130,14 @@
       "paths": [
         "%windir%\\System32\\winevt\\Logs\\*.evtx"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Windows event log .evtx files — may be needed for troubleshooting.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "font_cache",
       "label": "Windows Font Cache service (FNTCACHE.DAT) and font link temporary files",
+      "short_label": "Font cache file",
       "paths": [
         "%windir%\\System32\\FNTCACHE.DAT"
       ],
@@ -146,11 +147,12 @@
     {
       "id": "iis_logs",
       "label": "IIS HTTP logs, Failed Request logs, and IIS Express logs",
+      "short_label": "IIS logs",
       "paths": [
         "%windir%\\System32\\LogFiles\\HTTPERR",
         "%windir%\\System32\\inetsrv\\LogFiles"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "IIS HTTP logs, Failed Request logs, and IIS Express logs."
     },
     {
@@ -170,24 +172,25 @@
         "%windir%\\System32\\MUI",
         "%windir%\\System32\\en-US"
       ],
-      "safety": "caution",
+      "safety": "danger",
       "description": "Windows language pack cab files and MUI temp cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "memory_dumps",
-      "label": "Windows minidumps and full kernel memory dumps — needed for crash debugging",
+      "label": "Windows kernel memory dumps and live kernel reports",
+      "short_label": "Kernel memory dumps",
       "paths": [
-        "%windir%\\Minidump\\*.dmp",
         "%windir%\\MEMORY.DMP",
         "%windir%\\LiveKernelReports"
       ],
       "safety": "caution",
-      "description": "Windows minidumps and full kernel memory dumps — needed for crash debugging."
+      "description": "Windows kernel memory dumps and live kernel reports."
     },
     {
       "id": "minidump",
       "label": "Kernel minidumps (small memory dumps from bugchecks)",
+      "short_label": "Minidumps",
       "paths": [
         "%windir%\\Minidump"
       ],
@@ -197,6 +200,7 @@
     {
       "id": "ms_store_cache",
       "label": "Microsoft Store cache and downloaded packages",
+      "short_label": "Microsoft Store cache",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\Windows Store\\Cache"
       ],
@@ -209,7 +213,7 @@
       "paths": [
         "%windir%\\System32\\drivers\\etc\\hosts"
       ],
-      "safety": "safe",
+      "safety": "danger",
       "description": "Network-level DNS and NetBIOS cached entries.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
@@ -219,22 +223,24 @@
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Notifications"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Windows notification history and toast cache.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "panther_logs",
-      "label": "Windows Setup/Imagex logs in Panther directory — safe after setup completes",
+      "label": "Windows Setup diagnostic logs",
       "paths": [
         "%windir%\\Panther\\*.log"
       ],
       "safety": "caution",
-      "description": "Windows Setup/Imagex logs in Panther directory — safe after setup completes."
+      "description": "Windows Setup diagnostic logs.",
+      "disabled_reason": "duplicate of sysprep_logs"
     },
     {
       "id": "per_drive_found_clusters",
       "label": "CHKDSK recovered fragments (FOUND.*) on every fixed drive",
+      "short_label": "CHKDSK FOUND folders",
       "paths": [
         "%FIXED_DRIVES%\\FOUND.*"
       ],
@@ -244,6 +250,7 @@
     {
       "id": "per_drive_recycle_bin",
       "label": "Recycle Bin on every fixed drive",
+      "short_label": "Recycle Bin (all drives)",
       "paths": [
         "%FIXED_DRIVES%\\$Recycle.Bin"
       ],
@@ -253,6 +260,7 @@
     {
       "id": "per_drive_temp",
       "label": "Temp folders on every fixed drive",
+      "short_label": "Temp folders (all drives)",
       "paths": [
         "%FIXED_DRIVES%\\temp",
         "%FIXED_DRIVES%\\tmp"
@@ -266,13 +274,14 @@
       "paths": [
         "%LOCALAPPDATA%\\Packages\\Microsoft.Windows.Photos*\\LocalState"
       ],
-      "safety": "safe",
+      "safety": "caution",
       "description": "Microsoft Photos scan/3D objects cache and video editing temp.",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
       "id": "project_ascension_logs",
       "label": "Project Ascension launcher logs and cache — safe to clear",
+      "short_label": "Ascension launcher logs",
       "paths": [
         "%APPDATA%\\projectascension\\Cache",
         "%LOCALAPPDATA%\\ProjectAscension\\Logs",
@@ -289,17 +298,16 @@
         "%windir%\\Logs\\DISM\\dism.log"
       ],
       "safety": "caution",
-      "description": "System File Checker (sfc) and Deployment Image Servicing logs. NOT WinSxS internals."
+      "description": "System File Checker (sfc) and Deployment Image Servicing logs. NOT WinSxS internals.",
+      "disabled_reason": "duplicate of diag_logs"
     },
     {
       "id": "sysprep_logs",
       "label": "Sysprep (Windows generalization) logs and setup logs",
+      "short_label": "Sysprep and setup logs",
       "paths": [
         "%windir%\\Panther",
-        "%windir%\\Logs\\CBS\\CBS.log",
-        "%windir%\\INF\\setupapi.log",
-        "%windir%\\Panther\\UnattendGC\\setupact.log",
-        "%windir%\\Panther\\UnattendGC\\setuperr.log"
+        "%windir%\\INF\\setupapi.log"
       ],
       "safety": "caution",
       "description": "Sysprep (Windows generalization) logs and setup logs."
@@ -307,11 +315,9 @@
     {
       "id": "telemetry",
       "label": "Windows telemetry, WER Temp, AutoLogger ETL, diagerr/diagwrn logs",
+      "short_label": "WER temp files",
       "paths": [
-        "%ProgramData%\\Microsoft\\Windows\\WER\\Temp",
-        "%windir%\\System32\\WDI\\*.etl",
-        "%windir%\\System32\\diagerr.log",
-        "%windir%\\System32\\diagwrn.log"
+        "%ProgramData%\\Microsoft\\Windows\\WER\\Temp"
       ],
       "safety": "caution",
       "description": "Windows telemetry, WER Temp, AutoLogger ETL, diagerr/diagwrn logs."
@@ -319,6 +325,7 @@
     {
       "id": "temp_files",
       "label": "User temp files (TEMP env var and C:\\Windows\\Temp)",
+      "short_label": "Temporary files",
       "paths": [
         "%TEMP%",
         "%windir%\\Temp"
@@ -330,6 +337,7 @@
     {
       "id": "thumbnail_cache",
       "label": "Windows Explorer thumbnail and icon cache database files",
+      "short_label": "Thumbnail cache",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\thumbcache_*.db",
         "%LOCALAPPDATA%\\Microsoft\\Windows\\Explorer\\iconcache_*.db"
@@ -350,19 +358,18 @@
     },
     {
       "id": "update_cleanup",
-      "label": "Windows Update cleanup: downloaded patches, softwaredistribution backup, orphaned patches",
+      "label": "Windows Update backup files",
+      "short_label": "Windows Update backup",
       "paths": [
-        "%windir%\\SoftwareDistribution\\Download",
-        "%windir%\\SoftwareDistribution\\Backup",
-        "%windir%\\WinSxS\\Temp",
-        "%windir%\\Temp\\PostReboot"
+        "%windir%\\SoftwareDistribution\\Backup"
       ],
-      "safety": "caution",
-      "description": "Windows Update cleanup: downloaded patches, softwaredistribution backup, orphaned patches."
+      "safety": "danger",
+      "description": "Windows Update backup files."
     },
     {
       "id": "user_crash_dumps",
       "label": "User-mode crash dump files written by Windows Error Reporting",
+      "short_label": "App crash dumps",
       "paths": [
         "%LOCALAPPDATA%\\CrashDumps",
         "%TEMP%\\*.dmp"
@@ -373,6 +380,7 @@
     {
       "id": "wer_reports",
       "label": "Windows Error Reporting crash archives and pending queues",
+      "short_label": "Error reports",
       "paths": [
         "%ProgramData%\\Microsoft\\Windows\\WER\\ReportArchive",
         "%ProgramData%\\Microsoft\\Windows\\WER\\ReportQueue",
@@ -384,22 +392,23 @@
     },
     {
       "id": "windows_backup_catalog",
-      "label": "Windows Backup catalog and shadow copy history logs",
+      "label": "Windows Server Backup diagnostic logs (windows backup catalog)",
       "paths": [
         "%windir%\\Logs\\WindowsServerBackup"
       ],
       "safety": "caution",
-      "description": "Windows Backup catalog and shadow copy history logs."
+      "description": "Windows Server Backup diagnostic logs.",
+      "disabled_reason": "duplicate of windows_backup_logs"
     },
     {
       "id": "windows_backup_logs",
-      "label": "Windows Server Backup logs and System Protection shadow copy logs",
+      "label": "Windows Server Backup diagnostic logs",
+      "short_label": "Server Backup logs",
       "paths": [
-        "%windir%\\Logs\\WindowsServerBackup",
-        "%windir%\\Logs\\SIH"
+        "%windir%\\Logs\\WindowsServerBackup"
       ],
       "safety": "caution",
-      "description": "Windows Server Backup logs and System Protection shadow copy logs."
+      "description": "Windows Server Backup diagnostic logs."
     },
     {
       "id": "windows_cbs_logs",
@@ -407,12 +416,14 @@
       "paths": [
         "%windir%\\Logs\\CBS"
       ],
-      "safety": "safe",
-      "description": "Windows CBS (Component Based Servicing) logs."
+      "safety": "caution",
+      "description": "Windows CBS (Component Based Servicing) logs.",
+      "disabled_reason": "duplicate of diag_logs"
     },
     {
       "id": "windows_panther_logs",
       "label": "Windows Panther (setup) logs — unattend and diagnostic",
+      "short_label": "Windows setup logs",
       "paths": [
         "%windir%\\Panther\\Tmp"
       ],
@@ -422,9 +433,9 @@
     {
       "id": "windows_setup_diags",
       "label": "Windows SetupDiag verbose logs and migration data",
+      "short_label": "SetupDiag logs",
       "paths": [
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\Setup\\Diag",
-        "%windir%\\Panther"
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\Setup\\Diag"
       ],
       "safety": "caution",
       "description": "Windows SetupDiag verbose logs and migration data."
@@ -432,6 +443,7 @@
     {
       "id": "windows_tweaker_logs",
       "label": "WindowsTweaker application logs",
+      "short_label": "WinClientTool logs",
       "paths": [
         "%APPDATA%\\WindowsTweaker\\logs"
       ],
@@ -440,17 +452,19 @@
     },
     {
       "id": "windowsupdate_orch_cache",
-      "label": "Windows Update Orchestrator scan results and pending install state",
+      "label": "Windows Update downloaded files",
       "paths": [
         "%windir%\\SoftwareDistribution\\Download",
         "%windir%\\SoftwareDistribution\\Backup"
       ],
       "safety": "caution",
-      "description": "Windows Update Orchestrator scan results and pending install state."
+      "description": "Windows Update downloaded files.",
+      "disabled_reason": "duplicate of wu_cache"
     },
     {
       "id": "winsat_cache",
       "label": "Windows Performance WinSAT XML, Media.ets, and winsat.log files",
+      "short_label": "WinSAT results",
       "paths": [
         "%windir%\\Performance\\WinSAT\\*.xml",
         "%windir%\\Performance\\WinSAT\\Media.ets",
@@ -462,6 +476,7 @@
     {
       "id": "wu_cache",
       "label": "Windows Update download cache (requires stopping wuauserv service)",
+      "short_label": "Windows Update downloads",
       "paths": [
         "%windir%\\SoftwareDistribution\\Download"
       ],
@@ -482,11 +497,25 @@
     {
       "id": "update_orchestrator_logs",
       "label": "Windows Update orchestrator logs (USOShared)",
+      "short_label": "Update Orchestrator logs",
       "paths": [
         "%ProgramData%\\USOShared\\Logs"
       ],
       "safety": "safe",
       "description": "Diagnostic trace logs of the update orchestrator. Needs administrator."
+    },
+    {
+      "id": "amd_shader_caches",
+      "label": "AMD driver shader caches (DirectX 9, DirectX 12, Vulkan, OpenGL)",
+      "short_label": "AMD shader caches",
+      "paths": [
+        "%LOCALAPPDATA%\\AMD\\DxcCache",
+        "%LOCALAPPDATA%\\AMD\\VkCache",
+        "%LOCALAPPDATA%\\AMD\\DX9Cache",
+        "%LOCALAPPDATA%\\AMD\\OglpCache"
+      ],
+      "safety": "caution",
+      "description": "Compiled shaders the AMD driver keeps per API (AMD\\DxCache is in d3d_shader_cache). The same files AMD Software's Reset Shader Cache deletes; games stutter and load slower while they are rebuilt. Close games first."
     }
   ]
 }

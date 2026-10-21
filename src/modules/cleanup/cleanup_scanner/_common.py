@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from modules.cleanup.cleanup_scanner.deleter import is_cloud_only, is_link_attrs
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size, on_disk_size_of
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ def _root_counts(path: str) -> bool:
 
 def get_dir_size(path: str) -> int:
     """Local bytes a full clean of `path` would free -- the deleter's own link and
-    cloud-placeholder rules, over one scandir walk (no extra stat per file)."""
+    cloud-placeholder rules, over one scandir walk (no extra stat per file).
+    Sparse/compressed files count what they occupy on disk, not `st_size`."""
     total = 0
     stack = [path] if _root_counts(path) else []
     while stack:
@@ -78,7 +80,7 @@ def get_dir_size(path: str) -> int:
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(entry.path)
                     continue
-                total += st_and_attr[0].st_size
+                total += on_disk_size(entry.path, st_and_attr[0])
             except OSError as exc:
                 logger.debug("size walk cannot read %s: %s", entry.path, exc)
     return total
@@ -97,7 +99,7 @@ def _make_item(path: str, safety: str = "safe", min_age_days: int = 0) -> Option
         except OSError:
             return None
     is_dir = os.path.isdir(path)
-    size = get_dir_size(path) if is_dir else os.path.getsize(path)
+    size = get_dir_size(path) if is_dir else on_disk_size_of(path)
     return ScanItem(path=path, size=size, is_dir=is_dir, safety=safety)
 
 def _make_item_with_age(path: str, safety: str, min_age_days: int) -> Optional[ScanItem]:
@@ -107,12 +109,13 @@ def _make_item_with_age(path: str, safety: str, min_age_days: int) -> Optional[S
             mtime = os.path.getmtime(path)
             if (time.time() - mtime) < min_age_days * 86400:
                 return None
-        size = os.path.getsize(path)
+        size = on_disk_size_of(path)
         return ScanItem(path=path, size=size, is_dir=False, safety=safety)
     except OSError:
         return None
 
-__all__ = ['ScanItem', 'ScanResult', 'get_dir_size', 'format_size',
+__all__ = ['ScanItem', 'ScanResult', 'get_dir_size', 'format_size', 'on_disk_size',
+           'on_disk_size_of',
            '_make_item', '_make_item_with_age', 'dedupe_items',
            'total_of', 'logger']
 

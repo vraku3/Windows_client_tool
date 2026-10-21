@@ -1,0 +1,1330 @@
+{
+  "3dsmax_cache": {
+    "what": "3ds Max's whole user data folders (settings, scripts, plugins config, autoback).",
+    "used_for": "Configuration and user files.",
+    "verdict": "danger",
+    "risk": "Lost UI settings, scripts and autobackups.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "amd_comgr_cache": {
+    "what": "AMD Code Object Manager's cache of compiled GPU kernels (ROCm/HIP/OpenCL), on by default.",
+    "used_for": "Avoids recompiling GPU code between runs; pruned automatically (default cap 30 GB / 75% of disk).",
+    "verdict": "safe",
+    "risk": "First GPU-compute run after cleaning recompiles kernels (slower start).",
+    "before_cleaning": "Close apps using GPU compute (AI tools, Blender, etc.).",
+    "regenerates": true,
+    "sources": [
+      "https://github.com/ROCm/llvm-project/blob/amd-staging/amd/comgr/README.md"
+    ],
+    "catalog_concern": "AMD documents the Windows default as %LOCALAPPDATA%\\cache\\comgr; %LOCALAPPDATA%\\comgr may be an older location. Consider adding the documented path."
+  },
+  "amd_install_manager_cache": {
+    "what": "Not documented by the vendor: a download cache of AMD Software's installer/updater.",
+    "used_for": "Holds installer payloads already used.",
+    "verdict": "safe",
+    "risk": "A re-download if AMD Software repairs or re-installs.",
+    "before_cleaning": "Not during an AMD Software install/update.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "android_studio_cache": {
+    "what": "Android Studio's IDE caches (indexes) and its logs.",
+    "used_for": "Indexes speed up the editor; Android Studio rebuilds them on next start. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first start while re-indexing; lost logs. Gradle caches, SDK and emulator images are elsewhere and not touched.",
+    "before_cleaning": "Close Android Studio first.",
+    "regenerates": true,
+    "sources": [
+      "https://developer.android.com/studio/intro/studio-config",
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html"
+    ],
+    "catalog_concern": "Paths use %APPDATA%\\Google\\AndroidStudio*, which is the CONFIG folder; Google documents system files (caches, logs) under %LOCALAPPDATA%\\Google\\AndroidStudio<version>. The entry likely finds nothing. Never widen it to the whole config folder."
+  },
+  "ansible_cache": {
+    "what": "Ansible's local temporary folder on the controller (~/.ansible/tmp).",
+    "used_for": "Scratch space for running playbooks; recreated on next run.",
+    "verdict": "safe",
+    "risk": "A playbook running at that moment could fail. Ansible does not run natively on Windows (only under WSL), so it is usually absent.",
+    "before_cleaning": "Not while a playbook runs.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.ansible.com/ansible/latest/reference_appendices/config.html"
+    ],
+    "catalog_concern": ""
+  },
+  "apt_cache": {
+    "what": "Linux APT paths that do not exist on Windows (WSL keeps them inside the distro's virtual disk).",
+    "used_for": "Not applicable to Windows.",
+    "verdict": "caution",
+    "risk": "None on Windows; nothing to find.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: the paths are meaningless on Windows; WSL's apt cache is cleaned inside WSL with 'apt clean'."
+  },
+  "arcgis_cache": {
+    "what": "Esri's whole data folder (ArcGIS Pro settings, licensing, project data).",
+    "used_for": "Configuration and sign-in.",
+    "verdict": "danger",
+    "risk": "Lost settings, licence sign-in.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "atom_cache": {
+    "what": "Atom editor's Chromium HTTP cache (Cache) and temporary blob storage (blob_storage). Atom was discontinued by GitHub in 2022.",
+    "used_for": "Both are rebuilt by Electron when Atom starts.",
+    "verdict": "safe",
+    "risk": "None known; slightly slower first start.",
+    "before_cleaning": "Close Atom first.",
+    "regenerates": true,
+    "sources": [
+      "https://github.blog/2022-06-08-sunsetting-atom/"
+    ],
+    "catalog_concern": ""
+  },
+  "autocad_cache": {
+    "what": "Not documented by the vendor at these paths: AutoCAD per-release Cache and Temp folders.",
+    "used_for": "Temporary and cache data rebuilt by AutoCAD.",
+    "verdict": "safe",
+    "risk": "Slower first use; a crash-recovery file could sit in Temp if AutoCAD is open.",
+    "before_cleaning": "Close AutoCAD first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "AutoCAD's autosave (.sv$) defaults to %TEMP%; make sure no autosave/recovery files are in these folders."
+  },
+  "bazaar_cache": {
+    "what": "Bazaar's ~/.bazaar folder: bazaar.conf, authentication.conf and plugins.",
+    "used_for": "Configuration and saved credentials.",
+    "verdict": "danger",
+    "risk": "Lost credentials/config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: config and credentials, not a cache."
+  },
+  "bundler_cache": {
+    "what": "Bundler's ~/.bundle folder content.",
+    "used_for": "Bundler config (may hold source credentials) and installed spec data.",
+    "verdict": "danger",
+    "risk": "Lost credentials/config; reinstall needed.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: config, not cache."
+  },
+  "chocolatey_cache": {
+    "what": "Chocolatey's download cache, packages set aside after a failed install (lib-bad) and Chocolatey's logs.",
+    "used_for": "Cache avoids re-downloads; lib-bad is a leftover of a failed install; logs record every choco run.",
+    "verdict": "safe",
+    "risk": "Lost install history/logs for troubleshooting; re-downloads.",
+    "before_cleaning": "Only when no choco install/upgrade is running.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.chocolatey.org/en-us/configuration/",
+      "https://docs.realmjoin.com/other/troubleshooting/package-installation-issues/troubleshooting-failed-chocolatey-packages"
+    ],
+    "catalog_concern": "Chocolatey's default download cache is %TEMP%\\chocolatey unless cacheLocation is set. Never touch lib\\ (installed packages)."
+  },
+  "clang_cache": {
+    "what": "Not documented by the vendor at these exact paths. Clang's implicit module cache defaults to a 'clang\\ModuleCache' folder in the user cache directory (%LOCALAPPDATA% on Windows).",
+    "used_for": "Precompiled modules are rebuilt on the next compile.",
+    "verdict": "safe",
+    "risk": "Slower next build.",
+    "before_cleaning": "Not during a build.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Listed subfolders (\\.cache\\clang, clang\\Cache) may not match the real ModuleCache path."
+  },
+  "claude_cli_cache": {
+    "what": "Claude Code's per-project MCP server logs (observed here: mcp-logs-*\\*.jsonl, 402 KB).",
+    "used_for": "Diagnostics for MCP server connections; new logs are written each session.",
+    "verdict": "safe",
+    "risk": "Lost MCP troubleshooting history.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Conversation history and settings are in %USERPROFILE%\\.claude, not here."
+  },
+  "clion_cache": {
+    "what": "CLion's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close CLion first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "cmake_cache": {
+    "what": "Not documented as a cache: ~/.cmake holds the CMake user package registry (~/.cmake/packages on non-Windows).",
+    "used_for": "Lets find_package locate locally built packages.",
+    "verdict": "caution",
+    "risk": "find_package may stop finding locally built projects.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://cmake.org/cmake/help/latest/manual/cmake-packages.7.html"
+    ],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: registry, not build output."
+  },
+  "cocoapods_cache": {
+    "what": "CocoaPods spec repos and pod cache (macOS tool; paths are mac-style).",
+    "used_for": "Rebuilt by 'pod setup'/'pod install' -- but not relevant on Windows.",
+    "verdict": "caution",
+    "risk": "Re-download; on Windows nothing should be there.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: ~/.cocoapods also holds repo config; not a Windows tool anyway."
+  },
+  "codeblocks_cache": {
+    "what": "Code::Blocks' default configuration profile (default.conf, global variables).",
+    "used_for": "Configuration, not a cache.",
+    "verdict": "danger",
+    "risk": "Lost IDE settings and global compiler variables.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: it is the settings profile."
+  },
+  "composer_cache": {
+    "what": "PHP Composer's cache of downloaded package zips and repository metadata.",
+    "used_for": "Speeds up installs; re-downloaded on demand ('composer clear-cache').",
+    "verdict": "safe",
+    "risk": "Re-downloads only.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://getcomposer.org/doc/06-config.md#cache-dir"
+    ],
+    "catalog_concern": "Composer's Windows default is %LOCALAPPDATA%\\Composer; %USERPROFILE%\\.composer\\cache is the Unix-style path and likely matches nothing."
+  },
+  "conan_cache": {
+    "what": "The whole Conan home (~/.conan): remotes, profiles, settings and package data.",
+    "used_for": "Config plus built/downloaded packages.",
+    "verdict": "danger",
+    "risk": "Lost remotes/profiles/credentials; rebuild of all packages.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole home. Only ~/.conan\\data (Conan 1) or ~/.conan2\\p (Conan 2) are package caches, still costly to rebuild."
+  },
+  "curl_cfgs_cache": {
+    "what": "curl's personal config file (~/.curlrc).",
+    "used_for": "User configuration (may contain credentials or proxy settings).",
+    "verdict": "danger",
+    "risk": "Lost configuration/credentials.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: a config file, not a cache."
+  },
+  "darcs_cache": {
+    "what": "Darcs ~/.darcs folder (preferences, possibly a global cache).",
+    "used_for": "Configuration.",
+    "verdict": "caution",
+    "risk": "Lost preferences.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: mixed config."
+  },
+  "datagrip_cache": {
+    "what": "DataGrip's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close DataGrip first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "docker_desktop_cache": {
+    "what": "Docker Desktop's WSL disk images (all images, containers, volumes), container data, and Kubernetes data.",
+    "used_for": "Docker's whole engine storage.",
+    "verdict": "danger",
+    "risk": "Every image, container and named volume (databases!) lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://docs.docker.com/reference/cli/docker/system/prune/"
+    ],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: use 'docker system prune' or Docker Desktop's clean-up instead."
+  },
+  "dotnet_native_cache": {
+    "what": "Not documented by the vendor: %windir%\\SystemRuntime is a Windows folder.",
+    "used_for": "Windows-managed runtime files.",
+    "verdict": "danger",
+    "risk": "Could break Windows components.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: Windows system folder."
+  },
+  "eclipse_cache": {
+    "what": "Despite the label, the path is Maven's local repository (~/.m2/repository): downloaded libraries, plus artifacts YOU built and installed with 'mvn install'.",
+    "used_for": "Maven and IDEs resolve dependencies from here; downloaded ones are re-fetched on the next build.",
+    "verdict": "caution",
+    "risk": "Large re-download; offline builds fail; locally installed artifacts that exist on no remote are lost until rebuilt.",
+    "before_cleaning": "Close IDEs and stop running Maven builds.",
+    "regenerates": true,
+    "sources": [
+      "https://maven.apache.org/guides/introduction/introduction-to-repositories.html"
+    ],
+    "catalog_concern": "Label/description say Eclipse logs and workspace metadata, but the only path is ~/.m2/repository. Rename to Maven local repository. Also duplicated by java_cache."
+  },
+  "emacs_cache": {
+    "what": "Emacs auto-save list (crash-recovery records), installed ELPA packages and package var data.",
+    "used_for": "auto-save-list lets recover-session restore edits; elpa is installed packages.",
+    "verdict": "danger",
+    "risk": "Lost recovery of unsaved edits; packages must be reinstalled; broken config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: these are recovery data and installed packages, not caches."
+  },
+  "flatpak_cache": {
+    "what": "Linux Flatpak data path; not applicable on Windows.",
+    "used_for": "Holds installed Flatpak apps on Linux.",
+    "verdict": "danger",
+    "risk": "On Linux, removes installed apps; on Windows nothing to find.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: installed apps, and not a Windows path."
+  },
+  "fork_cache": {
+    "what": "Not documented by the vendor: a ForkLogs folder holding Fork's log files.",
+    "used_for": "Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "Close Fork first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Fork's own data is in %LOCALAPPDATA%\\Fork; this entry only touches the logs folder, which is fine."
+  },
+  "fusion360_cache": {
+    "what": "Fusion's whole data folders, including the offline cache of cloud designs.",
+    "used_for": "Local copies of designs, some possibly unsynced.",
+    "verdict": "danger",
+    "risk": "Unsynced design changes lost; sign-in lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: user data and sign-in."
+  },
+  "git_lfs_cache": {
+    "what": "Not a standard Git LFS location; Git LFS stores objects per repository in .git\\lfs\\objects (or a custom lfs.storage).",
+    "used_for": "LFS objects are the real content of large files; 'git lfs prune' removes only unreferenced ones.",
+    "verdict": "danger",
+    "risk": "Files not yet pushed are lost forever.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://man.archlinux.org/man/git-lfs-prune.1.en"
+    ],
+    "catalog_concern": "Disabling was right: use 'git lfs prune'."
+  },
+  "gitkraken_cache": {
+    "what": "GitKraken's whole app data (profiles, account sign-in, settings).",
+    "used_for": "Profile and sign-in data.",
+    "verdict": "danger",
+    "risk": "Sign-out and lost profiles/settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder with sign-ins."
+  },
+  "goland_cache": {
+    "what": "GoLand's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close GoLand first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "golang_cache": {
+    "what": "Go's module download cache (pkg\\mod\\cache) and build cache (go-build).",
+    "used_for": "Build cache speeds compiles ('go clean -cache'); module cache is re-downloaded ('go clean -modcache').",
+    "verdict": "caution",
+    "risk": "Slower first build; re-downloads; offline builds fail. Module cache files are read-only and may resist deletion.",
+    "before_cleaning": "Do not run during a go build.",
+    "regenerates": true,
+    "sources": [
+      "https://pkg.go.dev/cmd/go#hdr-Build_and_test_caching",
+      "https://go.dev/ref/mod#module-cache"
+    ],
+    "catalog_concern": "Catalog says safe. Build cache is safe; module download cache costs re-download and breaks offline work -- caution fits better. Deleting only cache\\ leaves extracted modules under pkg\\mod."
+  },
+  "gradle_caches_cache": {
+    "what": "Gradle's dependency and build caches, daemon logs/registry, and downloaded Gradle distributions (wrapper\\dists).",
+    "used_for": "Gradle re-downloads dependencies and distributions on the next build; it also prunes these itself (unused >30 days).",
+    "verdict": "caution",
+    "risk": "Long, large first build; offline builds fail; deleting while a daemon runs can break that build.",
+    "before_cleaning": "Run 'gradlew --stop' and close Android Studio/IntelliJ.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.gradle.org/current/userguide/directory_layout.html"
+    ],
+    "catalog_concern": "Overlaps java_cache. Never widen to ~/.gradle itself: gradle.properties there can hold credentials/signing keys."
+  },
+  "heidisql_cache": {
+    "what": "HeidiSQL's data folder (backups of unsaved query tabs, settings/sessions).",
+    "used_for": "Session data and unsaved queries.",
+    "verdict": "danger",
+    "risk": "Lost unsaved queries and sessions.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: user data."
+  },
+  "hyperv_cache": {
+    "what": "Hyper-V virtual machine configurations, checkpoints and virtual hard disks.",
+    "used_for": "The virtual machines themselves.",
+    "verdict": "danger",
+    "risk": "Virtual machines and their data destroyed.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: remove VMs/checkpoints through Hyper-V Manager."
+  },
+  "hyperv_vmstate_cache": {
+    "what": "Hyper-V's machine data folder, including saved-state (.vsv/.vmrs) files and VM configuration.",
+    "used_for": "Saved state is a paused VM's memory.",
+    "verdict": "danger",
+    "risk": "VMs lose their saved state or become unregistered.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: VM state, managed by Hyper-V."
+  },
+  "intellij_cache": {
+    "what": "IntelliJ IDEA's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close IntelliJ IDEA first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "java_cache": {
+    "what": "Maven local repo, Gradle caches and daemon folder, Ivy cache, and the Java Web Start/applet deployment cache.",
+    "used_for": "Build tools re-download dependencies; Java Web Start re-downloads apps.",
+    "verdict": "caution",
+    "risk": "Large re-downloads; offline builds fail; locally installed Maven artifacts lost; a running Gradle daemon can break.",
+    "before_cleaning": "Stop Gradle daemons (gradlew --stop) and close IDEs.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.gradle.org/current/userguide/directory_layout.html",
+      "https://maven.apache.org/guides/introduction/introduction-to-repositories.html"
+    ],
+    "catalog_concern": "Overlaps eclipse_cache (~/.m2/repository) and gradle_caches_cache (~/.gradle\\caches, \\daemon) -- same bytes counted twice. %LOCALAPPDATA%\\Maven\\repository is not a default location."
+  },
+  "jetbrains_cache": {
+    "what": "Caches (indexes) and logs of every JetBrains IDE, in one entry.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close all JetBrains IDEs first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "The label says compiler/build artifacts, but these are IDE indexes/logs (not Maven/Gradle). Local/JetBrains contains plugins and caches: target caches or use Invalidate Caches. Roaming/JetBrains is configuration; do not target it. The ProgramData cache path is undocumented. Narrow paths to documented caches; never delete the whole IDE data folder."
+  },
+  "kind_cache": {
+    "what": "kind's ~/.kind folder (cluster config and cached data).",
+    "used_for": "Cluster configuration for kind clusters.",
+    "verdict": "caution",
+    "risk": "Clusters may need recreating.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: cluster state, use 'kind delete cluster'."
+  },
+  "kubernetes_cache": {
+    "what": "kubectl's cache directory (~/.kube/cache): API discovery data and HTTP responses.",
+    "used_for": "Speeds up kubectl; rebuilt on the next command.",
+    "verdict": "safe",
+    "risk": "None known; first command slightly slower. ~/.kube\\config (credentials) is not touched.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://kubernetes.io/docs/reference/kubectl/kubectl/"
+    ],
+    "catalog_concern": ""
+  },
+  "lazarus_cache": {
+    "what": "Lazarus IDE's whole configuration folder.",
+    "used_for": "Configuration (environment, packages, recent projects).",
+    "verdict": "danger",
+    "risk": "Lost IDE configuration and package list.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole config folder."
+  },
+  "lm_studio_cache": {
+    "what": "LM Studio's Electron HTTP cache and its logs. Downloaded models are NOT here (they are under %USERPROFILE%\\.lmstudio or .cache\\lm-studio).",
+    "used_for": "Cache is rebuilt by Chromium; logs are diagnostics.",
+    "verdict": "safe",
+    "risk": "Lost logs; slightly slower first start.",
+    "before_cleaning": "Close LM Studio first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Description says 'AI model cache' -- misleading; models are elsewhere (good, or this would be many GB of re-download)."
+  },
+  "logitech_g_hub_cache": {
+    "what": "Logitech G HUB's whole data folders (profiles, macros, settings, sign-in).",
+    "used_for": "Device profiles and settings.",
+    "verdict": "danger",
+    "risk": "Lost profiles and macros.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "maple_cache": {
+    "what": "Maplesoft's whole data folder.",
+    "used_for": "Configuration and licence.",
+    "verdict": "danger",
+    "risk": "Lost settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "matlab_cache": {
+    "what": "MathWorks' whole data folders (preferences, add-ons, licence).",
+    "used_for": "Configuration and add-ons.",
+    "verdict": "danger",
+    "risk": "Lost preferences, add-ons; re-activation.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "matlab_full_cache": {
+    "what": "MATLAB's per-version preferences folders.",
+    "used_for": "Preferences, history, shortcuts.",
+    "verdict": "danger",
+    "risk": "Lost preferences and command history.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: settings folder."
+  },
+  "maven_repo_cache": {
+    "what": "Apache Maven's local repository (~/.m2/repository).",
+    "used_for": "Same as eclipse_cache.",
+    "verdict": "caution",
+    "risk": "Same as eclipse_cache: re-download, offline builds fail, locally installed artifacts lost.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://maven.apache.org/guides/introduction/introduction-to-repositories.html"
+    ],
+    "catalog_concern": "Disabled only as a duplicate of eclipse_cache -- right."
+  },
+  "maya_cache": {
+    "what": "Maya's whole per-version prefs and scripts folders.",
+    "used_for": "Preferences, shelves, scripts.",
+    "verdict": "danger",
+    "risk": "Lost preferences and scripts.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "mercurial_cache": {
+    "what": "Not documented by the vendor: ~/.hg is not a standard Mercurial folder (config is ~/.hgrc / mercurial.ini).",
+    "used_for": "Unknown content.",
+    "verdict": "caution",
+    "risk": "Unknown.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: not a known cache."
+  },
+  "meson_cache": {
+    "what": "Not documented by the vendor: Meson keeps build data inside each build directory, not ~/.cache/meson.",
+    "used_for": "If present, any cache would be rebuilt.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Likely matches nothing."
+  },
+  "minikube_cache": {
+    "what": "The whole minikube home: cluster profiles, certificates, machine disks and the image cache.",
+    "used_for": "Running cluster state and keys.",
+    "verdict": "danger",
+    "risk": "Clusters destroyed; certificates lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: only ~/.minikube\\cache is a re-downloadable cache; use 'minikube delete'."
+  },
+  "msix_cache": {
+    "what": "Not documented by the vendor: Windows' own package-manager and package staging folders.",
+    "used_for": "Used by Windows while deploying Store/MSIX apps.",
+    "verdict": "danger",
+    "risk": "Can break app installs/updates in progress.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: Windows deployment state."
+  },
+  "mysql_logs": {
+    "what": "Log files of a local MySQL server in a 'logs' folder under its program folder (error, general, slow-query logs if configured there).",
+    "used_for": "Diagnostics; MySQL's default error log is <host>.err in the data directory (usually ProgramData).",
+    "verdict": "caution",
+    "risk": "Lost diagnostics; the active log is locked while MySQL runs. If binary logs were placed here, deleting them breaks replication and point-in-time recovery.",
+    "before_cleaning": "Stop or flush logs (FLUSH LOGS) first; never delete binlog files by hand (PURGE BINARY LOGS).",
+    "regenerates": true,
+    "sources": [
+      "https://dev.mysql.com/doc/refman/8.0/en/error-log-destination-configuration.html",
+      "https://dev.mysql.com/doc/refman/8.0/en/windows-troubleshooting.html"
+    ],
+    "catalog_concern": "Not a default MySQL location. Make sure the entry can never match binlog.* or the data directory."
+  },
+  "navicat_cache": {
+    "what": "Navicat's data folder (connections, saved queries, possibly passwords).",
+    "used_for": "Configuration and user data.",
+    "verdict": "danger",
+    "risk": "Lost connections and queries.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: user data."
+  },
+  "net_framework_cache": {
+    "what": "Not documented by the vendor: Framework\\*\\NGEN folders are not where .NET native images live (they are in %windir%\\assembly\\NativeImages_*).",
+    "used_for": "Windows-managed .NET files.",
+    "verdict": "danger",
+    "risk": "Broken or slow .NET applications.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: Windows system folder; use 'ngen' itself, never delete."
+  },
+  "netbeans_cache": {
+    "what": "NetBeans log files (var\\log\\messages.log) and cache folders.",
+    "used_for": "Caches (indexes) are rebuilt by rescanning sources at next start; logs are diagnostics.",
+    "verdict": "safe",
+    "risk": "Rescan on next start; lost logs. Settings are in the user directory, not touched.",
+    "before_cleaning": "Close NetBeans first.",
+    "regenerates": true,
+    "sources": [
+      "https://bz.apache.org/netbeans/show_bug.cgi?id=196075"
+    ],
+    "catalog_concern": "NetBeans keeps its cache in %LOCALAPPDATA%\\NetBeans\\Cache\\<version>; the Roaming '**\\cache' glob may find little. Never widen to the whole Roaming user directory."
+  },
+  "npm_cache": {
+    "what": "Download caches of npm (_cacache), Yarn and pnpm's global store.",
+    "used_for": "Package tarballs reused by installs; re-downloaded on demand. Already-installed node_modules keep working.",
+    "verdict": "caution",
+    "risk": "Re-downloads; offline installs fail. npm docs say clearing is rarely needed ('npm cache verify' garbage-collects).",
+    "before_cleaning": "Do not run during an npm/yarn/pnpm install.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.npmjs.com/cli/v10/commands/npm-cache",
+      "https://pnpm.io/cli/store"
+    ],
+    "catalog_concern": "Overlaps pnpm_cache for pnpm stores. pnpm hard-links from its store, so much of it is still used by projects and is not freed."
+  },
+  "npp_cache": {
+    "what": "Notepad++ backup folder (unsaved and unnamed tabs from session snapshot) and plugin configuration.",
+    "used_for": "Backup is how Notepad++ restores unsaved tabs after closing or a crash; plugins\\config holds plugin settings.",
+    "verdict": "danger",
+    "risk": "Permanent loss of unsaved text and plugin settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: backup holds unsaved documents (user data), plugins\\config is settings."
+  },
+  "nuget_cache": {
+    "what": "NuGet's global packages folder (~/.nuget/packages) and HTTP caches (v3-cache).",
+    "used_for": "Restore and builds read packages from global-packages; NuGet re-downloads on the next restore. 'dotnet nuget locals all --clear' is the supported way.",
+    "verdict": "caution",
+    "risk": "Builds fail until restored; large re-download; offline machines and private/local feeds may not recover.",
+    "before_cleaning": "Close Visual Studio/Rider and stop builds.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders",
+      "https://learn.microsoft.com/en-us/nuget/reference/cli-reference/cli-ref-locals"
+    ],
+    "catalog_concern": "Overlaps nuget_global_packages (~/.nuget/packages) -- counted twice."
+  },
+  "nuget_global_packages": {
+    "what": "NuGet's global packages folder: every package version restored on this machine.",
+    "used_for": "Builds reference packages here directly; restore re-downloads them.",
+    "verdict": "caution",
+    "risk": "Builds fail until 'dotnet restore'; re-downloads; packages from feeds no longer reachable cannot come back.",
+    "before_cleaning": "Close Visual Studio/Rider and stop builds.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders"
+    ],
+    "catalog_concern": "Duplicate of part of nuget_cache."
+  },
+  "nvm_caches": {
+    "what": "nvm-windows' root folder: every installed Node.js version plus settings.txt.",
+    "used_for": "Installed runtimes, not a cache.",
+    "verdict": "danger",
+    "risk": "All Node versions and nvm settings lost; node stops working.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: installed runtimes."
+  },
+  "opencode_desktop_cache": {
+    "what": "Chromium/Electron caches of the OpenCode desktop app: temporary blobs, Dawn WebGPU/Graphite shader caches and the compression-dictionary cache (Shared Dictionary).",
+    "used_for": "All are rebuilt by Chromium on demand.",
+    "verdict": "safe",
+    "risk": "None known; first pages may load a little slower.",
+    "before_cleaning": "Close OpenCode first.",
+    "regenerates": true,
+    "sources": [
+      "https://developer.chrome.com/blog/shared-dictionary-compression"
+    ],
+    "catalog_concern": "Correctly avoids Local Storage, Session Storage, Network and opencode\\ (session data). Cache, Code Cache, GPUCache and GrShaderCache exist here too and are equally safe if wanted."
+  },
+  "packer_cache": {
+    "what": "Not documented by the vendor: Packer documents plugins under %APPDATA%\\packer.d\\plugins and its cache as ./packer_cache in the working folder.",
+    "used_for": "A plugin cache would be re-downloaded by 'packer init'.",
+    "verdict": "caution",
+    "risk": "Re-downloads; builds fail until 'packer init'.",
+    "before_cleaning": "Not during a packer build.",
+    "regenerates": true,
+    "sources": [
+      "https://developer.hashicorp.com/packer/docs/configure"
+    ],
+    "catalog_concern": "The listed path is not a documented Packer folder and likely matches nothing. Never retarget to packer.d\\plugins (installed plugins)."
+  },
+  "parallels_cache": {
+    "what": "Parallels settings and VM folders.",
+    "used_for": "Virtual machines and configuration.",
+    "verdict": "danger",
+    "risk": "VMs destroyed.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: user VMs."
+  },
+  "perforce_cache": {
+    "what": "Perforce P4 client folders (settings, connection data; tickets may be nearby).",
+    "used_for": "Client configuration and possibly login tickets.",
+    "verdict": "danger",
+    "risk": "Sign-out and lost connection settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: settings/sign-in data."
+  },
+  "phpstorm_cache": {
+    "what": "PhpStorm's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close PhpStorm first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "pip_cache": {
+    "what": "pip's HTTP download cache and the wheels it built from source, plus pip logs.",
+    "used_for": "Avoids re-downloading and rebuilding; 'pip cache purge' empties it. Installed packages are not here.",
+    "verdict": "caution",
+    "risk": "Re-downloads and rebuilds of source packages (can be slow); offline installs fail.",
+    "before_cleaning": "Do not run during a pip install.",
+    "regenerates": true,
+    "sources": [
+      "https://pip.pypa.io/en/stable/topics/caching/"
+    ],
+    "catalog_concern": ""
+  },
+  "pnpm_cache": {
+    "what": "pnpm's content-addressable package store.",
+    "used_for": "pnpm hard-links packages from here into every project's node_modules; re-downloaded when missing.",
+    "verdict": "caution",
+    "risk": "Re-downloads; space shared with projects via hard links is not freed. 'pnpm store prune' is the supported clean-up.",
+    "before_cleaning": "Do not run during a pnpm install.",
+    "regenerates": true,
+    "sources": [
+      "https://pnpm.io/cli/store",
+      "https://pnpm.io/npmrc#store-dir"
+    ],
+    "catalog_concern": "Current pnpm default on Windows is %LOCALAPPDATA%\\pnpm\\store, not listed. %USERPROFILE%\\.local\\share\\npm\\cache is not a known Windows location."
+  },
+  "postgres_logs": {
+    "what": "Not a documented PostgreSQL location: server logs live in the data directory's log\\ (pg_log) folder.",
+    "used_for": "Logs are diagnostics only.",
+    "verdict": "caution",
+    "risk": "Lost diagnostics. The description mentions pg_xlog/WAL: WAL is NOT a log to clean -- deleting it corrupts the database.",
+    "before_cleaning": "Never while PostgreSQL runs.",
+    "regenerates": true,
+    "sources": [
+      "https://www.postgresql.org/docs/current/wal-intro.html"
+    ],
+    "catalog_concern": "Description says 'pg_xlog archive files' -- WAL (pg_xlog/pg_wal) must never be deleted by a cleaner. Remove that wording; keep the path away from any data directory."
+  },
+  "pulumi_cache": {
+    "what": "Not documented by the vendor at %APPDATA%\\Pulumi; Pulumi's home is ~/.pulumi (credentials.json, plugins, local state).",
+    "used_for": "If it is Pulumi data it includes credentials and possibly local stack state.",
+    "verdict": "danger",
+    "risk": "Sign-out and possibly lost stack state.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: may contain credentials/state."
+  },
+  "pycharm_cache": {
+    "what": "PyCharm's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close PyCharm first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "pyenv_cache": {
+    "what": "pyenv (Unix) keeps downloaded Python source tarballs in ~/.pyenv/cache; pyenv-win instead uses .pyenv\\pyenv-win\\install_cache.",
+    "used_for": "Only needed to reinstall a version without downloading.",
+    "verdict": "caution",
+    "risk": "Re-downloads. pyenv-win reportedly uses install_cache during uninstall.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://github.com/pyenv-win/pyenv-win"
+    ],
+    "catalog_concern": "On Windows the listed path is unlikely to exist. Do not retarget it to pyenv-win\\versions (installed Pythons)."
+  },
+  "qt_creator_cache": {
+    "what": "Qt Creator's settings folder (QtProject\\QtCreator.ini, kits, sessions) and local data.",
+    "used_for": "This is configuration, not a cache.",
+    "verdict": "danger",
+    "risk": "Lost kits, sessions and preferences.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: QtProject is the settings folder."
+  },
+  "resharper_cache": {
+    "what": "Not documented by the vendor at this path ('Unoble' looks like a typo). ReSharper's real caches are under %LOCALAPPDATA%\\JetBrains\\Transient.",
+    "used_for": "Solution caches rebuild when Visual Studio reopens the solution.",
+    "verdict": "safe",
+    "risk": "If the folder existed it would be unknown content; re-analysis of solutions after a real cache clear.",
+    "before_cleaning": "Close Visual Studio / Rider first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the path is not a documented ReSharper cache folder. If re-enabled, target %LOCALAPPDATA%\\JetBrains\\Transient\\*\\*\\SolutionCaches only."
+  },
+  "revitable_cache": {
+    "what": "Revit's family cache, log files and UI cache.",
+    "used_for": "Caches are recreated when Revit next opens; logs are diagnostics.",
+    "verdict": "caution",
+    "risk": "Slower first open; lost diagnostics.",
+    "before_cleaning": "Close all Revit versions first.",
+    "regenerates": true,
+    "sources": [
+      "https://resources.imaginit.com/how-tos/how-to-clear-all-bim-360-cache",
+      "https://autodesk.com/support/technical/article/Clear-a-corrupt-damaged-C4R-model-from-the-system"
+    ],
+    "catalog_concern": "Keep CollaborationCache/PacCache out: Autodesk warns they can hold unsynchronised cloud-model changes."
+  },
+  "rider_cache": {
+    "what": "Rider's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close Rider first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "ruby_gems_cache": {
+    "what": "User-installed Ruby gems (~/.gem\\gems, specifications) and Bundler's config folder.",
+    "used_for": "Installed gems, and ~/.bundle\\config can hold private gem-server credentials.",
+    "verdict": "danger",
+    "risk": "Projects stop running until reinstalled; lost credentials.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: installed gems and config, not a cache. Only ~/.gem\\cache would be safe-ish."
+  },
+  "rubymine_cache": {
+    "what": "RubyMine's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close RubyMine first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "rust_cache": {
+    "what": "Cargo's downloaded crate archives (registry\\cache) and their extracted sources (registry\\src).",
+    "used_for": "Cargo re-extracts or re-downloads crates when a build needs them; newer Cargo prunes these itself.",
+    "verdict": "caution",
+    "risk": "Re-downloads; offline builds fail. Project target\\ folders are not touched.",
+    "before_cleaning": "Do not run during a cargo build.",
+    "regenerates": true,
+    "sources": [
+      "https://doc.rust-lang.org/cargo/guide/cargo-home.html",
+      "https://blog.rust-lang.org/2023/12/11/cargo-cache-cleaning/"
+    ],
+    "catalog_concern": ""
+  },
+  "scoop_bucket_cache": {
+    "what": "Installer archives Scoop downloaded (zip/7z/msi/exe).",
+    "used_for": "Lets Scoop reinstall the same version without downloading; 'scoop cache rm *' is the supported clean.",
+    "verdict": "safe",
+    "risk": "Re-download on reinstall. Installed apps (scoop\\apps) are not affected.",
+    "before_cleaning": "Not during a scoop install/update.",
+    "regenerates": false,
+    "sources": [
+      "https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-cache.ps1"
+    ],
+    "catalog_concern": ""
+  },
+  "scoop_cache": {
+    "what": "Same folder as scoop_bucket_cache.",
+    "used_for": "Same as scoop_bucket_cache.",
+    "verdict": "safe",
+    "risk": "Re-download on reinstall.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://github.com/ScoopInstaller/Scoop/blob/master/libexec/scoop-cache.ps1"
+    ],
+    "catalog_concern": "Disabled only as a duplicate -- right."
+  },
+  "sdkman_cache": {
+    "what": "SDKMAN! candidates = the installed JDKs/SDKs themselves.",
+    "used_for": "Installed tools, not downloads.",
+    "verdict": "danger",
+    "risk": "Installed SDKs removed.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: ~/.sdkman\\archives is the download cache, candidates is the installs."
+  },
+  "sketchup_cache": {
+    "what": "SketchUp's log files.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "Close SketchUp first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "smartgit_cache": {
+    "what": "SmartGit's whole settings folder (preferences, repositories list, credentials).",
+    "used_for": "Configuration and credentials.",
+    "verdict": "danger",
+    "risk": "Lost settings and stored logins.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole settings folder."
+  },
+  "sourcetree_cache": {
+    "what": "Sourcetree's whole data (accounts, saved passwords, bookmarks).",
+    "used_for": "Configuration and sign-ins.",
+    "verdict": "danger",
+    "risk": "Lost accounts, repository bookmarks, credentials.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder with sign-ins."
+  },
+  "spss_cache": {
+    "what": "IBM SPSS's whole data folder.",
+    "used_for": "Preferences and custom dialogs.",
+    "verdict": "danger",
+    "risk": "Lost settings/custom dialogs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "sql_server_logs": {
+    "what": "SQL Server's LOG folder: ERRORLOG files, SQL Agent logs, default trace (.trc) and system_health (.xel) files.",
+    "used_for": "Diagnostics; SQL Server rotates them (6 by default, more via settings) and sp_cycle_errorlog starts a new one.",
+    "verdict": "caution",
+    "risk": "Lost diagnostic/audit history; the current ERRORLOG is locked. Only rotated ERRORLOG.n files are normally removed.",
+    "before_cleaning": "Cycle the log (sp_cycle_errorlog) and keep the current files.",
+    "regenerates": true,
+    "sources": [
+      "https://www.mssqltips.com/sqlservertip/7320/large-sql-server-error-log-remove/",
+      "https://www.brentozar.com/archive/2015/09/forgotten-maintenance-cycling-the-sql-server-error-log/"
+    ],
+    "catalog_concern": "Real path is MSSQLnn.<instance>\\MSSQL\\Log, so 'MSSQL*\\LOG' may not match. FTData (full-text catalogs) is not a log -- keep it out."
+  },
+  "sqlitebrowser_cache": {
+    "what": "DB Browser for SQLite settings folder.",
+    "used_for": "Configuration (recent files, preferences).",
+    "verdict": "caution",
+    "risk": "Lost preferences.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: config, not a cache."
+  },
+  "stata_cache": {
+    "what": "Stata's data folder (user ado files, preferences).",
+    "used_for": "Installed user commands and settings.",
+    "verdict": "danger",
+    "risk": "Lost user-installed ado packages.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: user data."
+  },
+  "sublime_cache": {
+    "what": "Sublime Text's cache (compiled syntaxes), its symbol index database (Index) and logs.",
+    "used_for": "Rebuilt on next start; indexing re-runs over open folders.",
+    "verdict": "safe",
+    "risk": "Slower first start and re-indexing. Settings and packages are in Packages/Installed Packages, not touched.",
+    "before_cleaning": "Close Sublime Text first.",
+    "regenerates": true,
+    "sources": [
+      "https://forum.sublimetext.com/t/purpose-of-index-and-cache-directory-safe-to-delete/41069",
+      "https://www.sublimetext.com/docs/revert.html"
+    ],
+    "catalog_concern": "Sublime Text 4 keeps Cache/Index in %LOCALAPPDATA%\\Sublime Text, not %APPDATA%; the Roaming paths only match ST3 or portable-style installs."
+  },
+  "subversion_cache": {
+    "what": "Subversion's ~/.subversion folder: config, servers file and the auth folder of saved passwords.",
+    "used_for": "Configuration and cached credentials -- not working-copy pristine data (that lives in each .svn).",
+    "verdict": "danger",
+    "risk": "Saved SVN logins and settings lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://svnbook.red-bean.com/en/1.7/svn.advanced.confarea.html"
+    ],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: auth\\ is a sign-in store."
+  },
+  "terraform_cache": {
+    "what": "Terraform's shared provider plugin cache (only exists if plugin_cache_dir is configured).",
+    "used_for": "Providers are downloaded once and linked/copied into each project's .terraform folder; Terraform never prunes it.",
+    "verdict": "caution",
+    "risk": "Re-downloads on next 'terraform init'; projects linked by symlink fail until re-init; offline init fails.",
+    "before_cleaning": "Not during terraform init/plan/apply.",
+    "regenerates": true,
+    "sources": [
+      "https://developer.hashicorp.com/terraform/cli/config/config-file#provider-plugin-cache"
+    ],
+    "catalog_concern": "On Windows the CLI config dir is %APPDATA% (terraform.d); %USERPROFILE%\\.terraform.d\\plugin-cache only matches if the user chose it."
+  },
+  "tesseract_cache": {
+    "what": "A Tesseract data folder (trained language data).",
+    "used_for": "OCR language models, needed to recognise text.",
+    "verdict": "caution",
+    "risk": "OCR stops working for those languages until re-downloaded.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: data files, not cache."
+  },
+  "uv_cache": {
+    "what": "uv's cache of downloaded Python packages, built wheels and interpreters.",
+    "used_for": "uv hard-links files from here into environments; re-downloaded when needed. 'uv cache clean/prune' are the supported commands.",
+    "verdict": "caution",
+    "risk": "Re-downloads; hard-linked files stay in use (not freed). Environments made with UV_LINK_MODE=symlink BREAK.",
+    "before_cleaning": "Close running uv processes (uv locks the cache).",
+    "regenerates": true,
+    "sources": [
+      "https://docs.astral.sh/uv/concepts/cache/"
+    ],
+    "catalog_concern": "uv docs advise against deleting inside the cache by hand; whole-cache removal is fine except symlink-mode environments."
+  },
+  "vcpkg_cache": {
+    "what": "The vcpkg tool's own clone (source\\repos\\vcpkg): the tool, ports, built packages and installed libraries.",
+    "used_for": "This is the installation, not a cache.",
+    "verdict": "danger",
+    "risk": "vcpkg and every library installed through it disappear.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: only its downloads\\ and buildtrees\\ subfolders are disposable."
+  },
+  "vcredist_cache": {
+    "what": "A folder inside C:\\Windows\\Installer, the Windows Installer cache.",
+    "used_for": "Windows needs the cached packages to repair, patch and uninstall programs.",
+    "verdict": "danger",
+    "risk": "Programs can no longer be repaired, updated or uninstalled.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: never delete anything under %windir%\\Installer by hand."
+  },
+  "venv_cache": {
+    "what": "A Python virtual environment at ~/.venv (interpreter link and installed packages).",
+    "used_for": "A working environment, not a cache.",
+    "verdict": "danger",
+    "risk": "Anything using that environment breaks until recreated.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: an environment, not a cache."
+  },
+  "vim_cache": {
+    "what": "Vim persistent undo files and swap files.",
+    "used_for": "Swap files are Vim's crash recovery for unsaved edits; undo files keep undo history across sessions.",
+    "verdict": "danger",
+    "risk": "Lost recovery of unsaved edits; lost undo history.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: swap files are the only copy of unsaved edits after a crash."
+  },
+  "vmware_cache": {
+    "what": "VMware settings folders and the Virtual Machines folder with VM disks and snapshots.",
+    "used_for": "The virtual machines themselves.",
+    "verdict": "danger",
+    "risk": "VMs and their data destroyed.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: user VMs."
+  },
+  "vscode_cache": {
+    "what": "VS Code's Chromium HTTP cache (Cache), compiled-script cache (Code Cache) and its log files.",
+    "used_for": "Electron/Chromium rebuild Cache and Code Cache automatically; logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slightly slower first start; lost logs. Sign-ins, settings and extensions are not in these folders.",
+    "before_cleaning": "Close VS Code first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/1824237/why-is-vs-code-not-showing-any-extensions-whether"
+    ],
+    "catalog_concern": "The %LOCALAPPDATA%\\Microsoft\\VSCode\\... paths are not a VS Code data location (user data is %APPDATA%\\Code); they match nothing. Keep it away from Local Storage, Session Storage, Network and User."
+  },
+  "vscode_cached_data": {
+    "what": "CachedData holds V8 code caches of VS Code's own scripts; CachedProfilesData caches profile data.",
+    "used_for": "Speeds up startup; VS Code regenerates both on the next launch.",
+    "verdict": "safe",
+    "risk": "Slower first launch. None known beyond that.",
+    "before_cleaning": "Close VS Code first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/1824237/why-is-vs-code-not-showing-any-extensions-whether"
+    ],
+    "catalog_concern": ""
+  },
+  "vscode_cached_extensions": {
+    "what": "Downloaded extension packages (.vsix) VS Code kept after installing or updating extensions.",
+    "used_for": "Kept so an install can be repeated without downloading; installed extensions run from %USERPROFILE%\\.vscode\\extensions, not from here.",
+    "verdict": "safe",
+    "risk": "A re-download if an extension is reinstalled. Installed extensions keep working.",
+    "before_cleaning": "Close VS Code first.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/1824237/why-is-vs-code-not-showing-any-extensions-whether"
+    ],
+    "catalog_concern": ""
+  },
+  "vscode_dawn_cache": {
+    "what": "Shader caches of Chromium's Dawn WebGPU/Graphite graphics layer inside VS Code.",
+    "used_for": "Compiled GPU shaders reused between launches; recompiled automatically when needed.",
+    "verdict": "safe",
+    "risk": "Brief extra GPU compile time on next start. None known otherwise.",
+    "before_cleaning": "Close VS Code first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "vscode_settings_sync": {
+    "what": "Not documented by the vendor: VS Code writes logs to %APPDATA%\\Code\\logs, and %APPDATA%\\Code\\User holds settings, keybindings, snippets and workspace storage.",
+    "used_for": "If a User\\log folder exists it would only be log output.",
+    "verdict": "caution",
+    "risk": "Only logs are targeted, so lost diagnostics. Widening this to User\\ would delete settings and unsaved workspace state.",
+    "before_cleaning": "Close VS Code first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/answers/questions/1824237/why-is-vs-code-not-showing-any-extensions-whether"
+    ],
+    "catalog_concern": "Path User\\log is not a documented VS Code location and likely matches nothing; the description mentions 'workspace storage cache', which lives in User\\workspaceStorage and holds per-workspace state -- do not add it."
+  },
+  "vscode_webstorage": {
+    "what": "Chromium's newer storage-bucket area (WebStorage) used by VS Code's web views and extensions.",
+    "used_for": "Holds web-content storage such as IndexedDB/Cache Storage for buckets; data an extension or webview saved, not a plain cache.",
+    "verdict": "danger",
+    "risk": "Can lose extension or webview data and sign-in state.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: WebStorage is site/extension storage, the same class as IndexedDB and Local Storage."
+  },
+  "vscodium_cache": {
+    "what": "VSCodium's whole user-data profile and its whole local app folder.",
+    "used_for": "Contains settings, extensions state, Local Storage, sign-ins and caches together.",
+    "verdict": "danger",
+    "risk": "Lost settings, extension state, unsaved backups (Backups folder) and sign-ins.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: the paths are the whole profile. Safe subfolders would be %APPDATA%\\VSCodium\\Cache, Code Cache, GPUCache, CachedData and logs."
+  },
+  "webstorm_cache": {
+    "what": "WebStorm's caches (project indexes, file-system snapshot) and its log files.",
+    "used_for": "Caches speed up code navigation and search; after deletion the IDE re-indexes every project on next open, which can take minutes. Logs are only for troubleshooting.",
+    "verdict": "safe",
+    "risk": "Slow first open and high CPU while re-indexing; old logs needed for a bug report are lost. Settings and plugins are not in these folders.",
+    "before_cleaning": "Close WebStorm first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html"
+    ],
+    "catalog_concern": "Paths look in %APPDATA%\\JetBrains\\<IDE>\\caches and \\logs, but JetBrains documents %APPDATA% as the CONFIG directory; caches and logs live in %LOCALAPPDATA%\\JetBrains\\<IDE><version> (logs in its \\log). The entry likely finds nothing. Point it at %LOCALAPPDATA% caches/log subfolders only, never the config or whole system folder (Local History)."
+  },
+  "wget_cache": {
+    "what": "wget's config file (.wgetrc) and HSTS database (.wget-hsts).",
+    "used_for": "Config; the HSTS list enforces HTTPS for known sites.",
+    "verdict": "caution",
+    "risk": "Lost config; weaker HTTPS enforcement until relearned.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: config/security state."
+  },
+  "whisper_cache": {
+    "what": "Whisper model files (and possibly transcriptions).",
+    "used_for": "Downloaded speech models reused by every run.",
+    "verdict": "caution",
+    "risk": "Large re-downloads; possible loss of outputs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'caution'), moot while disabled. Disabling was right: models and possibly user output."
+  },
+  "winget_cache": {
+    "what": "Not documented by the vendor at this path; on this machine %LOCALAPPDATA%\\Microsoft\\winget holds Links and Packages (portable app installs), with no cache or logs folder.",
+    "used_for": "winget's documented logs are in the App Installer package's LocalState\\DiagOutputDir and auto-delete after 7 days.",
+    "verdict": "safe",
+    "risk": "If cache/logs exist: lost diagnostics only.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/package-manager/winget/troubleshooting"
+    ],
+    "catalog_concern": "Keep the entry to the cache and logs subfolders: the sibling Packages and Links folders are installed portable apps and their command shims."
+  },
+  "wolfram_cache": {
+    "what": "Wolfram's whole data folder (paclets, kernel init, preferences).",
+    "used_for": "Installed paclets and settings.",
+    "verdict": "danger",
+    "risk": "Lost settings and paclets.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole data folder."
+  },
+  "workbench_cache": {
+    "what": "MySQL Workbench's data (connections.xml, saved SQL workspaces, history).",
+    "used_for": "Connections and unsaved editor content.",
+    "verdict": "danger",
+    "risk": "Lost connections and unsaved scripts.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: user data."
+  },
+  "wsl2_cache": {
+    "what": "WSL distros' LocalState (the ext4.vhdx disk holding the whole Linux system and its files), Windows containers data and legacy Lxss.",
+    "used_for": "The Linux distributions themselves.",
+    "verdict": "danger",
+    "risk": "Whole Linux installations and all files inside them lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/wsl/disk-space"
+    ],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: these are the distros. Microsoft documents shrinking/cleaning inside WSL instead."
+  },
+  "wsl2_distro_cache": {
+    "what": "Whole WSL distribution package folders, including ext4.vhdx.",
+    "used_for": "The Linux distributions themselves.",
+    "verdict": "danger",
+    "risk": "Whole Linux installations lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/wsl/disk-space"
+    ],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: these are the distros."
+  },
+  "wsl_installer_cache": {
+    "what": "WSL distros' LocalState folders -- which hold the ext4.vhdx disk, not installer staging.",
+    "used_for": "The Linux distributions themselves.",
+    "verdict": "danger",
+    "risk": "Whole Linux installations lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/wsl/disk-space"
+    ],
+    "catalog_concern": "Catalog safety 'caution' is wrong (should be 'danger'), moot while disabled. Disabling was right: the description is wrong; LocalState is the distro disk."
+  },
+  "zbrush_cache": {
+    "what": "Maxon's whole data folders (ZBrush, Cinema 4D, Redshift, Maxon App).",
+    "used_for": "Preferences, licences/sign-in, user content.",
+    "verdict": "danger",
+    "risk": "Lost settings and sign-in.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole vendor folder."
+  },
+  "zed_cache": {
+    "what": "Zed editor's whole %APPDATA%\\Zed folder (settings, keymap) and a rustup folder under it.",
+    "used_for": "Holds user configuration, not a cache.",
+    "verdict": "danger",
+    "risk": "Lost settings/keymaps and extension state.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog safety 'safe' is wrong (should be 'danger'), moot while disabled. Disabling was right: whole config folder."
+  }
+}

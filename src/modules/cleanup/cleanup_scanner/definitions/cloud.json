@@ -26,11 +26,10 @@
       "id": "box_cache",
       "label": "Box Drive cache and sync staging data",
       "paths": [
-        "%LOCALAPPDATA%\\Box\\Box\\cache",
-        "%LOCALAPPDATA%\\Box\\Box\\logs"
+        "%LOCALAPPDATA%\\Box\\Box\\cache"
       ],
-      "safety": "safe",
-      "description": "Box Drive cache and sync staging data."
+      "safety": "caution",
+      "description": "May contain pending uploads or edits. Verify synchronization and close the client before reviewing deletion."
     },
     {
       "id": "cloudflare_warp_cache",
@@ -44,23 +43,23 @@
     },
     {
       "id": "dropbox_cache",
-      "label": "Dropbox cache, cache.db, and blob metadata — keeps account data intact",
+      "label": "Dropbox named cache and logs",
       "paths": [
         "%LOCALAPPDATA%\\Dropbox\\cache",
         "%APPDATA%\\Dropbox\\cache",
         "%APPDATA%\\Dropbox\\logs"
       ],
       "safety": "safe",
-      "description": "Dropbox cache, cache.db, and blob metadata — keeps account data intact."
+      "description": "Dropbox named cache and logs."
     },
     {
       "id": "expressvpn_cache",
-      "label": "ExpressVPN diagnostic logs and split-tunneling config cache",
+      "label": "ExpressVPN diagnostic logs",
       "paths": [
         "%APPDATA%\\ExpressVPN Logs"
       ],
       "safety": "safe",
-      "description": "ExpressVPN diagnostic logs and split-tunneling config cache."
+      "description": "ExpressVPN diagnostic logs."
     },
     {
       "id": "firebase_cache",
@@ -76,11 +75,10 @@
       "id": "google_drive_cache",
       "label": "Google Drive File Stream and Backup and Sync cache",
       "paths": [
-        "%LOCALAPPDATA%\\Google\\DriveFS\\Cache",
-        "%LOCALAPPDATA%\\Google\\DriveFS\\Logs"
+        "%LOCALAPPDATA%\\Google\\DriveFS\\Cache"
       ],
-      "safety": "safe",
-      "description": "Google Drive File Stream and Backup and Sync cache."
+      "safety": "caution",
+      "description": "May contain pending uploads or edits. Verify synchronization and close the client before reviewing deletion."
     },
     {
       "id": "heroku_cli_cache",
@@ -113,14 +111,14 @@
     },
     {
       "id": "mega_cache",
-      "label": "MEGAsync cache, temp files, and sync database",
+      "label": "MEGAsync named cache, temporary files and logs",
       "paths": [
         "%LOCALAPPDATA%\\MEGA Limited\\MEGAsync\\temp",
         "%LOCALAPPDATA%\\MEGA Limited\\MEGAsync\\logs",
         "%APPDATA%\\MEGAsync\\cache"
       ],
       "safety": "safe",
-      "description": "MEGAsync cache, temp files, and sync database."
+      "description": "MEGAsync named cache, temporary files and logs."
     },
     {
       "id": "mullvad_cache",
@@ -157,7 +155,7 @@
       "label": "NordVPN connection logs and settings cache",
       "paths": [
         "%APPDATA%\\NordVPN",
-        "%APPDATA%\\Roaming\\ClientConfig"
+        "%APPDATA%\\ClientConfig"
       ],
       "safety": "safe",
       "description": "NordVPN connection logs and settings cache.",
@@ -165,13 +163,13 @@
     },
     {
       "id": "onedrive_cache",
-      "label": "OneDrive known folder mask and sync conflict files",
+      "label": "OneDrive named cache and diagnostic logs",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\OneDrive\\logs",
         "%LOCALAPPDATA%\\Microsoft\\OneDrive\\cache"
       ],
       "safety": "safe",
-      "description": "OneDrive known folder mask and sync conflict files."
+      "description": "OneDrive named cache and diagnostic logs."
     },
     {
       "id": "onedrive_commercial_cache",
@@ -202,7 +200,8 @@
         "%LOCALAPPDATA%\\Microsoft\\OneDrive\\logs\\*.log"
       ],
       "safety": "safe",
-      "description": "OneDrive sync logs under %LOCALAPPDATA%\\Microsoft\\OneDrive\\logs."
+      "description": "OneDrive sync logs under %LOCALAPPDATA%\\Microsoft\\OneDrive\\logs.",
+      "disabled_reason": "duplicate of onedrive_cache"
     },
     {
       "id": "openvpn_cache",
@@ -220,11 +219,10 @@
       "label": "pCloud cache and temp sync data",
       "paths": [
         "%LOCALAPPDATA%\\pCloud\\Cache",
-        "%LOCALAPPDATA%\\pCloud\\temp",
-        "%LOCALAPPDATA%\\pCloud\\Logs"
+        "%LOCALAPPDATA%\\pCloud\\temp"
       ],
-      "safety": "safe",
-      "description": "pCloud cache and temp sync data."
+      "safety": "caution",
+      "description": "May contain pending uploads or edits. Verify synchronization and close the client before reviewing deletion."
     },
     {
       "id": "planetscale_cache",
@@ -238,13 +236,13 @@
     },
     {
       "id": "sharepoint_cache",
-      "label": "SharePoint/OneDrive sync client Known folder mask and local cache",
+      "label": "Office document upload staging (disabled)",
       "paths": [
         "%APPDATA%\\Microsoft\\Office\\OfficeFileCache",
         "%LOCALAPPDATA%\\Microsoft\\Office\\OfficeFileCache"
       ],
       "safety": "safe",
-      "description": "SharePoint/OneDrive sync client Known folder mask and local cache.",
+      "description": "Office document upload staging (disabled).",
       "disabled_reason": "Disabled 2026-10-10: every path pointed at the app's whole data folder, a sign-in store or user data (settings, accounts, saves, recordings, unsynced files), not a cache. Deleting it signs you out or loses data. Add only genuine cache subfolders."
     },
     {
@@ -362,6 +360,33 @@
       ],
       "safety": "safe",
       "description": "CyberGhost VPN client's API response and browser (Chromium Embedded Framework UI) cache -- confirmed real, both under %LOCALAPPDATA% and %APPDATA%. Scoped to these named cache subfolders only, never the CyberGhost root, which also holds server-list .scf files and UI assets. BrowserCache is NOT a cache despite its name: it is a whole WebView2 profile with Login Data, Cookies, Local Storage and Vpn Tokens (2026-10-11), so only its Cache / Code Cache / GPUCache are listed."
+    },
+    {
+      "id": "box_logs",
+      "label": "Box Drive logs",
+      "paths": [
+        "%LOCALAPPDATA%\\Box\\Box\\logs"
+      ],
+      "safety": "safe",
+      "description": "Diagnostic log files only; upload staging is kept in a separate caution entry."
+    },
+    {
+      "id": "google_drive_logs",
+      "label": "Google Drive File Stream and Backup and Sync logs",
+      "paths": [
+        "%LOCALAPPDATA%\\Google\\DriveFS\\Logs"
+      ],
+      "safety": "safe",
+      "description": "Diagnostic log files only; upload staging is kept in a separate caution entry."
+    },
+    {
+      "id": "pcloud_logs",
+      "label": "pCloud logs",
+      "paths": [
+        "%LOCALAPPDATA%\\pCloud\\Logs"
+      ],
+      "safety": "safe",
+      "description": "Diagnostic log files only; upload staging is kept in a separate caution entry."
     }
   ]
 }

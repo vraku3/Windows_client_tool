@@ -43,7 +43,9 @@ EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette so
 #: just a decorative pie-chart accent per category, so semantic() and the
 #: .qss role system both apply to nothing here). 262 once the Wi-Fi
 #: channel map's gradient bars became themed QProgressBars (4 literals).
-BUDGET = 236
+#: 176 after the 2026-10-21 Cleanup redesign moved charts and status colours
+#: to the shared semantic palette and theme roles.
+BUDGET = 176
 
 
 def frozen_colour_literals():

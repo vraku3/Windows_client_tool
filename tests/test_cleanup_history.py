@@ -118,12 +118,16 @@ def test_an_unwritable_log_never_fails_the_clean(monkeypatch, tmp_path):
     ch.record_deleted([(r"C:\x.tmp", 1)])                              # must not raise
 
 
-def test_the_history_dialog_lists_deleted_and_refused_paths(qapp, tmp_path, monkeypatch):
-    from modules.cleanup.cleanup_module import _CleanupHistoryDialog
+def test_the_history_tab_lists_deleted_and_refused_paths(qapp, tmp_path, monkeypatch):
+    from modules.cleanup.tabs._history_tab import _HistoryTab
     monkeypatch.setattr(ch, "_history_path", lambda: str(tmp_path / "h.json"))
     ch.record_deleted([(r"C:\Temp\big.tmp", 5_000_000)], [r"C:\ProgramData\Package Cache"])
-    dialog = _CleanupHistoryDialog()
-    top = dialog._deleted.topLevelItem(0)
-    assert "deleted 1 item(s), refused 1" in top.text(0)
-    children = [top.child(i).text(0) for i in range(top.childCount())]
-    assert children == [r"C:\Temp\big.tmp", r"REFUSED: C:\ProgramData\Package Cache"]
+    tab = _HistoryTab()
+    tab.refresh()
+    tab.table.selectRow(0)
+    qapp.processEvents()
+    paths = [tab.paths.topLevelItem(i).child(j).text(0)
+             for i in range(tab.paths.topLevelItemCount())
+             for j in range(tab.paths.topLevelItem(i).childCount())]
+    assert r"C:\Temp\big.tmp" in paths
+    assert r"C:\ProgramData\Package Cache" in paths

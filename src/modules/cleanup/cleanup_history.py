@@ -154,13 +154,23 @@ def _largest(removed: Sequence[Tuple[str, int]]) -> List[list]:
     return [[path, int(size or 0)] for path, size in top]
 
 
-def record_report(report, refused, owners=None, removed=()) -> None:
+def record_report(report, refused, owners=None, removed=(), categories=None,
+                  preset=None, source=None) -> None:
     """Append one clean's MEASURED outcome to the deletion log. Never raises.
 
     `removed` is [(path, measured_freed_bytes)]; the PATHS_PER_ENTRY largest
     are kept as "largest" so the log still answers "did Cleanup delete X".
     An empty folder removed or a link unlinked is a removal at 0 bytes, and a
     cancelled run is recorded even when it freed nothing.
+
+    The three keyword fields are additive and optional (an entry without them
+    is the old shape and every reader copes): `categories` maps a catalog
+    category (the same key ``scan_summaries.json`` uses) to the MEASURED bytes
+    that category freed in this clean -- never the scanned size; `preset` is
+    the preset that chose the items ("light", "thorough", ...); `source` names
+    what ran the clean ("Clean Now", "System Junk", "Duplicates"...). Each is
+    stored only when given, so a caller that passes nothing writes exactly
+    what it wrote before.
     """
     if not (report.files or report.locked or report.denied or report.kept_recent
             or report.cloud_only or refused or removed or report.cancelled):
@@ -179,7 +189,25 @@ def record_report(report, refused, owners=None, removed=()) -> None:
         "cloud_only": report.cloud_only,
         "refused": [[path, reason] for path, reason in refused][:PATHS_PER_ENTRY],
         "cancelled": bool(report.cancelled),
+        **_optional_fields(categories, preset, source),
     })
+
+
+def _optional_fields(categories, preset, source) -> dict:
+    """The additive fields of an entry, only those that were given. A
+    malformed category mapping is logged and dropped, never a failed clean."""
+    extra = {}
+    if categories is not None:
+        try:
+            extra["categories"] = {str(k): max(0, int(v or 0))
+                                   for k, v in dict(categories).items()}
+        except (TypeError, ValueError) as e:
+            logger.warning("cleanup deletion log: ignored categories %r: %s", categories, e)
+    if preset:
+        extra["preset"] = str(preset)
+    if source:
+        extra["source"] = str(source)
+    return extra
 
 
 def summarise(entry: dict) -> str:
@@ -202,3 +230,180 @@ def summarise(entry: dict) -> str:
     if entry.get("cancelled"):
         parts.append("Cancelled.")
     return " ".join(parts)
+
+
+# --------------------------------------------------------------------------
+# Readers for the History tab and the history report (Qt-free)
+# --------------------------------------------------------------------------
+
+#: The History tab's filters: key -> (menu text, tooltip).
+FILTERS = {
+    "all": ("All cleans", "Every clean recorded in the deletion log."),
+    "cancelled": ("Cancelled", "Cleans that were stopped before they finished."),
+    "refused": ("With refusals",
+                "Cleans in which Cleanup refused a path (a sign-in store, an Outlook "
+                "data file, an exclusion) and left it alone."),
+    "in_use": ("With files in use",
+               "Cleans that left files behind because a running program held them open."),
+}
+
+#: What each kind of path row in one clean means, said in words.
+PATH_KINDS = {
+    "removed": ("Removed", "Deleted by this clean. The size is what deleting it measurably freed."),
+    "locked": ("In use", "A running program held this file open, so it was left in place. "
+                         "Close the program and clean again to remove it."),
+    "denied": ("Access denied", "Windows refused access to this path, so it was left in place. "
+                                "Running elevated may reach it; some paths are protected on purpose."),
+    "refused": ("Refused", "Cleanup refused to touch this path on purpose and did not try "
+                           "to delete it. The reason says why."),
+}
+
+
+def entry_time(entry: dict):
+    """The entry's local time as seconds since the epoch, or None when its
+    "at" is missing or unparseable (logged; an old or damaged entry must
+    still list, just without a place on the time axis)."""
+    at = entry.get("at")
+    if not isinstance(at, str) or not at:
+        return None
+    try:
+        return datetime.fromisoformat(at).timestamp()
+    except (ValueError, OverflowError, OSError) as e:
+        logger.warning("cleanup deletion log: unreadable time %r: %s", at, e)
+        return None
+
+
+def _int(value) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def freed_of(entry: dict, category=None) -> int:
+    """Bytes the entry freed; for a category, that category's measured share.
+    An entry that recorded no categories counts 0 for every category -- its
+    split is not known, and inventing one would be a guess."""
+    if category is None:
+        return _int(entry.get("bytes", entry.get("freed_bytes", 0)))
+    cats = entry.get("categories")
+    return _int(cats.get(category)) if isinstance(cats, dict) else 0
+
+
+def matches(entry: dict, filter_key: str = "all", category=None) -> bool:
+    """True when `entry` passes the History tab's filter and category."""
+    if category is not None:
+        cats = entry.get("categories")
+        if not isinstance(cats, dict) or category not in cats:
+            return False
+    if filter_key == "cancelled":
+        return bool(entry.get("cancelled"))
+    if filter_key == "refused":
+        return bool(entry.get("refused"))
+    if filter_key == "in_use":
+        return bool(entry.get("locked_count") or entry.get("locked"))
+    return True
+
+
+def category_totals(entries) -> dict:
+    """category -> {"bytes", "cleans", "last_at"} over `entries` (per-category
+    history). Only entries that recorded categories contribute."""
+    out: dict = {}
+    for e in entries:
+        cats = e.get("categories")
+        if not isinstance(cats, dict):
+            continue
+        at = e.get("at") if isinstance(e.get("at"), str) else ""
+        for key, value in cats.items():
+            row = out.setdefault(str(key), {"bytes": 0, "cleans": 0, "last_at": ""})
+            row["bytes"] += _int(value)
+            row["cleans"] += 1
+            row["last_at"] = max(row["last_at"], at)
+    return out
+
+
+def categories_seen(entries) -> List[str]:
+    """Every category any entry recorded, largest measured total first."""
+    totals = category_totals(entries)
+    return sorted(totals, key=lambda k: (-totals[k]["bytes"], k))
+
+
+def trend_points(entries, category=None) -> List[Tuple[float, int]]:
+    """(epoch seconds, freed bytes) per clean, oldest first; entries without a
+    readable time are left out of the chart (they still list in the table)."""
+    points = []
+    for e in entries:
+        when = entry_time(e)
+        if when is not None:
+            points.append((when, freed_of(e, category)))
+    points.sort(key=lambda p: p[0])
+    return points
+
+
+def scan_points(summaries, category=None) -> List[Tuple[float, int]]:
+    """(epoch seconds, reclaimable bytes) per scan summary, oldest first.
+    For a category, that category's reclaimable size (absent counts 0)."""
+    points = []
+    for s in summaries or ():
+        if not isinstance(s, dict):
+            continue
+        when = entry_time(s)
+        if when is None:
+            continue
+        if category is None:
+            value = _int(s.get("total_size"))
+        else:
+            cats = s.get("categories")
+            value = _int(cats.get(category)) if isinstance(cats, dict) else 0
+        points.append((when, value))
+    points.sort(key=lambda p: p[0])
+    return points
+
+
+def path_rows(entry: dict) -> List[Tuple[str, str, int, str]]:
+    """(kind, path, size, reason) for every path one entry kept, in the order
+    removed, in use, access denied, refused. `size` is -1 when the log never
+    measured it (only removals carry a size). Malformed rows are skipped."""
+    rows = []
+    for item in entry.get("largest") or ():
+        if isinstance(item, (list, tuple)) and item and isinstance(item[0], str):
+            size = _int(item[1]) if len(item) > 1 else -1
+            rows.append(("removed", item[0], size, ""))
+    for kind in ("locked", "denied"):
+        for path in entry.get(kind) or ():
+            if isinstance(path, str):
+                rows.append((kind, path, -1, ""))
+    for item in entry.get("refused") or ():
+        if isinstance(item, (list, tuple)) and item and isinstance(item[0], str):
+            reason = str(item[1]) if len(item) > 1 else "refused"
+            rows.append(("refused", item[0], -1, reason))
+        elif isinstance(item, str):
+            rows.append(("refused", item, -1, "refused"))
+    return rows
+
+
+def kind_count(entry: dict, kind: str) -> int:
+    """The EXACT number of paths of `kind` in the clean (the stored lists are
+    capped; the counts are not). Old entries fall back to the list length."""
+    if kind == "locked":
+        return _int(entry.get("locked_count", len(entry.get("locked") or ())))
+    if kind == "denied":
+        return _int(entry.get("denied_count", len(entry.get("denied") or ())))
+    if kind == "removed":
+        return _int(entry.get("count", len(entry.get("largest") or ())))
+    return len(entry.get("refused") or ())
+
+
+def top_owner(entries):
+    """(process, cleans it held files in) for the process that held files in
+    the most cleans, or None when no clean recorded a holder."""
+    seen: dict = {}
+    for e in entries:
+        owners = e.get("owners")
+        if isinstance(owners, dict):
+            for name in owners:
+                seen[str(name)] = seen.get(str(name), 0) + 1
+    if not seen:
+        return None
+    name = min(seen, key=lambda k: (-seen[k], k.lower()))
+    return name, seen[name]

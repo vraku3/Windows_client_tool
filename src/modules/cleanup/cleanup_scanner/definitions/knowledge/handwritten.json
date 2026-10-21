@@ -1,0 +1,890 @@
+{
+  "app_caches": {
+    "what": "Caches of classic Teams, Discord, Slack, Spotify (Data) and VS Code.",
+    "used_for": "Rebuilt by each app on next start; Microsoft's own Teams fix deletes the whole Teams folder contents.",
+    "verdict": "safe",
+    "risk": "Slower first start; Teams may ask to sign in again and forget small preferences.",
+    "before_cleaning": "Close those apps first.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/microsoftteams/teams-administration/clear-teams-cache",
+      "https://community.spotify.com/t5/Desktop-Windows/Clearing-Spotify-storage-space/td-p/4368033"
+    ],
+    "catalog_concern": "VS Code's caches are in %APPDATA%\\Code (Cache, CachedData, CachedExtensionVSIXs), not %LOCALAPPDATA%\\Microsoft\\VSCode, so that part finds nothing."
+  },
+  "appdata_autodiscover": {
+    "what": "Any folder under %LOCALAPPDATA%/%APPDATA% (3 levels) whose NAME matches a list (Cache, GPUCache, blob_storage, Crashpad, CacheStorage, BrowserCache...).",
+    "used_for": "Most such folders are rebuildable caches, but a name is not proof: some hold crash reports, offline web-app data or whole browser profiles.",
+    "verdict": "caution",
+    "risk": "Lost offline web-app data (CacheStorage), unsent crash reports (Crashpad), Electron attachments (blob_storage), or a mis-named profile (CyberGhost's BrowserCache).",
+    "before_cleaning": "Close apps first; review the list.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Name-based matching offered as safe and pre-selected. The sign-in guard catches IndexedDB/Cookies, but not other data; 'crashpad', 'crash reports', 'cachestorage', 'blob_storage', 'browsercache(s)' should not be safe."
+  },
+  "appx_logs": {
+    "what": "Not documented by the vendor. Folders AppxPackages, PackageManagement and RemotePackages under %LOCALAPPDATA%\\Microsoft\\Windows.",
+    "used_for": "Unknown; names suggest package staging or management data.",
+    "verdict": "caution",
+    "risk": "Unknown contents; possibly package or provider data.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "backup_files": {
+    "what": "*.bak/*.old/*.tmp files directly in %windir% and a few app folders, plus Downloaded Program Files.",
+    "used_for": "Leftovers of setups and edits. Downloaded Program Files holds ActiveX controls IE/apps still use.",
+    "verdict": "caution",
+    "risk": "A .bak may be the only copy of an older config; removing ActiveX controls breaks sites/apps that use them (Microsoft KB 4015218).",
+    "before_cleaning": "Look at the list first.",
+    "regenerates": false,
+    "sources": [
+      "https://support.microsoft.com/en-us/help/4015218",
+      "https://en.wikipedia.org/wiki/Disk_Cleanup"
+    ],
+    "catalog_concern": "File-name patterns marked safe; a name does not prove a leftover."
+  },
+  "bitlocker_logs": {
+    "what": "Not documented by the vendor. %windir%\\System32\\LogFiles\\BitLocker.",
+    "used_for": "Logs only, by name; encryption keys are not stored here.",
+    "verdict": "safe",
+    "risk": "Lost BitLocker troubleshooting logs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "bits_transfers": {
+    "what": "Not documented by the vendor at these paths. The real BITS job queue is qmgr*.dat in ProgramData\\Microsoft\\Network\\Downloader.",
+    "used_for": "BITS queues background downloads (Windows Update, Defender, Intune). Microsoft resets it only with BITS stopped.",
+    "verdict": "caution",
+    "risk": "If it reaches the queue: in-progress downloads cancelled, possible BITS errors.",
+    "before_cleaning": "Stop BITS first.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2008-R2-and-2008/dd408553(v=ws.10)",
+      "https://msendpointmgr.com/2014/03/28/how-to-reset-bits-transfer-queue/"
+    ],
+    "catalog_concern": "Marked safe and deletes whole folders with no service stop; the listed paths do not match the documented queue location."
+  },
+  "brackets_cache": {
+    "what": "Not documented by the vendor. Brackets editor 'ext' and 'cache' folders.",
+    "used_for": "A cache is rebuilt by the editor; 'ext' may be extension data.",
+    "verdict": "safe",
+    "risk": "Possibly lost extension data.",
+    "before_cleaning": "Close Brackets.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "crash_dumps_system": {
+    "what": "Kernel crash dumps (Minidump, LiveKernelReports, MEMORY.DMP) and cluster.log.",
+    "used_for": "Evidence for diagnosing blue screens, hangs and failover cluster problems.",
+    "verdict": "caution",
+    "risk": "Lost crash evidence.",
+    "before_cleaning": "Only after crashes are diagnosed.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/read-small-memory-dump-file",
+      "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-code-reference-live-dump"
+    ],
+    "catalog_concern": "Overlaps memory_dumps/minidump."
+  },
+  "dbg_logs": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\dbg\\Logs (debugger logs, by name).",
+    "used_for": "Logs only.",
+    "verdict": "safe",
+    "risk": "Lost debugger logs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "delivery_opt_user": {
+    "what": "Not documented by the vendor. Per-user DeliveryOptimization Cache/Logs folders under %LOCALAPPDATA%.",
+    "used_for": "Delivery Optimization caches are rebuildable download caches.",
+    "verdict": "safe",
+    "risk": "Re-downloads.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://support.microsoft.com/help/4041707"
+    ],
+    "catalog_concern": "Delivery Optimization's cache is system-wide; this per-user path likely does not exist. Overlaps scan_delivery_optimization_do."
+  },
+  "delivery_optimization": {
+    "what": "Delivery Optimization's cache of update and Store downloads shared with other PCs.",
+    "used_for": "Windows clears it itself; deleted content is downloaded again when needed. Disk Cleanup offers it as Delivery Optimization Files.",
+    "verdict": "safe",
+    "risk": "Re-downloads; other PCs on the network cannot fetch those files from this one.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://support.microsoft.com/help/4041707"
+    ],
+    "catalog_concern": "On Windows 10/11 the cache is under ServiceProfiles\\NetworkService\\...\\DeliveryOptimization\\Cache; SoftwareDistribution\\DeliveryOptimization\\Cache likely does not exist."
+  },
+  "delivery_optimization_do": {
+    "what": "Delivery Optimization cache and log folders (per-user and ProgramData).",
+    "used_for": "Download cache; Windows trims it itself and re-downloads as needed.",
+    "verdict": "safe",
+    "risk": "Re-downloads.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://support.microsoft.com/help/4041707"
+    ],
+    "catalog_concern": "Overlaps scan_delivery_opt_user; the documented cache path (ServiceProfiles\\NetworkService\\...) is not listed."
+  },
+  "diagnostic_data": {
+    "what": "Diagnostic Data Viewer data and Feedback Hub files.",
+    "used_for": "Viewer data shows what diagnostics were sent; Feedback Hub keeps feedback attachments.",
+    "verdict": "caution",
+    "risk": "Lost viewer history and unsent feedback.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/privacy/diagnostic-data-viewer-overview"
+    ],
+    "catalog_concern": ""
+  },
+  "dmf_logs": {
+    "what": "Not documented by the vendor. Log and ETL files in %windir%\\Logs\\DMF.",
+    "used_for": "Diagnostic logs only, as the name and file types show.",
+    "verdict": "caution",
+    "risk": "Lost diagnostics.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "dns_cache": {
+    "what": "Nothing: a stub that returns no items. The DNS cache is in memory.",
+    "used_for": "ipconfig /flushdns clears it; Windows refills it on the next lookups.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Lists nothing; either implement the flush or remove the entry."
+  },
+  "downloads_folder_old": {
+    "what": "Files in your Downloads folder.",
+    "used_for": "Things you downloaded: installers, documents, archives. Often the only copy.",
+    "verdict": "caution",
+    "risk": "Permanent loss of downloaded files you still need.",
+    "before_cleaning": "Review each file.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "duplicate_files": {
+    "what": "Groups of files with the same size and the same first and last 8 KB (MD5).",
+    "used_for": "A finder; nothing is ticked. Matching only the ends is not proof the files are identical.",
+    "verdict": "caution",
+    "risk": "Two different files (VM images, databases, videos) can be reported as duplicates and one deleted.",
+    "before_cleaning": "Verify with a full hash before deleting.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Docstring says 64 KB, code reads 8 KB; a full-content compare should confirm a duplicate."
+  },
+  "empty_folders": {
+    "what": "Empty folders in your user folders and %LOCALAPPDATA%.",
+    "used_for": "Usually leftovers, but apps create some empty folders on purpose (e.g. a Store app's LocalState, TempState, AC).",
+    "verdict": "caution",
+    "risk": "An app that expects its folder may fail or reset; little space is gained.",
+    "before_cleaning": "Review the list.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Rated safe; walking %LOCALAPPDATA% reaches Packages\\<app>\\ folders Windows created for the package."
+  },
+  "etl_logs": {
+    "what": "Windows Update ETL traces, Delivery Optimization logs and Windows\\Temp\\ScriptArtifacts logs.",
+    "used_for": "Get-WindowsUpdateLog builds the readable update log from these ETLs.",
+    "verdict": "caution",
+    "risk": "Update history for troubleshooting is lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-logs"
+    ],
+    "catalog_concern": "Overlaps scan_msi_logs and diag_logs (Logs\\WindowsUpdate)."
+  },
+  "font_files_temp": {
+    "what": "Not documented by the vendor. LocalService\\...\\FontDrivers and %TEMP%\\Font* folders.",
+    "used_for": "Font-service scratch data, by name.",
+    "verdict": "caution",
+    "risk": "Unknown; small.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://winaero.com/rebuild-font-cache-windows-10/"
+    ],
+    "catalog_concern": "The %TEMP%\\Font* glob is tested with isdir and never matches; the real font cache folder is ...\\Local\\FontCache."
+  },
+  "game_caches": {
+    "what": "EpicGamesLauncher Data\\Portal\\Cache; Steam htmlcache Cache, Code Cache and GPUCache leaves (including Default); named Battle.net, EA Desktop, Ubisoft Connect, GOG Galaxy and Discord cache folders.",
+    "used_for": "Cached launcher pages, downloaded interface assets, compiled web code and GPU data. Launchers and Discord recreate these caches as needed; installed games, download staging and account profiles are outside these targets.",
+    "verdict": "caution",
+    "risk": "The next launch may be slower or redownload interface assets. GPU and shader cache rebuilding can cause temporary stutter. Cleaning while a launcher is running can leave locked files or race cache writes.",
+    "before_cleaning": "Close the affected launchers and Discord. Select only caches you intend to rebuild, and allow time for slower first launches and temporary stutter afterwards.",
+    "regenerates": true,
+    "sources": [
+      "https://steamcommunity.com/discussions/forum/1/6679490060452861540",
+      "https://steamcommunity.com/discussions/forum/1/558747288083286747",
+      "https://www.epicgames.com/help/en-US/epic-games-store-c-202300000001639/error-messages-c-202300000001736/is-0007-or-is-0009-manifest-failed-to-load-a202300000013120",
+      "https://jayd.ml/games/2020/05/16/epic-games-store-steam-libraries.html"
+    ],
+    "catalog_concern": ""
+  },
+  "group_policy_logs": {
+    "what": "%windir%\\Debug (netlogon.log, PASSWD.LOG, etc.), Group Policy logs and the GroupPolicy Operational .evtx.",
+    "used_for": "Logs for sign-in, domain and Group Policy troubleshooting.",
+    "verdict": "caution",
+    "risk": "Lost domain/policy diagnostics; the .evtx is a live event log held by the Event Log service.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/windows-security/enable-debug-logging-netlogon-service",
+      "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil"
+    ],
+    "catalog_concern": "Deleting an .evtx contradicts event_logs being disabled; drop the evtx path."
+  },
+  "ide_caches": {
+    "what": "JetBrains caches/index/logs, Visual Studio .vs, ComponentModelCache and Settings, ~vs* temp files, Notepad++\\backup, and the whole FileZilla folder.",
+    "used_for": "JetBrains caches and VS ComponentModelCache are rebuilt. VS Settings holds your IDE settings, Notepad++\\backup holds UNSAVED tabs, FileZilla's folder holds saved sites and passwords.",
+    "verdict": "danger",
+    "risk": "Lost unsaved Notepad++ text, all FileZilla saved servers/passwords, Visual Studio settings; JetBrains logs lost.",
+    "before_cleaning": "Never as configured.",
+    "regenerates": false,
+    "sources": [
+      "https://portableapps.com/node/37973",
+      "https://www.mysysadmintips.com/filezilla-ftp-client-stores-passwords-in-plain-text/",
+      "https://community.notepad-plus-plus.org/post/32142",
+      "https://community.notepad-plus-plus.org/post/70334",
+      "https://learn.microsoft.com/en-us/answers/questions/1221136/visual-studio-2022-clear-local-caches",
+      "https://www.jetbrains.com/help/idea/invalidate-caches.html",
+      "https://www.jetbrains.com/help/idea/directories-used-by-the-ide-to-store-settings-caches-plugins-and-logs.html"
+    ],
+    "catalog_concern": "DANGEROUS: %APPDATA%\\FileZilla (sitemanager.xml), Notepad++\\backup and VisualStudio\\<ver>\\Settings are user data offered as safe. Keep JetBrains caches/index and ComponentModelCache only."
+  },
+  "install_temp": {
+    "what": "Upgrade staging folders ($WINDOWS.~BT, $WINDOWS.~LS, $inplace, DownloadedInstallations).",
+    "used_for": "Used while a feature update installs and briefly for rollback.",
+    "verdict": "caution",
+    "risk": "Breaks an upgrade in progress or a rollback.",
+    "before_cleaning": "Only when no upgrade is pending.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/windows/deployment/upgrade/log-files"
+    ],
+    "catalog_concern": "$WINDOWS.~BT/~LS live at the drive root, not in %windir%; Panther\\*-ms is a glob tested with isdir and never matches."
+  },
+  "iso_vhd_files": {
+    "what": ".iso, .vhd and .vhdx files in your Downloads folder.",
+    "used_for": "Disk images you downloaded or created; a VHD/VHDX can be a working virtual machine disk.",
+    "verdict": "caution",
+    "risk": "Losing a VM disk or an image you cannot download again.",
+    "before_cleaning": "Make sure none is mounted or used by a VM.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "large_files": {
+    "what": "Any file over 100 MB in Documents/Desktop/Downloads, %LOCALAPPDATA%, Program Files and Steam\\steamapps\\common.",
+    "used_for": "A finder, not junk: these are your files, installed programs and games. Nothing is ticked.",
+    "verdict": "caution",
+    "risk": "Deleting files under Program Files or steamapps breaks programs and games; others are your data.",
+    "before_cleaning": "Review each file.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Items under Program Files and steamapps\\common should be danger, not caution."
+  },
+  "maps_cache": {
+    "what": "Windows Maps' LocalState and a TileDataLayer database.",
+    "used_for": "Maps' LocalState is app data (favourites, settings); offline maps live in ProgramData\\Microsoft\\MapData.",
+    "verdict": "caution",
+    "risk": "Lost Maps favourites and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://www.windowscentral.com/how-manage-offline-maps-windows-11"
+    ],
+    "catalog_concern": "The Packages path is built as %LOCALAPPDATA%\\Local\\Packages\\... with an unexpanded *, so it never matches; if fixed, it would delete a whole LocalState (app data) as safe."
+  },
+  "maps_offline_cache": {
+    "what": "Bing Maps app's LocalState: its settings and saved data.",
+    "used_for": "Offline maps are in ProgramData\\Microsoft\\MapData; LocalState is app data, not a cache.",
+    "verdict": "caution",
+    "risk": "Lost favourites and settings.",
+    "before_cleaning": "Remove offline maps from Settings > Apps > Offline maps.",
+    "regenerates": false,
+    "sources": [
+      "https://www.windowscentral.com/how-manage-offline-maps-windows-11"
+    ],
+    "catalog_concern": "Whole LocalState offered as safe -- the same reason photoscan_cache was disabled."
+  },
+  "msi_logs": {
+    "what": "*.log/*.etl in %windir%\\Logs\\MSI and %windir%\\Logs\\WindowsUpdate.",
+    "used_for": "Installer logs and Windows Update traces, used for troubleshooting.",
+    "verdict": "caution",
+    "risk": "Lost update/installer diagnostics.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-logs"
+    ],
+    "catalog_concern": "Rated safe; Windows Update ETLs are the source of Get-WindowsUpdateLog. Overlaps scan_etl_logs."
+  },
+  "msp_patches": {
+    "what": "EVERY .msp patch in C:\\Windows\\Installer, referenced or not.",
+    "used_for": "Windows Installer needs these to repair, patch and uninstall software (Office, SQL, VC++...).",
+    "verdict": "danger",
+    "risk": "Installed software can no longer be updated, repaired or uninstalled.",
+    "before_cleaning": "Never as configured.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/missing-windows-installer-cache",
+      "https://learn.microsoft.com/tr-tr/archive/blogs/sqlserverfaq/do-not-delete-files-from-the-windows-installer-folder"
+    ],
+    "catalog_concern": "DANGEROUS: no reference check, unlike scan_orphaned_installer_packages. Remove it or reuse that set-difference."
+  },
+  "ndis_cache": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\Microsoft\\Windows\\NetworkConnections.",
+    "used_for": "By name, network connection data; VPN/dial-up entries are kept in a similar folder (Network\\Connections\\Pbk).",
+    "verdict": "caution",
+    "risk": "Possibly lost VPN or connection settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "A network-connections folder rated safe; NDIS binding cache does not live in a user folder."
+  },
+  "network_debug_logs": {
+    "what": "Not documented by the vendor. LogFiles\\Nettettl and %LOCALAPPDATA%\\...\\Network Diagnostics.",
+    "used_for": "Network troubleshooting traces, by name.",
+    "verdict": "safe",
+    "risk": "Lost network diagnostics.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "'Nettettl' looks like a typo and matches nothing."
+  },
+  "novatrons_cache": {
+    "what": "Not documented by the vendor. The whole %APPDATA%\\Novatrons folder.",
+    "used_for": "Unknown app; a whole app data folder usually holds settings.",
+    "verdict": "caution",
+    "risk": "Lost settings or data of that app.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder offered as safe."
+  },
+  "old_av_quarantine": {
+    "what": "Quarantine folders of Avast, AVG, Malwarebytes and Defender.",
+    "used_for": "Hold detected files in a neutralised form so they can be restored if harmless.",
+    "verdict": "caution",
+    "risk": "False positives can no longer be restored; the AV's database still lists the items.",
+    "before_cleaning": "Empty quarantine from the antivirus itself.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/defender-endpoint/restore-quarantined-files-microsoft-defender-antivirus"
+    ],
+    "catalog_concern": "Paths contain 'Avast\\ quarantine' (space) and a non-existent Defender path, so it finds nothing."
+  },
+  "old_files": {
+    "what": "Files not modified for 6 months in Documents, Desktop, Downloads (not Pictures/Videos).",
+    "used_for": "A finder: these are your own documents. Nothing is ticked.",
+    "verdict": "caution",
+    "risk": "Permanent loss of real documents; age says nothing about value.",
+    "before_cleaning": "Review each file.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "orphaned_installer_packages": {
+    "what": ".msi/.msp files in C:\\Windows\\Installer that no installed product references.",
+    "used_for": "Unreferenced packages are not used for repair or uninstall. Fails closed if the registry cannot be read.",
+    "verdict": "caution",
+    "risk": "A mis-read registry could orphan a needed package; the product then cannot be repaired or removed.",
+    "before_cleaning": "Create a restore point first.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/missing-windows-installer-cache",
+      "https://devblogs.microsoft.com/setup/?p=1753"
+    ],
+    "catalog_concern": ""
+  },
+  "orphaned_virtual_disks": {
+    "what": "Virtual disks over 1 GB that no installed hypervisor can open.",
+    "used_for": "Usually left behind by an uninstalled VirtualBox/VMware; nothing uses them now.",
+    "verdict": "caution",
+    "risk": "The disk may still hold data someone wants.",
+    "before_cleaning": "Check what is inside first.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "perflogs": {
+    "what": "C:\\PerfLogs (Performance Monitor data-collector output) and LogFiles\\WMI\\RtTracking.",
+    "used_for": "PerfLogs holds reports an admin chose to record. Not recreated.",
+    "verdict": "caution",
+    "risk": "Lost performance reports someone created on purpose.",
+    "before_cleaning": "Check for reports you need.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Rated safe; these are deliberately collected diagnostics."
+  },
+  "powershell_ise_cache": {
+    "what": "Not documented by the vendor. %APPDATA%\\Microsoft\\WindowsPowerShell\\ISE.",
+    "used_for": "The scanner's own description says 'saved scripts'; ISE keeps settings elsewhere.",
+    "verdict": "caution",
+    "risk": "If it holds scripts, they are lost.",
+    "before_cleaning": "Check the folder first.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Labelled 'saved scripts' yet rated safe."
+  },
+  "powershell_logs": {
+    "what": "PSReadLine command history, PowerShell transcripts and PowerShell's own logs.",
+    "used_for": "History is what the Up arrow recalls; transcripts are audit records an admin or policy turned on.",
+    "verdict": "caution",
+    "risk": "Lost command history and audit transcripts (which may be required by policy).",
+    "before_cleaning": "Check transcript retention policy.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/powershell/module/psreadline/about/about_psreadline"
+    ],
+    "catalog_concern": "Rated safe, but it is user history and audit data. Note PSReadLine lives in %APPDATA%, not %LOCALAPPDATA%, so that part finds nothing today."
+  },
+  "powershell_modules_cache": {
+    "what": "%APPDATA%\\PowerShell\\DownloadedModules and ConsoleHost_history.txt (PowerShell command history).",
+    "used_for": "History is your saved PowerShell commands; modules folder is not a documented PowerShell location.",
+    "verdict": "caution",
+    "risk": "Lost command history.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/powershell/module/psreadline/about/about_psreadline"
+    ],
+    "catalog_concern": "Command history is user data, not a cache; also PSReadLine history is in %APPDATA%, so the listed %LOCALAPPDATA% path matches nothing."
+  },
+  "prefetch": {
+    "what": "Windows Prefetch (.pf) files: records of what each program loads at start-up.",
+    "used_for": "Windows uses them to start programs and boot faster, and prunes them itself. Rebuilt as programs run.",
+    "verdict": "caution",
+    "risk": "Next boots and program launches are slower until rebuilt; no space worth gaining.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Prefetcher"
+    ],
+    "catalog_concern": "The scanner marks items safe; the tabs relabel it caution. Deleting Prefetch has no benefit."
+  },
+  "print_nightmare_logs": {
+    "what": "spool\\PRINTERS and SERVERS (queued jobs) plus spool\\drivers: the installed printer drivers.",
+    "used_for": "Printers print through the drivers in spool\\drivers. They are not recreated.",
+    "verdict": "danger",
+    "risk": "Printers stop working and the spooler may fail to start; queued jobs lost.",
+    "before_cleaning": "Never as configured.",
+    "regenerates": false,
+    "sources": [
+      "https://hdkb.clemson.edu/phpkb/article.php?id=203",
+      "https://helpdeskgeek.com/how-to-forcefully-clear-a-stuck-print-queue-in-windows/"
+    ],
+    "catalog_concern": "DANGEROUS: spool\\drivers holds installed printer drivers. Also no spooler stop check."
+  },
+  "print_spooler": {
+    "what": "Print spooler queue files (spool\\PRINTERS, SERVERS).",
+    "used_for": "Hold print jobs waiting to print. Deleting cancels them; the standard fix for a stuck queue.",
+    "verdict": "caution",
+    "risk": "Queued print jobs are lost.",
+    "before_cleaning": "Stop the Print Spooler service first (the scanner checks).",
+    "regenerates": false,
+    "sources": [
+      "https://helpdeskgeek.com/how-to-forcefully-clear-a-stuck-print-queue-in-windows/"
+    ],
+    "catalog_concern": ""
+  },
+  "printer_driver_cache": {
+    "what": "spool\\drivers (installed printer drivers) and spool\\PRINTERS (queued jobs).",
+    "used_for": "Printing uses these drivers; not recreated.",
+    "verdict": "danger",
+    "risk": "Printers stop working; jobs lost.",
+    "before_cleaning": "Never as configured.",
+    "regenerates": false,
+    "sources": [
+      "https://hdkb.clemson.edu/phpkb/article.php?id=203"
+    ],
+    "catalog_concern": "DANGEROUS: same spool\\drivers problem as scan_print_nightmare_logs."
+  },
+  "recent_files": {
+    "what": "Recent Items shortcuts and the jump-list files (*.automaticDestinations-ms, *.customDestinations-ms).",
+    "used_for": "These ARE the Recent lists, Quick access and the pinned items in taskbar/Start jump lists. Not recreated.",
+    "verdict": "caution",
+    "risk": "Pinned jump-list items and Quick access pins (f01b4d95cf55d32a.automaticDestinations-ms) are lost, and recent-file lists empty. Privacy gain only.",
+    "before_cleaning": "Only if you want your history and pins cleared.",
+    "regenerates": false,
+    "sources": [
+      "https://www.howtogeek.com/5245/fix-for-when-pinned-jump-list-items-get-stuck-in-windows-7/",
+      "https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-iapplicationdestinations"
+    ],
+    "catalog_concern": "Rated safe, but deleting automaticDestinations removes the user's own pins; it should be caution and unticked."
+  },
+  "recycle_bin": {
+    "what": "The Recycle Bin on every drive: your deleted files.",
+    "used_for": "Lets you restore deleted files; emptying is permanent.",
+    "verdict": "caution",
+    "risk": "Permanent loss of files you may want back.",
+    "before_cleaning": "Check the Recycle Bin first.",
+    "regenerates": false,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Disk_Cleanup"
+    ],
+    "catalog_concern": "Marked safe and still listed in the Large Items tab, although per_drive_recycle_bin (caution) was meant to replace it."
+  },
+  "search_index": {
+    "what": "The Windows Search index database (Windows.edb / Windows.db) and its temp/usage files.",
+    "used_for": "Start menu, Explorer and Outlook search use it. Rebuilt by re-indexing, which takes hours.",
+    "verdict": "caution",
+    "risk": "Search returns little until re-indexing finishes; files are locked by WSearch.",
+    "before_cleaning": "Use Indexing Options > Rebuild instead, or stop WSearch.",
+    "regenerates": true,
+    "sources": [
+      "https://www.winhelponline.com/blog/reset-rebuild-windows-search-index-fix-problems/",
+      "https://woshub.com/windows-edb-file-too-big-how-to-reduce-size/"
+    ],
+    "catalog_concern": ""
+  },
+  "store_app_caches": {
+    "what": "Named cache folders inside Store apps' LocalCache (Cache/Temp and WebView2 Cache, Code Cache, GPUCache, shader caches) -- never LocalCache itself.",
+    "used_for": "Rebuilt by each app; sign-in data (IndexedDB, Local Storage, Cookies) is left alone.",
+    "verdict": "safe",
+    "risk": "Slower first start; a game's 'cache' folder may hold content that is downloaded again.",
+    "before_cleaning": "Close the apps first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.microsoft.com/en-au/windows/microsoft-store-doesn-t-launch-reset-the-cache-df2aea11-6338-418a-9515-434c5e910adb"
+    ],
+    "catalog_concern": ""
+  },
+  "superseded_app_versions": {
+    "what": "Older version folders of MathWorks Service Host and of Squirrel-updated apps (app-x.y.z beside Update.exe), skipping running ones.",
+    "used_for": "Squirrel normally removes old versions after an update; leftovers are not used. Service Host rebuilds itself when MATLAB starts.",
+    "verdict": "caution",
+    "risk": "No rollback to the previous version; a version still in use by another session could break.",
+    "before_cleaning": "Close the app and MATLAB.",
+    "regenerates": false,
+    "sources": [
+      "https://www.advancedinstaller.com/what-is-squirrel-framework.html",
+      "https://www.mathworks.com/matlabcentral/answers/2128851-why-is-the-mathworks-service-host-causing-issues-with-my-cluster-and-or-hpc"
+    ],
+    "catalog_concern": ""
+  },
+  "sysinternals_logs": {
+    "what": "Not documented by the vendor. The whole Sysinternals folders in %LOCALAPPDATA% and %APPDATA%.",
+    "used_for": "Sysinternals tools keep most settings in the registry; these folders may hold saved traces or data.",
+    "verdict": "caution",
+    "risk": "Lost saved traces or tool data.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folders offered as safe, against the catalog rule."
+  },
+  "triumph_cache": {
+    "what": "Not documented by the vendor. The whole %APPDATA%\\Triumph folder.",
+    "used_for": "Unknown app; whole app data folder.",
+    "verdict": "caution",
+    "risk": "Lost settings or project data.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder offered as safe."
+  },
+  "usb_shadow_copies": {
+    "what": "SYSTEM's CryptnetUrlCache: cached certificate revocation lists and OCSP replies.",
+    "used_for": "Windows reuses them to check certificates; deleted entries are fetched again (certutil -urlcache * delete does the same).",
+    "verdict": "safe",
+    "risk": "Slightly slower first certificate checks; offline revocation checks fail until refetched.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/archive/blogs/alejacma/crl-gets-cached-after-we-do-an-online-verification-with-x509chain",
+      "https://support.citrix.com/external/article/CTX120608/ssl-error-76-the-security-certificate-wa.html"
+    ],
+    "catalog_concern": "Name and description ('USB shadow copies and ReadyBoost') do not match what it deletes."
+  },
+  "userprofile_temp": {
+    "what": "%LOCALAPPDATA%\\Temp, only when TEMP points elsewhere.",
+    "used_for": "Programs' scratch files; leftovers are not needed.",
+    "verdict": "safe",
+    "risk": "A running installer may need its files.",
+    "before_cleaning": "Close installers first.",
+    "regenerates": true,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Disk_Cleanup"
+    ],
+    "catalog_concern": "No 24-hour floor here, unlike temp_files."
+  },
+  "uwp_all_apps_cache": {
+    "what": "Same named Store-app cache folders as scan_store_app_caches.",
+    "used_for": "Rebuilt by each app; sign-in data is not touched.",
+    "verdict": "safe",
+    "risk": "Slower first start.",
+    "before_cleaning": "Close the apps.",
+    "regenerates": true,
+    "sources": [
+      "https://support.microsoft.com/en-au/windows/microsoft-store-doesn-t-launch-reset-the-cache-df2aea11-6338-418a-9515-434c5e910adb"
+    ],
+    "catalog_concern": "Duplicate of scan_store_app_caches: same bytes counted twice."
+  },
+  "virtual_disk_images": {
+    "what": "Virtual disks over 1 GB (.vhd/.vhdx/.vdi/.vmdk/.qcow2) whose hypervisor is installed.",
+    "used_for": "These are working virtual machines or WSL distributions. Compacting reclaims space; deleting destroys them.",
+    "verdict": "danger",
+    "risk": "A whole VM or WSL distribution is lost.",
+    "before_cleaning": "Compact instead of deleting.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "virtual_drives": {
+    "what": "Not documented by the vendor. DAEMON Tools ImageCache folders and the whole WinCDEmu folder.",
+    "used_for": "Image catalogs/caches of virtual-drive tools.",
+    "verdict": "caution",
+    "risk": "May hold images you created or tool settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "%LOCALAPPDATA%\\WinCDEmu is a whole app folder."
+  },
+  "winSxS_temp": {
+    "what": "WinSxS\\InstallTemp and WinSxS\\Temp (PendingRenames/PendingDeletes).",
+    "used_for": "Servicing finishes pending file replacements from here at the next restart.",
+    "verdict": "danger",
+    "risk": "An update waiting for a restart can fail or leave Windows inconsistent; Microsoft says never delete inside WinSxS.",
+    "before_cleaning": "Never delete; restart and let Windows clear it.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder",
+      "https://www.bleepingcomputer.com/forums/t/516197/cwindowswinsxstemppendingrenames/"
+    ],
+    "catalog_concern": "Offered as caution and listed twice in cleanup_module; anything inside WinSxS should be refused."
+  },
+  "windows_app_extensions_cache": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\Microsoft\\Windows\\AppExtensionDatabase.",
+    "used_for": "By name, a database of registered app extensions.",
+    "verdict": "caution",
+    "risk": "Unknown; apps' extensions may stop being found until re-registered.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "A 'database' rated safe with no evidence it rebuilds."
+  },
+  "windows_compatibility_cache": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\Microsoft\\Windows\\CompatibilityExperience.",
+    "used_for": "Compatibility checks data, by name.",
+    "verdict": "safe",
+    "risk": "Unknown; likely recreated.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "windows_connected_accounts_cache": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\Microsoft\\IdentityOLTCache -- by the scanner's own description, cached account tokens.",
+    "used_for": "Token caches like IdentityCache/OneAuth keep Office, Teams and Outlook signed in.",
+    "verdict": "danger",
+    "risk": "Sign-outs from Microsoft 365 apps and connected accounts.",
+    "before_cleaning": "Never as configured.",
+    "regenerates": false,
+    "sources": [
+      "https://srs.scrmc.com/helpdesk/KB/View/303-office-365-authentication-issues"
+    ],
+    "catalog_concern": "DANGEROUS: a token store offered as safe. Its siblings IdentityCache and OneAuth are in SIGN_IN_STORES; IdentityOLTCache is not."
+  },
+  "windows_defender_logs": {
+    "what": "Defender's Logs and Support folders (MPLog, MpSupportFiles.cab) and per-user Scans\\History / Quarantine paths.",
+    "used_for": "Support files are for Microsoft support cases. Quarantine holds detected files you might need to restore.",
+    "verdict": "caution",
+    "risk": "Lost Defender diagnostics; if quarantine is reached, false positives can no longer be restored.",
+    "before_cleaning": "Remove quarantine items from Windows Security instead.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/defender-endpoint/collect-diagnostic-data",
+      "https://learn.microsoft.com/en-us/defender-endpoint/restore-quarantined-files-microsoft-defender-antivirus"
+    ],
+    "catalog_concern": "Rated safe. The per-user Defender paths do not exist (Defender keeps them in ProgramData); quarantine should never be a safe item."
+  },
+  "windows_inbox_apps_cache": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\Local\\Microsoft\\Windows\\IEDebar.",
+    "used_for": "Path is doubled ('Local\\Local') and does not exist; nothing is deleted.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Dead path; description (Calculator/Photos/Mail) does not match."
+  },
+  "windows_insider_logs": {
+    "what": "Feedback Hub data and log folders.",
+    "used_for": "Hold feedback attachments and diagnostics waiting to be sent.",
+    "verdict": "caution",
+    "risk": "Unsent feedback and its diagnostics are lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "windows_insider_preview_cache": {
+    "what": "Not documented by the vendor. Windows Insider upgrade staging folders.",
+    "used_for": "Staging for Insider builds; only needed while a flight installs.",
+    "verdict": "caution",
+    "risk": "Breaks an Insider upgrade in progress.",
+    "before_cleaning": "Only when no build is installing.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "windows_installer_cache": {
+    "what": "Not documented by the vendor. .msi/.msp files in %LOCALAPPDATA%\\Microsoft\\Windows\\Installer.",
+    "used_for": "If these are cached installers, Windows Installer needs them to repair or uninstall.",
+    "verdict": "caution",
+    "risk": "A product that cannot be repaired or removed.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/missing-windows-installer-cache"
+    ],
+    "catalog_concern": "Offered with no reference check; scan_orphaned_installer_packages's approach would be safer."
+  },
+  "windows_installer_rollback": {
+    "what": "Not documented by the vendor. Folders C:\\Windows\\Installer\\Patch and \\001.",
+    "used_for": "Anything inside Windows\\Installer belongs to Windows Installer's repair/uninstall cache. Rollback during installs uses C:\\Config.Msi.",
+    "verdict": "danger",
+    "risk": "Software that cannot be repaired, patched or uninstalled.",
+    "before_cleaning": "Never delete inside Windows\\Installer.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/missing-windows-installer-cache",
+      "https://learn.microsoft.com/tr-tr/archive/blogs/sqlserverfaq/do-not-delete-files-from-the-windows-installer-folder"
+    ],
+    "catalog_concern": "Microsoft says the Windows Installer folder must not be deleted from."
+  },
+  "windows_logs": {
+    "what": "CBS, DISM, MoSetup logs, setupapi.*.log and WindowsUpdate.log.",
+    "used_for": "Diagnostics for updates, upgrades and driver installs (setupapi.dev.log records every device install).",
+    "verdict": "caution",
+    "risk": "Lost evidence for update, upgrade and driver problems.",
+    "before_cleaning": "Not while an update or SFC/DISM is running.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/analyze-sfc-program-log-file-entries",
+      "https://learn.microsoft.com/windows/deployment/upgrade/log-files"
+    ],
+    "catalog_concern": "Overlaps diag_logs/sfc_logs."
+  },
+  "windows_old": {
+    "what": "Windows.old: the previous Windows installation left by an upgrade, including old user files.",
+    "used_for": "Lets you go back to the previous version and recover old files. Windows removes it itself after a while.",
+    "verdict": "caution",
+    "risk": "No way back to the previous version; files left in the old profile are lost. Manual deletion often fails on permissions.",
+    "before_cleaning": "Copy anything you need out of it; prefer Storage Sense.",
+    "regenerates": false,
+    "sources": [
+      "https://support.microsoft.com/topic/e12f9d84-ad7f-4780-9406-465670157f8e"
+    ],
+    "catalog_concern": ""
+  },
+  "windows_optional_features": {
+    "what": "WinSxS\\ManifestBackup and WinSxS\\InstallTemp.",
+    "used_for": "Parts of the component store used by servicing.",
+    "verdict": "danger",
+    "risk": "Microsoft: deleting anything inside WinSxS can stop Windows booting or updating.",
+    "before_cleaning": "Never delete; use DISM.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder",
+      "https://learn.microsoft.com/en-us/archive/blogs/jmanning/do-not-manually-delete-things-from-windirwinsxs"
+    ],
+    "catalog_concern": "InstallTemp is offered as safe; anything inside WinSxS should be refused."
+  },
+  "windows_printer_migration_cache": {
+    "what": "spool\\PRINTERS: queued print jobs (not printer-migration data).",
+    "used_for": "Jobs waiting to print; deleting cancels them.",
+    "verdict": "caution",
+    "risk": "Queued jobs lost; files locked while the spooler runs.",
+    "before_cleaning": "Stop Print Spooler first.",
+    "regenerates": false,
+    "sources": [
+      "https://helpdeskgeek.com/how-to-forcefully-clear-a-stuck-print-queue-in-windows/"
+    ],
+    "catalog_concern": "Duplicate of scan_print_spooler without its spooler check; description wrong."
+  },
+  "windows_recovery_env_cache": {
+    "what": "Not documented by the vendor. %windir%\\System32\\LogFiles\\SM.",
+    "used_for": "Log files, by location.",
+    "verdict": "safe",
+    "risk": "Lost logs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Description (WinRE/ReAgentc) is not documented for this folder."
+  },
+  "windows_reliability_logs": {
+    "what": "Not documented by the vendor. %LOCALAPPDATA%\\Microsoft\\Windows\\Reliability.",
+    "used_for": "Reliability Monitor's data is kept elsewhere (ProgramData\\Microsoft\\RAC).",
+    "verdict": "safe",
+    "risk": "Unknown; likely nothing.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "If pointed at RAC it would erase Reliability history, which should be caution."
+  },
+  "windows_shell_cache": {
+    "what": "Not documented by the vendor. The whole LocalCache of ShellExperienceHost.",
+    "used_for": "Shell UI (Start/Action Center) cache, by location.",
+    "verdict": "caution",
+    "risk": "Unknown; shell UI may reset parts of its state.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Whole LocalCache, against the app's own rule; target named cache folders."
+  },
+  "windows_terminal_cache": {
+    "what": "Not documented by the vendor. The whole LocalCache of the Windows Terminal package.",
+    "used_for": "Terminal's settings are in LocalState (documented), so LocalCache is probably cache, but its contents are not documented.",
+    "verdict": "caution",
+    "risk": "Unknown; possibly Terminal state.",
+    "before_cleaning": "Close Windows Terminal.",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/windows/terminal/faq"
+    ],
+    "catalog_concern": "Offers a whole LocalCache, which the app's own rule (WhatsApp incident) forbids; target named cache folders."
+  },
+  "windows_terminal_settings_cache": {
+    "what": "%LOCALAPPDATA%\\Microsoft\\WindowsTerminal -- where Terminal keeps settings.json/state.",
+    "used_for": "This is your Terminal configuration (profiles, colours, keybindings). Not recreated as you had it.",
+    "verdict": "danger",
+    "risk": "All Windows Terminal settings reset to default.",
+    "before_cleaning": "Never as configured.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/windows/terminal/faq"
+    ],
+    "catalog_concern": "Settings offered as safe. (Microsoft's unpackaged path is 'Windows Terminal' with a space, so this may not match today.)"
+  },
+  "wmi_logs": {
+    "what": "WMI logs (wbem\\Logs) and wbem\\Repository\\FS -- part of the WMI repository database.",
+    "used_for": "The repository holds every WMI class and registration; Windows and many apps (this one included) depend on it. Not rebuilt by deletion.",
+    "verdict": "danger",
+    "risk": "Broken WMI: management tools, Defender, apps and scripts fail. Use winmgmt /salvagerepository instead.",
+    "before_cleaning": "Never delete the repository.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/win32/wmisdk/winmgmt"
+    ],
+    "catalog_concern": "DANGEROUS: wbem\\Repository\\FS is offered as safe. On current Windows the repository files sit directly in wbem\\Repository, so it may not match, but it must be removed."
+  }
+}

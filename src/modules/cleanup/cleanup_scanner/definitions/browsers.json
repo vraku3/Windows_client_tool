@@ -14,14 +14,14 @@
     },
     {
       "id": "vivaldi_cache",
-      "label": "Vivaldi browser cache, code cache, and blob storage",
+      "label": "Vivaldi HTTP, compiled-code and GPU caches",
       "paths": [
         "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\Cache",
         "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\Code Cache",
         "%LOCALAPPDATA%\\Vivaldi\\User Data\\*\\GPUCache"
       ],
       "safety": "safe",
-      "description": "Vivaldi browser cache, code cache, and blob storage."
+      "description": "Vivaldi HTTP, compiled-code and GPU caches."
     },
     {
       "id": "opera_cache",
@@ -48,7 +48,7 @@
     },
     {
       "id": "edge_cache",
-      "label": "Microsoft Edge cache, code cache, GPU cache, and web data",
+      "label": "Microsoft Edge HTTP, compiled-code and GPU caches",
       "paths": [
         "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache",
         "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Code Cache",
@@ -56,18 +56,18 @@
         "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\ShaderCache"
       ],
       "safety": "safe",
-      "description": "Microsoft Edge cache, code cache, GPU cache, and web data."
+      "description": "Microsoft Edge HTTP, compiled-code and GPU caches."
     },
     {
       "id": "firefox_cache",
-      "label": "Mozilla Firefox cache, startup cache, and content prefs",
+      "label": "Firefox HTTP and startup caches",
       "paths": [
         "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2",
         "%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles\\*\\cache2",
         "%APPDATA%\\Mozilla\\Firefox\\Profiles\\*\\startupCache"
       ],
       "safety": "safe",
-      "description": "Mozilla Firefox cache, startup cache, and content prefs."
+      "description": "Firefox HTTP and startup caches."
     },
     {
       "id": "chrome_cache",
@@ -100,7 +100,8 @@
         "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\Default\\GPUCache"
       ],
       "safety": "safe",
-      "description": "Chrome full cache paths including GPUCache and Code Cache."
+      "description": "Chrome full cache paths including GPUCache and Code Cache.",
+      "disabled_reason": "duplicate of chrome_cache"
     },
     {
       "id": "edge_cache_full",
@@ -111,7 +112,8 @@
         "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\Default\\GPUCache"
       ],
       "safety": "safe",
-      "description": "Microsoft Edge full cache paths including GPUCache and Code Cache."
+      "description": "Microsoft Edge full cache paths including GPUCache and Code Cache.",
+      "disabled_reason": "duplicate of edge_cache"
     },
     {
       "id": "brave_cache_full",
@@ -122,16 +124,18 @@
         "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\Default\\GPUCache"
       ],
       "safety": "safe",
-      "description": "Brave full cache paths including GPUCache and Code Cache."
+      "description": "Brave full cache paths including GPUCache and Code Cache.",
+      "disabled_reason": "duplicate of brave_cache"
     },
     {
       "id": "inetcache_ietlc",
-      "label": "IE/Edge INetCache, Cookies, and DownloadHistory temp files",
+      "label": "WinINet temporary web files",
       "paths": [
-        "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache"
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\IE",
+        "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\Low\\IE"
       ],
-      "safety": "safe",
-      "description": "IE/Edge INetCache, Cookies, and DownloadHistory temp files."
+      "safety": "caution",
+      "description": "Temporary web files used by Windows and IE mode (the IE and Low\\IE folders only). Never Content.Outlook, where classic Outlook keeps attachments you opened; close Office apps first."
     },
     {
       "id": "chromium_service_worker_scripts",
@@ -141,8 +145,9 @@
         "%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Service Worker\\ScriptCache",
         "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\*\\Service Worker\\ScriptCache"
       ],
-      "safety": "safe",
-      "description": "Compiled service-worker scripts. Rebuilt on the next visit; no sign-in is kept here."
+      "safety": "caution",
+      "description": "Service-worker site data. Removing it can break offline applications; use browser site-data controls instead.",
+      "disabled_reason": "Site data used for offline applications; not a rebuildable HTTP cache. The deleter refuses it."
     },
     {
       "id": "chromium_service_worker_storage",
@@ -153,7 +158,8 @@
         "%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\User Data\\*\\Service Worker\\CacheStorage"
       ],
       "safety": "caution",
-      "description": "What sites saved for offline use (2 GB in Chrome here). Sign-ins are NOT here (those are cookies); a site works offline again after its next online visit."
+      "description": "Service-worker site data. Removing it can break offline applications; use browser site-data controls instead.",
+      "disabled_reason": "Site data used for offline applications; not a rebuildable HTTP cache. The deleter refuses it."
     },
     {
       "id": "chrome_installer_caches",
@@ -172,7 +178,16 @@
         "%LOCALAPPDATA%\\Google\\Chrome\\User Data\\OptGuideOnDeviceModel"
       ],
       "safety": "caution",
-      "description": "~4 GB model behind Chrome's built-in AI features. Chrome downloads it again the next time a feature needs it; nothing is signed out."
+      "description": "Downloaded on-device AI model. Chrome downloads it again if an enabled feature needs it; close Chrome before reviewing deletion."
+    },
+    {
+      "id": "firefox_crash_reports",
+      "label": "Firefox crash diagnostics",
+      "paths": [
+        "%APPDATA%\\Mozilla\\Firefox\\Crash Reports"
+      ],
+      "safety": "caution",
+      "description": "Diagnostic crash reports used for troubleshooting; review before deleting."
     }
   ]
 }

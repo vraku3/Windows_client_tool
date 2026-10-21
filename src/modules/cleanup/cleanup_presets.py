@@ -20,6 +20,9 @@ NEVER_INCLUDED = frozenset({
     "scan_orphaned_user_profiles",
     "scan_virtual_disk_images",
     "scan_orphaned_virtual_disks",
+    # Jump lists hold pins; a cache-like name is not evidence of disposable data.
+    "scan_recent_files",
+    "scan_appdata_autodiscover",
 })
 
 PRESETS = {

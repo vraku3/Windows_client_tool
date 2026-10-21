@@ -1,0 +1,886 @@
+{
+  "apex_cache": {
+    "what": "Not documented by the vendor. A folder of Apex Legends text log files, if it exists at this path.",
+    "used_for": "Logs are only read for troubleshooting; the game writes new ones on its next run.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close Apex Legends first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.partitionwizard.com/news/apex-legends-save-file-location.html"
+    ],
+    "catalog_concern": "The label promises a 'shader preload', but the only path is a logs folder. Apex keeps its settings and profile under Saved Games\\Respawn\\Apex (local, profile) -- that folder must never be targeted."
+  },
+  "arma_cache": {
+    "what": "%APPDATA%\\Arma 3 / %LOCALAPPDATA%\\Arma 3 are Arma 3's whole data folders: .RPT logs plus profile settings, mission cache and other per-user data.",
+    "used_for": "The game reads profile data and settings from here on every launch.",
+    "verdict": "danger",
+    "risk": "Deleting the whole folder loses profile settings and local data, not just logs.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: the paths are whole app data folders. Only the *.rpt log files would be a safe target."
+  },
+  "battle_net_auth_cache": {
+    "what": "Cache, web cache and log folders under %APPDATA%\\Blizzard\\Battle.net. Current Battle.net does not use these paths: its caches are under %LOCALAPPDATA%\\Battle.net and %ProgramData%\\Battle.net (checked on this PC).",
+    "used_for": "Blizzard says removing the Battle.net cache does not touch game data; the app rebuilds it on its next start.",
+    "verdict": "safe",
+    "risk": "If the paths exist: a slower first start of the app and lost logs. No sign-out.",
+    "before_cleaning": "Close Battle.net and end Agent.exe first.",
+    "regenerates": true,
+    "sources": [
+      "https://blizz.ly/2IrYZ3g",
+      "https://us.support.blizzard.com/en/article/14377"
+    ],
+    "catalog_concern": "The label says 'authentication ticket cache': that would sign you out, but nothing here is one. The paths are stale and find nothing on a current install; battlenet_local_caches is the entry that matches real folders. Never add %LOCALAPPDATA%\\Battle.net\\Account (it holds cookie.bin, the sign-in)."
+  },
+  "battlenet_cache": {
+    "what": "Cache, web cache and log folders under %APPDATA%\\Blizzard\\Battle.net. Current Battle.net does not use these paths: its caches are under %LOCALAPPDATA%\\Battle.net and %ProgramData%\\Battle.net (checked on this PC).",
+    "used_for": "Blizzard says removing the Battle.net cache does not touch game data; the app rebuilds it on its next start.",
+    "verdict": "safe",
+    "risk": "If the paths exist: a slower first start of the app and lost logs. No sign-out.",
+    "before_cleaning": "Close Battle.net and end Agent.exe first.",
+    "regenerates": true,
+    "sources": [
+      "https://blizz.ly/2IrYZ3g",
+      "https://us.support.blizzard.com/en/article/14377"
+    ],
+    "catalog_concern": "The paths are stale and find nothing on a current install; battlenet_local_caches is the entry that matches real folders. Never add %LOCALAPPDATA%\\Battle.net\\Account (it holds cookie.bin, the sign-in)."
+  },
+  "battlenet_local_caches": {
+    "what": "Battle.net's Cache folder and the Cache/Code Cache/DawnCache/GPUCache of each embedded-browser profile under BrowserCaches (verified on this PC).",
+    "used_for": "Rebuilt on the app's next start; Blizzard says clearing the cache does not affect game data.",
+    "verdict": "safe",
+    "risk": "Slower first start. No sign-out: Local Storage, Network and Session Storage beside them, and Account\\cookie.bin, are not touched.",
+    "before_cleaning": "Close Battle.net first.",
+    "regenerates": true,
+    "sources": [
+      "https://blizz.ly/2IrYZ3g",
+      "https://us.support.blizzard.com/en/article/14377"
+    ],
+    "catalog_concern": ""
+  },
+  "beamng_cache": {
+    "what": "Not documented by the vendor. BeamNG.drive log files, if they exist at this path.",
+    "used_for": "Diagnostics only; new logs are written on the next launch.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close BeamNG.drive first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "BeamNG's user folder (%LOCALAPPDATA%\\BeamNG.drive\\<version>) holds mods, vehicle configs and saves; keeping it out is correct."
+  },
+  "blizzard_downloads_cache": {
+    "what": "Battle.net and Diablo III log folders (paths that a current install mostly does not use).",
+    "used_for": "Logs are only for troubleshooting and are recreated.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close Battle.net and the game first.",
+    "regenerates": true,
+    "sources": [
+      "https://blizz.ly/2IrYZ3g",
+      "https://us.support.blizzard.com/en/article/14377"
+    ],
+    "catalog_concern": "The label promises 'patch staging and manifest cache', but only log folders are listed. Real patch data lives inside the game folders and must not be deleted (it would force a re-download or repair)."
+  },
+  "bsd_wine_cache": {
+    "what": "A duplicate of the Battle.net cache/webcache/log paths.",
+    "used_for": "Same as battlenet_cache: rebuildable cache and logs.",
+    "verdict": "safe",
+    "risk": "None beyond battlenet_cache (duplicate).",
+    "before_cleaning": "Close Battle.net first.",
+    "regenerates": true,
+    "sources": [
+      "https://blizz.ly/2IrYZ3g",
+      "https://us.support.blizzard.com/en/article/14377"
+    ],
+    "catalog_concern": "Disabling is harmless (it duplicates battlenet_cache), but the stated reason (whole data folder or sign-in store) does not describe these paths."
+  },
+  "cities_skylines_cache": {
+    "what": "Not documented by the vendor. Cities: Skylines log files, if present at this path (the game normally writes output_log.txt inside its install folder).",
+    "used_for": "Diagnostics only; rewritten on next start.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Correctly excludes %LOCALAPPDATA%\\Colossal Order\\Cities_Skylines, which holds saves, maps and mods."
+  },
+  "ck2_cache": {
+    "what": "Not documented by the vendor. Crusader Kings II log files. Paradox games normally write logs to Documents\\Paradox Interactive\\Crusader Kings II\\logs, so this %APPDATA% path may not exist.",
+    "used_for": "Logs (error.log, game.log ...) are rewritten every launch and only help troubleshooting.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game and the Paradox Launcher first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "The label mentions 'replay cache and DLC download staging'; the path is only logs. Never widen this to Documents\\Paradox Interactive\\Crusader Kings II: save games and mods live there."
+  },
+  "ck3_cache": {
+    "what": "Not documented by the vendor. Crusader Kings III log files. Paradox games normally write logs to Documents\\Paradox Interactive\\Crusader Kings III\\logs, so this %APPDATA% path may not exist.",
+    "used_for": "Logs (error.log, game.log ...) are rewritten every launch and only help troubleshooting.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game and the Paradox Launcher first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Never widen this to Documents\\Paradox Interactive\\Crusader Kings III: save games and mods live there."
+  },
+  "csgo_cache": {
+    "what": "...\\csgo\\local\\cfg holds Counter-Strike's CONFIG files (keybinds, settings, autoexec), not a cache. The path under %APPDATA% does not exist on normal installs.",
+    "used_for": "The game reads these configs on every launch.",
+    "verdict": "danger",
+    "risk": "Lost keybinds, video and game settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: cfg is user configuration. CS2's shader cache is in Steam's shadercache\\730 instead."
+  },
+  "curseforge_cache": {
+    "what": "CurseForge's Chromium/Electron caches: Cache, Code Cache, GPUCache, Dawn GPU caches and blob_storage (verified present on this PC next to IndexedDB, Local Storage and Network, which are NOT listed).",
+    "used_for": "Rebuilt on the next start.",
+    "verdict": "safe",
+    "risk": "Slower first start only.",
+    "before_cleaning": "Quit CurseForge first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "destiny2_cache": {
+    "what": "Bungie's Destiny 2 user folders: settings (cvars.xml) and the activity feed data.",
+    "used_for": "Read on every launch; deleting resets settings.",
+    "verdict": "danger",
+    "risk": "Lost graphics/keybind settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: these are whole app data folders."
+  },
+  "diablo4_cache": {
+    "what": "Not documented by the vendor. Diablo IV log folders, if present (Diablo IV keeps settings in Documents\\Diablo IV).",
+    "used_for": "Diagnostics only; recreated.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close Diablo IV and Battle.net first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "The label promises a 'shader cache', but the paths are logs only. That is the safer choice: the real shader cache rebuild causes stutter."
+  },
+  "ea_app_cache": {
+    "what": "Cache and log folders of the EA app and the older Origin client (web cache, launcher logs). Several listed paths are older layouts; current EA app caches are under %LOCALAPPDATA%\\Electronic Arts\\EA Desktop and %ProgramData%\\EA Desktop.",
+    "used_for": "EA's own 'App Recovery > Clear Cache' clears the same kind of data; the app rebuilds it on its next start.",
+    "verdict": "safe",
+    "risk": "A slower first start and lost logs. Game installs are not here.",
+    "before_cleaning": "Quit the EA app (also from the tray) first.",
+    "regenerates": true,
+    "sources": [
+      "https://forums.ea.com/discussions/ea-app-general-discussion-en/ea-app-cache-path/11860681"
+    ],
+    "catalog_concern": "Some paths are stale. Only Cache/logs/WebCache are listed, which is correct; never add the EA Desktop root folders."
+  },
+  "ea_desktop_full_cache": {
+    "what": "EA app Cache and logs folders (older paths).",
+    "used_for": "Same as ea_app_cache: rebuilt on next start.",
+    "verdict": "safe",
+    "risk": "A slower first start and lost logs.",
+    "before_cleaning": "Quit the EA app first.",
+    "regenerates": true,
+    "sources": [
+      "https://forums.ea.com/discussions/ea-app-general-discussion-en/ea-app-cache-path/11860681"
+    ],
+    "catalog_concern": "The label says 'game content staging' -- download staging would cost a re-download, but the paths do not include any."
+  },
+  "epic_games_cache": {
+    "what": "Epic Games Launcher web cache, a data cache and its logs.",
+    "used_for": "Epic tells users to delete the Saved\\webcache folders to fix display or launcher errors; they are rebuilt on next start.",
+    "verdict": "safe",
+    "risk": "A slower first launcher start; lost logs. No sign-out, games untouched.",
+    "before_cleaning": "Exit the Epic Games Launcher from the tray first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.epicgames.com/help/c-202300000001690/a202300000013316?lang=en-US"
+    ],
+    "catalog_concern": "The label says 'shader compiler staging and manifest data' -- wrong. Data\\Manifests (the list of installed games) must never be targeted, or the launcher forgets installed games."
+  },
+  "epic_launcher_cache": {
+    "what": "Same Epic Launcher webcache, data cache and logs as epic_games_cache.",
+    "used_for": "Rebuilt on next start.",
+    "verdict": "safe",
+    "risk": "None beyond epic_games_cache (duplicate).",
+    "before_cleaning": "Exit the launcher first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.epicgames.com/help/c-202300000001690/a202300000013316?lang=en-US"
+    ],
+    "catalog_concern": "Disabling as a duplicate is fine, but the reason given (user data / sign-in store) is wrong for these paths: webcache is exactly what Epic says to delete."
+  },
+  "epic_manifest_cache": {
+    "what": "The Epic Games Launcher log folder only.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Exit the launcher first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.epicgames.com/help/c-202300000001690/a202300000013316?lang=en-US"
+    ],
+    "catalog_concern": "Label says 'manifest data and download URL cache' but only logs are listed -- good, since deleting real manifests makes the launcher forget installed games."
+  },
+  "eso_cache": {
+    "what": "Elder Scrolls Online log files. The listed path (%LOCALAPPDATA%\\Documents\\...) is malformed; ESO uses Documents\\Elder Scrolls Online\\live\\Logs.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "The path will not match. If fixed, target only live\\Logs: live\\AddOns and live\\SavedVariables hold add-ons and their saved data."
+  },
+  "eu4_cache": {
+    "what": "Not documented by the vendor. Europa Universalis IV log files. Paradox games normally write logs to Documents\\Paradox Interactive\\Europa Universalis IV\\logs, so this %APPDATA% path may not exist.",
+    "used_for": "Logs (error.log, game.log ...) are rewritten every launch and only help troubleshooting.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game and the Paradox Launcher first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Never widen this to Documents\\Paradox Interactive\\Europa Universalis IV: save games and mods live there."
+  },
+  "fortnite_cache": {
+    "what": "A D3D shader cache under FortniteGame\\Saved, plus %LOCALAPPDATA%\\Frostbite\\Cache (Frostbite is EA's engine, not Fortnite's).",
+    "used_for": "Compiled GPU shaders; deleting them forces recompilation. Epic warns the first match after clearing a shader cache may stutter.",
+    "verdict": "caution",
+    "risk": "Stutter and longer loads until shaders recompile; nothing is lost permanently.",
+    "before_cleaning": "Close Fortnite and the Epic launcher. Only worth doing when stutter is suspected to come from a bad cache.",
+    "regenerates": true,
+    "sources": [
+      "https://www.epicgames.com/help/c-202300000001636/c-202300000001719/fortnite-stutters-heavily-and-has-below-expected-performance-on-directx-12-a202300000018050?lang=en-US"
+    ],
+    "catalog_concern": "Shader caches should be 'caution', not 'safe': clearing costs stutter. The Frostbite path belongs to EA games, not Fortnite."
+  },
+  "forza_cache": {
+    "what": "Forza Horizon / Motorsport data folders: settings, saves, clips and the photo/capture gallery.",
+    "used_for": "User content.",
+    "verdict": "danger",
+    "risk": "Lost saves, settings, clips and photos.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: these are whole user-data folders."
+  },
+  "game_bar_widget_cache": {
+    "what": "Not documented by the vendor. A Game Bar data folder.",
+    "used_for": "Unknown contents; may include settings.",
+    "verdict": "caution",
+    "risk": "Unknown -- could reset Game Bar settings.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a whole app folder, not a named cache."
+  },
+  "gamejolt_cache": {
+    "what": "Game Jolt client's whole data folder, including installed games and sign-in data.",
+    "used_for": "Used by the client on every start.",
+    "verdict": "danger",
+    "risk": "Sign-out and possibly deleted installed games.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a whole app folder."
+  },
+  "gamepass_cache": {
+    "what": "Not documented by the vendor. A Game Bar logs folder (this path is not used by current Xbox/Game Bar builds).",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label promises 'downloads and shader cache' but the path is a logs folder; Game Pass game installs (XboxGames) must never be targeted."
+  },
+  "gog_cache": {
+    "what": "GOG Galaxy Cache, WebCache and logs folders. Current Galaxy keeps these under %ProgramData%\\GOG.com\\Galaxy (webcache, logs), so the %APPDATA% paths may not exist.",
+    "used_for": "GOG forum advice for a stuck client is to clear webcache first; it is rebuilt. Logs are diagnostics.",
+    "verdict": "safe",
+    "risk": "Slower first start; lost logs.",
+    "before_cleaning": "Exit GOG Galaxy (also from the tray) first.",
+    "regenerates": true,
+    "sources": [
+      "https://gog.com/forum/general/galaxy_entry_stuck_on_aborting"
+    ],
+    "catalog_concern": "Never widen to %ProgramData%\\GOG.com\\Galaxy\\storage: galaxy-2.0.db there is the library database (playtime, tags, connected platforms)."
+  },
+  "gog_galaxy2_cache": {
+    "what": "Duplicate of gog_cache.",
+    "used_for": "Rebuilt on start.",
+    "verdict": "safe",
+    "risk": "None beyond gog_cache.",
+    "before_cleaning": "Exit GOG Galaxy first.",
+    "regenerates": true,
+    "sources": [
+      "https://gog.com/forum/general/galaxy_entry_stuck_on_aborting"
+    ],
+    "catalog_concern": "Disabling as a duplicate is fine; the stated reason (user data) does not describe these paths."
+  },
+  "gog_offline_cache": {
+    "what": "GOG Galaxy Cache and logs folders (same as gog_cache).",
+    "used_for": "Rebuilt / diagnostics.",
+    "verdict": "safe",
+    "risk": "Slower first start; lost logs.",
+    "before_cleaning": "Exit GOG Galaxy first.",
+    "regenerates": true,
+    "sources": [
+      "https://gog.com/forum/general/galaxy_entry_stuck_on_aborting"
+    ],
+    "catalog_concern": "Label says 'offline installer cache and game backup metadata' -- downloaded offline installers/backups are user data, but no such path is listed."
+  },
+  "hoi4_cache": {
+    "what": "Not documented by the vendor. Hearts of Iron IV log files. Paradox games normally write logs to Documents\\Paradox Interactive\\Hearts of Iron IV\\logs, so this %APPDATA% path may not exist.",
+    "used_for": "Logs (error.log, game.log ...) are rewritten every launch and only help troubleshooting.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game and the Paradox Launcher first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "The label mentions a 'replay cache'; the path is only logs. Never widen this to Documents\\Paradox Interactive\\Hearts of Iron IV: save games and mods live there."
+  },
+  "humble_cache": {
+    "what": "Not documented by the vendor. Cache and logs of the Humble App (an Electron app).",
+    "used_for": "Chromium-style Cache is rebuilt on next start; logs are diagnostics.",
+    "verdict": "safe",
+    "risk": "Slower first start; lost logs.",
+    "before_cleaning": "Quit the Humble App first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Fine as long as only Cache/logs are listed; Local Storage/IndexedDB beside them would sign you out."
+  },
+  "humble_choice_cache": {
+    "what": "Duplicate of humble_cache.",
+    "used_for": "Rebuilt.",
+    "verdict": "safe",
+    "risk": "None beyond humble_cache.",
+    "before_cleaning": "Quit the Humble App first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling as a duplicate is fine; the reason text does not match the paths."
+  },
+  "itch_app_cache": {
+    "what": "Not documented by the vendor. The itch.io app's logs folder.",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Quit the itch app first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label promises 'cache, downloads, community data' but only logs are listed -- good; itch's installed games and sign-in must not be touched."
+  },
+  "itch_cache": {
+    "what": "Duplicate of itch_app_cache (logs).",
+    "used_for": "Diagnostics only.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling as a duplicate is fine."
+  },
+  "kongregate_cache": {
+    "what": "Kongregate launcher's whole data folder.",
+    "used_for": "Used by the launcher.",
+    "verdict": "caution",
+    "risk": "Possible sign-out / lost local data.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a whole app folder."
+  },
+  "lol_cache": {
+    "what": "Not documented by the vendor. League of Legends logs, if present at this %APPDATA% path (LoL normally logs inside its install folder).",
+    "used_for": "Diagnostics; Riot support asks for these when troubleshooting.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close League and the Riot Client first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "The label mentions a 'replay cache': replays (.rofl in Documents\\League of Legends\\Replays) are user data and must never be targeted; none are listed."
+  },
+  "lutris_cache": {
+    "what": "Lutris (a Linux game manager) Wine prefixes and runners. Not used on Windows.",
+    "used_for": "A Wine prefix holds installed games and their saves.",
+    "verdict": "danger",
+    "risk": "Lost installed games and saves.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: Wine prefixes are installs plus saves, and Lutris does not run on Windows."
+  },
+  "lutris_runs_cache": {
+    "what": "Lutris runners, Wine prefixes and its share folder (Linux only).",
+    "used_for": "Installs, saves and config.",
+    "verdict": "danger",
+    "risk": "Lost installs, saves and config.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: same as lutris_cache."
+  },
+  "minecraft_cache": {
+    "what": "Minecraft Java's logs folder (latest.log and gzipped older logs).",
+    "used_for": "Diagnostics; rewritten every launch.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close Minecraft first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label promises 'shader cache, resource pack staging'; only logs are listed -- good. .minecraft\\saves, screenshots, resourcepacks and shaderpacks are user data."
+  },
+  "minecraft_launcher_cache": {
+    "what": "Minecraft Java logs and crash-reports folders.",
+    "used_for": "Crash reports explain past crashes; both are recreated as needed.",
+    "verdict": "safe",
+    "risk": "Lost crash reports and logs (diagnostics).",
+    "before_cleaning": "Close Minecraft first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "minedrive_cache": {
+    "what": "Minesweeper data and the Phone Link (YourPhone) app folder.",
+    "used_for": "Phone Link stores its phone pairing and synced data.",
+    "verdict": "danger",
+    "risk": "Phone Link unpairs / loses synced data.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: YourPhone is Phone Link's data, not a game cache."
+  },
+  "oculus_cache": {
+    "what": "Meta/Oculus whole data folder (and a bogus registry-like path).",
+    "used_for": "Library and settings data.",
+    "verdict": "danger",
+    "risk": "Lost settings / library state.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a whole app folder."
+  },
+  "overwatch_cache": {
+    "what": "Not documented by the vendor. Overwatch logs and a Cache folder under %APPDATA%\\Blizzard\\Overwatch, if present.",
+    "used_for": "Diagnostics / rebuildable cache.",
+    "verdict": "safe",
+    "risk": "Lost logs; a slower first start.",
+    "before_cleaning": "Close Overwatch and Battle.net first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Overwatch keeps its settings in Documents\\Overwatch\\Settings -- never target that."
+  },
+  "paradox_cache": {
+    "what": "Paradox launcher apps folder and the user's mods folder.",
+    "used_for": "Mods are user content.",
+    "verdict": "danger",
+    "risk": "Lost mods.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: it pointed at mods."
+  },
+  "path_of_exile_cache": {
+    "what": "Path of Exile logs and its compiled shader cache (shaderCache).",
+    "used_for": "Shaders are recompiled after deletion; community and GGG forum guides clear it only to fix a corrupt cache.",
+    "verdict": "caution",
+    "risk": "Stutter and FPS drops until the shader cache is rebuilt; logs lost. Nothing permanent.",
+    "before_cleaning": "Close the game. Only when the cache is suspected corrupt.",
+    "regenerates": true,
+    "sources": [
+      "https://www.pathofexile.com/forum/view-thread/3799800"
+    ],
+    "catalog_concern": "Shader cache should be 'caution', not 'safe' (rebuild stutter). PoE 1 actually uses %APPDATA%\\Path of Exile (and PoE 2 %APPDATA%\\Path of Exile 2\\ShaderCache*), so the Grinding Gear Games path may not match."
+  },
+  "protonvpn_cache": {
+    "what": "Proton VPN's whole data folder (settings, account/session data and logs), misfiled under games.",
+    "used_for": "Used by the VPN client.",
+    "verdict": "danger",
+    "risk": "Sign-out and lost VPN settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a whole app folder holding sign-in data; only a logs subfolder could ever be a target."
+  },
+  "pubg_cache": {
+    "what": "Not documented by the vendor. PUBG (TslGame) logs and crash-reporter files.",
+    "used_for": "Diagnostics.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup. Crash reports not yet sent are lost.",
+    "before_cleaning": "Close PUBG first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Never widen to TslGame\\Saved\\Config (game settings)."
+  },
+  "rimworld_cache": {
+    "what": "RimWorld's user folder: Saves, Config (settings, mod list) and the player log.",
+    "used_for": "Saves and settings.",
+    "verdict": "danger",
+    "risk": "Lost save games and settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: it holds saves."
+  },
+  "roblox_cache": {
+    "what": "Not documented by the vendor. Roblox log files and an installer download folder.",
+    "used_for": "Logs are diagnostics; downloads are re-fetched by the bootstrapper if needed.",
+    "verdict": "safe",
+    "risk": "Lost logs; a possible re-download on update.",
+    "before_cleaning": "Close Roblox first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Correctly avoids ClientSettings (Roblox user settings)."
+  },
+  "rockstar_cache": {
+    "what": "Not documented by the vendor. Rockstar Games Launcher logs.",
+    "used_for": "Diagnostics.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Quit the Rockstar launcher first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label promises Social Club cache and updates; only logs are listed. Documents\\Rockstar Games holds saves and settings -- never target."
+  },
+  "rust_game_cache": {
+    "what": "Not documented by the vendor. Rust logs and crash-reports, if present at this path.",
+    "used_for": "Diagnostics.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close Rust first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label mentions 'shader cache' but none is listed."
+  },
+  "steamCMD_cache": {
+    "what": "SteamCMD folders: downloaded dedicated-server/game content and workshop items.",
+    "used_for": "These are installs.",
+    "verdict": "danger",
+    "risk": "Lost server installs (re-download of many GB).",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: downloaded content, not cache."
+  },
+  "steam_cache": {
+    "what": "Steam's per-game shader pre-cache (shadercache) and the Steam client's embedded-browser data folder (htmlcache), under a non-default Steam location.",
+    "used_for": "Shaders are re-downloaded/recompiled per game; htmlcache is the Steam store/community browser profile.",
+    "verdict": "caution",
+    "risk": "Stutter until shaders rebuild. The WHOLE htmlcache also holds Cookies, Local Storage and Login Data of the Steam web views.",
+    "before_cleaning": "Exit Steam first.",
+    "regenerates": true,
+    "sources": [
+      "https://steamcommunity.com/discussions/forum/1/1736588252393707613",
+      "https://www.phoronix.com/news/Steam-Flush-Stale-Cache"
+    ],
+    "catalog_concern": "Shader cache should be 'caution'. Whole htmlcache is a Chromium profile with cookies (on this PC %LOCALAPPDATA%\\Steam\\htmlcache\\Default holds Cookies/Login Data/Local Storage); target only its Cache/Code Cache/GPUCache, as steam_webhelper_caches does. %LOCALAPPDATA%\\Programs\\Steam is not Steam's default location."
+  },
+  "steam_cloud_sync_cache": {
+    "what": "Not documented by the vendor. A non-existent steamapps\\backups path.",
+    "used_for": "Unknown.",
+    "verdict": "caution",
+    "risk": "Could contain user backups.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a 'backups' folder is user data by name."
+  },
+  "steam_deck_cache": {
+    "what": "Game installs (steamapps\\common) and a steamdeck folder.",
+    "used_for": "steamapps\\common is installed games.",
+    "verdict": "danger",
+    "risk": "Deleting installed games.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: steamapps\\common is games."
+  },
+  "steam_download_cache": {
+    "what": "Steam's in-progress download staging and the whole htmlcache browser profile.",
+    "used_for": "Partial downloads resume from scratch; htmlcache holds web-view sign-in data.",
+    "verdict": "caution",
+    "risk": "Re-download of interrupted updates; sign-in data in htmlcache (Cookies/Local Storage).",
+    "before_cleaning": "Exit Steam and make sure nothing is downloading.",
+    "regenerates": true,
+    "sources": [
+      "https://steamcommunity.com/discussions/forum/1/1736588252393707613",
+      "https://www.phoronix.com/news/Steam-Flush-Stale-Cache"
+    ],
+    "catalog_concern": "Same htmlcache problem as steam_cache; the downloads path is non-default (Steam stages in steamapps\\downloading)."
+  },
+  "steam_full_cache": {
+    "what": "Steam logs, shader pre-cache, download staging and the whole htmlcache folder.",
+    "used_for": "Mix of diagnostics, rebuildable shaders and a browser profile.",
+    "verdict": "caution",
+    "risk": "Shader stutter, re-downloads of interrupted updates, possible loss of Steam web-view cookies.",
+    "before_cleaning": "Exit Steam; no download in progress.",
+    "regenerates": true,
+    "sources": [
+      "https://steamcommunity.com/discussions/forum/1/1736588252393707613",
+      "https://www.phoronix.com/news/Steam-Flush-Stale-Cache"
+    ],
+    "catalog_concern": "Bundles shader cache and whole htmlcache under 'safe'. Split it: logs safe, shaders caution, htmlcache only its Cache subfolders."
+  },
+  "steam_logs": {
+    "what": "Steam client log files in the Steam install folder (connection, content, bootstrap logs).",
+    "used_for": "Diagnostics; Valve support may ask for them. Steam writes new ones.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Exit Steam first (files are held open).",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "steam_proton_cache": {
+    "what": "Proton compatdata: one Wine prefix per game, containing that game's saves and settings.",
+    "used_for": "Per-game Windows environment on Linux.",
+    "verdict": "danger",
+    "risk": "Lost saves and settings for non-Steam-Cloud games.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: compatdata holds saves."
+  },
+  "steam_shader_cache": {
+    "what": "Steam shadercache + htmlcache (duplicate of steam_cache).",
+    "used_for": "See steam_cache.",
+    "verdict": "caution",
+    "risk": "Shader stutter; htmlcache cookies.",
+    "before_cleaning": "Exit Steam first.",
+    "regenerates": true,
+    "sources": [
+      "https://steamcommunity.com/discussions/forum/1/1736588252393707613",
+      "https://www.phoronix.com/news/Steam-Flush-Stale-Cache"
+    ],
+    "catalog_concern": "Disabling is right; as written it would also take the whole htmlcache."
+  },
+  "steam_webhelper_cache": {
+    "what": "The Steam web-helper's whole htmlcache folder (a Chromium profile). The real one is %LOCALAPPDATA%\\Steam\\htmlcache; %APPDATA%\\Steam does not exist on this PC.",
+    "used_for": "Steam's store, library and community pages run in this embedded browser.",
+    "verdict": "caution",
+    "risk": "The profile holds Cookies, Local Storage, Session Storage and Login Data: deleting it all signs out the Steam web views.",
+    "before_cleaning": "Exit Steam first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Targets the whole Chromium profile, not just caches; steam_webhelper_caches is the correct, narrow version."
+  },
+  "steam_webhelper_caches": {
+    "what": "Only the cache subfolders of Steam's embedded browser: Default\\Cache, Code Cache, GPUCache and the Chromium shader caches (verified on this PC).",
+    "used_for": "Rebuilt when Steam's store/library pages are opened again; these GPU shader caches are for Steam's UI, not games.",
+    "verdict": "safe",
+    "risk": "Slightly slower Steam UI first time. No sign-out: Cookies, Login Data and Local Storage are not touched.",
+    "before_cleaning": "Exit Steam first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "steamvr_cache": {
+    "what": "SteamVR folder and Steam's config folder (config.vdf, loginusers.vdf).",
+    "used_for": "Steam's config holds sign-in and client settings.",
+    "verdict": "danger",
+    "risk": "Steam signs out and loses settings; SteamVR loses room setup.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: Steam\\config is Steam's sign-in and settings store."
+  },
+  "stellaris_cache": {
+    "what": "Not documented by the vendor. Stellaris log files. Paradox games normally write logs to Documents\\Paradox Interactive\\Stellaris\\logs, so this %APPDATA% path may not exist.",
+    "used_for": "Logs (error.log, game.log ...) are rewritten every launch and only help troubleshooting.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the game and the Paradox Launcher first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "The label says 'game save staging' -- wrong and alarming; the path is only logs. Never widen this to Documents\\Paradox Interactive\\Stellaris: save games and mods live there."
+  },
+  "terraria_cache": {
+    "what": "%APPDATA%\\Re-Logic: Re-Logic's whole user-data folder (Terraria/tModLoader data, settings and backups; players and worlds are normally in Documents\\My Games\\Terraria).",
+    "used_for": "User data.",
+    "verdict": "danger",
+    "risk": "Possible loss of characters/worlds or settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: a whole user-data folder."
+  },
+  "ubisoft_cache": {
+    "what": "Not documented by the vendor. Ubisoft Connect cache, downloads, logs and shader-cache folders under %APPDATA%/%LOCALAPPDATA%\\Ubisoft\\Connect (current installs keep their cache in the launcher folder in Program Files (x86)).",
+    "used_for": "The launcher re-creates caches; a 'downloads' folder would be game download staging.",
+    "verdict": "caution",
+    "risk": "Possible re-download of a paused game download; shader-cache rebuild stutter; users report having to sign in again after clearing the launcher cache.",
+    "before_cleaning": "Quit Ubisoft Connect; no download in progress.",
+    "regenerates": true,
+    "sources": [
+      "https://steamcommunity.com/app/304390/discussions/1/596266515199752616"
+    ],
+    "catalog_concern": "'downloads' and 'shader-cache' are not 'safe' items. Paths look unverified."
+  },
+  "unity_cache": {
+    "what": "Unity Editor/Hub cache and log folders under %LOCALAPPDATA%\\Unity.",
+    "used_for": "Unity documents its caches (package and build caches) as rebuildable; logs (Editor.log) are diagnostics.",
+    "verdict": "caution",
+    "risk": "Packages re-download and builds/imports take longer next time; lost logs.",
+    "before_cleaning": "Close the Unity Editor and Hub first.",
+    "regenerates": true,
+    "sources": [
+      "https://docs.unity.com/en-us/engine/6000.0/manual/building-and-publishing/build-cache-location-reference",
+      "https://docs.unity.com/en-us/engine/6000.3/manual/packages-list/package-manager-caches/upm-cache.md"
+    ],
+    "catalog_concern": "Label says 'library' -- a project's Library folder is not here and should not be. %APPDATA%\\Unity\\Asset Store-5.x (downloaded assets) is not listed, correctly."
+  },
+  "unity_hub_cache": {
+    "what": "Not documented by the vendor. Unity Hub cache and logs (Hub actually lives in %APPDATA%\\UnityHub, an Electron profile).",
+    "used_for": "Rebuilt by the Hub.",
+    "verdict": "caution",
+    "risk": "Slower start; lost logs.",
+    "before_cleaning": "Quit Unity Hub first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Label says 'downloaded editor installs' -- those are installs, not cache; none are listed. Never widen to the Hub profile root (Local Storage = sign-in)."
+  },
+  "unity_hub_full_cache": {
+    "what": "Duplicate of unity_hub_cache.",
+    "used_for": "Rebuilt.",
+    "verdict": "caution",
+    "risk": "None beyond unity_hub_cache.",
+    "before_cleaning": "Quit Unity Hub first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling as a duplicate is fine."
+  },
+  "unreal_cache": {
+    "what": "Unreal Engine's local Derived Data Cache (compiled shaders, cooked textures and other derived data).",
+    "used_for": "Epic: DDC content is disposable and is regenerated from the .uasset files.",
+    "verdict": "caution",
+    "risk": "Opening projects is much slower afterwards (shader compilation can take a long time). Nothing is lost.",
+    "before_cleaning": "Close the Unreal Editor first.",
+    "regenerates": true,
+    "sources": [
+      "https://dev.epicgames.com/documentation/en-us/unreal-engine/using-derived-data-cache-in-unreal-engine?lang=en-US"
+    ],
+    "catalog_concern": "The label mentions 'build, intermediate, and saved folders' -- a project's Saved holds autosaves and config; it is not targeted, correctly."
+  },
+  "valorant_cache": {
+    "what": "Intended: VALORANT and Vanguard logs. Riot documents the logs at %LOCALAPPDATA%\\VALORANT\\Saved\\Logs.",
+    "used_for": "Diagnostics Riot support asks for.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close VALORANT first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.riotgames.com/en-us/valorant/support-tools/gathering-logs-in-valorant"
+    ],
+    "catalog_concern": "Both paths are wrong ('Riot Games\\Valorant\\logs' under %APPDATA%, and a typo 'Signip'), so the entry finds nothing."
+  },
+  "warcraft_cache": {
+    "what": "World of Warcraft, Diablo III and Hearthstone log folders (WoW actually writes Logs inside its install folder, e.g. _retail_\\Logs).",
+    "used_for": "Diagnostics; recreated.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "Close the games and Battle.net first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "WoW's WTF folder (add-on settings, keybinds, macros) and Interface\\AddOns must never be targeted; they are not."
+  },
+  "warframe_cache": {
+    "what": "Warframe's whole data folders (EE.log plus EE.cfg settings and other data).",
+    "used_for": "Settings and logs.",
+    "verdict": "caution",
+    "risk": "Lost settings.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole app folders; only EE.log would be safe."
+  },
+  "windows_game_bar_cache": {
+    "what": "XboxLive folder and Xbox Game Overlay LocalCache.",
+    "used_for": "Xbox sign-in tokens/device data may live here.",
+    "verdict": "caution",
+    "risk": "Possible Xbox sign-out.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Disabling was right: may hold sign-in data."
+  },
+  "winehq_cache": {
+    "what": "Wine (Linux) temp folder and cache. These paths do not exist on Windows.",
+    "used_for": "Temporary files.",
+    "verdict": "safe",
+    "risk": "None known.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Pointless on Windows; harmless."
+  },
+  "wineprefix_cache": {
+    "what": "Whole Wine/PlayOnLinux prefixes and winetricks downloads (Linux).",
+    "used_for": "Prefixes hold installed programs and saves.",
+    "verdict": "danger",
+    "risk": "Lost installs and saves.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: whole prefixes."
+  },
+  "xbox_app_cache": {
+    "what": "Gaming Services and Xbox Game Bar package LocalCache folders.",
+    "used_for": "Microsoft's gaming runtime state.",
+    "verdict": "caution",
+    "risk": "Could break game launching or sign-in until repaired.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: Gaming Services state is not a plain cache."
+  },
+  "xbox_cache": {
+    "what": "Gaming Services and Game Bar LocalCache, Family notifications LocalState and %ProgramData%\\XboxLiveDeviceInfo.",
+    "used_for": "Device identity and app state.",
+    "verdict": "danger",
+    "risk": "Xbox sign-in / device identity reset; family settings state lost.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right: LocalState and device info are not caches."
+  },
+  "xbox_live_cache": {
+    "what": "Not documented by the vendor. A Game Bar logs folder at a path current Windows does not use.",
+    "used_for": "Diagnostics.",
+    "verdict": "safe",
+    "risk": "Only past diagnostics are lost: support or a crash investigation can no longer read what happened before the cleanup.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Path likely matches nothing; harmless."
+  },
+  "steam_appcache_httpcache": {
+    "what": "Steam client HTTP cache inside appcache, observed on this PC. Valve's tracker lists appcache/httpcache as a cache on Linux; Valve does not document the Windows path.",
+    "used_for": "Showing store and library artwork and pages without downloading them again.",
+    "verdict": "safe",
+    "risk": "Library and store images load more slowly once while Steam downloads them again. Games, saves, sign-in and appinfo.vdf are not in this folder.",
+    "before_cleaning": "Close Steam for a complete clean; files it holds open are skipped.",
+    "regenerates": true,
+    "sources": [
+      "https://partner.steamgames.com/doc/store/application/depots",
+      "https://github.com/ValveSoftware/steam-for-linux/issues/3096"
+    ],
+    "catalog_concern": "Valve documents depots but not these Windows cache paths. Directory evidence is a user report in Valve's tracker, corroborated by this PC. Only common fixed-drive Steam install roots are covered; arbitrary custom install folders are not."
+  },
+  "steam_depotcache": {
+    "what": "Steam depot manifest cache observed on this PC. Valve documents depots as game-content groups; the depotcache directory is also listed in Valve's Linux tracker, but its Windows path is not officially documented.",
+    "used_for": "Starting and checking game downloads and updates. Steam fetches a manifest again when it needs one.",
+    "verdict": "caution",
+    "risk": "A paused or running download or update may have to start over or verify again. Installed games and saves are not stored here.",
+    "before_cleaning": "Close Steam and make sure no download or update is queued. Manifests younger than a day are kept.",
+    "regenerates": true,
+    "sources": [
+      "https://partner.steamgames.com/doc/store/application/depots",
+      "https://github.com/ValveSoftware/steam-for-linux/issues/3096"
+    ],
+    "catalog_concern": "Valve documents depots, not this Windows path. Directory evidence is a user report in Valve's tracker, corroborated by this PC. Only the default install root is approved by the catalog audit allowlist; custom roots require a separate allowlist review."
+  }
+}

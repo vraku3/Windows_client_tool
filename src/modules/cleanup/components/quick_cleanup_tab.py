@@ -1,33 +1,60 @@
-"""QuickCleanupTab — dashboard-style cleanup with pie chart and category groups.
+"""QuickCleanupTab — the Cleanup overview dashboard (the "Quick Cleanup" tab).
 
-Provides:
-- Summary pie chart showing reclaimable space by category
-- Per-category expandable group cards with scan/clean
-- Batch "Clean All" across all categories
-- Advanced expandable section with additional categories
-- Background scanning via Worker threads
-- Auto-refresh (external control via start/stop)
+Top to bottom, in one scroll area (``.optimise-facts/ui-plan.md`` section 2.2):
 
-One-click system maintenance actions used to live here too; they moved to
-Quick Fix's card catalog (`modules/quick_fix/fix_actions.py`, "Cleanup"
-category) during the module-consolidation merge, and this tab's one-click
-panel was deleted entirely.
+- **Toolbar**: Scan all, Stop, the preset and the preset clean. The status
+  sits next to the buttons that caused it, with a progress bar that counts
+  locations, and names the slow scanners it is still waiting for.
+- **Row A, key figures** (``kpi_tiles``): reclaimable, safe to clean now
+  (what the selected preset would remove), needs review, not offered, and the
+  free space C: would have after the clean (labelled an estimate).
+- **Row B, charts** (``charts``): space by category (the donut's slices and
+  its legend are the SAME list, every location included, "Other (N)" last),
+  the ten largest locations (bars coloured AND labelled by safety), and the
+  trend of cleans and scans.
+- **Row C, recommendations** (``recommendations_panel``). A card navigates;
+  nothing here cleans by itself.
+- **Row D, locations**: every category as one compact row
+  (``category_group``), largest first; the long tail sits under "More
+  locations (N)", sorted by size, empty ones hidden.
+
+Safety is never relaxed by anything shown here: a row's badge is the more
+cautious of the catalog's rating and the research's (``knowledge``), and the
+preset clean still decides from the catalog, exactly as before.
+
+Public contract (cleanup_module and the tests depend on it): ``build()``,
+``scan()``, ``auto_scan()``, ``clean_now()``, ``cancel()``,
+``start_auto_refresh()``/``stop_auto_refresh()``, ``scan_done(int, int)``,
+``freed_bytes(int)`` (MEASURED bytes). New: ``snapshot_ready(ScanSnapshot)``
+after every complete scan, ``navigate(tab_key, ids, age_days)`` from a
+recommendation card, and ``set_theme(theme)``.
+
+The scan summary for the trend (``ScanSnapshot.append_summary``) is NOT
+written here; whoever owns ``snapshot_ready`` decides that, so a test that
+scans never writes to the real %APPDATA%.
 """
-import logging
-from typing import Dict, List
+from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer, QThreadPool, pyqtSignal
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont
+import logging
+import ntpath
+import time
+from typing import Dict, List, Optional
+
+from PyQt6.QtCore import QEvent, Qt, QTimer, QThreadPool, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QLabel, QScrollArea, QFrame,
-    QSizePolicy, QComboBox,
+    QAbstractItemView, QComboBox, QFrame, QGridLayout, QHeaderView, QHBoxLayout,
+    QLabel, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QTableWidget,
+    QTableWidgetItem, QToolButton, QVBoxLayout, QWidget,
 )
 
 from core.widget_life import widget_is_valid
-from core.worker import Worker
-from modules.cleanup.components.category_group import CategoryGroup
-from core.semantic_colors import semantic
+from core.worker import Worker, retire
+from modules.cleanup.components.category_group import (
+    CategoryGroup, ColumnHeader, BADGE, most_cautious,
+)
+from modules.cleanup.components.kpi_tiles import (
+    DASH, KpiStrip, KpiTile, compute_figures, not_offered_tooltip,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,118 +72,111 @@ logger = logging.getLogger(__name__)
 _alive = widget_is_valid
 
 
-# ── Advanced Categories ────────────────────────────────────────────────────────
-
-_CATEGORY_COLORS = [
-    "#4fc3f7", "#ffb74d", "#81c784", "#ce93d8", "#4dd0e1", "#a5d6a7",
-    "#fff59d", "#ff8a65", "#ef9a9a", "#b0bec5", "#90caf9", "#80deea",
-    "#ffcc80", "#fff176", "#80cbc4", "#c5e1a5", "#64b5f6", "#80d8ff",
-    "#f8bbd0", "#d1c4e9", "#aed6f1", "#76d7c4", "#f1948a", "#85c1e9",
-    "#82e0aa", "#bb8fce", "#f8c471", "#73c6b6", "#58d68d", "#ecf0f1",
-    "#f9e79f", "#abebc6", "#d2b4de", "#fad7a0", "#d5dbdb", "#f39c12",
-    "#5dade2", "#00bfff", "#f7dc6f", "#3498db", "#e74c3c", "#e67e22",
-    "#9b59b6", "#2980b9", "#bdc3c7", "#f5b041", "#f0b27a", "#b3e5fc",
-    "#1f618d", "#2874a6", "#1db954", "#2ecc71",
-]
+# ── Categories ───────────────────────────────────────────────────────────
+#
+# (id, display name, legacy colour slot). The third element is kept so the
+# tuple shape every caller and test uses does not change; it is IGNORED.
+# Chart colours come from core.semantic_colors.chart(i) by size rank, read at
+# paint time, so they follow the theme.
 
 ADVANCED_CATEGORIES = [
     # Core
-    ("recent", "Recent Files", _CATEGORY_COLORS[10]),
-    ("games", "Game Caches", _CATEGORY_COLORS[3]),
-    ("adobe", "Adobe Cache", _CATEGORY_COLORS[8]),
-    ("office", "Office Temp", _CATEGORY_COLORS[11]),
-    ("jets", "IDE Caches", _CATEGORY_COLORS[6]),
-    ("spooler", "Print Spooler", _CATEGORY_COLORS[5]),
-    ("winsat", "WinSAT Cache", _CATEGORY_COLORS[12]),
-    ("etl", "ETL Logs", _CATEGORY_COLORS[9]),
-    ("telemetry", "Telemetry Data", _CATEGORY_COLORS[8]),
-    ("delivery", "Delivery Optim.", _CATEGORY_COLORS[13]),
-    ("clipboard", "Clipboard", _CATEGORY_COLORS[14]),
-    ("xbox", "Xbox Cache", _CATEGORY_COLORS[15]),
-    ("onedrive", "OneDrive Logs", _CATEGORY_COLORS[16]),
-    ("maps", "Maps Cache", _CATEGORY_COLORS[17]),
-    ("sticky", "Sticky Notes", _CATEGORY_COLORS[18]),
-    ("defender", "Defender History", _CATEGORY_COLORS[19]),
+    ("recent", "Recent Files", ""),
+    ("games", "Game Caches", ""),
+    ("adobe", "Adobe Cache", ""),
+    ("office", "Office Temp", ""),
+    ("jets", "IDE Caches", ""),
+    ("spooler", "Print Spooler", ""),
+    ("winsat", "WinSAT Cache", ""),
+    ("etl", "ETL Logs", ""),
+    ("telemetry", "Telemetry Data", ""),
+    ("delivery", "Delivery Optimization", ""),
+    ("clipboard", "Clipboard", ""),
+    ("xbox", "Xbox Cache", ""),
+    ("onedrive", "OneDrive Logs", ""),
+    ("maps", "Maps Cache", ""),
+    ("sticky", "Sticky Notes", ""),
+    ("defender", "Defender History", ""),
     # Cloud Storage
-    ("dropbox", "Dropbox Cache", _CATEGORY_COLORS[20]),
-    ("gdrive", "Google Drive", _CATEGORY_COLORS[21]),
-    ("mega", "MEGA Cache", _CATEGORY_COLORS[22]),
-    ("pcloud", "pCloud Cache", _CATEGORY_COLORS[23]),
-    ("icloud", "iCloud Cache", _CATEGORY_COLORS[24]),
-    ("box", "Box Cache", _CATEGORY_COLORS[25]),
+    ("dropbox", "Dropbox Cache", ""),
+    ("gdrive", "Google Drive", ""),
+    ("mega", "MEGA Cache", ""),
+    ("pcloud", "pCloud Cache", ""),
+    ("icloud", "iCloud Cache", ""),
+    ("box", "Box Cache", ""),
     # Virtualization
-    ("docker", "Docker Desktop", _CATEGORY_COLORS[26]),
-    ("vbox", "VirtualBox VMs", _CATEGORY_COLORS[27]),
-    ("vmware", "VMware VMs", _CATEGORY_COLORS[23]),
-    ("wsl2", "WSL2 Distros", _CATEGORY_COLORS[28]),
-    ("hyperv", "Hyper-V VMs", _CATEGORY_COLORS[29]),
+    ("docker", "Docker Desktop", ""),
+    ("vbox", "VirtualBox VMs", ""),
+    ("vmware", "VMware VMs", ""),
+    ("wsl2", "WSL2 Distros", ""),
+    ("hyperv", "Hyper-V VMs", ""),
     # Media Production
-    ("obs", "OBS Cache", _CATEGORY_COLORS[30]),
-    ("davinci", "DaVinci Cache", _CATEGORY_COLORS[31]),
-    ("premiere", "Premiere Cache", _CATEGORY_COLORS[32]),
-    ("blender", "Blender Cache", _CATEGORY_COLORS[33]),
-    ("audacity", "Audacity Cache", _CATEGORY_COLORS[34]),
+    ("obs", "OBS Cache", ""),
+    ("davinci", "DaVinci Cache", ""),
+    ("premiere", "Premiere Cache", ""),
+    ("blender", "Blender Cache", ""),
+    ("audacity", "Audacity Cache", ""),
     # Communication
-    ("telegram", "Telegram Cache", _CATEGORY_COLORS[23]),
-    ("signal", "Signal Cache", _CATEGORY_COLORS[28]),
-    ("teams", "Teams Cache", _CATEGORY_COLORS[21]),
-    ("slack", "Slack Cache", _CATEGORY_COLORS[22]),
-    ("discord", "Discord Cache", _CATEGORY_COLORS[20]),
+    ("telegram", "Telegram Cache", ""),
+    ("signal", "Signal Cache", ""),
+    ("teams", "Teams Cache", ""),
+    ("slack", "Slack Cache", ""),
+    ("discord", "Discord Cache", ""),
     # Development
-    ("jetbrains", "JetBrains Cache", _CATEGORY_COLORS[35]),
-    ("eclipse", "Eclipse Cache", _CATEGORY_COLORS[36]),
-    ("gitlfs", "Git LFS Cache", _CATEGORY_COLORS[22]),
-    ("npm", "npm Cache", _CATEGORY_COLORS[27]),
-    ("pip", "pip Cache", _CATEGORY_COLORS[23]),
-    ("nuget", "NuGet Cache", _CATEGORY_COLORS[24]),
-    ("vscode", "VSCode Cache", _CATEGORY_COLORS[37]),
-    ("unity", "Unity Cache", _CATEGORY_COLORS[26]),
+    ("jetbrains", "JetBrains Cache", ""),
+    ("eclipse", "Eclipse Cache", ""),
+    ("gitlfs", "Git LFS Cache", ""),
+    ("npm", "npm Cache", ""),
+    ("pip", "pip Cache", ""),
+    ("nuget", "NuGet Cache", ""),
+    ("vscode", "VS Code Cache", ""),
+    ("unity", "Unity Cache", ""),
     # Games
-    ("epic", "Epic Games Cache", _CATEGORY_COLORS[38]),
-    ("battlenet", "Battle.net Cache", _CATEGORY_COLORS[39]),
-    ("rockstar", "Rockstar Cache", _CATEGORY_COLORS[40]),
-    ("minecraft", "Minecraft Cache", _CATEGORY_COLORS[28]),
-    ("lol", "LoL Cache", _CATEGORY_COLORS[35]),
-    ("rust", "Rust Game Cache", _CATEGORY_COLORS[41]),
+    ("epic", "Epic Games Cache", ""),
+    ("battlenet", "Battle.net Cache", ""),
+    ("rockstar", "Rockstar Cache", ""),
+    ("minecraft", "Minecraft Cache", ""),
+    ("lol", "League of Legends Cache", ""),
+    ("rust", "Rust Game Cache", ""),
     # More Browsers
-    ("brave", "Brave Cache", _CATEGORY_COLORS[35]),
-    ("vivaldi", "Vivaldi Cache", _CATEGORY_COLORS[42]),
-    ("opera", "Opera Cache", _CATEGORY_COLORS[40]),
-    ("yandex", "Yandex Cache", _CATEGORY_COLORS[35]),
-    ("edge", "Edge Cache", _CATEGORY_COLORS[39]),
-    ("firefox", "Firefox Cache", _CATEGORY_COLORS[41]),
-    ("chrome", "Chrome Cache", _CATEGORY_COLORS[43]),
+    ("brave", "Brave Cache", ""),
+    ("vivaldi", "Vivaldi Cache", ""),
+    ("opera", "Opera Cache", ""),
+    ("yandex", "Yandex Cache", ""),
+    ("edge", "Edge Cache", ""),
+    ("firefox", "Firefox Cache", ""),
+    ("chrome", "Chrome Cache", ""),
     # System
-    ("iis", "IIS Logs", _CATEGORY_COLORS[44]),
-    ("dockerimg", "Docker Images", _CATEGORY_COLORS[45]),
-    ("vpn", "VPN Cache", _CATEGORY_COLORS[36]),
-    ("putty", "PuTTY Cache", _CATEGORY_COLORS[46]),
-    ("rdp", "RDP Cache", _CATEGORY_COLORS[23]),
+    ("iis", "IIS Logs", ""),
+    ("dockerimg", "Docker Images", ""),
+    ("vpn", "VPN Cache", ""),
+    ("putty", "PuTTY Cache", ""),
+    ("rdp", "RDP Cache", ""),
     # PC-Specific (auto-discovered)
-    ("vscode_ext", "VSCode Ext VSIXs", _CATEGORY_COLORS[37]),
-    ("vscode_dawn", "VSCode Dawn Cache", _CATEGORY_COLORS[17]),
-    ("vscode_web", "VSCode WebStorage", _CATEGORY_COLORS[47]),
-    ("steam_logs", "Steam Logs", _CATEGORY_COLORS[48]),
-    ("steam_web", "Steam WebCache", _CATEGORY_COLORS[49]),
-    ("chrome_full", "Chrome Full Cache", _CATEGORY_COLORS[43]),
-    ("edge_full", "Edge Full Cache", _CATEGORY_COLORS[39]),
-    ("brave_full", "Brave Full Cache", _CATEGORY_COLORS[35]),
-    ("uwp_all", "UWP Apps Cache", _CATEGORY_COLORS[20]),
-    ("lm_studio", "LM Studio Cache", _CATEGORY_COLORS[28]),
-    ("teams_npc", "MS Teams NPC", _CATEGORY_COLORS[21]),
-    ("photos_cache", "Windows Photos", _CATEGORY_COLORS[11]),
-    ("ms_store", "MS Store Cache", _CATEGORY_COLORS[16]),
-    ("discord_logs", "Discord Logs", _CATEGORY_COLORS[42]),
-    ("notifications", "Notif. History", _CATEGORY_COLORS[14]),
-    ("spotify_app", "Spotify Cache", _CATEGORY_COLORS[50]),
-    ("cbs_logs", "CBS Logs", _CATEGORY_COLORS[44]),
-    ("panther_logs", "Panther Logs", _CATEGORY_COLORS[12]),
-    ("inetcache", "INetCache", _CATEGORY_COLORS[10]),
-    ("game_bar", "Game Bar Cache", _CATEGORY_COLORS[15]),
-    ("yarn", "Yarn Cache", _CATEGORY_COLORS[27]),
-    ("pnpm", "pnpm Cache", _CATEGORY_COLORS[24]),
+    ("vscode_ext", "VS Code extension packages", ""),
+    ("vscode_dawn", "VS Code Dawn Cache", ""),
+    ("vscode_web", "VS Code WebStorage", ""),
+    ("steam_logs", "Steam Logs", ""),
+    ("steam_web", "Steam WebCache", ""),
+    ("chrome_full", "Chrome Full Cache", ""),
+    ("edge_full", "Edge Full Cache", ""),
+    ("brave_full", "Brave Full Cache", ""),
+    ("uwp_all", "UWP Apps Cache", ""),
+    ("lm_studio", "LM Studio Cache", ""),
+    ("teams_npc", "Microsoft Teams Cache", ""),
+    ("photos_cache", "Windows Photos Cache", ""),
+    ("ms_store", "Microsoft Store Cache", ""),
+    ("discord_logs", "Discord Logs", ""),
+    ("notifications", "Notification History", ""),
+    ("spotify_app", "Spotify Cache", ""),
+    ("cbs_logs", "CBS Logs", ""),
+    ("panther_logs", "Panther Logs", ""),
+    ("inetcache", "INetCache", ""),
+    ("game_bar", "Game Bar Cache", ""),
+    ("yarn", "Yarn Cache", ""),
+    ("pnpm", "pnpm Cache", ""),
     # Smart Finders
-    ("empty_folders", "Empty Folders", _CATEGORY_COLORS[44]),
+    ("empty_folders", "Empty Folders", ""),
     # Catalog-backed (present on this machine, previously reachable only
     # via System Junk/App & Game Caches' own bulk category inclusion --
     # featured here individually for visibility. Each id is the catalog's
@@ -170,64 +190,102 @@ ADVANCED_CATEGORIES = [
     # (only pnputil /delete-driver via _driver_panel.py's dedicated,
     # confirmed panel -- deleting the folder directly is how a machine
     # loses a driver it still believes it has).
-    ("complus_cache", "COM+ App Cache", _CATEGORY_COLORS[10]),
-    ("office_cache_extended", "Office Ext. Cache", _CATEGORY_COLORS[3]),
-    ("onedrive_cache", "OneDrive Mask Cache", _CATEGORY_COLORS[8]),
-    ("onedrive_commercial_cache", "OneDrive Biz Cache", _CATEGORY_COLORS[11]),
-    ("onedrive_full_cache", "OneDrive Full Cache", _CATEGORY_COLORS[6]),
-    ("claude_cli_cache", "Claude CLI Cache", _CATEGORY_COLORS[5]),
-    ("npp_cache", "Notepad++ Cache", _CATEGORY_COLORS[12]),
-    ("vscode_cached_data", "VSCode Cached Data", _CATEGORY_COLORS[9]),
-    ("vscode_settings_sync", "VSCode Settings Sync", _CATEGORY_COLORS[13]),
-    ("xbox_app_cache", "Xbox App Cache", _CATEGORY_COLORS[14]),
-    ("amd_radeon_cache", "AMD Radeon Cache", _CATEGORY_COLORS[15]),
-    ("browser_caches", "Browser Cache (bulk)", _CATEGORY_COLORS[17]),
-    ("d3d_shader_cache", "Direct3D Shader Cache", _CATEGORY_COLORS[18]),
-    ("diag_logs", "Diagnostic Logs", _CATEGORY_COLORS[19]),
-    ("directx_shader_cache", "DirectX Shader Cache", _CATEGORY_COLORS[20]),
-    ("dxgi_cache", "DXGI Cache", _CATEGORY_COLORS[22]),
-    ("event_logs", "Event Log Files", _CATEGORY_COLORS[23]),
-    ("font_cache", "Font Cache Service", _CATEGORY_COLORS[24]),
-    ("language_packs", "Language Pack Cache", _CATEGORY_COLORS[25]),
-    ("memory_dumps", "Memory Dumps", _CATEGORY_COLORS[26]),
-    ("minidump", "Kernel Minidumps", _CATEGORY_COLORS[27]),
-    ("per_drive_recycle_bin", "Recycle Bin (all drives)", _CATEGORY_COLORS[29]),
-    ("per_drive_temp", "Temp (all drives)", _CATEGORY_COLORS[10]),
-    ("sfc_logs", "SFC/DISM Logs", _CATEGORY_COLORS[3]),
-    ("sysprep_logs", "Sysprep Logs", _CATEGORY_COLORS[8]),
-    ("thumbnail_cache_central", "Explorer Thumbcache", _CATEGORY_COLORS[11]),
-    ("update_cleanup", "Windows Update Cleanup", _CATEGORY_COLORS[6]),
-    ("wer_reports", "Error Reporting Archive", _CATEGORY_COLORS[5]),
-    ("windows_backup_catalog", "Windows Backup Catalog", _CATEGORY_COLORS[12]),
-    ("windows_backup_logs", "Server Backup Logs", _CATEGORY_COLORS[9]),
-    ("windows_setup_diags", "Setup Diag Logs", _CATEGORY_COLORS[13]),
-    ("windows_tweaker_logs", "This App's Own Logs", _CATEGORY_COLORS[14]),
-    ("windowsupdate_orch_cache", "WU Orchestrator Cache", _CATEGORY_COLORS[15]),
-    ("wu_history_cache", "WU Download History", _CATEGORY_COLORS[16]),
+    ("complus_cache", "COM+ App Cache", ""),
+    ("office_cache_extended", "Office Extended Cache", ""),
+    ("onedrive_cache", "OneDrive Mask Cache", ""),
+    ("onedrive_commercial_cache", "OneDrive for Business Cache", ""),
+    ("onedrive_full_cache", "OneDrive Full Cache", ""),
+    ("claude_cli_cache", "Claude CLI Cache", ""),
+    ("npp_cache", "Notepad++ Cache", ""),
+    ("vscode_cached_data", "VS Code Cached Data", ""),
+    ("vscode_settings_sync", "VS Code Settings Sync", ""),
+    ("xbox_app_cache", "Xbox App Cache", ""),
+    ("amd_radeon_cache", "AMD Radeon Cache", ""),
+    ("browser_caches", "Browser Cache (bulk)", ""),
+    ("d3d_shader_cache", "Direct3D Shader Cache", ""),
+    ("diag_logs", "Diagnostic Logs", ""),
+    ("directx_shader_cache", "DirectX Shader Cache", ""),
+    ("dxgi_cache", "DXGI Cache", ""),
+    ("event_logs", "Event Log Files", ""),
+    ("font_cache", "Font Cache Service", ""),
+    ("language_packs", "Language Pack Cache", ""),
+    ("memory_dumps", "Memory Dumps", ""),
+    ("minidump", "Kernel Minidumps", ""),
+    ("per_drive_recycle_bin", "Recycle Bin (all drives)", ""),
+    ("per_drive_temp", "Temp (all drives)", ""),
+    ("sfc_logs", "SFC/DISM Logs", ""),
+    ("sysprep_logs", "Sysprep Logs", ""),
+    ("thumbnail_cache_central", "Explorer Thumbcache", ""),
+    ("update_cleanup", "Windows Update Cleanup", ""),
+    ("wer_reports", "Error Reporting Archive", ""),
+    ("windows_backup_catalog", "Windows Backup Catalog", ""),
+    ("windows_backup_logs", "Server Backup Logs", ""),
+    ("windows_setup_diags", "Setup Diag Logs", ""),
+    ("windows_tweaker_logs", "This App's Own Logs", ""),
+    ("windowsupdate_orch_cache", "WU Orchestrator Cache", ""),
+    ("wu_history_cache", "WU Download History", ""),
     # Confirmed real on THIS machine specifically (cross-referenced against
     # its own installed-software list, not guessed): CurseForge and AMD
     # ReLive's DVR buffer had no catalog entry at all until now.
-    ("curseforge_cache", "CurseForge Cache", _CATEGORY_COLORS[35]),
-    ("amd_dvr_cache", "AMD ReLive Buffer", _CATEGORY_COLORS[40]),
+    ("curseforge_cache", "CurseForge Cache", ""),
+    ("amd_dvr_cache", "AMD ReLive Buffer", ""),
     # Found via a direct AppData folder census (registry Uninstall keys
     # miss portable/Electron-updater-style installs like these).
-    ("cyberghost_cache", "CyberGhost VPN Cache", _CATEGORY_COLORS[51]),
-    ("opencode_desktop_cache", "OpenCode Cache", _CATEGORY_COLORS[39]),
-    ("amd_comgr_cache", "AMD Compute Cache", _CATEGORY_COLORS[41]),
-    ("amd_install_manager_cache", "AMD Installer Cache", _CATEGORY_COLORS[42]),
+    ("cyberghost_cache", "CyberGhost VPN Cache", ""),
+    ("opencode_desktop_cache", "OpenCode Cache", ""),
+    ("amd_comgr_cache", "AMD Compute Cache", ""),
+    ("amd_install_manager_cache", "AMD Installer Cache", ""),
 ]
 
+CLEANUP_CATEGORIES = [
+    ("temp", "Temp Files", ""),
+    ("prefetch", "Prefetch", ""),
+    ("thumb", "Thumbnail Cache", ""),
+    ("crash", "Crash Dumps", ""),
+    ("browser", "Browser Caches", ""),
+    ("app", "App Caches", ""),
+    ("logs", "Windows Logs", ""),
+    ("wu", "Windows Update", ""),
+    ("large", "Large Items", ""),
+    ("dev", "Dev Tools", ""),
+]
 
-# ── Pie Chart ────────────────────────────────────────────────────────────────
+#: Where "Review on the … tab" goes for a main category (display names; the
+#: owner resolves them). Advanced categories have no single tab.
+_AREA_TAB = {
+    "temp": "System Junk", "prefetch": "System Junk", "thumb": "System Junk",
+    "crash": "System Junk", "browser": "Browser Caches", "app": "App & Game Caches",
+    "logs": "Logs & Reports", "wu": "Windows Update", "large": "Large Items",
+    "dev": "Dev Tools",
+}
+
+#: The recommendation engine's tab keys (recommend.TAB_*), per category, so a
+#: snapshot row says which area tab shows it.
+_RECO_TAB = {
+    "temp": "system", "prefetch": "system", "thumb": "system", "crash": "system",
+    "browser": "browser", "app": "apps", "logs": "logs", "wu": "wu", "large": "large",
+    "dev": "dev",
+}
+_RECO_TAB_BY_CATALOG = {
+    "system": "system", "browsers": "browser", "dev": "dev", "apps": "apps",
+    "cloud": "apps", "comms": "apps", "games": "apps", "media": "apps",
+}
+
+#: The browser category has no scanner function; its research and catalog id.
+BROWSER_KB_ID = "browser_caches"
+
+#: Charts sit side by side from this width; below it they stack.
+CHARTS_SIDE_BY_SIDE = 1100
+CHARTS_TWO_COLUMNS = 720
+
+#: After this long, the progress line names the scanners still running.
+SLOW_NOTE_AFTER_S = 8
 
 
 def largest_slice_text(slices, format_size) -> str:
-    """"Largest: Package Cache -- 32.1 GB", or "" with nothing to show.
+    """"Largest: Package Cache — 32.1 GB", or "" with nothing to show.
 
-    The legend beside the donut lists only the main categories, but the donut
-    also carries every advanced category's slice: on the real machine the
-    listed categories summed to 2.2 GB of a 34.8 GB total, and the biggest
-    slice was one nobody could name without opening "Show Advanced"."""
+    ``slices`` are (label, size, colour) tuples (the colour is ignored)."""
     if not slices:
         return ""
     label, size, _color = max(slices, key=lambda s: s[1])
@@ -235,168 +293,102 @@ def largest_slice_text(slices, format_size) -> str:
         return ""
     return f"Largest: {label} — {format_size(size)}"
 
-class _PieChart(QWidget):
-    """Pure-Qt donut chart showing reclaimable space by category."""
 
-    def __init__(self, parent=None):
+def short_path(path: str, parts: int = 3) -> str:
+    """"…\\AppData\\Local\\Temp" -- the end of a path is what says what it is."""
+    p = str(path).rstrip("\\/")
+    pieces = [x for x in p.replace("/", "\\").split("\\") if x]
+    if len(pieces) <= parts:
+        return p
+    return "…\\" + "\\".join(pieces[-parts:])
+
+
+class _AccentButton(QPushButton):
+    """The primary action: accent-coloured only while it can be pressed. The
+    accent role has no disabled look of its own, so a disabled accent button
+    would still look like the thing to click."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self._sync_role()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.EnabledChange:
+            self._sync_role()
+
+    def _sync_role(self) -> None:
+        want = "accentButton" if self.isEnabled() else ""
+        if self.objectName() != want:
+            self.setObjectName(want)
+            style = self.style()
+            style.unpolish(self)
+            style.polish(self)
+            self.update()
+
+
+class _ChartsRow(QWidget):
+    """Three chart cards: side by side when wide, two-up, or stacked."""
+
+    def __init__(self, cards, parent=None):
         super().__init__(parent)
-        self._slices: List[tuple] = []   # (label, size_bytes, color)
-        self.setMinimumSize(120, 120)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.cards = list(cards)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(10)
+        self._grid.setVerticalSpacing(10)
+        self._mode = ""
+        self._available_width = None
+        self._place("wide")
 
-    def set_slices(self, slices: List[tuple]) -> None:
-        """Set slices: list of (label, size_bytes, css_color_string)."""
-        self._slices = slices
-        self.update()
+    def mode(self) -> str:
+        return self._mode
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        w = self.width()
-        h = self.height()
-        size = min(w, h)
-
-        # Donut: outer radius = half the widget, inner radius = 40%
-        cx = w / 2
-        cy = h / 2
-        outer_r = size / 2 - 4
-        inner_r = outer_r * 0.45
-
-        total = sum(s[1] for s in self._slices)
-        if total == 0:
-            # Draw empty grey ring
-            painter.setPen(QPen(QColor("#555"), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(int(cx - outer_r), int(cy - outer_r),
-                                int(outer_r * 2), int(outer_r * 2))
-            painter.setPen(QPen(QColor("#888")))
-            painter.drawText(int(cx), int(cy), "No data")
+    def _place(self, mode: str) -> None:
+        if mode == self._mode:
             return
+        self._mode = mode
+        for c in self.cards:
+            self._grid.removeWidget(c)
+        for i in range(3):
+            self._grid.setColumnStretch(i, 0)
+        a, b, c = self.cards
+        if mode == "wide":
+            self._grid.addWidget(a, 0, 0)
+            self._grid.addWidget(b, 0, 1)
+            self._grid.addWidget(c, 0, 2)
+            for i, s in enumerate((10, 12, 10)):
+                self._grid.setColumnStretch(i, s)
+        elif mode == "two":
+            self._grid.addWidget(a, 0, 0)
+            self._grid.addWidget(b, 0, 1)
+            self._grid.addWidget(c, 1, 0, 1, 2)
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 1)
+        else:
+            self._grid.addWidget(a, 0, 0)
+            self._grid.addWidget(b, 1, 0)
+            self._grid.addWidget(c, 2, 0)
+            self._grid.setColumnStretch(0, 1)
 
-        start_angle = 0
-        for label, size_bytes, color in self._slices:
-            span = int(size_bytes / total * 360 * 16)
-            painter.setPen(QPen(QColor(color), 2))
-            painter.setBrush(QBrush(QColor(color)))
-            rect_x = int(cx - outer_r)
-            rect_y = int(cy - outer_r)
-            rect_w = int(outer_r * 2)
-            rect_h = int(outer_r * 2)
-            painter.drawPie(rect_x, rect_y, rect_w, rect_h,
-                           int(start_angle), int(span))
-            start_angle += span
+    def resizeEvent(self, event):
+        w = self._available_width or event.size().width()
+        self._place("wide" if w >= CHARTS_SIDE_BY_SIDE
+                    else "two" if w >= CHARTS_TWO_COLUMNS else "stacked")
+        super().resizeEvent(event)
 
-        # Inner circle (donut hole)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor("#2d2d2d")))
-        painter.drawEllipse(int(cx - inner_r), int(cy - inner_r),
-                            int(inner_r * 2), int(inner_r * 2))
-
-        # Centre text: total size
-        from modules.cleanup.cleanup_scanner import format_size
-        painter.setPen(QColor("#ffffff"))
-        font = QFont("Segoe UI", 8, QFont.Weight.Bold)
-        painter.setFont(font)
-        painter.drawText(int(cx), int(cy - 6), format_size(total))
-        font2 = QFont("Segoe UI", 7)
-        painter.setFont(font2)
-        painter.setPen(QColor("#aaaaaa"))
-        painter.drawText(int(cx), int(cy + 8), "reclaimable")
-
-
-# ── Category slice card ───────────────────────────────────────────────────────
-
-class _SliceCard(QFrame):
-    """Small legend card shown below the pie chart for each category."""
-
-    clicked = pyqtSignal()
-
-    def __init__(self, label: str, size_bytes: int, color: str, parent=None,
-                 clickable: bool = True):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        # QLabel derives from QFrame, so an unscoped `QFrame { ... }` rule set
-        # on this card also styled every label inside it -- each one drew its
-        # own copy of the accent stripe. The rule has to name the card.
-        self.setObjectName("sliceCard")
-        # The ~91 advanced cards can emit `clicked` but nothing ever
-        # connects to it (they don't map 1:1 onto a single tab) -- giving
-        # them a pointing-hand cursor advertised a click that did nothing.
-        self._clickable = clickable
-        if clickable:
-            self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._color = color
-        self._update_style(size_bytes)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
-        self._dot = QLabel(f"<span style='color:{color};font-size:14px'>●</span>")
-        # No colour in the markup -- a stylesheet cannot reach inside rich
-        # text, so this grey outlived every theme change.
-        self._lbl = QLabel(label)
-        self._lbl.setStyleSheet("font-size:12px")
-        self._sz = QLabel()
-        self._sz.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        from modules.cleanup.cleanup_scanner import format_size
-        # No colour in the markup: a QSS rule cannot reach inside rich text, so a
-        # colour written here would survive the theme switch like the rest did.
-        self._sz.setText(f"<span style='font-size:11px'>{format_size(size_bytes)}</span>")
-        lay.addWidget(self._dot)
-        lay.addWidget(self._lbl, 1)
-        lay.addWidget(self._sz)
-
-    def _update_style(self, size_bytes: int):
-        # Only the category's own accent stripe is declared here. An inline
-        # sheet overrides just the properties it names, so leaving `background`
-        # out lets the active theme keep painting it -- naming it was what
-        # pinned this row to #3c3c3c in both themes.
-        self.setStyleSheet(f"""
-            QFrame#sliceCard {{
-                border-left: 3px solid {self._color};
-                border-radius: 4px;
-                padding: 4px 8px;
-            }}
-        """)
-
-    def set_size(self, size_bytes: int) -> None:
-        """Update the displayed size and opacity."""
-        from modules.cleanup.cleanup_scanner import format_size
-        # No colour in the markup: a QSS rule cannot reach inside rich text, so a
-        # colour written here would survive the theme switch like the rest did.
-        self._sz.setText(f"<span style='font-size:11px'>{format_size(size_bytes)}</span>")
-        self._update_style(size_bytes)
-        self.setVisible(size_bytes > 0)
-
-    def mousePressEvent(self, event) -> None:
-        if self._clickable:
-            self.clicked.emit()
-        super().mousePressEvent(event)
-
-
-# ── QuickCleanupTab ──────────────────────────────────────────────────────────
-
-# Category definitions: (id, display_name, color)
-# scanner_fn is resolved in build() from the _id_map
-CLEANUP_CATEGORIES = [
-    ("temp", "Temp Files", _CATEGORY_COLORS[0]),
-    ("prefetch", "Prefetch", _CATEGORY_COLORS[1]),
-    ("thumb", "Thumbnail Cache", _CATEGORY_COLORS[2]),
-    ("crash", "Crash Dumps", _CATEGORY_COLORS[3]),
-    ("browser", "Browser Caches", _CATEGORY_COLORS[4]),
-    ("app", "App Caches", _CATEGORY_COLORS[5]),
-    ("logs", "Windows Logs", _CATEGORY_COLORS[6]),
-    ("wu", "Windows Update", _CATEGORY_COLORS[7]),
-    ("large", "Large Items", _CATEGORY_COLORS[8]),
-    ("dev", "Dev Tools", _CATEGORY_COLORS[9]),
-]
+    def set_available_width(self, width):
+        self._available_width = width
+        self._place("wide" if width >= CHARTS_SIDE_BY_SIDE
+                    else "two" if width >= CHARTS_TWO_COLUMNS else "stacked")
 
 
 class QuickCleanupTab(QWidget):
     """
-    Dashboard-style cleanup view with a donut chart and per-category groups.
+    The overview dashboard.
 
     Lifecycle:
-        - Construct, then call build() to create category groups.
+        - Construct, then call build() to create the categories.
         - Auto-refresh: call start_auto_refresh() / stop_auto_refresh().
         - scan() triggers a background rescan of all categories.
         - cancel() cancels any in-flight workers.
@@ -405,36 +397,35 @@ class QuickCleanupTab(QWidget):
     # Emitted when all scans complete: (total_items, total_size)
     scan_done = pyqtSignal(int, int)
 
-    # Emitted after a successful Clean All Safe -- feeds CleanupModule's
-    # shared "Freed this session" counter, the same signal every other
-    # tab in the module already emits.
+    # Emitted after a clean -- the MEASURED bytes, feeding CleanupModule's
+    # shared "Freed this session" counter like every other tab.
     freed_bytes = pyqtSignal(int)
 
-    #: _OverviewTab used to have the same constant, before it was deleted
-    #: in this merge. This sweep covers MORE categories than Overview's
-    #: did, so give it real headroom above whatever this machine's own
-    #: scan measures, not a number copied from a different, smaller sweep.
+    # A complete scan, as a ScanSnapshot (scan_snapshot.py).
+    snapshot_ready = pyqtSignal(object)
+
+    # A recommendation card asked to open another tab: (tab_key, ids, age_days).
+    navigate = pyqtSignal(str, list, int)
+
+    #: This sweep covers ~137 categories; generous headroom above what this
+    #: machine measures (the whole sweep is ~45 s here).
     SCAN_WATCHDOG_MS = 300_000
 
-    #: A real-world report: Scan All ran for over an hour producing
-    #: nothing, while each category's own manual Scan button (which only
-    #: runs ONE scanner) worked fine -- because _on_all_scanned only fires
-    #: once EVERY scanner among ~137 has reported, one pathologically slow
-    #: scanner (a huge personal folder, a slow network share, a OneDrive
-    #: placeholder needing hydration) blocks the whole dashboard, and nothing
-    #: short of the full 5-minute SCAN_WATCHDOG_MS would ever show anything.
-    #: A category stuck past this (45s -- real sweeps here measure single
-    #: seconds per scanner) is marked timed-out and counted as reported, so
-    #: the other ~136 results still render; its own real worker keeps
-    #: running and corrects the result in place if it finishes later.
+    #: One pathologically slow scanner (a huge personal folder, a slow share,
+    #: a OneDrive placeholder needing hydration) must not block the whole
+    #: dashboard: a category stuck past this is counted as reported (timed
+    #: out) so the others render; its own worker keeps running and corrects
+    #: the result in place if it finishes later.
     PER_SCANNER_TIMEOUT_MS = 45_000
 
     def __init__(self, parent=None, on_category_clicked=None):
         super().__init__(parent)
         self._on_category_clicked = on_category_clicked
-        self._categories: List[tuple] = []   # (id, label, color, scanner_fn)
+        self._categories: List[tuple] = []
+        self._advanced_categories: List[tuple] = []
         self._group_widgets: Dict[str, CategoryGroup] = {}
-        self._results: Dict[str, object] = {}   # id -> ScanResult
+        self._results: Dict[str, object] = {}   # id -> ScanResult (browser: raw list)
+        self._display: Dict[str, object] = {}   # id -> ScanResult, browser converted
         self._scanning = False
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._on_timer_refresh)
@@ -447,27 +438,1147 @@ class QuickCleanupTab(QWidget):
         self._watchdog.setSingleShot(True)
         self._watchdog.timeout.connect(self._on_scan_watchdog)
         self._clean_after_scan = False
+        self._total_scanned = 0
+        self._scan_targets: List[str] = []
+        self._scan_started = 0.0
+        self._snapshot = None
+        self._reco_pending = False
+        self._not_offered = None
+        self._free_c: Optional[int] = None
+        self._free_c_error = ""
+        self._figures = None
+        self._scan_errors = {}
+        self._scan_generation = 0
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def build(self, categories: List[tuple] = None, advanced_categories: List[tuple] = None) -> None:
         """Build the UI. Call once after construction.
 
-        categories: list of (id, display_name, color).
-                    Defaults to CLEANUP_CATEGORIES.
-        advanced_categories: list of (id, display_name, color).
-                    Defaults to ADVANCED_CATEGORIES.
+        categories / advanced_categories: lists of (id, display_name, colour);
+        the colour is ignored. Default to CLEANUP_CATEGORIES /
+        ADVANCED_CATEGORIES.
         """
         if categories is None:
             categories = CLEANUP_CATEGORIES
         if advanced_categories is None:
             advanced_categories = ADVANCED_CATEGORIES
-        self._categories = categories
-        self._advanced_categories = advanced_categories
+        self._categories = list(categories)
+        self._advanced_categories = list(advanced_categories)
 
         from modules.cleanup import cleanup_scanner as cs
         from modules.cleanup import browser_scanner as bs
-        _id_map = {
+        _id_map = self._main_scanner_definitions(cs)
+        _id_map.update(self._extra_scanner_definitions(cs))
+
+        # A category alias must not turn a reviewed caution entry back into safe.
+        for cid, (fn, safety) in list(_id_map.items()):
+            spec = getattr(fn, "spec", None)
+            if spec is not None:
+                _id_map[cid] = (fn, spec.safety)
+
+        self._scanner_map = {}
+        self._browser_scanner = bs.detect_browsers  # for browser category
+        self._base_safety: Dict[str, str] = {}
+
+        for cid, clabel, ccolor in self._categories:
+            fn_safety = _id_map.get(cid, (None, "safe"))
+            self._scanner_map[cid] = (fn_safety[0], clabel, ccolor)
+            self._base_safety[cid] = fn_safety[1]
+
+        self._adv_scanner_map = {}
+        for cid, clabel, ccolor in self._advanced_categories:
+            fn_safety = _id_map.get(cid, (None, "safe"))
+            self._adv_scanner_map[cid] = (fn_safety[0], clabel, ccolor)
+            self._base_safety[cid] = fn_safety[1]
+
+        self._id_to_scanner_name = {
+            cid: (fn.__name__ if fn else None)
+            for cid, (fn, _label, _color) in
+            {**self._scanner_map, **self._adv_scanner_map}.items()
+        }
+
+        self._setup_ui()
+        self._connect_theme()
+
+    def start_auto_refresh(self, interval_ms: int = 30_000) -> None:
+        self._refresh_interval_ms = interval_ms
+        self._refresh_timer.start(interval_ms)
+
+    def stop_auto_refresh(self) -> None:
+        self._refresh_timer.stop()
+
+    def scan(self) -> None:
+        """Trigger background scan of all categories. Idempotent."""
+        if self._scanning:
+            return
+        self._do_scan_all()
+
+    def auto_scan(self) -> None:
+        """Scan once, the first time this tab is shown (CleanupModule calls
+        this on every tab switch, as for every other tab)."""
+        if not self._scanned:
+            self._do_scan_all()
+
+    def cancel(self) -> None:
+        self._reset_after_cancel()
+        reco = getattr(self, "_reco", None)
+        if reco is not None and _alive(reco):
+            reco.cancel()
+
+    _cancel_all = cancel
+
+    def clean_now(self) -> None:
+        """The module-level "Clean Now" button's entry point. Scans first if
+        this tab has never been scanned (or was reset by a cancel); once a
+        scan has nothing cleanable this is a no-op."""
+        if self._scanning:
+            return
+        if self._scanned:
+            self._do_clean_all_safe()
+            return
+        self._clean_after_scan = True
+        self._do_scan_all()
+
+    def set_theme(self, _theme: str = "") -> None:
+        """Repaint everything painted from the palette (charts, rows, tiles)."""
+        if not _alive(self):
+            return
+        for chart in (getattr(self, "_donut", None), getattr(self, "_bars", None),
+                      getattr(self, "_trend", None)):
+            if chart is not None:
+                chart.set_theme(_theme)
+        for g in self._all_groups():
+            g.update()
+            g._header.update()
+        for t in getattr(self, "_tiles", {}).values():
+            t.glyph.update()
+        if hasattr(self, "_col_header"):
+            self._col_header.update()
+
+    def snapshot(self):
+        """The last complete scan as a ScanSnapshot, or None."""
+        return self._snapshot
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Base breakpoints on the viewport, not the content's current minimum
+        # width: a wide grid must be able to shrink back into a narrow window.
+        width = max(1, event.size().width() - 40)
+        if hasattr(self, "_charts"):
+            self._charts.set_available_width(width)
+            self._kpi.set_available_width(width)
+
+    def _track_worker(self, worker):
+        def finished():
+            if _alive(self) and worker in self._workers:
+                self._workers.remove(worker)
+        worker.signals.finished.connect(finished)
+        self._workers.append(worker)
+
+    def _add_chart_table(self, card, headers):
+        """A keyboard-readable equivalent of the painted chart, from the same data."""
+        card.table_toggle = QToolButton(card)
+        card.table_toggle.setText("Show as table")
+        card.table_toggle.setCheckable(True)
+        card.table_toggle.setToolTip("Switch between the chart and its measured values in a table.")
+        card.table_toggle.setAccessibleName(f"Show {card.title_label.text()} as table")
+        card.table = QTableWidget(0, len(headers), card)
+        card.table.setHorizontalHeaderLabels(headers)
+        card.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        card.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        card.table.setAccessibleName(f"{card.title_label.text()} values")
+        card.table.setToolTip("Read-only values from the same scan or history as the chart.")
+        card.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        card.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        card.table.verticalHeader().hide()
+        card.table.hide()
+        card.layout().insertWidget(1, card.table_toggle, 0, Qt.AlignmentFlag.AlignRight)
+        card.layout().insertWidget(3, card.table, 1)
+
+        def toggle(checked):
+            if not _alive(self):
+                return
+            card.chart.setVisible(not checked)
+            card.table.setVisible(checked)
+            card.table_toggle.setText("Show chart" if checked else "Show as table")
+        card.table_toggle.toggled.connect(toggle)
+
+    @staticmethod
+    def _set_chart_table(card, rows):
+        card.table.setRowCount(len(rows))
+        for row, (values, tooltip) in enumerate(rows):
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(str(value))
+                cell.setToolTip(tooltip)
+                card.table.setItem(row, column, cell)
+
+    def group(self, cid: str) -> Optional[CategoryGroup]:
+        return self._group_widgets.get(cid)
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+
+    def _connect_theme(self) -> None:
+        try:
+            from app import App
+        except ImportError:
+            return
+        inst = getattr(App, "instance", None)
+        theme = getattr(inst, "theme", None)
+        if theme is not None and hasattr(theme, "theme_changed"):
+            theme.theme_changed.connect(self.set_theme)
+
+    @staticmethod
+    def _app_config():
+        try:
+            from app import App
+        except ImportError:
+            return None
+        inst = getattr(App, "instance", None)
+        return getattr(inst, "config", None)
+
+    def _setup_ui(self):
+        from modules.cleanup.cleanup_presets import PRESETS, preset_names
+        from modules.cleanup.components.charts import BarChart, ChartCard, DonutChart, TrendChart
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self._build_toolbar(outer, PRESETS, preset_names)
+
+        self._build_progress(outer)
+
+        # ── Scrolled page ──
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll = scroll
+        page = QWidget()
+        page.setObjectName("overviewPage")
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(12, 6, 12, 14)
+        lay.setSpacing(12)
+
+        self._build_kpi_tiles(lay)
+
+        self._build_charts(lay, BarChart, ChartCard, DonutChart, TrendChart)
+
+        self._build_recommendations(lay)
+
+        self._build_locations(lay)
+        lay.addStretch()
+
+        scroll.setWidget(page)
+        outer.addWidget(scroll, 1)
+        self._group_widgets = dict(self._group_by_cid)
+
+    def _make_group(self, cid: str, label: str, fn, *, main: bool) -> CategoryGroup:
+        group = CategoryGroup(label, fn, auto_refresh=False,
+                              base_safety=self._base_safety.get(cid, ""),
+                              tab_name=_AREA_TAB.get(cid, "") if main else "",
+                              catalog_id=BROWSER_KB_ID if cid == "browser" else "")
+        group.freed_bytes.connect(self.freed_bytes)
+        group.freed_bytes.connect(self._after_group_clean)
+        group.scan_done.connect(
+            lambda count, size, cid=cid: self._category_updated(cid) if _alive(self) else None)
+        if main:
+            group.clicked.connect(lambda cid=cid: self._handle_category_clicked(cid))
+        return group
+
+    def _all_groups(self) -> List[CategoryGroup]:
+        return list(getattr(self, "_group_by_cid", {}).values())
+
+    def _reset_tiles(self) -> None:
+        t = self._tiles
+        t["total"].set(DASH, "Scan to measure",
+                       "<b>Reclaimable</b><p>Everything the scan found that Cleanup can offer, "
+                       "every path counted once even when two categories list it.</p>")
+        t["safe"].set(DASH, "What the preset would remove",
+                      "<b>Safe to clean now</b><p>What “Clean” would remove with the selected "
+                      "preset. Light takes only locations rated Safe.</p>")
+        t["review"].set(DASH, "Rated Review or Risky",
+                        "<b>Needs review</b><p>Locations rated Review or Risky: the more cautious "
+                        "of the catalog's rating and the research's. They start unticked and the "
+                        "Light preset never takes them.</p>")
+        t["blocked"].set(DASH, "Kept out on purpose", not_offered_tooltip(None))
+        t["drive"].set(DASH, "Estimate after a clean",
+                       "<b>Free after clean (C:)</b><p>C:'s free space now plus what the selected "
+                       "preset would remove from C:. An estimate: files in use, cloud-only "
+                       "files and newer-than-24-hour temp files are kept, so the measured "
+                       "figure after a clean is usually lower.</p>")
+
+    def _on_preset_changed(self, _index: int) -> None:
+        from modules.cleanup.cleanup_presets import PRESETS
+        pid = self._preset_combo.currentData()
+        label = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
+        self._clean_all_btn.setText(f"Clean ({label})…")
+        if self._scanned:
+            self._clean_all_btn.setEnabled(self._has_cleanable_items())
+            self._refresh_figures()
+
+    # ── Auto-refresh ────────────────────────────────────────────────────────
+
+    def _on_timer_refresh(self):
+        if self._scanning:
+            return
+        self.scan()
+
+    # ── Scan All ────────────────────────────────────────────────────────────
+
+    def _start_timeout_guard(self, cid: str, scan_targets: list) -> QTimer:
+        """A per-category watchdog: if `cid` hasn't reported within
+        PER_SCANNER_TIMEOUT_MS it is counted as done (timed out) so one slow
+        scanner cannot block every other category from being shown."""
+        generation = self._scan_generation
+        def _on_timeout():
+            if not _alive(self) or generation != self._scan_generation or cid in self._results:
+                return
+            logger.warning(
+                "Quick Cleanup: %s did not report within %.0fs -- "
+                "continuing without it (its own worker keeps running "
+                "and will correct this if it finishes later)",
+                cid, self.PER_SCANNER_TIMEOUT_MS / 1000)
+            self._timed_out_cids.add(cid)
+            self._total_scanned += 1
+            if self._total_scanned == len(scan_targets):
+                self._on_all_scanned()
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(_on_timeout)
+        timer.start(self.PER_SCANNER_TIMEOUT_MS)
+        self._per_category_timers.append(timer)
+        return timer
+
+    def _count_scanner_result(self, cid: str, scan_targets: list) -> None:
+        """Count `cid` toward completion -- unless its timeout guard already
+        counted it, in which case this is a late, corrected result."""
+        already_counted = cid in self._timed_out_cids
+        if not already_counted:
+            self._total_scanned += 1
+        if self._total_scanned == len(scan_targets):
+            self._on_all_scanned()
+        elif already_counted and not self._scanning and self._scanned:
+            # A slow scanner finished after the dashboard rendered without it:
+            # put its real figures in.
+            self._render_results()
+
+    def _do_scan_all(self):
+        if self._scanning:
+            return
+        self._scanning = True
+        self._scan_generation += 1
+        generation = self._scan_generation
+        self._scan_started = time.monotonic()
+        self._watchdog.start(self.SCAN_WATCHDOG_MS)
+        self._scan_all_btn.setEnabled(False)
+        self._stop_btn.setEnabled(True)
+        self._clean_all_btn.setEnabled(False)
+        self._results.clear()
+        self._scan_errors.clear()
+        self._total_scanned = 0
+        self._timed_out_cids = set()
+        for t in self._per_category_timers:
+            t.stop()
+        self._per_category_timers = []
+
+        from modules.cleanup import cleanup_scanner as cs
+
+        scan_targets = [cid for cid, _, _ in self._categories]
+        scan_targets += [cid for cid, _, _ in self._advanced_categories]
+        browser_target = "browser" in [c[0] for c in self._categories]
+
+        def _start_worker(cid: str, scanner_fn):
+            def _run(_worker):
+                from modules.cleanup.cleanup_scanner import scan_cache
+                return scan_cache.cached_scan(scanner_fn, 0)
+
+            timer = self._start_timeout_guard(cid, scan_targets)
+
+            def _done(result):
+                if not _alive(self) or generation != self._scan_generation:
+                    return
+                timer.stop()
+                self._results[cid] = result
+                self._count_scanner_result(cid, scan_targets)
+
+            def _err(_e):
+                if not _alive(self) or generation != self._scan_generation:
+                    return
+                timer.stop()
+                logger.warning("Quick Cleanup scanner %s failed: %s", cid, _e)
+                self._scan_errors[cid] = str(_e)
+                self._results[cid] = cs.ScanResult()
+                self._count_scanner_result(cid, scan_targets)
+
+            def _cancelled():
+                if _alive(self) and generation == self._scan_generation:
+                    self._reset_after_cancel("Scan stopped. Click Scan all to start again.")
+
+            w = Worker(_run)
+            w.signals.result.connect(_done)
+            w.signals.error.connect(_err)
+            w.signals.cancelled.connect(_cancelled)
+            self._track_worker(w)
+            QThreadPool.globalInstance().start(w)
+
+        for cid, _clabel, _c in self._categories:
+            if cid == "browser":
+                continue
+            fn_info = self._scanner_map.get(cid)
+            if fn_info is None or fn_info[0] is None:
+                scan_targets.remove(cid)
+                continue
+            _start_worker(cid, fn_info[0])
+
+        for cid, _clabel, _c in self._advanced_categories:
+            fn_info = self._adv_scanner_map.get(cid)
+            if fn_info is None or fn_info[0] is None:
+                scan_targets.remove(cid)
+                continue
+            _start_worker(cid, fn_info[0])
+
+        self._scan_targets = scan_targets
+
+        if browser_target:
+            def _run_browser(_worker):
+                return self._browser_scanner()
+
+            browser_timer = self._start_timeout_guard("browser", scan_targets)
+
+            def _done_browser(results):
+                if not _alive(self) or generation != self._scan_generation:
+                    return
+                browser_timer.stop()
+                self._results["browser"] = results
+                self._count_scanner_result("browser", scan_targets)
+
+            def _err_browser(_e):
+                if not _alive(self) or generation != self._scan_generation:
+                    return
+                browser_timer.stop()
+                logger.warning("Quick Cleanup browser scan failed: %s", _e)
+                self._scan_errors["browser"] = str(_e)
+                self._results["browser"] = []
+                self._count_scanner_result("browser", scan_targets)
+
+            def _cancelled_browser():
+                if _alive(self) and generation == self._scan_generation:
+                    self._reset_after_cancel("Scan stopped. Click Scan all to start again.")
+
+            wb = Worker(_run_browser)
+            wb.signals.result.connect(_done_browser)
+            wb.signals.error.connect(_err_browser)
+            wb.signals.cancelled.connect(_cancelled_browser)
+            self._track_worker(wb)
+            QThreadPool.globalInstance().start(wb)
+
+        if hasattr(self, "_progress_row"):
+            self._progress.setRange(0, max(1, len(scan_targets)))
+            self._progress.setValue(0)
+            self._progress_row.show()
+            self._status_lbl.setText("Scanning… nothing is deleted by a scan.")
+            self._update_progress()
+            self._progress_timer.start()
+
+        if not scan_targets:
+            self._on_all_scanned()
+
+    def _update_progress(self) -> None:
+        if not _alive(self) or not self._scanning:
+            return
+        total = max(1, len(self._scan_targets))
+        done = min(total, self._total_scanned)
+        self._progress.setMaximum(total)
+        self._progress.setValue(done)
+        text = f"Scanning {done} of {total} locations"
+        elapsed = time.monotonic() - self._scan_started
+        if elapsed >= SLOW_NOTE_AFTER_S:
+            label_by_id = {cid: label for cid, label, _ in
+                           self._categories + self._advanced_categories}
+            waiting = [label_by_id.get(c, c) for c in self._scan_targets
+                       if c not in self._results and c not in self._timed_out_cids]
+            if waiting:
+                shown = ", ".join(waiting[:3]) + (f" and {len(waiting) - 3} more"
+                                                  if len(waiting) > 3 else "")
+                text += f" · still waiting on {shown} ({elapsed:.0f} s)"
+        self._progress_lbl.setText(text)
+        self._progress_lbl.setToolTip(text)
+
+    def _on_all_scanned(self):
+        self._watchdog.stop()
+        self._scanned = True
+        self._scanning = False
+        self._scan_all_btn.setEnabled(True)
+        self._stop_btn.setEnabled(False)
+        self._progress_timer.stop()
+        self._progress_row.hide()
+        self._workers = [w for w in self._workers if not w.is_cancelled]
+
+        total_items, total_size = self._render_results()
+
+        categories_with_data = self._figures.categories_with_data if self._figures else 0
+        status = (
+            f"Found {total_items} item(s) across {categories_with_data} categories"
+            if categories_with_data else "No reclaimable space found"
+        )
+        if self._timed_out_cids:
+            label_by_id = {cid: label for cid, label, _ in
+                           self._categories + self._advanced_categories}
+            names = ", ".join(
+                label_by_id.get(cid, cid) for cid in sorted(self._timed_out_cids))
+            status += f" ({len(self._timed_out_cids)} slow and still scanning: {names})"
+        if self._scan_errors:
+            status += f"; {len(self._scan_errors)} scanner(s) failed — expand the category for details"
+        self._status_lbl.setText(status)
+        self._status_lbl.setToolTip(status)
+        self.scan_done.emit(total_items, total_size)
+
+        self._publish_snapshot()
+        self._start_facts_job()
+        self._refresh_trend()
+
+        if self._clean_after_scan:
+            self._clean_after_scan = False
+            self._do_clean_all_safe()
+
+    # ── Rendering a finished scan ───────────────────────────────────────
+
+    def _browser_scan_result(self, browser_results):
+        """The browser scan as a ScanResult, so it can be listed, charted and
+        de-duplicated like every other category. The raw list stays in
+        ``_results["browser"]`` for the clean, which takes it as is."""
+        from modules.cleanup import cleanup_scanner as cs
+        out = cs.ScanResult()
+        for r in browser_results or []:
+            for profile in getattr(r, "profiles", None) or []:
+                for cat in getattr(profile, "categories", None) or []:
+                    size = int(getattr(cat, "size_bytes", 0) or 0)
+                    if size > 0:
+                        out.items.append(cs.ScanItem(path=str(cat.path), size=size,
+                                                     is_dir=True, safety="safe"))
+                        out.total_size += size
+        return out
+
+    def _render_results(self):
+        """Feed every view from ``self._results``. Returns (items, bytes)."""
+        from modules.cleanup import cleanup_scanner as cs
+        from modules.cleanup.components.charts import Slice
+
+        # Categories overlap, so results are de-duplicated ACROSS categories
+        # before anything is totalled (measured before the fix: 2.10 GB
+        # claimed against 1.39 GB really present). Each unique path goes to the
+        # first category that claims it, in display order.
+        merged = dict(self._results)
+        if "browser" in merged and not isinstance(merged["browser"], cs.ScanResult):
+            merged["browser"] = self._browser_scan_result(merged["browser"])
+        display = self._deduplicate_across_categories(merged)
+        raw_browser = self._results.get("browser")
+        self._results = dict(display)
+        if raw_browser is not None and not isinstance(raw_browser, cs.ScanResult):
+            self._results["browser"] = raw_browser
+        self._display = display
+
+        total_size = 0
+        total_items = 0
+        with_data = 0
+        for cid, group in self._group_by_cid.items():
+            result = display.get(cid)
+            if not isinstance(result, cs.ScanResult):
+                if cid in self._timed_out_cids:
+                    group._set_state("Still scanning…")
+                    continue
+                result = cs.ScanResult()
+            group.set_result(result)
+            group._err_lbl.setText(self._scan_errors.get(cid, ""))
+            group._err_lbl.setVisible(cid in self._scan_errors)
+            if result.items:
+                total_size += result.total_size
+                total_items += len(result.items)
+                with_data += 1
+        for group in self._all_groups():
+            group.set_share(group.total_size() / total_size if total_size else 0.0)
+
+        # Main rows: largest first. Advanced: largest first, empty ones hidden.
+        mains = sorted(self._legend_cards, key=lambda g: -g.total_size())
+        for i, g in enumerate(mains):
+            self._main_box.insertWidget(i, g)
+        advs = sorted(self._adv_cards, key=lambda g: -g.total_size())
+        for i, g in enumerate(advs):
+            self._adv_box.insertWidget(i, g)
+            g.setVisible(g.total_size() > 0)
+        self._update_adv_button()
+
+        # Donut: every category, so slice and legend are one list.
+        slices = []
+        for cid, group in self._group_by_cid.items():
+            size = group.total_size()
+            if size > 0:
+                slices.append(Slice(label=group.name(), bytes=size, key=cid,
+                                    safety_mix=group.safety_mix()))
+        self._donut.set_data(slices)
+
+        # Bars: the ten largest single locations.
+        bars = []
+        for cid, group in self._group_by_cid.items():
+            for item in group.items():
+                if item.size > 0:
+                    bars.append(Slice(label=short_path(item.path), bytes=int(item.size),
+                                      key=f"{cid}\n{item.path}", safety=group.item_safety(item),
+                                      detail=item.path))
+        self._bars.set_data(bars)
+        from modules.cleanup.components.charts import percent_text
+        self._set_chart_table(self._donut_card, [
+            ((s.label, cs.format_size(s.bytes), percent_text(s.bytes, self._donut.total())),
+             self._donut_tooltip(s)) for s in self._donut.slices()])
+        self._set_chart_table(self._bars_card, [
+            ((s.label, cs.format_size(s.bytes), BADGE[s.safety]), self._bar_tooltip(s))
+            for s in self._bars.bars()])
+
+        self._figures_with_data = with_data
+        self._refresh_figures()
+        self._clean_all_btn.setEnabled(self._has_cleanable_items())
+        return total_items, total_size
+
+    def _preset_items(self) -> list:
+        """(path, size) the selected preset would remove -- the same selection
+        _do_clean_all_safe makes, read-only."""
+        from modules.cleanup import cleanup_presets
+        from modules.cleanup import cleanup_scanner as cs
+        preset_id = self._preset_combo.currentData() if hasattr(self, "_preset_combo") else "light"
+        chosen = []
+        scan_results = {k: v for k, v in self._results.items()
+                        if k != "browser" and isinstance(v, cs.ScanResult)}
+        if preset_id == "custom":
+            for cid, result in scan_results.items():
+                if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
+                    continue
+                chosen.extend((i.path, i.size) for i in result.items if i.safety == "safe")
+        else:
+            try:
+                chosen.extend((i.path, i.size) for i in cleanup_presets.items_for_preset(
+                    preset_id, scan_results, self._id_to_scanner_name))
+            except ValueError as exc:
+                logger.warning("preset %s could not be resolved: %s", preset_id, exc)
+        browser = self._display.get("browser")
+        if isinstance(browser, cs.ScanResult):
+            chosen.extend((i.path, i.size) for i in browser.items)
+        return chosen
+
+    def _refresh_figures(self) -> None:
+        from modules.cleanup.cleanup_scanner import format_size
+        from modules.cleanup.cleanup_presets import PRESETS
+        rows = []
+        self._effective_by_path = {}
+        for group in self._group_by_cid.values():
+            for item in group.items():
+                level = group.item_safety(item)
+                rows.append((item.path, item.size, level))
+                self._effective_by_path[ntpath.normcase(item.path)] = level
+        fig = compute_figures(rows, self._preset_items(),
+                              getattr(self, "_figures_with_data", 0))
+        self._figures = fig
+        pid = self._preset_combo.currentData()
+        plabel = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
+        t = self._tiles
+        cats = fig.categories_with_data
+        t["total"].set(format_size(fig.total),
+                       f"{fig.locations} locations in {cats} categor{'y' if cats == 1 else 'ies'}")
+        reviewed = sum(size for path, size in self._preset_items()
+                       if self._effective_by_path.get(ntpath.normcase(path), "safe") != "safe")
+        safe_sub = f"{fig.preset_count} locations · {plabel} preset"
+        safe_tip = ("<b>Safe to clean now</b><p>What “Clean” would remove with the "
+                    f"<b>{plabel}</b> preset: {fig.preset_count} locations, "
+                    f"{format_size(fig.preset_bytes)}. The preset decides from the catalog's "
+                    "own rating, exactly as before.</p>")
+        if reviewed:
+            safe_sub = f"{plabel} preset · {format_size(reviewed)} of it rated Review"
+            safe_tip += (f"<p>{format_size(reviewed)} of it is rated Review or Risky by the "
+                         "research, which is more cautious than the catalog there. Read those "
+                         "rows (ⓘ) before you clean, or pick them by hand on their tab.</p>")
+        t["safe"].set(format_size(fig.preset_bytes), safe_sub, safe_tip)
+        t["review"].set(format_size(fig.review_bytes),
+                        f"{fig.review_count} locations · start unticked")
+        self._refresh_drive_tile()
+
+    def _refresh_drive_tile(self) -> None:
+        from modules.cleanup.cleanup_scanner import format_size
+        tile = self._tiles["drive"]
+        if self._free_c is None:
+            if self._free_c_error:
+                tile.set(DASH, "C: could not be read")
+            return
+        add = (self._figures.preset_on_drive.get("C:", 0) if self._figures else 0)
+        tile.set(format_size(self._free_c + add),
+                 f"now {format_size(self._free_c)} free · estimate")
+
+    # ── Snapshot, recommendations, facts, trend ─────────────────────────
+
+    def _snapshot_per_tab(self) -> dict:
+        from modules.cleanup import cleanup_scanner as cs
+        per_tab: Dict[str, dict] = {}
+        for cid, result in self._display.items():
+            if not isinstance(result, cs.ScanResult) or not result.items:
+                continue
+            fn = self._scanner_map.get(cid, self._adv_scanner_map.get(cid, (None,)))[0]
+            if cid in _RECO_TAB:
+                tab = _RECO_TAB[cid]
+            else:
+                cat = getattr(getattr(fn, "spec", None), "category", "")
+                tab = _RECO_TAB_BY_CATALOG.get(cat, "overview")
+            bucket = per_tab.setdefault(tab, {})
+            key = fn if fn is not None else (BROWSER_KB_ID if cid == "browser" else cid)
+            if key in bucket:
+                from modules.cleanup.cleanup_scanner.knowledge import id_for_scanner
+                key = id_for_scanner(fn) if fn is not None else cid
+            bucket[key] = result
+        return per_tab
+
+    def _publish_snapshot(self) -> None:
+        try:
+            from modules.cleanup.cleanup_scanner.scan_snapshot import ScanSnapshot
+            snap = ScanSnapshot.from_results(self._snapshot_per_tab(),
+                                             preset=str(self._preset_combo.currentData() or ""))
+        except (ImportError, AttributeError, TypeError, ValueError, KeyError, OSError) as exc:
+            logger.warning("Quick Cleanup: could not build the scan snapshot: %s", exc)
+            return
+        self._snapshot = snap
+        self.snapshot_ready.emit(snap)
+        self._reco_pending = True
+        if self.isVisible():
+            self._refresh_recommendations()
+
+    def _refresh_recommendations(self) -> None:
+        if self._reco is None or self._snapshot is None or not self._reco_pending:
+            return
+        self._reco_pending = False
+        self._reco.refresh(self._snapshot)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._reco_pending:
+            QTimer.singleShot(0, self._refresh_recommendations)
+        if not getattr(self, "_trend_loaded", False):
+            self._refresh_trend()
+
+    def _start_facts_job(self) -> None:
+        """Free space on C: and the not-offered census, off the UI thread."""
+        from modules.cleanup.components.kpi_tiles import not_offered_on_this_pc
+
+        def _run(_worker):
+            import shutil
+            free, err = None, ""
+            try:
+                free = shutil.disk_usage("C:\\").free
+            except OSError as exc:
+                err = str(exc)
+            try:
+                from modules.cleanup.cleanup_scanner.catalog import load_catalog
+                info = not_offered_on_this_pc(load_catalog().values())
+            except (ImportError, OSError, ValueError) as exc:
+                logger.warning("not-offered census failed: %s", exc)
+                info = None
+            return free, err, info
+
+        def _done(res):
+            if not _alive(self):
+                return
+            free, err, info = res
+            self._free_c, self._free_c_error = free, err
+            self._not_offered = info
+            if info is not None:
+                self._tiles["blocked"].set(
+                    str(info.count), "locations kept out on purpose",
+                    not_offered_tooltip(info))
+            else:
+                self._tiles["blocked"].set(DASH, "could not be checked",
+                                           not_offered_tooltip(None))
+            self._refresh_drive_tile()
+
+        def _err(msg):
+            if not _alive(self):
+                return
+            logger.warning("Quick Cleanup facts job failed: %s", msg)
+
+        w = Worker(_run)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._track_worker(w)
+        QThreadPool.globalInstance().start(w)
+
+    def _refresh_trend(self) -> None:
+        """Cleans from the deletion log and scans from the scan summaries."""
+        self._trend_loaded = True
+
+        def _run(_worker):
+            from modules.cleanup import cleanup_history as ch
+            from modules.cleanup.cleanup_scanner.scan_snapshot import read_summaries
+            cleans = ch.trend_points(ch.recent_deleted(500))
+            scans = ch.scan_points(read_summaries())
+            return cleans, scans
+
+        def _done(res):
+            if not _alive(self):
+                return
+            from modules.cleanup.components.charts import TrendPoint
+            cleans, scans = res
+            self._trend.set_data([TrendPoint(w, v) for w, v in cleans],
+                                 [TrendPoint(w, v) for w, v in scans])
+            from datetime import datetime
+            from modules.cleanup.cleanup_scanner import format_size
+            rows = [(w, v, None) for w, v in cleans] + [(w, None, v) for w, v in scans]
+            self._set_chart_table(self._trend_card, [
+                ((datetime.fromtimestamp(w).strftime("%Y-%m-%d %H:%M"),
+                  format_size(freed) if freed is not None else DASH,
+                  format_size(reclaimable) if reclaimable is not None else DASH),
+                 "Measured clean history and saved scan summaries.")
+                for w, freed, reclaimable in sorted(rows, key=lambda row: row[0])])
+
+        def _err(msg):
+            if not _alive(self):
+                return
+            logger.warning("Quick Cleanup trend could not be read: %s", msg)
+            self._trend.set_empty_text("History could not be read", str(msg)[:120])
+
+        w = Worker(_run)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._track_worker(w)
+        QThreadPool.globalInstance().start(w)
+
+    # ── Chart and recommendation interaction ────────────────────────────
+
+    def _donut_tooltip(self, mark) -> str:
+        from html import escape
+        from modules.cleanup.components.charts import OTHER_KEY, percent_text, safety_mix_text
+        from modules.cleanup.cleanup_scanner import format_size
+        total = self._donut.total()
+        head = (f"<b>{escape(mark.label)}</b> · {escape(format_size(mark.bytes))} · "
+                f"{escape(percent_text(mark.bytes, total))}")
+        mix = safety_mix_text(mark.safety_mix)
+        body = f"<p>{escape(mix)}</p>" if mix else ""
+        if mark.key == OTHER_KEY:
+            names = ", ".join(mark.members[:12]) + ("…" if len(mark.members) > 12 else "")
+            return f"<div style='max-width:420px'>{head}{body}<p>{escape(names)}</p>" \
+                   "<p>Click to open More locations.</p></div>"
+        group = self._group_by_cid.get(mark.key)
+        if group is None:
+            return head + body
+        return group.row_tooltip().replace("</div>", f"{body}<p>Click to find it below.</p></div>", 1)
+
+    def _bar_tooltip(self, mark) -> str:
+        from html import escape
+        cid = mark.key.split("\n", 1)[0]
+        group = self._group_by_cid.get(cid)
+        path = f"<p><b>Path:</b> {escape(mark.detail)}</p>"
+        if group is None:
+            return path
+        return group.row_tooltip().replace("</div>", path + "</div>", 1)
+
+    def _reveal(self, cid: str) -> None:
+        group = self._group_by_cid.get(cid)
+        if group is None:
+            return
+        if group in self._adv_cards and not self._adv_shown:
+            self._toggle_advanced()
+        group.set_expanded(True)
+        QTimer.singleShot(0, lambda g=group: self._scroll.ensureWidgetVisible(g, 0, 40)
+                          if _alive(g) else None)
+        group._header.setFocus()
+
+    def _on_donut_clicked(self, key: str) -> None:
+        from modules.cleanup.components.charts import OTHER_KEY
+        self._donut.set_selected(key)
+        if key == OTHER_KEY:
+            if not self._adv_shown:
+                self._toggle_advanced()
+            QTimer.singleShot(0, lambda: self._scroll.ensureWidgetVisible(self._show_adv_btn, 0, 40)
+                              if _alive(self) else None)
+            return
+        self._reveal(key)
+
+    def _on_bar_clicked(self, key: str) -> None:
+        self._reveal(key.split("\n", 1)[0])
+
+    def _on_reco_navigate(self, tab: str, ids: list, age_days: int) -> None:
+        """An overview target is shown here; any other tab is the owner's."""
+        if tab == "overview":
+            wanted = set(ids)
+            hits = [cid for cid, g in self._group_by_cid.items()
+                    if g.catalog_id() in wanted and g.total_size() > 0]
+            for cid in hits:
+                self._reveal(cid)
+            if hits:
+                self._reveal(hits[0])
+            return
+        self.navigate.emit(tab, list(ids), int(age_days))
+
+    def _expand_groups(self, expanded: bool) -> None:
+        for g in self._all_groups():
+            if g.isVisible() or not expanded:
+                if not expanded or g.total_size() > 0:
+                    g.set_expanded(expanded)
+
+    def _update_adv_button(self) -> None:
+        if not hasattr(self, "_show_adv_btn"):
+            return
+        arrow = "▾" if self._adv_shown else "▸"
+        if not self._scanned:
+            n = len(self._adv_cards)
+            text = f"{arrow}  More locations ({n})"
+            self._adv_empty.setText("Scan to see which of these exist on this PC.")
+            self._adv_empty.setVisible(True)
+        else:
+            found = sum(1 for g in self._adv_cards if g.total_size() > 0)
+            size = sum(g.total_size() for g in self._adv_cards)
+            from modules.cleanup.cleanup_scanner import format_size
+            text = f"{arrow}  More locations ({found})  ·  {format_size(size)}"
+            self._adv_empty.setText("None of these found anything on this PC."
+                                    if found == 0 else "")
+            self._adv_empty.setVisible(found == 0)
+        self._show_adv_btn.setText(text)
+        self._show_adv_btn.setAccessibleName(text.replace(arrow, "").strip())
+
+    # ── Cancel and watchdog ──────────────────────────────────────────────
+
+    def _on_stop_clicked(self) -> None:
+        if self._scanning:
+            self._reset_after_cancel(message="Scan stopped. Nothing was deleted; click Scan all "
+                                             "to start again.")
+
+    def _on_scan_watchdog(self) -> None:
+        if not self._scanning:
+            return
+        label_by_id = {cid: label for cid, label, _ in self._categories + self._advanced_categories}
+        missing = [label_by_id.get(cid, cid) for cid in self._scan_targets
+                   if cid not in self._results]
+        stuck_desc = ", ".join(missing) if missing else "unknown"
+        logger.warning(
+            "Quick Cleanup scan timed out after %.0fs with %d/%d "
+            "categories reported; still waiting on: %s",
+            self.SCAN_WATCHDOG_MS / 1000, self._total_scanned,
+            len(self._scan_targets), stuck_desc)
+        self._reset_after_cancel(
+            message=f"Scan timed out — stuck on: {stuck_desc} (click Scan all to retry)")
+
+    def _reset_after_cancel(self, message: str = None) -> None:
+        """Put the tab back in a state the user can act on -- shared by the
+        watchdog, Stop and cancel(). A cancelled Worker emits `cancelled`,
+        never `result` or `error`, so _on_all_scanned would never run."""
+        self._watchdog.stop()
+        self._scan_generation += 1
+        retire(self._workers)       # held until delivered: see core.worker.retire
+        for t in self._per_category_timers:
+            t.stop()
+        self._per_category_timers = []
+        self._scanning = False
+        # A cancelled scan must not leave clean_now()'s deferred action armed.
+        self._clean_after_scan = False
+        # Nothing was measured, so the tab has NOT been scanned.
+        self._scanned = False
+        for g in self._all_groups():
+            g.cancel()
+        if hasattr(self, "_scan_all_btn"):
+            self._scan_all_btn.setEnabled(True)
+            self._stop_btn.setEnabled(False)
+            self._clean_all_btn.setEnabled(self._has_cleanable_items())
+        if hasattr(self, "_progress_row"):
+            self._progress_timer.stop()
+            self._progress_row.hide()
+        if hasattr(self, "_status_lbl") and message:
+            self._status_lbl.setText(message)
+            self._status_lbl.setToolTip(message)
+
+    def _has_cleanable_items(self) -> bool:
+        """Is there at least one item the CURRENT preset would clean?
+        Mirrors what _do_clean_all_safe actually does."""
+        from modules.cleanup import cleanup_scanner as cs
+        from modules.cleanup import browser_scanner as bs
+        from modules.cleanup import cleanup_presets
+
+        preset_id = self._preset_combo.currentData() if hasattr(self, "_preset_combo") else "light"
+
+        for cid, result in self._results.items():
+            if cid == "browser":
+                browser_results: List[bs.BrowserResult] = result or []
+                if isinstance(browser_results, cs.ScanResult):
+                    if browser_results.items:
+                        return True
+                    continue
+                for r in browser_results:
+                    for profile in r.profiles:
+                        for cat in profile.categories:
+                            if cat.size_bytes > 0:
+                                return True
+            elif isinstance(result, cs.ScanResult):
+                if preset_id == "custom":
+                    if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
+                        continue
+                    if any(item.safety == "safe" for item in result.items):
+                        return True
+                else:
+                    items = cleanup_presets.items_for_preset(
+                        preset_id, {cid: result}, self._id_to_scanner_name)
+                    if items:
+                        return True
+        return False
+
+    def _deduplicate_across_categories(self, results: dict) -> dict:
+        """Drop items already claimed by an earlier category.
+
+        `dedupe_items` removes a repeated or nested path from ONE list; this
+        applies the same rule across the whole scan. First claim wins, in
+        display order, which keeps every slice attributable to one category.
+        """
+        from modules.cleanup import cleanup_scanner as cs
+
+        order = [cid for cid, _label, _colour in self._categories]
+        order += [cid for cid, _label, _colour in self._advanced_categories]
+
+        claimed: list = []
+        deduped = dict(results)
+        for cid in order:
+            result = results.get(cid)
+            if not isinstance(result, cs.ScanResult) or not result.items:
+                continue
+            merged = cs.dedupe_items(claimed + list(result.items))
+            already = {id(i) for i in claimed}
+            kept = [i for i in merged if id(i) not in already]
+            fresh = cs.ScanResult()
+            fresh.items = kept
+            fresh.total_size = sum(i.size for i in kept)
+            deduped[cid] = fresh
+            claimed = merged
+        return deduped
+
+    def _on_group_scan_done(self, item_count: int, total_size: int):
+        """Kept for callers of the old API; a single category's rescan does
+        not change the dashboard's totals."""
+
+    def _category_updated(self, cid: str) -> None:
+        """Reconcile a category's rescan, including a post-clean measurement."""
+        if self._scanning:
+            return
+        group = self._group_by_cid[cid]
+        self._results[cid] = group._results
+        self._render_results()
+        self._publish_snapshot()
+
+    def _after_group_clean(self, _freed: int) -> None:
+        if _alive(self):
+            self._refresh_trend()
+
+    def _handle_category_clicked(self, cid: str) -> None:
+        if self._on_category_clicked is not None:
+            self._on_category_clicked(cid)
+
+    def _toggle_advanced(self):
+        """Show/hide the More locations list."""
+        self._adv_shown = not self._adv_shown
+        self._adv_widget.setVisible(self._adv_shown)
+        self._update_adv_button()
+
+    # ── Clean with the preset ───────────────────────────────────────────
+
+    def _do_clean_all_safe(self):
+        if self._scanning:
+            return
+        from modules.cleanup import cleanup_scanner as cs
+        from modules.cleanup import browser_scanner as bs
+        from modules.cleanup import clean_safe_runner as csr
+
+        all_safe: List[cs.ScanItem] = []
+        needs_wu = False
+        total = 0
+        browser_cats: List[bs.CacheCategory] = []
+
+        from modules.cleanup import cleanup_presets
+        preset_id = self._preset_combo.currentData()
+
+        for cid in self._results:
+            if cid == "browser":
+                browser_results = self._results.get(cid, [])
+                if isinstance(browser_results, cs.ScanResult):
+                    continue
+                for r in browser_results:
+                    for profile in r.profiles:
+                        for cat in profile.categories:
+                            if cat.size_bytes > 0:
+                                browser_cats.append(cat)
+                                total += cat.size_bytes
+            elif cid == "wu":
+                needs_wu = True
+
+        scan_results = {k: v for k, v in self._results.items()
+                        if k != "browser" and isinstance(v, cs.ScanResult)}
+        if preset_id == "custom":
+            for cid, result in scan_results.items():
+                if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
+                    continue
+                for item in result.items:
+                    if item.safety == "safe":
+                        item.selected = True
+                        all_safe.append(item)
+                        total += item.size
+        else:
+            selected_items = cleanup_presets.items_for_preset(
+                preset_id, scan_results, self._id_to_scanner_name)
+            for item in selected_items:
+                item.selected = True
+                all_safe.append(item)
+                total += item.size
+
+        if not all_safe and not browser_cats:
+            return
+
+        def _on_done(deleted, errors, freed):
+            if not _alive(self):
+                return
+            self._scanning = False
+            self._scan_all_btn.setEnabled(True)
+            self._progress_row.hide()
+            from modules.cleanup.cleanup_scanner import format_size
+            msg = f"Cleaned {deleted} item(s) · {format_size(freed)} freed (measured)"
+            if errors:
+                msg += f" — {errors} could not be deleted; see the History tab"
+            self._status_lbl.setText(msg)
+            self._status_lbl.setToolTip(msg)
+            self.freed_bytes.emit(freed)        # measured, never the scanned total
+            self._refresh_trend()
+            self.scan()
+
+        def _on_error(e: str):
+            if not _alive(self):
+                return
+            self._scanning = False
+            self._scan_all_btn.setEnabled(True)
+            self._progress_row.hide()
+            self._status_lbl.setText(f"Clean error: {e}")
+
+        preset_label = (
+            cleanup_presets.PRESETS[preset_id]["label"]
+            if preset_id != "custom" else None)
+
+        worker = csr.run_clean_safe(
+            self, all_safe, browser_cats=browser_cats, stop_wuauserv=needs_wu,
+            confirm="always", preset_label=preset_label,
+            on_done=_on_done, on_error=_on_error)
+        if worker is None:
+            return  # user declined the confirm -- nothing was disabled yet
+
+        self._scanning = True
+        self._scan_all_btn.setEnabled(False)
+        self._stop_btn.setEnabled(False)
+        self._clean_all_btn.setEnabled(False)
+        self._progress.setRange(0, 0)
+        self._progress_lbl.setText("Cleaning… files in use are skipped and reported.")
+        self._progress_row.show()
+        self._track_worker(worker)
+
+    def _main_scanner_definitions(self, cs):
+        return {
             # Main categories
             "temp":     (cs.scan_temp_files,              "safe"),
             "prefetch": (cs.scan_prefetch,                "caution"),
@@ -480,11 +1591,11 @@ class QuickCleanupTab(QWidget):
             "large":    (cs.scan_windows_old,              "caution"),
             "dev":      (cs.scan_dev_tool_caches,           "safe"),
             # Advanced categories (existing)
-            "recent":   (cs.scan_recent_files,            "safe"),
-            "games":    (cs.scan_game_caches,              "safe"),
+            "recent":   (cs.scan_recent_files,            "caution"),
+            "games":    (cs.scan_game_caches,              "caution"),
             "adobe":    (cs.scan_adobe_cache,              "safe"),
             "office":   (cs.scan_office_temp,             "safe"),
-            "jets":     (cs.scan_ide_caches,              "safe"),
+            "jets":     (cs.scan_ide_caches,              "caution"),
             "spooler":  (cs.scan_print_spooler,           "caution"),
             "winsat":   (cs.scan_winsat_cache,            "safe"),
             "etl":      (cs.scan_etl_logs,               "caution"),
@@ -545,6 +1656,10 @@ class QuickCleanupTab(QWidget):
             "edge":      (cs.scan_edge_cache,              "safe"),
             "firefox":   (cs.scan_firefox_cache,          "safe"),
             "chrome":    (cs.scan_chrome_cache,            "safe"),
+        }
+
+    def _extra_scanner_definitions(self, cs):
+        return {
             # System
             "iis":       (cs.scan_iis_logs,               "safe"),
             "dockerimg": (cs.scan_docker_desktop_cache,    "caution"),
@@ -626,681 +1741,241 @@ class QuickCleanupTab(QWidget):
             "amd_install_manager_cache": (cs.scan_amd_install_manager_cache, "safe"),
         }
 
-        self._scanner_map = {}
-        self._browser_scanner = bs.detect_browsers  # for browser category
+    def _build_toolbar(self, outer, PRESETS, preset_names):
+        # ── Toolbar ──
+        bar = QWidget()
+        bar.setObjectName("overviewToolbar")
+        toolbar = QHBoxLayout(bar)
+        toolbar.setContentsMargins(12, 10, 12, 4)
+        toolbar.setSpacing(8)
 
-        for cid, clabel, ccolor in categories:
-            fn_safety = _id_map.get(cid, (None, "safe"))
-            self._scanner_map[cid] = (fn_safety[0], clabel, ccolor)
-
-        self._adv_scanner_map = {}
-        for cid, clabel, ccolor in advanced_categories:
-            fn_safety = _id_map.get(cid, (None, "safe"))
-            self._adv_scanner_map[cid] = (fn_safety[0], clabel, ccolor)
-
-        self._id_to_scanner_name = {
-            cid: (fn.__name__ if fn else None)
-            for cid, (fn, _label, _color) in
-            {**self._scanner_map, **self._adv_scanner_map}.items()
-        }
-
-        self._setup_ui()
-
-    def start_auto_refresh(self, interval_ms: int = 30_000) -> None:
-        self._refresh_interval_ms = interval_ms
-        self._refresh_timer.start(interval_ms)
-
-    def stop_auto_refresh(self) -> None:
-        self._refresh_timer.stop()
-
-    def scan(self) -> None:
-        """Trigger background scan of all categories. Idempotent."""
-        if self._scanning:
-            return
-        self._do_scan_all()
-
-    def auto_scan(self) -> None:
-        """Scan once, the first time this tab is shown -- CleanupModule's
-        _on_tab_changed calls this on every tab switch, the same as every
-        other tab in the module (_ScanTab, _OverviewTab before it)."""
-        if not self._scanned:
-            self._do_scan_all()
-
-    def cancel(self) -> None:
-        self._reset_after_cancel()
-
-    def clean_now(self) -> None:
-        """The module-level "Clean Now" button's entry point. Scans first
-        if this tab has never been scanned (or was reset by a cancel) --
-        the button is reachable before anyone has visited this tab at
-        all, so it cannot assume `_results` is already populated. Once a
-        scan genuinely has nothing cleanable, this is a no-op, same as
-        clicking the (disabled) Clean button directly would be."""
-        if self._scanning:
-            return
-        if self._scanned:
-            self._do_clean_all_safe()
-            return
-        self._clean_after_scan = True
-        self._do_scan_all()
-
-    # ── Setup ────────────────────────────────────────────────────────────────
-
-    def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        # ── Top toolbar ──
-        toolbar = QHBoxLayout()
-        self._scan_all_btn = QPushButton("🔍  Scan All")
+        self._scan_all_btn = QPushButton("Scan all")
+        self._scan_all_btn.setToolTip(
+            "Measure every location in the catalog that exists on this PC (read-only; "
+            "nothing is deleted). F5.")
+        self._scan_all_btn.setAccessibleName("Scan all locations")
         self._scan_all_btn.clicked.connect(self.scan)
+        toolbar.addWidget(self._scan_all_btn)
 
-        from modules.cleanup.cleanup_presets import PRESETS, preset_names
+        self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.setToolTip("Stop the scan. Locations already measured are discarded "
+                                  "and the tab goes back to its unscanned state.")
+        self._stop_btn.setAccessibleName("Stop scanning")
+        self._stop_btn.clicked.connect(self._on_stop_clicked)
+        toolbar.addWidget(self._stop_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setObjectName("toolbarSeparator")
+        toolbar.addWidget(sep)
+
+        preset_lbl = QLabel("Preset")
+        preset_lbl.setObjectName("muted")
+        toolbar.addWidget(preset_lbl)
+
         self._preset_combo = QComboBox()
         self._preset_combo.setToolTip(
-            "Which items \"Clean\" includes when you click it -- Light is "
-            "the original behavior, Aggressive includes danger-level items "
-            "(except orphaned profiles/virtual disks, never included by any preset). "
-            "Custom behaves the same as Light here -- this dashboard has no "
-            "per-item checkboxes for Custom to mean anything else."
-        )
+            "<b>What “Clean” removes</b><p><b>Light</b>: only locations rated Safe.<br>"
+            "<b>Thorough</b>: Safe and Review.<br><b>Aggressive</b>: everything, Risky "
+            "included (never orphaned profiles or virtual disks).<br><b>Custom</b>: here, "
+            "the same as Light (this dashboard has no per-item ticks for Custom to use).</p>"
+            "<p>Every clean asks first and lists what it will do.</p>")
+        self._preset_combo.setAccessibleName("Cleanup preset")
         for pid in preset_names():
             label = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
             self._preset_combo.addItem(label, pid)
         self._preset_combo.setCurrentIndex(self._preset_combo.findData("light"))
         self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-
-        self._clean_all_btn = QPushButton("🗑️  Clean (Light)")
-        self._clean_all_btn.setEnabled(False)
-        self._clean_all_btn.clicked.connect(self._do_clean_all_safe)
-        self._status_lbl = QLabel("Click Scan All to analyze your system")
-        self._status_lbl.setObjectName("muted")
-        self._show_adv_btn = QPushButton("Show Advanced ▼")
-        self._show_adv_btn.setStyleSheet("font-size: 12px; padding: 4px 10px;")
-        self._show_adv_btn.clicked.connect(self._toggle_advanced)
-        self._adv_shown = False
-        toolbar.addWidget(self._scan_all_btn)
         toolbar.addWidget(self._preset_combo)
+
+        self._clean_all_btn = _AccentButton("Clean (Light)…")
+        self._clean_all_btn.setEnabled(False)
+        self._clean_all_btn.setToolTip(
+            "Clean what the selected preset includes, after a confirmation that names it. "
+            "Freed space is what the deleter measured, not what the scan estimated.")
+        self._clean_all_btn.setAccessibleName("Clean with the selected preset")
+        self._clean_all_btn.clicked.connect(self._do_clean_all_safe)
         toolbar.addWidget(self._clean_all_btn)
-        toolbar.addWidget(self._show_adv_btn)
-        toolbar.addStretch()
-        toolbar.addWidget(self._status_lbl)
-        layout.addLayout(toolbar)
 
-        # Progress bar
-        self._progress = QLabel()
-        self._progress.setStyleSheet(f"color: {semantic('warning')}; font-size: 11px;")
-        self._progress.hide()
-        layout.addWidget(self._progress)
+        self._status_lbl = QLabel("Click Scan all to measure what this PC can reclaim.")
+        self._status_lbl.setObjectName("muted")
+        self._status_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._status_lbl.setMinimumWidth(80)
+        toolbar.addWidget(self._status_lbl, 1)
+        outer.addWidget(bar)
 
-        # ── Dashboard row: pie chart + legend ──
-        dash_frame = QFrame()
-        dash_frame.setFrameShape(QFrame.Shape.StyledPanel)
-        dash_frame.setObjectName("card")
-        dash_lay = QHBoxLayout(dash_frame)
-        dash_lay.setContentsMargins(12, 12, 12, 12)
+    def _build_progress(self, outer):
+        prog = QWidget()
+        prog_lay = QHBoxLayout(prog)
+        prog_lay.setContentsMargins(12, 0, 12, 4)
+        prog_lay.setSpacing(10)
+        self._progress = QProgressBar()
+        self._progress.setTextVisible(False)
+        self._progress.setFixedHeight(6)
+        self._progress.setMaximumWidth(360)
+        self._progress.setAccessibleName("Scan progress")
+        prog_lay.addWidget(self._progress)
+        self._progress_lbl = QLabel("")
+        self._progress_lbl.setObjectName("muted")
+        self._progress_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        prog_lay.addWidget(self._progress_lbl, 1)
+        self._progress_row = prog
+        prog.hide()
+        outer.addWidget(prog)
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(400)
+        self._progress_timer.timeout.connect(self._update_progress)
 
-        self._pie_chart = _PieChart()
-        self._pie_chart.setFixedSize(160, 160)
-        dash_lay.addWidget(self._pie_chart)
+    def _build_kpi_tiles(self, lay):
+        # Row A — key figures
+        self._tiles = {
+            "total": KpiTile("Reclaimable", "total"),
+            "safe": KpiTile("Safe to clean now", "safe"),
+            "review": KpiTile("Needs review", "review"),
+            "blocked": KpiTile("Not offered", "blocked"),
+            "drive": KpiTile("Free after clean (C:)", "drive"),
+        }
+        self._kpi = KpiStrip(list(self._tiles.values()))
+        lay.addWidget(self._kpi)
+        self._reset_tiles()
 
-        # Legend
-        self._legend_layout = QVBoxLayout()
-        self._legend_layout.setSpacing(4)
-        self._legend_cards: List[_SliceCard] = []
-        for cid, clabel, ccolor in self._categories:
-            card = _SliceCard(clabel, 0, ccolor, clickable=True)
-            card.clicked.connect(lambda cid=cid: self._handle_category_clicked(cid))
-            self._legend_cards.append(card)
-            self._legend_layout.addWidget(card)
-        self._legend_layout.addStretch()
-        dash_lay.addLayout(self._legend_layout, 1)
+    def _build_charts(self, lay, BarChart, ChartCard, DonutChart, TrendChart):
+        # Row B — charts
+        self._donut = DonutChart(title="Space by category", top_n=8)
+        self._donut.slice_clicked.connect(self._on_donut_clicked)
+        self._donut.set_tooltip_provider(self._donut_tooltip)
+        self._bars = BarChart(title="Largest locations", top_n=10)
+        self._bars.slice_clicked.connect(self._on_bar_clicked)
+        self._bars.set_tooltip_provider(self._bar_tooltip)
+        self._trend = TrendChart(title="Trend")
+        self._donut_card = ChartCard("Space by category", self._donut,
+                                     "Every location, largest first. Click a slice to find it below.")
+        self._bars_card = ChartCard("Largest locations", self._bars,
+                                    "Top 10 across every category; each path counted once.")
+        self._trend_card = ChartCard("Trend", self._trend,
+                                     "Freed per clean, total freed, and reclaimable at each scan.")
+        self._add_chart_table(self._donut_card, ["Category", "Size", "Share"])
+        self._add_chart_table(self._bars_card, ["Location", "Size", "Safety"])
+        self._add_chart_table(self._trend_card, ["When", "Freed", "Reclaimable"])
+        for card, tip in ((self._donut_card, "Hover a slice for its size, share and safety mix."),
+                          (self._bars_card, "Hover a bar for what the location is and its full path."),
+                          (self._trend_card, "From the clean history and earlier scans.")):
+            card.title_label.setToolTip(tip)
+        for c in (self._donut_card, self._bars_card, self._trend_card):
+            c.setMinimumHeight(300)
+        self._charts = _ChartsRow([self._donut_card, self._bars_card, self._trend_card])
+        lay.addWidget(self._charts)
 
-        # Summary stats on the right
-        stats_lay = QVBoxLayout()
-        stats_lay.setSpacing(6)
-        self._total_lbl = QLabel("Total: —")
-        self._total_lbl.setStyleSheet("font-size: 16px; font-weight: bold;")
-        self._safe_lbl = QLabel("Safe to clean: —")
-        self._safe_lbl.setStyleSheet(f"color: {semantic('success')}; font-size: 13px;")
-        self._item_lbl = QLabel("Items found: —")
-        self._item_lbl.setObjectName("muted")
-        self._item_lbl.setStyleSheet("font-size: 12px;")
-        self._cat_lbl = QLabel(f"Categories: {len(self._categories)}")
-        self._cat_lbl.setObjectName("muted")
-        self._cat_lbl.setStyleSheet("font-size: 12px;")
-        stats_lay.addWidget(self._total_lbl)
-        stats_lay.addWidget(self._safe_lbl)
-        stats_lay.addWidget(self._item_lbl)
-        stats_lay.addWidget(self._cat_lbl)
-        self._largest_lbl = QLabel("")
-        self._largest_lbl.setObjectName("muted")
-        self._largest_lbl.setStyleSheet("font-size: 12px;")
-        self._largest_lbl.setWordWrap(True)
-        stats_lay.addWidget(self._largest_lbl)
-        stats_lay.addStretch()
-        dash_lay.addLayout(stats_lay)
-        dash_lay.addStretch()
+    def _build_recommendations(self, lay):
+        # Row C — recommendations
+        self._reco_card = QFrame()
+        self._reco_card.setObjectName("chartCard")
+        self._reco_card.setStyleSheet("QStackedWidget, QStackedWidget > QWidget "
+                                      "{ background: transparent; }")
+        reco_lay = QVBoxLayout(self._reco_card)
+        reco_lay.setContentsMargins(14, 12, 14, 12)
+        self._reco = None
+        try:
+            from modules.cleanup.components.recommendations_panel import RecommendationsPanel
+            self._reco = RecommendationsPanel(self._reco_card, config=self._app_config(),
+                                              thread_pool=QThreadPool.globalInstance())
+            self._reco.navigate.connect(self._on_reco_navigate)
+            reco_lay.addWidget(self._reco)
+        except ImportError as exc:
+            logger.warning("recommendations unavailable: %s", exc)
+            self._reco_card.hide()
+        lay.addWidget(self._reco_card)
 
-        layout.addWidget(dash_frame)
+    def _build_locations(self, lay):
+        # Row D — locations
+        loc = QFrame()
+        loc.setObjectName("chartCard")
+        # The rows are painted on the card itself; without this every plain
+        # QWidget inside it would fill itself with the pane colour.
+        loc.setStyleSheet(
+            "QWidget#categoryGroup, QWidget#categoryRow, QWidget#categoryPathsBox, "
+            "QWidget#categoryRows, QWidget#categoryColumns, QTreeWidget#categoryPaths "
+            "{ background: transparent; }")
+        loc_lay = QVBoxLayout(loc)
+        loc_lay.setContentsMargins(6, 12, 6, 8)
+        loc_lay.setSpacing(0)
+        head = QHBoxLayout()
+        head.setContentsMargins(8, 0, 8, 8)
+        title = QLabel("Locations")
+        title.setObjectName("chartTitle")
+        title.setToolTip("Every category this dashboard scans. Click a row to see and tick its "
+                         "paths; ⓘ explains it; ⋯ has its actions.")
+        head.addWidget(title)
+        head.addSpacing(10)
+        self._loc_hint = QLabel("Largest first · click a row to see its paths")
+        self._loc_hint.setObjectName("muted")
+        head.addWidget(self._loc_hint)
+        head.addStretch()
+        self._expand_all_btn = QToolButton()
+        self._expand_all_btn.setText("Expand all")
+        self._expand_all_btn.setToolTip("Show the paths of every category that found something.")
+        self._expand_all_btn.clicked.connect(lambda: self._expand_groups(True))
+        head.addWidget(self._expand_all_btn)
+        self._collapse_all_btn = QToolButton()
+        self._collapse_all_btn.setText("Collapse all")
+        self._collapse_all_btn.setToolTip("Close every category's path list.")
+        self._collapse_all_btn.clicked.connect(lambda: self._expand_groups(False))
+        head.addWidget(self._collapse_all_btn)
+        loc_lay.addLayout(head)
 
-        # ── Scrollable category groups ──
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        content = QWidget()
-        content_lay = QVBoxLayout(content)
-        content_lay.setContentsMargins(0, 0, 0, 0)
-        content_lay.setSpacing(8)
+        self._col_header = ColumnHeader()
+        self._col_header.setObjectName("categoryColumns")
+        loc_lay.addWidget(self._col_header)
+
+        self._main_box = QVBoxLayout()
+        self._main_box.setContentsMargins(0, 0, 0, 0)
+        self._main_box.setSpacing(0)
+        loc_lay.addLayout(self._main_box)
 
         self._groups_container: List[CategoryGroup] = []
         self._group_by_cid: Dict[str, CategoryGroup] = {}
-        for cid, clabel, ccolor in self._categories:
-            fn_info = self._scanner_map.get(cid)
-            if fn_info is None or fn_info[0] is None:
-                continue
-            scanner_fn, label, color = fn_info
-            group = CategoryGroup(label, scanner_fn, auto_refresh=False)
-            group.scan_done.connect(self._on_group_scan_done)
-            group.freed_bytes.connect(self.freed_bytes)
+        self._legend_cards: List[CategoryGroup] = []
+        for cid, clabel, _colour in self._categories:
+            fn = self._scanner_map.get(cid, (None,))[0]
+            group = self._make_group(cid, clabel, fn, main=True)
+            self._legend_cards.append(group)
             self._groups_container.append(group)
             self._group_by_cid[cid] = group
-            content_lay.addWidget(group)
+            self._main_box.addWidget(group)
 
-        content_lay.addStretch()
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
+        self._show_adv_btn = QToolButton()
+        self._show_adv_btn.setObjectName("disclosure")
+        self._show_adv_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._show_adv_btn.setToolTip(
+            "Smaller and more specific locations: app, game, cloud, developer and Windows "
+            "caches. Only the ones that found something are listed, largest first.")
+        self._show_adv_btn.clicked.connect(self._toggle_advanced)
+        self._adv_shown = False
+        adv_row = QHBoxLayout()
+        adv_row.setContentsMargins(8, 8, 8, 4)
+        adv_row.addWidget(self._show_adv_btn)
+        adv_row.addStretch()
+        loc_lay.addLayout(adv_row)
 
-        # ── Advanced panel (hidden by default) ──
         self._adv_widget = QWidget()
-        adv_lay = QVBoxLayout(self._adv_widget)
-        adv_lay.setContentsMargins(0, 8, 0, 0)
-        adv_lay.setSpacing(8)
-
-        adv_header = QLabel("Advanced Cleanup")
-        adv_header.setStyleSheet("font-size: 14px; font-weight: bold; padding: 4px 0;")
-        adv_lay.addWidget(adv_header)
-
-        # Advanced legend cards
-        self._adv_legend_layout = QGridLayout()
-        self._adv_legend_layout.setSpacing(6)
-        self._adv_cards: List[_SliceCard] = []
-        for idx, (cid, clabel, ccolor) in enumerate(self._advanced_categories):
-            card = _SliceCard(clabel, 0, ccolor, clickable=False)
-            card.setVisible(False)
-            self._adv_cards.append(card)
-            row = idx // 3
-            col = idx % 3
-            self._adv_legend_layout.addWidget(card, row, col)
-        adv_lay.addLayout(self._adv_legend_layout)
-
+        self._adv_widget.setObjectName("categoryRows")
+        self._adv_box = QVBoxLayout(self._adv_widget)
+        self._adv_box.setContentsMargins(0, 0, 0, 0)
+        self._adv_box.setSpacing(0)
+        self._adv_cards: List[CategoryGroup] = []
+        for cid, clabel, _colour in self._advanced_categories:
+            fn = self._adv_scanner_map.get(cid, (None,))[0]
+            group = self._make_group(cid, clabel, fn, main=False)
+            group.setVisible(False)
+            self._adv_cards.append(group)
+            self._group_by_cid[cid] = group
+            self._adv_box.addWidget(group)
+        self._adv_empty = QLabel("")
+        self._adv_empty.setObjectName("muted")
+        self._adv_empty.setContentsMargins(34, 8, 8, 8)
+        self._adv_box.addWidget(self._adv_empty)
         self._adv_widget.setVisible(False)
-        layout.addWidget(self._adv_widget)
-
-    def _on_preset_changed(self, _index: int) -> None:
-        from modules.cleanup.cleanup_presets import PRESETS
-        pid = self._preset_combo.currentData()
-        label = PRESETS[pid]["label"] if pid in PRESETS else "Custom"
-        self._clean_all_btn.setText(f"🗑️  Clean ({label})")
-
-    # ── Auto-refresh ────────────────────────────────────────────────────────
-
-    def _on_timer_refresh(self):
-        if self._scanning:
-            return
-        self.scan()
-
-    # ── Scan All ────────────────────────────────────────────────────────────
-
-    def _start_timeout_guard(self, cid: str, scan_targets: list) -> QTimer:
-        """A per-category watchdog, started alongside that category's
-        worker: if `cid` hasn't reported within PER_SCANNER_TIMEOUT_MS, it
-        is counted as done (timed out) so one slow scanner cannot block
-        every other category from ever being shown. The real worker keeps
-        running and corrects the placeholder in place if it finishes
-        later. Returns the timer so the caller stops it once a real
-        result (or error) lands."""
-        def _on_timeout():
-            if not _alive(self) or cid in self._results:
-                return
-            logger.warning(
-                "Quick Cleanup: %s did not report within %.0fs -- "
-                "continuing without it (its own worker keeps running "
-                "and will correct this if it finishes later)",
-                cid, self.PER_SCANNER_TIMEOUT_MS / 1000)
-            self._timed_out_cids.add(cid)
-            self._total_scanned += 1
-            if self._total_scanned == len(scan_targets):
-                self._on_all_scanned()
-
-        timer = QTimer(self)
-        timer.setSingleShot(True)
-        timer.timeout.connect(_on_timeout)
-        timer.start(self.PER_SCANNER_TIMEOUT_MS)
-        self._per_category_timers.append(timer)
-        return timer
-
-    def _count_scanner_result(self, cid: str, scan_targets: list) -> None:
-        """Count `cid` toward completion -- unless its timeout guard
-        already counted it, in which case this is a late, corrected
-        result and must not increment _total_scanned a second time."""
-        already_counted = cid in self._timed_out_cids
-        if not already_counted:
-            self._total_scanned += 1
-        if self._total_scanned == len(scan_targets):
-            self._on_all_scanned()
-
-    def _do_scan_all(self):
-        if self._scanning:
-            return
-        self._scanning = True
-        self._watchdog.start(self.SCAN_WATCHDOG_MS)
-        self._scan_all_btn.setEnabled(False)
-        self._clean_all_btn.setEnabled(False)
-        self._progress.setText("🔍  Scanning all categories...")
-        self._progress.show()
-        self._results.clear()
-        self._total_scanned = 0
-        self._timed_out_cids = set()
-        for t in self._per_category_timers:
-            t.stop()
-        self._per_category_timers = []
-
-        from modules.cleanup import cleanup_scanner as cs
-
-        # Build complete scan target list: main + advanced (excl. browser handled specially)
-        scan_targets = [cid for cid, _, _ in self._categories]
-        scan_targets += [cid for cid, _, _ in self._advanced_categories]
-        # Browser will be added below
-        browser_target = "browser" in [c[0] for c in self._categories]
-
-        def _start_worker(cid: str, scanner_fn, category_list: list):
-            """Launch a worker for a scanner function, with its own timeout
-            so one slow scanner cannot block every other category from ever
-            being shown (see PER_SCANNER_TIMEOUT_MS)."""
-            def _run(_worker):
-                from modules.cleanup.cleanup_scanner import scan_cache
-                return scan_cache.cached_scan(scanner_fn, 0)
-
-            timer = self._start_timeout_guard(cid, scan_targets)
-
-            def _done(result):
-                if not _alive(self):
-                    return
-                timer.stop()
-                self._results[cid] = result
-                self._count_scanner_result(cid, scan_targets)
-
-            def _err(_e):
-                if not _alive(self):
-                    return
-                timer.stop()
-                self._results[cid] = cs.ScanResult()
-                self._count_scanner_result(cid, scan_targets)
-
-            w = Worker(_run)
-            w.signals.result.connect(_done)
-            w.signals.error.connect(_err)
-            self._workers.append(w)
-            QThreadPool.globalInstance().start(w)
-
-        # Main categories
-        for cid, clabel, ccolor in self._categories:
-            if cid == "browser":
-                continue
-            fn_info = self._scanner_map.get(cid)
-            if fn_info is None or fn_info[0] is None:
-                scan_targets.remove(cid)
-                continue
-            scanner_fn = fn_info[0]
-            _start_worker(cid, scanner_fn, self._categories)
-
-        # Advanced categories
-        for cid, clabel, ccolor in self._advanced_categories:
-            fn_info = self._adv_scanner_map.get(cid)
-            if fn_info is None or fn_info[0] is None:
-                scan_targets.remove(cid)
-                continue
-            scanner_fn = fn_info[0]
-            _start_worker(cid, scanner_fn, self._advanced_categories)
-
-        self._scan_targets = scan_targets
-
-        # Browser as separate worker
-        if browser_target:
-            def _run_browser(_worker):
-                return self._browser_scanner()
-
-            browser_timer = self._start_timeout_guard("browser", scan_targets)
-
-            def _done_browser(results):
-                if not _alive(self):
-                    return
-                browser_timer.stop()
-                self._results["browser"] = results
-                self._count_scanner_result("browser", scan_targets)
-
-            def _err_browser(_e):
-                if not _alive(self):
-                    return
-                browser_timer.stop()
-                self._results["browser"] = []
-                self._count_scanner_result("browser", scan_targets)
-
-            wb = Worker(_run_browser)
-            wb.signals.result.connect(_done_browser)
-            wb.signals.error.connect(_err_browser)
-            self._workers.append(wb)
-            QThreadPool.globalInstance().start(wb)
-
-    def _on_all_scanned(self):
-        self._watchdog.stop()
-        self._scanned = True
-        self._scanning = False
-        self._scan_all_btn.setEnabled(True)
-        self._progress.hide()
-        self._workers = [w for w in self._workers if not w.is_cancelled]
-
-        from modules.cleanup import cleanup_scanner as cs
-        from modules.cleanup import browser_scanner as bs
-
-        # Categories overlap, so their results are deduplicated ACROSS
-        # categories before anything is totalled. Measured here before the
-        # fix: 2.10 GB claimed against 1.39 GB really present — 50% too
-        # high — because two categories can point at the same directory
-        # (%TEMP% and %LOCALAPPDATA%\Temp are one place). Each unique path
-        # is attributed to the first category that claims it, in the order
-        # they are displayed, so the pie slices still sum to the total.
-        self._results = self._deduplicate_across_categories(self._results)
-
-        # Build pie chart slices
-        slices: List[tuple] = []
-        total_size = 0
-        total_safe = 0
-        total_items = 0
-        categories_with_data = 0
-
-        # Main categories
-        for i, (cid, clabel, ccolor) in enumerate(self._categories):
-            if cid == "browser":
-                browser_results: List[bs.BrowserResult] = self._results.get(cid, [])
-                bsize = sum(r.total_bytes for r in browser_results)
-                bitems = sum(len(r.profiles) for r in browser_results)
-                if bsize > 0:
-                    slices.append((clabel, bsize, ccolor))
-                    total_size += bsize
-                    total_items += bitems
-                    categories_with_data += 1
-                    if i < len(self._legend_cards):
-                        self._legend_cards[i].set_size(bsize)
-                else:
-                    if i < len(self._legend_cards):
-                        self._legend_cards[i].set_size(0)
-            else:
-                result: cs.ScanResult = self._results.get(cid, cs.ScanResult())
-                # Feed the result into this category's dropdown so expanding it shows
-                # the paths immediately (no separate per-category scan needed).
-                group = self._group_by_cid.get(cid)
-                if group is not None:
-                    group.set_result(result)
-                if result.items:
-                    slices.append((clabel, result.total_size, ccolor))
-                    total_size += result.total_size
-                    total_safe += sum(item.size for item in result.items if item.safety == "safe")
-                    total_items += len(result.items)
-                    categories_with_data += 1
-                    if i < len(self._legend_cards):
-                        self._legend_cards[i].set_size(result.total_size)
-                else:
-                    if i < len(self._legend_cards):
-                        self._legend_cards[i].set_size(0)
-
-        # Advanced categories
-        for i, (cid, clabel, ccolor) in enumerate(self._advanced_categories):
-            result: cs.ScanResult = self._results.get(cid, cs.ScanResult())
-            if result.items:
-                slices.append((clabel, result.total_size, ccolor))
-                total_size += result.total_size
-                total_safe += sum(item.size for item in result.items if item.safety == "safe")
-                total_items += len(result.items)
-                categories_with_data += 1
-                if i < len(self._adv_cards):
-                    self._adv_cards[i].set_size(result.total_size)
-            else:
-                if i < len(self._adv_cards):
-                    self._adv_cards[i].set_size(0)
-
-        self._pie_chart.set_slices(slices)
-        self._largest_lbl.setText(largest_slice_text(slices, cs.format_size))
-        self._total_lbl.setText(f"Total: {cs.format_size(total_size)}")
-        self._safe_lbl.setText(f"Safe to clean: {cs.format_size(total_safe)}")
-        self._item_lbl.setText(f"Items found: {total_items}")
-        self._cat_lbl.setText(f"Categories: {len(self._categories)} + {len(self._advanced_categories)} advanced")
-        self._clean_all_btn.setEnabled(self._has_cleanable_items())
-        status = (
-            f"Found {total_items} item(s) across {categories_with_data} categories"
-            if categories_with_data
-            else "No reclaimable space found"
-        )
-        if self._timed_out_cids:
-            label_by_id = {cid: label for cid, label, _ in
-                          self._categories + self._advanced_categories}
-            names = ", ".join(
-                label_by_id.get(cid, cid) for cid in sorted(self._timed_out_cids))
-            status += f" ({len(self._timed_out_cids)} slow and still scanning: {names})"
-        self._status_lbl.setText(status)
-        self.scan_done.emit(total_items, total_size)
-
-        if self._clean_after_scan:
-            self._clean_after_scan = False
-            self._do_clean_all_safe()
-
-    def _on_scan_watchdog(self) -> None:
-        if not self._scanning:
-            return
-        label_by_id = {cid: label for cid, label, _ in self._categories + self._advanced_categories}
-        missing = [label_by_id.get(cid, cid) for cid in self._scan_targets
-                  if cid not in self._results]
-        stuck_desc = ", ".join(missing) if missing else "unknown"
-        logger.warning(
-            "Quick Cleanup scan timed out after %.0fs with %d/%d "
-            "categories reported; still waiting on: %s",
-            self.SCAN_WATCHDOG_MS / 1000, self._total_scanned,
-            len(self._scan_targets), stuck_desc)
-        self._reset_after_cancel(
-            message=f"Scan timed out — stuck on: {stuck_desc} (click Scan All to retry)")
-
-    def _reset_after_cancel(self, message: str = None) -> None:
-        """Put the tab back in a state the user can act on -- shared by
-        the watchdog above and cancel() below. A cancelled Worker emits
-        `cancelled`, never `result` or `error` (core/worker.py), so
-        _total_scanned would never reach the target count and
-        _on_all_scanned would never run on its own."""
-        self._watchdog.stop()
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
-        for t in self._per_category_timers:
-            t.stop()
-        self._per_category_timers = []
-        self._scanning = False
-        # A cancelled scan must not leave clean_now()'s deferred action
-        # armed -- it would otherwise fire on the NEXT unrelated scan.
-        self._clean_after_scan = False
-        # Nothing was measured, so the tab has NOT been scanned: let
-        # auto_scan() run again the next time the module is activated.
-        self._scanned = False
-        if hasattr(self, "_scan_all_btn"):
-            self._scan_all_btn.setEnabled(True)
-            # Gated the same way _on_all_scanned gates it: nothing to
-            # clean (a fresh tab, or a scan that never produced a result)
-            # must not leave this button looking clickable.
-            self._clean_all_btn.setEnabled(self._has_cleanable_items())
-        if hasattr(self, "_progress"):
-            self._progress.hide()
-        if hasattr(self, "_status_lbl") and message:
-            self._status_lbl.setText(message)
-
-    def _has_cleanable_items(self) -> bool:
-        """Is there at least one item the CURRENT preset would clean?
-        Mirrors what _do_clean_all_safe actually does, so a cancelled/
-        timed-out scan and a completed one agree on when there is
-        genuinely something to clean under whatever preset is selected."""
-        from modules.cleanup import cleanup_scanner as cs
-        from modules.cleanup import browser_scanner as bs
-        from modules.cleanup import cleanup_presets
-
-        preset_id = self._preset_combo.currentData() if hasattr(self, "_preset_combo") else "light"
-
-        for cid, result in self._results.items():
-            if cid == "browser":
-                browser_results: List[bs.BrowserResult] = result or []
-                for r in browser_results:
-                    for profile in r.profiles:
-                        for cat in profile.categories:
-                            if cat.size_bytes > 0:
-                                return True
-            elif isinstance(result, cs.ScanResult):
-                if preset_id == "custom":
-                    if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
-                        continue
-                    if any(item.safety == "safe" for item in result.items):
-                        return True
-                else:
-                    items = cleanup_presets.items_for_preset(
-                        preset_id, {cid: result}, self._id_to_scanner_name)
-                    if items:
-                        return True
-        return False
-
-    def _deduplicate_across_categories(self, results: dict) -> dict:
-        """Drop items already claimed by an earlier category.
-
-        `dedupe_items` removes a repeated or nested path from ONE list;
-        this applies the same rule across the whole scan, so a directory
-        counted under "Temp Files" is not counted again under "Crash
-        Dumps". First claim wins, in display order, which keeps every slice
-        attributable to exactly one category.
-        """
-        from modules.cleanup import cleanup_scanner as cs
-
-        order = [cid for cid, _label, _colour in self._categories]
-        order += [cid for cid, _label, _colour in self._advanced_categories]
-
-        claimed: list = []
-        deduped = dict(results)
-        for cid in order:
-            result = results.get(cid)
-            if not isinstance(result, cs.ScanResult) or not result.items:
-                continue
-            merged = cs.dedupe_items(claimed + list(result.items))
-            already = {id(i) for i in claimed}
-            kept = [i for i in merged if id(i) not in already]
-            fresh = cs.ScanResult()
-            fresh.items = kept
-            fresh.total_size = sum(i.size for i in kept)
-            deduped[cid] = fresh
-            claimed = merged
-        return deduped
-
-    def _on_group_scan_done(self, item_count: int, total_size: int):
-        """Forward from individual category groups."""
-        pass  # Individual group scans don't update the dashboard summary
-
-    def _handle_category_clicked(self, cid: str) -> None:
-        if self._on_category_clicked is not None:
-            self._on_category_clicked(cid)
-
-    def _toggle_advanced(self):
-        """Show/hide the advanced cleanup section."""
-        self._adv_shown = not self._adv_shown
-        self._adv_widget.setVisible(self._adv_shown)
-        self._show_adv_btn.setText("Hide Advanced ▲" if self._adv_shown else "Show Advanced ▼")
-
-    # ── Clean All Safe ─────────────────────────────────────────────────────
-
-    def _do_clean_all_safe(self):
-        if self._scanning:
-            return
-        from modules.cleanup import cleanup_scanner as cs
-        from modules.cleanup import browser_scanner as bs
-        from modules.cleanup import clean_safe_runner as csr
-
-        all_safe: List[cs.ScanItem] = []
-        needs_wu = False
-        total = 0
-        browser_cats: List[bs.CacheCategory] = []
-
-        from modules.cleanup import cleanup_presets
-        preset_id = self._preset_combo.currentData()
-
-        for cid in self._results:
-            if cid == "browser":
-                browser_results: List[bs.BrowserResult] = self._results.get(cid, [])
-                for r in browser_results:
-                    for profile in r.profiles:
-                        for cat in profile.categories:
-                            if cat.size_bytes > 0:
-                                browser_cats.append(cat)
-                                total += cat.size_bytes
-            elif cid == "wu":
-                needs_wu = True
-
-        if preset_id == "custom":
-            for cid, result in self._results.items():
-                if cid == "browser":
-                    continue
-                if self._id_to_scanner_name.get(cid) in cleanup_presets.NEVER_INCLUDED:
-                    continue
-                for item in result.items:
-                    if item.safety == "safe":
-                        item.selected = True
-                        all_safe.append(item)
-                        total += item.size
-        else:
-            selected_items = cleanup_presets.items_for_preset(
-                preset_id, {k: v for k, v in self._results.items() if k != "browser"},
-                self._id_to_scanner_name)
-            for item in selected_items:
-                item.selected = True
-                all_safe.append(item)
-                total += item.size
-
-        if not all_safe and not browser_cats:
-            return
-
-        def _on_done(deleted, errors, freed):
-            self._scanning = False
-            self._scan_all_btn.setEnabled(True)
-            self._progress.hide()
-            msg = f"Cleaned {deleted} item(s)"
-            if errors:
-                msg += f" — {errors} could not be deleted"
-            self._status_lbl.setText(msg)
-            self.freed_bytes.emit(freed)        # measured, never the scanned total
-            self.scan()
-
-        def _on_error(e: str):
-            self._scanning = False
-            self._scan_all_btn.setEnabled(True)
-            self._progress.hide()
-            self._status_lbl.setText(f"Clean error: {e}")
-
-        preset_label = (
-            cleanup_presets.PRESETS[preset_id]["label"]
-            if preset_id != "custom" else None)
-
-        worker = csr.run_clean_safe(
-            self, all_safe, browser_cats=browser_cats, stop_wuauserv=needs_wu,
-            confirm="always", preset_label=preset_label,
-            on_done=_on_done, on_error=_on_error)
-        if worker is None:
-            return  # user declined the confirm -- nothing was disabled yet
-
-        self._scanning = True
-        self._scan_all_btn.setEnabled(False)
-        self._clean_all_btn.setEnabled(False)
-        self._progress.setText("🗑️  Cleaning safe items...")
-        self._progress.show()
-        self._workers.append(worker)
+        loc_lay.addWidget(self._adv_widget)
+        self._update_adv_button()
+        lay.addWidget(loc)

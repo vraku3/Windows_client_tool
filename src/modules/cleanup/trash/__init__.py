@@ -18,6 +18,7 @@ from typing import List, Optional
 from dataclasses import dataclass
 
 from modules.cleanup.cleanup_config import CleanupConfig
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size
 import logging
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ class TrashManager:
                             target_path=str(trash_item_path),
                             original_name=trash_item_path.name,
                             deleted_date=modified,
-                            size_bytes=stat.st_size,
+                            size_bytes=on_disk_size(str(trash_item_path), stat),
                         )
                     )
                 except Exception:

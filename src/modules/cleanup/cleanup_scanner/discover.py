@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List
 
 from modules.cleanup.cleanup_scanner import catalog
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,8 @@ def size_of(path, cap=400_000, cancelled=lambda: False, result=None):
             if count > cap or cancelled():
                 return total
             try:
-                total += os.lstat(os.path.join(current, name)).st_size
+                full = os.path.join(current, name)
+                total += on_disk_size(full, os.lstat(full))
             except OSError as exc:
                 _unreadable(exc, result)
     return total

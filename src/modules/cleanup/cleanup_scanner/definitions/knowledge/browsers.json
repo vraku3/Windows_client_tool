@@ -1,0 +1,233 @@
+{
+  "brave_cache": {
+    "what": "Brave's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Brave first for a complete clean.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": ""
+  },
+  "brave_cache_full": {
+    "what": "Brave's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile. Default profile only.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Brave first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": "Duplicate of brave_cache."
+  },
+  "chrome_cache": {
+    "what": "Google Chrome's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Google Chrome first for a complete clean.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs",
+      "https://chromium.googlesource.com/chromium/src/+/94dea2e9e46997a7473047be3f7fd213e08ee48d/gpu/command_buffer/service/gr_shader_cache.cc"
+    ],
+    "catalog_concern": "Same ShaderCache note as edge_cache."
+  },
+  "chrome_cache_full": {
+    "what": "Chrome's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile. Default profile only.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Chrome first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": "Duplicate of chrome_cache (a subset of its paths). Same bytes counted twice if both are shown."
+  },
+  "chrome_installer_caches": {
+    "what": "component_crx_cache keeps the previous package (CRX) of each Chrome component so updates can be applied as small differential patches; extensions_crx_cache is the matching cache for extension packages.",
+    "used_for": "Used only to make the next component/extension update smaller. Deleting it makes the next update download the full package. Installed components and extensions are not removed.",
+    "verdict": "safe",
+    "risk": "Next update downloads a little more. extensions_crx_cache's role is inferred from Chromium's CRX cache, not separately documented.",
+    "before_cleaning": "Close Chrome first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src/+/main/components/update_client/crx_cache.h",
+      "https://forum.vivaldi.net/topic/90152/folder-named-component_crx_cache"
+    ],
+    "catalog_concern": ""
+  },
+  "chrome_on_device_ai_model": {
+    "what": "OptGuideOnDeviceModel holds Chrome's on-device AI model (Gemini Nano, a weights.bin of about 4 GB) used for built-in AI features.",
+    "used_for": "Used by Chrome's local AI features (e.g. writing help, scam detection). If deleted, Chrome downloads it again in the background while those features are enabled.",
+    "verdict": "caution",
+    "risk": "Re-downloads ~4 GB unless the on-device model features/flags are turned off first; the AI features stop working until it is back.",
+    "before_cleaning": "Turn off Chrome's on-device AI features (chrome://flags or policy) first, or it will come back.",
+    "regenerates": true,
+    "sources": [
+      "https://www.theregister.com/ai-and-ml/2026/05/07/chrome-silently-installs-a-4-gb-local-llm-on-your-computer/5230893",
+      "https://pureinfotech.com/stop-chrome-gemini-nano-download-windows-11/"
+    ],
+    "catalog_concern": "Agrees. Tooltip should say it re-downloads."
+  },
+  "chromium_service_worker_scripts": {
+    "what": "Service Worker\\ScriptCache holds the stored JavaScript of service workers that websites installed (Chrome, Edge, Brave). The worker registrations themselves are in Service Worker\\Database.",
+    "used_for": "Service workers run sites offline, handle push notifications and background sync. A missing script means the browser must fetch it again when the site is next visited.",
+    "verdict": "caution",
+    "risk": "Not documented by Google: removing scripts while registrations remain can break offline mode or push notifications of web apps until the site is revisited or re-registered.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [
+      "https://issuetracker.google.com/issues/37135461",
+      "https://forums.opera.com/post/207702"
+    ],
+    "catalog_concern": "Listed safe. Clearing service-worker data is part of 'site data', not 'cached images and files', in the browser's own settings; caution is more accurate."
+  },
+  "chromium_service_worker_storage": {
+    "what": "Service Worker\\CacheStorage is the Cache API storage websites fill themselves, for offline use of web apps (Chrome, Edge, Brave). It can grow to gigabytes.",
+    "used_for": "Sites re-download what they need when visited online. Offline copies (e.g. offline docs, PWA assets) are gone until then.",
+    "verdict": "caution",
+    "risk": "Offline web apps stop working offline until revisited; any data a site kept only in its Cache API is lost. Logins are usually in cookies/IndexedDB, not here.",
+    "before_cleaning": "Close the browser first; prefer the browser's own site-data clearing for single sites.",
+    "regenerates": true,
+    "sources": [
+      "https://issuetracker.google.com/issues/37135461",
+      "https://communities.vmware.com/t5/Dynamic-Environment-Manager/Chrome-ServiceWorker-Cache/td-p/2833156",
+      "https://forums.opera.com/post/207702"
+    ],
+    "catalog_concern": "Agrees with caution. Admins report excluding this folder causes no issues, but it is site data, not HTTP cache."
+  },
+  "edge_cache": {
+    "what": "Microsoft Edge's Cache, Code Cache and GPUCache in every profile, plus ShaderCache.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Edge (and its startup boost/background processes) first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs",
+      "https://chromium.googlesource.com/chromium/src/+/94dea2e9e46997a7473047be3f7fd213e08ee48d/gpu/command_buffer/service/gr_shader_cache.cc"
+    ],
+    "catalog_concern": "In current Chromium ShaderCache/GrShaderCache sit directly under User Data, so 'User Data\\*\\ShaderCache' matches little; harmless. Label says 'web data' but the Web Data file (autofill) is not targeted, good."
+  },
+  "edge_cache_full": {
+    "what": "Edge's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile. Default profile only.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Edge first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": "Duplicate of edge_cache."
+  },
+  "firefox_cache": {
+    "what": "Firefox's network cache (cache2) and startupCache. Firefox keeps the cache in the Local profile (%LOCALAPPDATA%\\Mozilla\\Firefox\\Profiles) apart from the Roaming profile with your data.",
+    "used_for": "Speeds up page loads and start-up; Firefox recreates both. Bookmarks, cookies, logins and site data are not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads.",
+    "before_cleaning": "Close Firefox first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.foxtonforensics.com/browser-history-examiner/firefox-data",
+      "https://support.mozilla.org/questions/1242460"
+    ],
+    "catalog_concern": "Label says 'content prefs' but content-prefs.sqlite (per-site zoom etc.) is not targeted, good."
+  },
+  "inetcache_ietlc": {
+    "what": "INetCache is WinINet's Temporary Internet Files (used by IE mode, the Windows web components and many apps). It also contains Content.Outlook, where classic Outlook puts attachments you open, and Office's Content.MSO. Cookies are in INetCookies, not here.",
+    "used_for": "Cached web files are re-downloaded when needed. Outlook copies an attachment into Content.Outlook to open it; edits you save without 'Save As' stay only there.",
+    "verdict": "caution",
+    "risk": "Edits to an Outlook attachment opened from a message, saved only to the temp copy, are lost. A full or cleared folder is harmless for Windows itself.",
+    "before_cleaning": "Close Outlook and Office apps first.",
+    "regenerates": true,
+    "sources": [
+      "https://www.slipstick.com/outlook/securetemp-files-folder/",
+      "https://www.outlook-tips.net/tips/securetemp-folder/"
+    ],
+    "catalog_concern": "Listed safe; caution because of Content.Outlook (OLK) attachment copies. Label claims 'Cookies and DownloadHistory' but cookies are not in INetCache; fix the label."
+  },
+  "opera_cache": {
+    "what": "Opera's Cache, Code Cache, GPUCache and Media Cache. Opera keeps its profile in %APPDATA%\\Opera Software\\Opera Stable and its caches in the %LOCALAPPDATA% twin of that folder.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Opera first.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs",
+      "https://forums.opera.com/post/362913"
+    ],
+    "catalog_concern": "Newer Opera builds use Chromium's layout with a 'Default' profile subfolder, so the caches may now be one level deeper (...\\Opera Stable\\Default\\Cache) and missed. Opera GX (Opera Software\\Opera GX Stable) is not covered. 'Media Cache' is obsolete in modern Chromium."
+  },
+  "tor_browser_cache": {
+    "what": "Tor Browser is portable and normally installed on the Desktop; %APPDATA%\\Tor Browser is not its standard location. A whole folder would include the browser profile and Tor state.",
+    "used_for": "Disabled in the catalog, so the app never cleans it. Keeping it disabled is correct.",
+    "verdict": "caution",
+    "risk": "Could remove bookmarks, settings and Tor guard state.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Whole app folder; correctly disabled."
+  },
+  "vivaldi_cache": {
+    "what": "Vivaldi's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Vivaldi first for a complete clean.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": "Label mentions blob storage but GPUCache is what is listed; harmless."
+  },
+  "yandex_cache": {
+    "what": "Yandex Browser's Cache (HTTP cache of downloaded web files), Code Cache (compiled JavaScript/WebAssembly) and GPUCache (compiled GPU shaders) in every profile.",
+    "used_for": "They only make sites load faster. The browser rebuilds them as you browse; the first visits are slower and use more data. History, cookies, passwords and Local Storage are separate and not touched.",
+    "verdict": "safe",
+    "risk": "None known beyond slower first loads. Locked files are skipped while the browser runs.",
+    "before_cleaning": "Close Yandex Browser first for a complete clean.",
+    "regenerates": true,
+    "sources": [
+      "https://chromium.googlesource.com/chromium/src.git/+/refs/heads/master/docs/user_data_dir.md",
+      "https://artifacts-kb.readthedocs.io/en/latest/sources/webbrowser/ChromeCache.html",
+      "https://v8.dev/blog/code-caching-for-devs"
+    ],
+    "catalog_concern": ""
+  },
+  "firefox_crash_reports": {
+    "what": "Firefox's crash reporter folder. When Firefox crashes, the report is written to 'pending'; after it is sent, the pending files are removed and a small .txt with the crash ID goes to 'submitted'.",
+    "used_for": "Sending crash reports to Mozilla, and about:crashes, which lists your past crash IDs so you can look them up or attach them to a bug report.",
+    "verdict": "caution",
+    "risk": "Unsent crash reports in 'pending' are lost, and about:crashes no longer shows past crash IDs. Firefox, its profile, bookmarks and passwords are not in this folder.",
+    "before_cleaning": "If Firefox has been crashing, open about:crashes first and submit or note the crash IDs you may need for a support request.",
+    "regenerates": true,
+    "sources": [
+      "https://firefox-source-docs.mozilla.org/contributing/debugging/stacktrace_report.html",
+      "https://support.mozilla.org/en-US/kb/mozillacrashreporter"
+    ],
+    "catalog_concern": ""
+  }
+}

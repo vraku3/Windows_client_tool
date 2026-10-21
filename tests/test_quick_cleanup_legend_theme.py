@@ -1,22 +1,26 @@
-"""The category legend must be readable in whichever theme is in force.
+"""A category's name must be readable in whichever theme is in force.
 
-`_SliceCard` wrote its label colour into the markup -- `<span
-style='color:#e0e0e0'>` -- which no stylesheet can reach, so it stayed a
-dark-theme grey forever. That was invisible the moment the card stopped
-painting itself dark: #e0e0e0 on #f5f5f5 is 1.1:1.
-
-Measured on the rendered widget, because the point is what reaches the screen.
+This test once guarded `_SliceCard`, the legend card beside the old donut,
+whose label colour was written into its markup -- `<span style='color:#e0e0e0'>`
+-- where no stylesheet can reach, so it stayed a dark-theme grey forever.
+The overview (WP6) replaced those cards with painted category rows
+(`category_group._CategoryHeader`) and a legend the donut draws itself; both
+read their colours at paint time. The rule is the same and is still measured
+on the rendered widget, because the point is what reaches the screen.
 """
+import os
 import sys
 
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QFrame, QVBoxLayout
 
 QApplication.instance() or QApplication(sys.argv)
 
-from modules.cleanup.components.quick_cleanup_tab import _SliceCard  # noqa: E402
+from core import semantic_colors as sc  # noqa: E402
+from modules.cleanup import cleanup_scanner as cs  # noqa: E402
+from modules.cleanup.components.category_group import CategoryGroup, row_columns  # noqa: E402
 
 
 def _luminance(colour: QColor) -> float:
@@ -32,51 +36,56 @@ def _contrast(a: QColor, b: QColor) -> float:
     return (high + 0.05) / (low + 0.05)
 
 
-def _render_label_region(theme_qss: str):
-    """Just the category-name label's rectangle.
-
-    Measuring the whole card passes on the strength of its OTHER text -- the
-    size, which is already themed -- and says nothing about the label. The
-    coloured dot would fool it too. Crop to the one widget under test.
-    """
+def _render_name_region(theme: str):
+    """Just the category NAME's column of the row, on a card-coloured surface."""
     qapp = QApplication.instance()
+    qss = open(os.path.join(os.path.dirname(__file__), "..", "src", "ui", "styles",
+                            f"{theme}.qss"), encoding="utf-8").read()
     previous = qapp.styleSheet()
-    qapp.setStyleSheet(theme_qss)
-    card = _SliceCard("Temp Files", 0, "#4fc3f7")
-    card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
-    card.resize(320, 40)
-    card.show()
-    qapp.processEvents()
-    # Grab the label WIDGET, not a crop of the card: a crop still contains
-    # the category's colour swatch, which is the most contrasting thing in the
-    # card and would answer for text it says nothing about.
-    image = card._lbl.grab().toImage()
-    qapp.setStyleSheet(previous)
+    qapp.setStyleSheet(qss)
+    sc.set_theme(theme)
+    try:
+        # Hosted the way the overview hosts it: on a chartCard, with the
+        # rows' own surfaces transparent.
+        card = QFrame()
+        card.setObjectName("chartCard")
+        card.setStyleSheet("QWidget#categoryGroup, QWidget#categoryRow "
+                           "{ background: transparent; }")
+        lay = QVBoxLayout(card)
+        group = CategoryGroup("Temp Files", cs.scan_temp_files)
+        group.set_result(cs.ScanResult(items=[cs.ScanItem(path=r"C:\t", size=10, is_dir=True)],
+                                       total_size=10))
+        lay.addWidget(group)
+        card.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+        card.resize(900, 90)
+        card.show()
+        qapp.processEvents()
+        header = group._header
+        name = row_columns(header.rect())["name"]
+        origin = header.mapTo(card, header.rect().topLeft())
+        image = card.grab().toImage().copy(origin.x() + name.x(), origin.y() + 4, 120, 22)
+    finally:
+        qapp.setStyleSheet(previous)
+        sc.set_theme("dark")
     return image
 
 
 def _background_and_darkest_ink(image):
-    """The card's own background, and the most extreme text pixel on it."""
     from collections import Counter
     counts = Counter()
     for y in range(image.height()):
         for x in range(image.width()):
             counts[image.pixel(x, y)] += 1
     background = QColor(counts.most_common(1)[0][0])
-    # The glyph cores sit furthest from the background in luminance.
     ink = max((QColor(p) for p in counts),
               key=lambda c: abs(_luminance(c) - _luminance(background)))
     return background, ink
 
 
 @pytest.mark.parametrize("theme", ["dark", "light"])
-def test_legend_label_is_readable_on_its_own_card(theme):
-    import os
-    qss = open(os.path.join(os.path.dirname(__file__), "..", "src", "ui",
-                            "styles", f"{theme}.qss"), encoding="utf-8").read()
-    background, ink = _background_and_darkest_ink(_render_label_region(qss))
+def test_category_name_is_readable_on_its_card(theme):
+    background, ink = _background_and_darkest_ink(_render_name_region(theme))
     ratio = _contrast(background, ink)
     assert ratio >= 4.5, (
-        f"{theme}: the legend card's text reaches only {ratio:.2f}:1 against "
-        f"its own background ({ink.name()} on {background.name()})"
-    )
+        f"{theme}: the category name reaches only {ratio:.2f}:1 against its "
+        f"background ({ink.name()} on {background.name()})")

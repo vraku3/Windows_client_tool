@@ -7,7 +7,7 @@ import time
 
 from PyQt6.QtCore import QThreadPool
 
-from modules.cleanup.cleanup_module import _CATEGORY_TAB_NAMES
+from modules.cleanup.cleanup_module import _CATEGORY_TAB_KEYS
 from modules.cleanup.cleanup_scanner import ScanResult
 
 
@@ -132,21 +132,17 @@ def test_get_refresh_interval_is_60_seconds(qapp):
 
 
 def test_every_category_tab_name_mapping_resolves_to_a_real_tab(qapp):
-    """_CATEGORY_TAB_NAMES maps 10 Quick Cleanup category ids to tab
-    display-name strings, matched by exact string equality against
-    self._tabs.tabText(i) in _on_category_clicked. A typo in either this
+    """_CATEGORY_TAB_KEYS maps 10 Quick Cleanup category ids to tab
+    stable keys resolved to widgets in _on_category_clicked. A typo in either this
     dict or quick_cleanup_tab.py's CLEANUP_CATEGORIES would silently no-op
     a category click for that category -- only "browser" had coverage
     before this test (see test_clicking_a_category_card_switches_to_its_tab
     above); this exercises all 10."""
     module, app = _module(qapp)
     try:
-        for category_id, expected_tab_name in _CATEGORY_TAB_NAMES.items():
+        for category_id, tab_key in _CATEGORY_TAB_KEYS.items():
             module._quick._handle_category_clicked(category_id)
-            actual = module._tabs.tabText(module._tabs.currentIndex())
-            assert actual == expected_tab_name, (
-                f"category {category_id!r} navigated to tab {actual!r}, "
-                f"expected {expected_tab_name!r}")
+            assert module._tabs.currentWidget() is module._tab_widgets[tab_key]
         _settle(qapp)
     finally:
         app.shutdown()

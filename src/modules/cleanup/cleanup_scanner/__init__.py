@@ -72,7 +72,7 @@ _OV_GROUPS = [
         scan_wmi_logs, scan_sfc_logs, scan_group_policy_logs,
     ]),
     ("Large Items", [
-        scan_windows_old, scan_recycle_bin, scan_installer_patch_cache,
+        scan_windows_old, scan_installer_patch_cache,
     ]),
     ("Dev Tools", [
         scan_dev_tool_caches, scan_vscode_cache, scan_jetbrains_cache,

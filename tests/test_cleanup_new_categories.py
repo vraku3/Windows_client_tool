@@ -25,7 +25,7 @@ import os
 
 import pytest
 
-from _sparse import make_sparse
+from _sparse import count_logical, make_sparse
 from modules.cleanup import cleanup_scanner as cs
 from modules.cleanup.cleanup_scanner import catalog
 
@@ -97,6 +97,7 @@ def test_virtual_disks_are_reported_but_never_pre_selected(
 
     disk = tmp_path / "ext4.vhdx"
     make_sparse(disk, 2 * 1024 * 1024 * 1024)
+    count_logical(monkeypatch)                     # a sparse stand-in for a real image
 
     monkeypatch.setattr(ss.drives, "fixed_drive_roots", lambda: [str(tmp_path)])
     monkeypatch.setattr(virtual_disks, "installed_hypervisors",

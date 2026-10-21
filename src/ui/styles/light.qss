@@ -578,3 +578,72 @@ QPlainTextEdit#iseConsole[consoleSize="12"] { font-size: 12pt; }
 QPlainTextEdit#iseConsole[consoleSize="13"] { font-size: 13pt; }
 QPlainTextEdit#iseConsole[consoleSize="14"] { font-size: 14pt; }
 QPlainTextEdit#iseConsole[consoleSize="16"] { font-size: 16pt; }
+
+/* ---- Cleanup redesign: shared roles ------------------------------------
+   The light half of the roles in dark.qss (see the comment there). Text is
+   >= 4.5:1 on its background, measured by tests/test_chart_palette.py. ---- */
+QFrame#cleanupHeader {
+    background-color: #ececec;
+    border: none;
+    border-bottom: 1px solid #d4d4d4;
+}
+
+QFrame#kpiTile {
+    background-color: #ececec;
+    border: 1px solid #d4d4d4;
+    border-radius: 8px;
+}
+/* Labels inside these surfaces take the surface, not the pane colour
+   (light.qss gives QLabel no background of its own, so without this a
+   title would sit in a pane-coloured band on a white card). */
+QFrame#cleanupHeader QLabel, QFrame#kpiTile QLabel, QFrame#chartCard QLabel,
+QFrame#recoCard QLabel, QFrame#recoCardHigh QLabel {
+    background: transparent;
+}
+QLabel#kpiValue {
+    color: #1e1e1e;
+    font-size: 20px;
+    font-weight: bold;
+}
+QLabel#kpiCaption {
+    color: #575757;
+    font-size: 11px;
+}
+
+/* Same colour as chrome("surface") in light (#ffffff). */
+QFrame#chartCard {
+    background-color: #ffffff;
+    border: 1px solid #d4d4d4;
+    border-radius: 8px;
+}
+QLabel#chartTitle {
+    color: #1e1e1e;
+    font-weight: bold;
+}
+
+QFrame#recoCard {
+    background-color: #ffffff;
+    border: 1px solid #d4d4d4;
+    border-left: 4px solid #00639c;
+    border-radius: 6px;
+}
+QFrame#recoCardHigh {
+    background-color: #fdf3f2;
+    border: 1px solid #e8c4c0;
+    border-left: 4px solid #b3261e;
+    border-radius: 6px;
+}
+
+QWidget#detailPane {
+    background-color: #ffffff;
+    color: #1e1e1e;
+    border: 1px solid #d4d4d4;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+QLabel#emptyState {
+    color: #5f5f5f;
+    font-size: 13px;
+    padding: 24px;
+}

@@ -512,3 +512,85 @@ QPlainTextEdit#iseConsole[consoleSize="12"] { font-size: 12pt; }
 QPlainTextEdit#iseConsole[consoleSize="13"] { font-size: 13pt; }
 QPlainTextEdit#iseConsole[consoleSize="14"] { font-size: 14pt; }
 QPlainTextEdit#iseConsole[consoleSize="16"] { font-size: 16pt; }
+
+/* ---- Cleanup redesign: shared roles ------------------------------------
+   The objectNames every Cleanup pane uses instead of inline sheets, so the
+   header, tiles, cards and empty states follow a theme switch. The same
+   names, with light colours, are in light.qss; the phosphor themes get them
+   by recolouring this sheet. `safetyBadge` has no rule on purpose: the badge
+   is painted by a delegate from core.semantic_colors, not by the sheet.
+   Contrast (WCAG): every text colour below is >= 4.5:1 on its background,
+   measured by tests/test_chart_palette.py. ---- */
+QFrame#cleanupHeader {
+    background-color: #252526;
+    border: none;
+    border-bottom: 1px solid #3c3c3c;
+}
+
+/* A KPI tile is a card (QFrame#card) under another name, so the tiles can be
+   found and styled without catching every other card in the app. */
+QFrame#kpiTile {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    border-radius: 8px;
+}
+/* Labels inside these surfaces take the surface, not the pane colour
+   (light.qss gives QLabel no background of its own, so without this a
+   title would sit in a pane-coloured band on a white card). */
+QFrame#cleanupHeader QLabel, QFrame#kpiTile QLabel, QFrame#chartCard QLabel,
+QFrame#recoCard QLabel, QFrame#recoCardHigh QLabel {
+    background: transparent;
+}
+QLabel#kpiValue {
+    color: #e0e0e0;
+    font-size: 20px;
+    font-weight: bold;
+}
+QLabel#kpiCaption {
+    color: #9d9d9d;
+    font-size: 11px;
+}
+
+/* Charts paint chrome("surface") (#2b2b2b) themselves; the card is the same
+   colour so the chart has no visible box inside it, and the chart palette's
+   3:1 contrast is measured against exactly this colour. */
+QFrame#chartCard {
+    background-color: #2b2b2b;
+    border: 1px solid #3c3c3c;
+    border-radius: 8px;
+}
+QLabel#chartTitle {
+    color: #e0e0e0;
+    font-weight: bold;
+}
+
+/* Recommendation cards: the left edge carries the severity, and the card
+   also carries an icon shape and words, so colour is never the only cue. */
+QFrame#recoCard {
+    background-color: #252526;
+    border: 1px solid #3c3c3c;
+    border-left: 4px solid #4fc3f7;
+    border-radius: 6px;
+}
+QFrame#recoCardHigh {
+    background-color: #2d2626;
+    border: 1px solid #4a3434;
+    border-left: 4px solid #f44747;
+    border-radius: 6px;
+}
+
+/* The detail pane beside every area tab (a QTextBrowser). */
+QWidget#detailPane {
+    background-color: #252526;
+    color: #d4d4d4;
+    border: 1px solid #3c3c3c;
+    border-radius: 6px;
+    padding: 6px;
+}
+
+/* "No data -- click Scan": centred, muted, never a blank box. */
+QLabel#emptyState {
+    color: #9d9d9d;
+    font-size: 13px;
+    padding: 24px;
+}

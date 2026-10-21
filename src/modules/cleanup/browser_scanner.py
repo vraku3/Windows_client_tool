@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
+from modules.cleanup.cleanup_scanner.disk_size import on_disk_size
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,19 +86,15 @@ BROWSER_EXES = {
 # rather than re-deriving safety per entry from scratch.
 CHROMIUM_CACHE_SUBDIRS = {
     "Cache":                     "HTTP Cache",
-    "Cache2":                    "HTTP Cache v2",
     "Code Cache":                "Compiled JS/WASM",
     "GPUCache":                  "GPU Shader Cache",
     "Media Cache":               "Media Cache",
-    "blob_storage":              "Blob Storage",
     "ShaderCache":               "Shader Cache",
     "GrShaderCache":             "General Shader Cache",
     "DawnCache":                 "Dawn WebGPU Cache",
     "Extension Cache":           "Extension Cache",
     r"Crashpad\reports":         "Crash Reports",
     r"Crashpad\pending":         "Pending Crash Reports",
-    r"GrShaderCache\GPUCache":  "GPU Cache (sub)",
-    r"ShaderCache\GPUCache":     "GPU Cache (sub)",
 }
 
 # Firefox cache subdirectories
@@ -106,9 +104,6 @@ FIREFOX_CACHE_SUBDIRS = {
     "offlineCache":         "Offline Cache",
     "thumbnails":           "Page Thumbnails",
     "startupCache":         "Startup Cache",
-    r"crashes\submitted":   "Submitted Crashes",
-    r"crashes\pending":     "Pending Crashes",
-    "minidumps":            "Minidumps",
 }
 
 
@@ -173,11 +168,9 @@ class BrowserScanResult:
 # Cache categories for Chromium
 CHROMIUM_CACHE_CATEGORIES = [
     ("Cache", "HTTP Cache"),
-    ("Cache2", "HTTP Cache v2"),
     ("Code Cache", "Compiled JS & WASM"),
-    ("GPU Cache", "GPU Shader Cache"),
+    ("GPUCache", "GPU Shader Cache"),
     ("Media Cache", "Media Cache"),
-    ("blob_storage", "Blob Storage"),
     (r"Crashpad\reports", "Crash Reports"),
 ]
 
@@ -188,9 +181,6 @@ FIREFOX_CACHE_CATEGORIES = [
     ("offlineCache", "Offline Cache"),
     ("thumbnails", "Page Thumbnails"),
     ("startupCache", "Startup Cache"),
-    (r"crashes\submitted", "Submitted Crashes"),
-    (r"crashes\pending", "Pending Crashes"),
-    ("minidumps", "Minidumps"),
 ]
 
 # Browser executable mappings
@@ -348,12 +338,12 @@ class BrowserScanner2:
             for entry in path.iterdir():
                 try:
                     if entry.is_file():
-                        total += entry.stat().st_size
+                        total += on_disk_size(str(entry), entry.stat())
                     elif entry.is_dir():
                         for sub in entry.iterdir():
                             try:
                                 if sub.is_file():
-                                    total += sub.stat().st_size
+                                    total += on_disk_size(str(sub), sub.stat())
                             except OSError:
                                 logger.debug("Ignored OSError", exc_info=True)
                 except OSError:
@@ -626,7 +616,7 @@ class EnhancedBrowserScanner:
             for entry in path.rglob("*"):
                 try:
                     if entry.is_file():
-                        total += entry.stat().st_size
+                        total += on_disk_size(str(entry), entry.stat())
                 except OSError:
                     logger.debug("Ignored OSError", exc_info=True)
         except OSError:

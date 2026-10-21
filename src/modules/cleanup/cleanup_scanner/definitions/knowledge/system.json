@@ -1,0 +1,556 @@
+{
+  "application_manifest_cache": {
+    "what": "WinSxS\\Manifests: the manifest of every component in the Windows component store.",
+    "used_for": "Windows servicing reads these to install, repair and update Windows. They are not rebuilt; only DISM/servicing may change them.",
+    "verdict": "danger",
+    "risk": "Deleting anything in WinSxS can leave Windows unable to boot or update. Microsoft says use Disk Cleanup or DISM /StartComponentCleanup instead.",
+    "before_cleaning": "Never delete manually.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder",
+      "https://learn.microsoft.com/en-us/archive/blogs/jmanning/do-not-manually-delete-things-from-windirwinsxs"
+    ],
+    "catalog_concern": "Disabling is right. The disabled_reason text (whole app data folder / sign-in store) is the generic wording and does not describe this entry; the real reason is that it is system-critical."
+  },
+  "browser_caches": {
+    "what": "The HTTP disk cache of the Default profile in Chrome and Edge (Default\\Cache).",
+    "used_for": "Pages and images are downloaded again as you browse; the folder is rebuilt automatically. Sign-ins, cookies and history are elsewhere and untouched.",
+    "verdict": "safe",
+    "risk": "Pages load slower for a while. Files in use by a running browser stay behind.",
+    "before_cleaning": "Close the browser first.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": "Description says Firefox but no Firefox path is listed, and only the Default profile is covered (Profile 1, 2... are not)."
+  },
+  "d3d_shader_cache": {
+    "what": "Compiled GPU shaders saved by DirectX (D3DSCache) and the NVIDIA/AMD drivers (DXCache, GLCache).",
+    "used_for": "Games and apps compile shaders once and reuse them. After deletion each game recompiles them on its next launch.",
+    "verdict": "caution",
+    "risk": "No data loss, but the first sessions of every game stutter or load slowly while shaders rebuild. Clearing it repeatedly (e.g. every Clean All Safe) makes that permanent.",
+    "before_cleaning": "Close games and GPU-heavy apps first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.gaijin.net/hc/en-us/articles/30268449678994-How-to-clear-NVIDIA-and-DirectX-cache",
+      "https://steamcommunity.com/discussions/forum/1/6679490060452861540"
+    ],
+    "catalog_concern": "Rated safe, so Clean All Safe wipes it every time and re-introduces shader stutter; caution fits better. Same paths as the other enabled shader entry (d3d_shader_cache / directx_shader_cache), so the same bytes are counted and offered twice; keep one."
+  },
+  "defender_history": {
+    "what": "Microsoft Defender's detection history (Protection History) and scan result records under Scans\\History.",
+    "used_for": "Windows Security shows these as past detections. Deleting them is an unsupported way to clear Protection History; Defender keeps working and writes new records.",
+    "verdict": "caution",
+    "risk": "You lose the record of what was detected and when (useful after an infection). Tamper Protection usually blocks the deletion anyway.",
+    "before_cleaning": "Clear history from Windows Security instead.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/defender-endpoint/restore-quarantined-files-microsoft-defender-antivirus",
+      "https://answers.microsoft.com/en-us/windows/forum/all/how-do-i-delete-items-quarantined-by-windows/cf1d31ad-4144-4edd-aa56-fb2cbd11ae0d"
+    ],
+    "catalog_concern": "Catalog said safe; disabling was right. Disabled_reason wording is generic and inaccurate (not user data or sign-ins, but security evidence)."
+  },
+  "dev_tool_caches": {
+    "what": "Download caches of npm, pip, NuGet (incl. the global-packages folder), Cargo, Gradle, Maven and Yarn.",
+    "used_for": "Package managers reuse these instead of downloading again. After deletion the next build or install re-downloads everything it needs.",
+    "verdict": "caution",
+    "risk": "Large re-downloads; offline builds fail. Maven .m2\\repository can also hold artifacts you built locally (mvn install) that exist nowhere else.",
+    "before_cleaning": "Close IDEs and stop builds/daemons (gradlew --stop).",
+    "regenerates": true,
+    "sources": [
+      "https://docs.npmjs.com/cli/v10/commands/npm-cache",
+      "https://pip.pypa.io/en/stable/cli/pip_cache/",
+      "https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders",
+      "https://docs.gradle.org/current/userguide/directory_layout.html",
+      "https://maven.apache.org/guides/introduction/introduction-to-repositories.html",
+      "https://doc.rust-lang.org/cargo/guide/cargo-home.html",
+      "https://classic.yarnpkg.com/en/docs/cli/cache"
+    ],
+    "catalog_concern": "%USERPROFILE%\\.nuget\\packages and .m2\\repository are package stores, not just caches; caution is correct but should say so. npm's own cache is %LOCALAPPDATA%\\npm-cache."
+  },
+  "diag_logs": {
+    "what": "Windows servicing and diagnostic logs: CBS, DISM, MoSetup, SIH, Windows Update ETLs, WDI traces, diagerr/diagwrn.",
+    "used_for": "Only read when troubleshooting failed updates, SFC/DISM repairs or performance problems. Windows writes new ones; deleted history is not recreated.",
+    "verdict": "caution",
+    "risk": "Lost evidence for diagnosing a failed update or corruption. CBS.log and active ETLs are locked while servicing runs.",
+    "before_cleaning": "Only when no update or SFC/DISM is running and nothing needs diagnosing.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/analyze-sfc-program-log-file-entries",
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-logs",
+      "https://learn.microsoft.com/windows/deployment/upgrade/log-files"
+    ],
+    "catalog_concern": "Overlaps sfc_logs, windows_cbs_logs and telemetry (same files counted more than once)."
+  },
+  "directx_shader_cache": {
+    "what": "DirectX (D3DSCache) and NVIDIA/AMD/Intel driver shader caches, including AMD VulkanCache and Intel GLCache.",
+    "used_for": "Compiled shaders reused by games; rebuilt on the next launch of each game.",
+    "verdict": "caution",
+    "risk": "No data loss, but stutter and long first loads in every game until shaders are recompiled.",
+    "before_cleaning": "Close games first.",
+    "regenerates": true,
+    "sources": [
+      "https://support.gaijin.net/hc/en-us/articles/30268449678994-How-to-clear-NVIDIA-and-DirectX-cache"
+    ],
+    "catalog_concern": "Rated safe, so every Clean All Safe re-introduces shader stutter. Same paths as the other enabled shader entry (d3d_shader_cache / directx_shader_cache), so the same bytes are counted and offered twice; keep one."
+  },
+  "driver_store": {
+    "what": "The Driver Store: every driver package Windows has staged, including those for devices in use now.",
+    "used_for": "Windows installs and reinstalls drivers from here (new USB ports, repairs, updates). Not rebuilt if deleted.",
+    "verdict": "danger",
+    "risk": "Devices lose their drivers or cannot be reinstalled; can break boot. Remove superseded packages one by one with pnputil /delete-driver.",
+    "before_cleaning": "Never delete the folder; use pnputil.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows-hardware/drivers/devtest/pnputil-command-syntax",
+      "https://learn.microsoft.com/en-us/answers/a/3611751"
+    ],
+    "catalog_concern": "Disabling is right."
+  },
+  "dxgi_cache": {
+    "what": "Same GPU shader cache folders as directx_shader_cache.",
+    "used_for": "See directx_shader_cache: shaders are recompiled by each game after deletion.",
+    "verdict": "caution",
+    "risk": "Shader stutter after deletion; duplicate entry.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://support.gaijin.net/hc/en-us/articles/30268449678994-How-to-clear-NVIDIA-and-DirectX-cache"
+    ],
+    "catalog_concern": "Disabling as a duplicate is right."
+  },
+  "event_logs": {
+    "what": "Windows event log files (.evtx): System, Application, Security and every operational log.",
+    "used_for": "Event Viewer, Reliability Monitor, auditing and troubleshooting read them. Logs are held open by the Event Log service; clear with wevtutil cl, not by deleting.",
+    "verdict": "danger",
+    "risk": "Destroys audit and troubleshooting history; clearing Security is treated as tampering (event 1102). Deleting the files under the running service can corrupt logs.",
+    "before_cleaning": "Never delete the files; use Event Viewer or wevtutil.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wevtutil"
+    ],
+    "catalog_concern": "Catalog said caution; disabling was right. The disabled_reason wording is generic."
+  },
+  "font_cache": {
+    "what": "FNTCACHE.DAT, the boot-time font cache kept by Windows.",
+    "used_for": "Speeds up font loading. Windows rebuilds it after a restart if it is deleted.",
+    "verdict": "caution",
+    "risk": "Slightly slower first boot; the file is locked while Windows runs, so deletion usually needs the Font Cache service stopped.",
+    "before_cleaning": "Stop the Windows Font Cache service; restart afterwards.",
+    "regenerates": true,
+    "sources": [
+      "https://winaero.com/rebuild-font-cache-windows-10/"
+    ],
+    "catalog_concern": "Small (a few MB); little to gain."
+  },
+  "iis_logs": {
+    "what": "IIS web server request logs and HTTP.sys error logs (HTTPERR).",
+    "used_for": "Used for web-site troubleshooting, traffic and security audits. Not recreated; IIS just writes new files.",
+    "verdict": "caution",
+    "risk": "Lost web access/audit history, which servers often must keep for compliance or incident response.",
+    "before_cleaning": "Check your retention requirements first.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/iis/manage/provisioning-and-managing-iis/managing-iis-log-file-storage"
+    ],
+    "catalog_concern": "Rated safe but these are audit logs; caution fits. Current IIS logs default to %SystemDrive%\\inetpub\\logs\\LogFiles, which is not listed."
+  },
+  "installer_patch_cache": {
+    "what": "Windows Installer's $PatchCache$: baseline copies of files from MSI products, used when patching.",
+    "used_for": "Needed to repair, patch or uninstall patches of MSI software. Not rebuilt.",
+    "verdict": "danger",
+    "risk": "Future repairs and patch removals may demand the original installation media or fail.",
+    "before_cleaning": "Never delete manually.",
+    "regenerates": false,
+    "sources": [
+      "https://devblogs.microsoft.com/setup/?p=1753",
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/missing-windows-installer-cache"
+    ],
+    "catalog_concern": "Disabling is right."
+  },
+  "language_packs": {
+    "what": "System32\\MUI and System32\\en-US: the language resource (.mui) files that hold Windows' own text and dialogs.",
+    "used_for": "Every Windows program loads its menus and messages from here. Not rebuilt; only a repair restores them.",
+    "verdict": "danger",
+    "risk": "Windows and its tools lose their UI text or fail to start. Remove language packs from Settings instead.",
+    "before_cleaning": "Never delete.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Catalog said caution; disabling was right (should be danger). The description 'cab files and MUI temp cache' is wrong: these are live system files."
+  },
+  "memory_dumps": {
+    "what": "Kernel crash dumps: MEMORY.DMP, Minidump files and LiveKernelReports.",
+    "used_for": "Written after a blue screen or a live kernel hang; read with WinDbg to find the faulting driver. Not recreated.",
+    "verdict": "caution",
+    "risk": "The only evidence of a past crash is gone.",
+    "before_cleaning": "Only after the crash has been diagnosed.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/read-small-memory-dump-file",
+      "https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/bug-check-code-reference-live-dump"
+    ],
+    "catalog_concern": "Overlaps minidump (Minidump counted twice)."
+  },
+  "minidump": {
+    "what": "%windir%\\Minidump: one small dump per blue screen.",
+    "used_for": "Holds the stop code, loaded drivers and stack of each crash, for diagnosis. Not recreated.",
+    "verdict": "caution",
+    "risk": "Loss of the only record of past bugchecks.",
+    "before_cleaning": "Only after crashes are diagnosed.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/performance/read-small-memory-dump-file"
+    ],
+    "catalog_concern": "Same files as memory_dumps' Minidump path: counted twice."
+  },
+  "ms_store_cache": {
+    "what": "Not documented by the vendor at this path. The Store keeps its cache in its package folder; wsreset.exe is the supported reset.",
+    "used_for": "A Store cache would be rebuilt when the Store next opens.",
+    "verdict": "safe",
+    "risk": "None known for a cache; the path may not exist on Windows 10/11.",
+    "before_cleaning": "Close Microsoft Store.",
+    "regenerates": true,
+    "sources": [
+      "https://support.microsoft.com/en-au/windows/microsoft-store-doesn-t-launch-reset-the-cache-df2aea11-6338-418a-9515-434c5e910adb"
+    ],
+    "catalog_concern": "Path looks stale; prefer running wsreset.exe."
+  },
+  "network_adapter_cache": {
+    "what": "The hosts file: manual name-to-address overrides (ad blocking, dev sites, blocked domains).",
+    "used_for": "Read by the DNS client on every lookup. It is configuration, not a cache; Windows does not recreate custom entries.",
+    "verdict": "danger",
+    "risk": "Lost custom entries: blocked sites reachable again, dev/intranet names stop resolving. DNS cache is flushed with ipconfig /flushdns instead.",
+    "before_cleaning": "Never delete; reset it per Microsoft's KB only if wanted.",
+    "regenerates": false,
+    "sources": [
+      "https://support.microsoft.com/kb/972034"
+    ],
+    "catalog_concern": "Disabling is right; the description ('DNS and NetBIOS cached entries') is wrong."
+  },
+  "notifications_cache": {
+    "what": "The notification database (wpndatabase.db): notification history and per-app notification settings.",
+    "used_for": "Action Center and app notification settings read it. Windows recreates an empty one, but app settings are reset.",
+    "verdict": "caution",
+    "risk": "Notification preferences and history are reset; the file is locked by the push notification service.",
+    "before_cleaning": "Only to fix a broken notification store.",
+    "regenerates": true,
+    "sources": [
+      "https://www.deskmodder.de/wiki/index.php/Benachrichtigungen_und_Aktionen_Alte_Eintr%C3%A4ge_entfernen_l%C3%B6schen_Windows_10"
+    ],
+    "catalog_concern": "Catalog said safe; disabling was right."
+  },
+  "panther_logs": {
+    "what": "Windows Setup and upgrade logs (setupact.log, setuperr.log) in %windir%\\Panther.",
+    "used_for": "Read when diagnosing a failed upgrade or OOBE. Not recreated until the next setup.",
+    "verdict": "caution",
+    "risk": "Lost upgrade diagnostics. Small.",
+    "before_cleaning": "Only when no upgrade is in progress.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/windows/deployment/upgrade/log-files",
+      "https://support.microsoft.com/kb/927521"
+    ],
+    "catalog_concern": "Overlaps sysprep_logs and windows_setup_diags (whole Panther folder)."
+  },
+  "per_drive_found_clusters": {
+    "what": "FOUND.000 folders: file fragments (.chk) that CHKDSK recovered but could not reattach.",
+    "used_for": "Nothing uses them. Each .chk may hold a whole file, part of one, or junk.",
+    "verdict": "caution",
+    "risk": "Rarely, the only copy of something lost in a crash or power cut.",
+    "before_cleaning": "Look inside first if files went missing.",
+    "regenerates": false,
+    "sources": [
+      "https://www.howtogeek.com/282798/what-are-the-found000-folder-and-file0000chk-file-in-windows/"
+    ],
+    "catalog_concern": ""
+  },
+  "per_drive_recycle_bin": {
+    "what": "The Recycle Bin on every fixed drive: files you deleted.",
+    "used_for": "Lets you restore deleted files. Emptying it deletes them permanently.",
+    "verdict": "caution",
+    "risk": "Permanent loss of anything you might still want back.",
+    "before_cleaning": "Check the Recycle Bin first.",
+    "regenerates": false,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Disk_Cleanup"
+    ],
+    "catalog_concern": "Correct, but the old hand-written scan_recycle_bin is still offered in the Large Items tab as safe."
+  },
+  "per_drive_temp": {
+    "what": "A \\temp or \\tmp folder at the root of a fixed drive.",
+    "used_for": "Created by a person or a tool on purpose; nothing in Windows manages it or recreates its contents.",
+    "verdict": "caution",
+    "risk": "May hold files someone parked there deliberately.",
+    "before_cleaning": "Look at the contents first.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "photoscan_cache": {
+    "what": "The Photos app's LocalState: its library database, settings and (legacy Photos) Video Editor projects.",
+    "used_for": "This is app data, not a cache; Photos would re-index, but projects and settings are lost.",
+    "verdict": "caution",
+    "risk": "Lost albums/people tags, settings and video projects.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Disabling was right (catalog said safe)."
+  },
+  "project_ascension_logs": {
+    "what": "Not documented by the vendor. Project Ascension launcher logs and its cache folder.",
+    "used_for": "Logs are only for troubleshooting; a cache folder is normally rebuilt by the launcher.",
+    "verdict": "safe",
+    "risk": "Lost launcher logs; launcher may re-download cached data.",
+    "before_cleaning": "Close the Ascension launcher.",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "sfc_logs": {
+    "what": "CBS.log and dism.log: the logs of SFC, DISM and Windows servicing.",
+    "used_for": "Read to see what SFC/DISM repaired or failed to repair. New ones are started; old content is lost.",
+    "verdict": "caution",
+    "risk": "Lost repair evidence; CBS.log is in use while servicing runs.",
+    "before_cleaning": "Not while SFC, DISM or an update is running.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/analyze-sfc-program-log-file-entries"
+    ],
+    "catalog_concern": "Same files as diag_logs and windows_cbs_logs: counted more than once."
+  },
+  "sysprep_logs": {
+    "what": "The whole %windir%\\Panther folder plus CBS.log and setupapi.log.",
+    "used_for": "Setup, Sysprep and upgrade diagnostics. Panther can also hold unattend files and migration data.",
+    "verdict": "caution",
+    "risk": "Lost setup/upgrade evidence; deleting Panther during an upgrade breaks it.",
+    "before_cleaning": "Only when no upgrade or Sysprep is in progress.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/windows/deployment/upgrade/log-files",
+      "https://support.microsoft.com/kb/927521"
+    ],
+    "catalog_concern": "Overlaps panther_logs, sfc_logs and windows_setup_diags. setupapi.log is the XP name; current files are INF\\setupapi.dev.log / setupapi.app.log."
+  },
+  "telemetry": {
+    "what": "Windows Error Reporting temp files, WDI diagnostic traces and diagerr/diagwrn logs.",
+    "used_for": "Diagnostics data that Windows rewrites as needed.",
+    "verdict": "caution",
+    "risk": "Lost diagnostic traces; pending error reports may not be sent.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/fr-fr/archive/blogs/oanapl/windows-error-reporting-wer-for-developers"
+    ],
+    "catalog_concern": "Overlaps diag_logs. Deleting these files does not turn telemetry off."
+  },
+  "temp_files": {
+    "what": "The user temp folder (%TEMP%) and Windows\\Temp.",
+    "used_for": "Programs and installers put scratch files here. Most are leftovers; Windows does not need them after the program finishes.",
+    "verdict": "safe",
+    "risk": "An installer or app still running may need its files; the 24-hour floor protects most of these.",
+    "before_cleaning": "Close running installers and apps.",
+    "regenerates": true,
+    "sources": [
+      "https://en.wikipedia.org/wiki/Disk_Cleanup",
+      "https://support.microsoft.com/en-us/windows/manage-drive-space-with-storage-sense-654f6ada-7bfc-45e5-966b-e24aded96ad5"
+    ],
+    "catalog_concern": ""
+  },
+  "thumbnail_cache": {
+    "what": "Explorer's thumbnail and icon cache databases (thumbcache_*.db, iconcache_*.db).",
+    "used_for": "Previews of pictures, videos and icons. Rebuilt as you browse folders; your files are not touched.",
+    "verdict": "safe",
+    "risk": "Folders show generic icons until previews are rebuilt.",
+    "before_cleaning": "Locked by Explorer; some files only go after Explorer restarts.",
+    "regenerates": true,
+    "sources": [
+      "https://www.winhelponline.com/blog/clear-thumbnail-cache-windows/"
+    ],
+    "catalog_concern": ""
+  },
+  "thumbnail_cache_central": {
+    "what": "Same files as thumbnail_cache.",
+    "used_for": "Rebuilt as you browse.",
+    "verdict": "safe",
+    "risk": "None known; duplicate entry.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://www.winhelponline.com/blog/clear-thumbnail-cache-windows/"
+    ],
+    "catalog_concern": "Disabling as a duplicate is right."
+  },
+  "update_cleanup": {
+    "what": "Windows Update downloads (SoftwareDistribution\\Download, Backup) plus WinSxS\\Temp and Windows\\Temp\\PostReboot.",
+    "used_for": "Downloads are fetched again when needed. WinSxS\\Temp holds PendingRenames/PendingDeletes that servicing completes at the next restart.",
+    "verdict": "danger",
+    "risk": "Deleting WinSxS\\Temp while an update waits for a restart can break that update. Download folder alone is fine with wuauserv stopped.",
+    "before_cleaning": "Stop wuauserv; never while an update is pending a restart.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-resources",
+      "https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/clean-up-the-winsxs-folder",
+      "https://www.bleepingcomputer.com/forums/t/516197/cwindowswinsxstemppendingrenames/"
+    ],
+    "catalog_concern": "Drop WinSxS\\Temp (Microsoft: never delete inside WinSxS); Windows\\Temp\\PostReboot is also not documented. The SoftwareDistribution part is fine as caution."
+  },
+  "update_orchestrator_logs": {
+    "what": "ETL trace logs of the Update Orchestrator (USOShared\\Logs).",
+    "used_for": "Only read when diagnosing update scheduling. New traces are written.",
+    "verdict": "safe",
+    "risk": "Lost update-scheduling diagnostics.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-logs"
+    ],
+    "catalog_concern": ""
+  },
+  "user_crash_dumps": {
+    "what": "User-mode crash dumps written by Windows Error Reporting (%LOCALAPPDATA%\\CrashDumps) and .dmp files in %TEMP%.",
+    "used_for": "Used by developers or support to diagnose an app crash. Not recreated.",
+    "verdict": "caution",
+    "risk": "Lost evidence of app crashes.",
+    "before_cleaning": "Only after the crash is diagnosed.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/win32/wer/collecting-user-mode-dumps"
+    ],
+    "catalog_concern": ""
+  },
+  "wer_reports": {
+    "what": "Windows Error Reporting report folders: archived (sent) and queued (not yet sent) problem reports.",
+    "used_for": "Reliability Monitor and support use them; queued reports wait to be sent to Microsoft.",
+    "verdict": "caution",
+    "risk": "Lost problem history; queued reports are never sent.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/fr-fr/archive/blogs/oanapl/windows-error-reporting-wer-for-developers",
+      "https://learn.microsoft.com/en-us/windows/win32/wer/wer-settings"
+    ],
+    "catalog_concern": ""
+  },
+  "windows_backup_catalog": {
+    "what": "Windows Server Backup logs in %windir%\\Logs\\WindowsServerBackup (not the backup catalog itself).",
+    "used_for": "Read when a backup failed. Not recreated.",
+    "verdict": "caution",
+    "risk": "Lost backup troubleshooting history.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Description says 'catalog and shadow copy history' but only logs are targeted. Same path as windows_backup_logs: counted twice."
+  },
+  "windows_backup_logs": {
+    "what": "Windows Server Backup logs and the SIH (Service Initiated Healing) logs.",
+    "used_for": "Troubleshooting logs only.",
+    "verdict": "caution",
+    "risk": "Lost backup/servicing diagnostics.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": "Overlaps windows_backup_catalog and diag_logs (SIH). SIH is servicing, not 'System Protection shadow copy logs'."
+  },
+  "windows_cbs_logs": {
+    "what": "%windir%\\Logs\\CBS: CBS.log and its compressed archives (CbsPersist_*.cab).",
+    "used_for": "The record of Windows servicing and SFC repairs. Old content is not recreated.",
+    "verdict": "caution",
+    "risk": "Lost evidence for update/corruption problems; CBS.log is locked by TrustedInstaller.",
+    "before_cleaning": "Not while an update or SFC/DISM is running.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/troubleshoot/windows-client/deployment/analyze-sfc-program-log-file-entries"
+    ],
+    "catalog_concern": "Rated safe while sfc_logs/diag_logs rate the same files caution; caution is consistent. Counted multiple times."
+  },
+  "windows_panther_logs": {
+    "what": "Not documented by the vendor. Panther\\Tmp is a scratch folder of Windows Setup.",
+    "used_for": "Used during setup/upgrade only.",
+    "verdict": "safe",
+    "risk": "None known once setup has finished.",
+    "before_cleaning": "Only when no upgrade is in progress.",
+    "regenerates": false,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "windows_setup_diags": {
+    "what": "SetupDiag/setup diagnostic logs plus the whole %windir%\\Panther folder.",
+    "used_for": "Upgrade diagnostics; Panther may also hold migration data during an upgrade.",
+    "verdict": "caution",
+    "risk": "Lost upgrade evidence; breaks an upgrade in progress.",
+    "before_cleaning": "Only when no upgrade is in progress.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/windows/deployment/upgrade/log-files"
+    ],
+    "catalog_concern": "Overlaps panther_logs and sysprep_logs. The %LOCALAPPDATA% Setup\\Diag path is not documented."
+  },
+  "windows_tweaker_logs": {
+    "what": "This app's own log files.",
+    "used_for": "Only for troubleshooting this tool. New logs are written each session.",
+    "verdict": "safe",
+    "risk": "Lost history of what the tool did (useful when reverting).",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [],
+    "catalog_concern": ""
+  },
+  "windowsupdate_orch_cache": {
+    "what": "SoftwareDistribution\\Download and Backup: downloaded update packages.",
+    "used_for": "Windows Update downloads them again if still needed. Microsoft's reset procedure renames these folders with the services stopped.",
+    "verdict": "caution",
+    "risk": "Re-downloads; deleting during an install can make it fail.",
+    "before_cleaning": "Stop wuauserv and BITS; not during an update.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-resources"
+    ],
+    "catalog_concern": "Description ('Orchestrator scan results') is wrong. Same paths as update_cleanup and wu_cache: counted up to three times."
+  },
+  "winsat_cache": {
+    "what": "WinSAT (Windows System Assessment Tool) result files and log.",
+    "used_for": "Old performance scores; rerun 'winsat formal' to recreate them.",
+    "verdict": "safe",
+    "risk": "Scores read by some tools/games disappear until WinSAT runs again.",
+    "before_cleaning": "",
+    "regenerates": true,
+    "sources": [
+      "https://technet.microsoft.com/en-us/library/cc742136(v=ws.10)"
+    ],
+    "catalog_concern": ""
+  },
+  "wu_cache": {
+    "what": "SoftwareDistribution\\Download: Windows Update's download folder.",
+    "used_for": "Packages are downloaded again if still needed.",
+    "verdict": "caution",
+    "risk": "Re-downloads; an update being installed can fail.",
+    "before_cleaning": "Stop wuauserv; not during an update.",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-resources"
+    ],
+    "catalog_concern": "Overlaps update_cleanup and windowsupdate_orch_cache."
+  },
+  "wu_history_cache": {
+    "what": "Same folders as windowsupdate_orch_cache.",
+    "used_for": "Re-downloaded if needed.",
+    "verdict": "caution",
+    "risk": "Duplicate entry.",
+    "before_cleaning": "",
+    "regenerates": false,
+    "sources": [
+      "https://learn.microsoft.com/en-us/windows/deployment/update/windows-update-resources"
+    ],
+    "catalog_concern": "Disabling as a duplicate is right; the 'download history' wording is wrong (history is in DataStore, not here)."
+  },
+  "amd_shader_caches": {
+    "what": "Compiled shaders the AMD graphics driver stores per API: DxcCache (DirectX 12), DX9Cache, VkCache (Vulkan) and OglpCache (OpenGL). AMD Software's Reset Shader Cache deletes these stored shader cache files.",
+    "used_for": "Faster game loading and lower CPU use: AMD compiles frequently used game shaders once and reuses them on the next launch.",
+    "verdict": "caution",
+    "risk": "Games load slower and can stutter while the driver compiles the shaders again. No settings or saves are stored here.",
+    "before_cleaning": "Close all games. Clear it only to fix corrupted-shader glitches or to reclaim space; the AMD Software Reset Shader Cache button does the same.",
+    "regenerates": true,
+    "sources": [
+      "https://www.amd.com/en/resources/support-articles/faqs/DH3-012.html"
+    ],
+    "catalog_concern": ""
+  }
+}

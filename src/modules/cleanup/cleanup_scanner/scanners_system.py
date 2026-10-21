@@ -2009,6 +2009,10 @@ def _refusal_reason(item: ScanItem) -> Optional[str]:
         return inside(guarded_dirs) or (item.is_dir and any(
             _is_inside(guarded, path) for path in paths for guarded in guarded_dirs))
 
+    print_queue = os.path.join(os.environ.get("windir", r"C:\Windows"),
+                               "System32", "spool", "PRINTERS")
+    if inside((print_queue,)) and _spooler_stopped() is not True:
+        return "Spooler is not confirmed stopped -- print queue left alone"
     if inside(protected_app_dirs()):
         return "it is inside this application's own folder"
     if is_or_holds(protected_system_dirs()):

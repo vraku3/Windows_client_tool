@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 
 from core.long_op_pool import get_long_op_pool
 from core.table_ui import set_role
-from core.worker import Worker, _emit
+from core.worker import Worker, _emit, retire
 from modules.cleanup.cleanup_scanner import format_size, known_folders
 from modules.cleanup.cleanup_scanner.drives import fixed_drive_roots
 from modules.cleanup.duplicates.actions import perform_actions
@@ -42,11 +42,12 @@ def _tokens(text):
 
 
 class _DuplicatesTab(QWidget):
-    freed_bytes = pyqtSignal(int)
+    freed_bytes = pyqtSignal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._workers = []
+        self._open_workers = []
         self._active_worker = None
         self._action_running = False
         self._scan_options = None
@@ -375,8 +376,13 @@ class _DuplicatesTab(QWidget):
         worker = Worker(task)
         worker.signals.result.connect(done)
         worker.signals.error.connect(lambda err: _alive(self) and self._show_status(f"Could not open: {err}"))
-        # Kept referenced while running; a short history is enough (one per click).
-        self._open_workers = (getattr(self, "_open_workers", []) + [worker])[-8:]
+
+        def finished():
+            if worker in self._open_workers:
+                self._open_workers.remove(worker)
+
+        worker.signals.finished.connect(finished)
+        self._open_workers.append(worker)
         get_long_op_pool().start(worker)
 
     def _copy_path(self):
@@ -416,6 +422,7 @@ class _DuplicatesTab(QWidget):
                 self._show_status(f"Export failed: {exc}")
 
     def _cancel_all(self):
+        retire(self._open_workers)
         for worker in self._workers:
             worker.cancel()
         if self._active_worker is not None:

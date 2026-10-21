@@ -89,6 +89,7 @@ def write_version_info(project_root: str) -> str:
 
 
 HIDDEN_IMPORTS = [
+    "core.game_folders",
     "modules.cleanup.cleanup_scanner.knowledge",
     "modules.cleanup.cleanup_scanner.scan_snapshot",
     "modules.cleanup.cleanup_scanner.recommend",

@@ -23,6 +23,8 @@ import fnmatch
 from dataclasses import dataclass
 from typing import Dict, Optional
 
+from core.game_folders import GAME_FOLDERS
+
 REC, MAX, OPT = "recommended", "maximum", "optional"
 
 
@@ -392,13 +394,6 @@ LAUNCHERS = (
     "ealauncher.exe", "origin.exe", "ubisoftconnect.exe", "upc.exe", "galaxyclient*.exe",
     "riotclient*.exe", "xboxpcapp.exe", "gamelaunchhelper.exe", "playnite*.exe", "heroic.exe",
     "rockstarlauncher.exe", "launcher.exe", "bsglauncher.exe", "wargaminggamecenter.exe",
-)
-
-#: Folders games live in: nothing running from one is ever closed.
-GAME_FOLDERS = (
-    "\\steamapps\\", "\\epic games\\", "\\xboxgames\\", "\\gog galaxy\\games\\", "\\riot games\\",
-    "\\ea games\\", "\\ubisoft game launcher\\games\\", "\\battle.net\\", "\\blizzard",
-    "\\rockstar games\\", "\\games\\", "\\windowsapps\\microsoft.gaming",
 )
 
 #: Shared by process protection and the advice handle counts.

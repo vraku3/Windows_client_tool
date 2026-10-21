@@ -5,13 +5,13 @@ import ctypes
 import json
 import logging
 import os
-import shutil
 import uuid
 from dataclasses import dataclass, field
 from ctypes import wintypes
 from datetime import datetime
 
 from core.security_vendors import SECURITY_VENDORS
+from core.game_folders import GAME_FOLDERS
 
 from modules.cleanup import cleanup_history
 from modules.cleanup.cleanup_scanner import ScanItem, known_folders
@@ -19,7 +19,7 @@ from modules.cleanup.cleanup_scanner.deleter import DeleteReport, delete_path
 from modules.cleanup.cleanup_scanner.scanners_system import _protected_entry, _refusal_reason
 from .enumerate import CLOUD_MASK, system_folders, unsafe_ancestors
 from .finder import ScanCancelled, dhash, hash_file, safe_snapshot
-from .models import under, validate_selection
+from .models import canonical_path, under, validate_selection
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +48,8 @@ SECURITY_FOLDERS = SECURITY_VENDORS
 def always_refused(path: str):
     """Reasons no confirmation can override (security software, the Windows folder,
     the owner's Cleanup exclusions, AI model caches)."""
-    norm = os.path.normcase(os.path.abspath(path))
-    windir = os.path.normcase(os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows")
+    norm = canonical_path(path)
+    windir = canonical_path(os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows")
     if under(norm, windir):
         return "Files inside the Windows folder are never acted on (Windows keeps its duplicates on purpose)"
     parts = {p.lower() for p in norm.split(os.sep)}
@@ -106,6 +106,8 @@ def protected_reason(entry, *, scanned_roots=(), confirm_system=False):
     hard = always_refused(path)
     if hard:
         return hard
+    if any(folder in canonical_path(path).replace("/", "\\").lower() for folder in GAME_FOLDERS):
+        return "Game installation files are never acted on"
     current = safe_snapshot(entry)
     if current.attrs & CLOUD_MASK or known_folders.is_cloud_placeholder(path):
         return "Cloud placeholders cannot be acted on"
@@ -203,7 +205,13 @@ def _move_file(path, destination):
         raise FileExistsError(target)
     _journal_move(path, target, "moving")  # durable before the source can disappear
     try:
-        shutil.move(path, target)
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.MoveFileExW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+        kernel.MoveFileExW.restype = wintypes.BOOL
+        # COPY_ALLOWED keeps alternate streams when crossing volumes; WRITE_THROUGH
+        # waits for that copy before success. No REPLACE_EXISTING: never overwrite.
+        if not kernel.MoveFileExW(path, target, 0x2 | 0x8):
+            raise ctypes.WinError(ctypes.get_last_error())
     except OSError as error:
         _journal_move(path, target, "failed", error)
         raise
@@ -298,6 +306,8 @@ def perform_actions(groups, selected, *, mode="recycle", destination="", action=
                 except (OSError, ValueError) as exc:
                     logger.warning("Duplicate action failed on %s: %s", target.path, exc)
                     outcome = ActionOutcome(target.path, "failed", str(exc))
+                if outcome.status == "failed":
+                    refused.append((target.path, f"{mode}: {outcome.reason}"))
                 result.outcomes.append(outcome)
                 if on_outcome:
                     on_outcome(outcome)

@@ -73,53 +73,7 @@ def test_exclusion_read_error_refuses_but_missing_is_empty(tmp_path, monkeypatch
     assert actions.always_refused(str(tmp_path / "ordinary.bin")) == "Cleanup exclusions could not be read"
 
 
-def test_move_journal_is_durable_before_move_and_records_success(tmp_path, monkeypatch):
-    source = tmp_path / "source.bin"
-    source.write_bytes(b"duplicate")
-    dest = tmp_path / "dest"
-    dest.mkdir()
-    journal = tmp_path / "WindowsTweaker" / "cleanup" / "duplicate_moves.jsonl"
-    real_move, real_fsync = actions.shutil.move, os.fsync
-    syncs = []
-
-    def fsync(fd):
-        real_fsync(fd)
-        syncs.append(fd)
-
-    def move(src, target):
-        entries = [json.loads(line) for line in journal.read_text().splitlines()]
-        assert len(syncs) == 1
-        assert entries == [{"ts": entries[0]["ts"], "src": str(source), "dest": target, "state": "moving"}]
-        return real_move(src, target)
-
-    monkeypatch.setattr(actions.os, "fsync", fsync)
-    monkeypatch.setattr(actions.shutil, "move", move)
-    target = actions._move_file(str(source), str(dest))
-    entries = [json.loads(line) for line in journal.read_text().splitlines()]
-    assert [e["state"] for e in entries] == ["moving", "moved"]
-    assert entries[-1]["dest"] == target and len(syncs) == 2
-
-
-def test_move_journal_write_failure_prevents_move(tmp_path, monkeypatch):
-    source = tmp_path / "source.bin"
-    source.write_bytes(b"duplicate")
-    move = Mock()
-    monkeypatch.setattr(actions.shutil, "move", move)
-    monkeypatch.setattr(actions.os, "fsync", Mock(side_effect=OSError("journal unavailable")))
-    with pytest.raises(OSError, match="journal unavailable"):
-        actions._move_file(str(source), str(tmp_path))
-    move.assert_not_called()
-    assert source.exists()
-
-
-def test_move_journal_records_failure(tmp_path, monkeypatch):
-    monkeypatch.setattr(actions.shutil, "move", Mock(side_effect=OSError("move refused")))
-    with pytest.raises(OSError, match="move refused"):
-        actions._move_file(str(tmp_path / "source.bin"), str(tmp_path))
-    journal = tmp_path / "WindowsTweaker" / "cleanup" / "duplicate_moves.jsonl"
-    entries = [json.loads(line) for line in journal.read_text().splitlines()]
-    assert [e["state"] for e in entries] == ["moving", "failed"]
-    assert entries[-1]["error"] == "move refused"
+# Move-journal tests moved to test_review5_dup_safety.py (the move is MoveFileExW now).
 
 
 def test_recycle_does_not_take_connected_html_files(tmp_path, monkeypatch):

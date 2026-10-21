@@ -124,9 +124,18 @@ def select_files(groups: list[DuplicateGroup], strategy: str,
     return selected
 
 
+def canonical_path(path: str) -> str:
+    path = os.path.abspath(path)
+    if path[:8].lower() == "\\\\?\\unc\\":
+        path = "\\\\" + path[8:]
+    elif path.startswith("\\\\?\\"):
+        path = path[4:]
+    return os.path.normcase(os.path.abspath(path))
+
+
 def under(path: str, root: str) -> bool:
     try:
-        p, r = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(root))
+        p, r = canonical_path(path), canonical_path(root)
         return os.path.commonpath((p, r)) == r
     except ValueError:
         return False  # Different volumes have no common path.

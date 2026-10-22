@@ -15,6 +15,7 @@ from core.worker import Worker
 from core.windows_utils import is_reboot_pending
 from core.long_op_pool import get_long_op_pool
 from modules.quick_fix.fix_actions import ALL_ACTIONS, FixAction
+from modules.quick_fix.browser_links_card import BrowserLinksCard
 import logging
 logger = logging.getLogger(__name__)
 
@@ -288,7 +289,7 @@ class QuickFixModule(BaseModule):
         content_layout.setContentsMargins(8, 8, 8, 8)
 
         # Group actions by category preserving order
-        categories: OrderedDict = OrderedDict()
+        categories: OrderedDict = OrderedDict([(BrowserLinksCard.ACTION.category, [BrowserLinksCard.ACTION])])
         for action in ALL_ACTIONS:
             categories.setdefault(action.category, []).append(action)
 
@@ -314,8 +315,11 @@ class QuickFixModule(BaseModule):
             grid = QGridLayout()
             grid.setSpacing(8)
             for i, action in enumerate(actions):
-                card = _FixCard(action, last_outcomes.get(action.title),
-                                 recurring.get(action.title, 0))
+                if action.key == BrowserLinksCard.ACTION.key:
+                    card = BrowserLinksCard(module_workers=self._workers)
+                else:
+                    card = _FixCard(action, last_outcomes.get(action.title),
+                                    recurring.get(action.title, 0))
                 card._category = cat_name
                 self._cards.append(card)
                 grid.addWidget(card, i // 2, i % 2)
@@ -335,7 +339,9 @@ class QuickFixModule(BaseModule):
         return outer
 
     def on_activate(self) -> None:
-        pass
+        for card in self._cards:
+            if isinstance(card, BrowserLinksCard):
+                card.activate()
 
     def _show_history(self) -> None:
         QuickFixHistoryDialog(self._widget).exec()

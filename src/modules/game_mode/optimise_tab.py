@@ -25,7 +25,7 @@ from .engine import app_usage, optimise, space
 logger = logging.getLogger(__name__)
 
 
-def _read_all(engine, selected):
+def _read_all(engine, selected, cancelled=lambda: False):
     """Everything Refresh shows. Each optional section fails on its own."""
     rows = engine.inspect(selected)
     extras = {"notes": [], "space": None, "usage": None}
@@ -36,10 +36,14 @@ def _read_all(engine, selected):
         extras["notes"] = [f"Notes could not be read: {error}"]
     if getattr(engine, "space", None) is not None:
         try:
-            extras["space"] = engine.space.breakdown()
+            extras["space"] = engine.space.breakdown(cancelled=cancelled)
+        except space.ScanCancelled:
+            return rows, extras
         except (OSError, ValueError, RuntimeError) as error:
             logger.warning("optimise OS: space breakdown failed: %s", error)
             extras["space"] = error
+    if cancelled():
+        return rows, extras
     if getattr(engine, "usage", None) is not None:
         try:
             extras["usage"] = engine.usage.analyse()
@@ -65,6 +69,7 @@ class OptimiseTab(QWidget):
         self._rows = []
         self._pending = None
         self._summary = ""
+        self._space_failed = False
         lay = QVBoxLayout(self)
         lay.addLayout(self._build_bar())
         note = QLabel("Persistent preferences, independent of Game Mode ON/OFF: Apply and Revert work "
@@ -169,6 +174,10 @@ class OptimiseTab(QWidget):
         self._space_btn = QPushButton("Free up space...", page)
         self._space_btn.clicked.connect(self._preview_space)
         row.addWidget(self._space_btn)
+        self._recommendations = QPushButton("Open Windows cleanup recommendations", page)
+        self._recommendations.setToolTip("Windows handles previous installations, large files and cloud content. WinClientTool never deletes Windows.old.")
+        self._recommendations.clicked.connect(self._open_cleanup_recommendations)
+        lay.addWidget(self._recommendations)
         self._space_ticked_label = QLabel("Nothing ticked.", page)
         set_role(self._space_ticked_label, "muted")
         row.addWidget(self._space_ticked_label)
@@ -312,7 +321,13 @@ class OptimiseTab(QWidget):
 
     def refresh(self) -> None:
         selected = set(self._selected)
-        self._start("refresh", lambda worker: _read_all(self._engine, selected))
+        self._start("refresh", lambda worker: _read_all(self._engine, selected, lambda: worker.is_cancelled))
+
+    def _open_cleanup_recommendations(self) -> None:
+        from core import shell_launch
+        error = shell_launch.launch("ms-settings:storagerecommendations")
+        if error:
+            self._banner.set_error(f"Could not open Windows cleanup recommendations: {error}")
 
     def _preview_apply(self) -> None:
         selected = set(self._selected)
@@ -331,7 +346,7 @@ class OptimiseTab(QWidget):
     def _space_ticked(self, *_args) -> None:
         picked = space_tree.chosen(self._space_tree)
         self._space_ticked_label.setText(
-            f"Ticked: {format_size(picked.total)} in {picked.count} location(s)." if picked.count
+            f"Ticked: {format_size(picked.total)} eligible in {picked.count} location(s)." if picked.count
             else "Nothing ticked.")
 
     def _preview_space(self) -> None:
@@ -349,7 +364,7 @@ class OptimiseTab(QWidget):
                 f"  {path} -- {format_size(size)}" for path, size in rows))
         if picked.count:
             lines.append(f"Total: {format_size(picked.total)} in {picked.count} location(s), measured "
-                         "on Refresh; what is freed is measured as it goes.")
+                         "eligible on Refresh; recent files are kept. What is freed is measured as it goes.")
         if dism:
             lines.append(f"Component store cleanup: {space.DISM_NOTE}")
         text = ("\n\n".join(lines) + "\n\nExcluded: "
@@ -372,7 +387,7 @@ class OptimiseTab(QWidget):
     def _start(self, kind, work) -> None:
         if self.busy or self._host_busy():
             return
-        if kind != "refresh" or not self._summary:
+        if kind != "refresh" or (not self._summary and not self._space_failed):
             self._banner.hide()
         self._status.setText("Reading this PC..." if kind in ("refresh", "preview_apply", "preview_revert")
                              else "Applying..." if kind == "apply"
@@ -441,12 +456,13 @@ class OptimiseTab(QWidget):
                     self._start(*action)
         elif kind == "space":
             text = payload.text()
+            self._space_failed = payload.failed
             self._space_result.setPlainText(text)
             self._status.setText("Free up space finished. " + text.splitlines()[0])
-            if payload.skipped or (payload.dism and payload.dism.get("returncode")):
+            if payload.failed:
                 self._banner.set_error("Free up space: some parts were refused or failed.\n" + text)
             selected = set(self._selected)
-            self._pending = ("refresh", lambda w: _read_all(self._engine, selected))
+            self._pending = ("refresh", lambda w: _read_all(self._engine, selected, lambda: w.is_cancelled))
         else:
             self._summary = payload.text()
             self._status.setText(self._summary)
@@ -455,7 +471,7 @@ class OptimiseTab(QWidget):
                 self._banner.set_error("Some settings could not be verified. The journal is kept; retry Revert.\n"
                                        + "\n".join(f"{optimise.BY_ID[k].label}: {v}" for k, v in payload.failed.items()))
             selected = set(self._selected)
-            self._pending = ("refresh", lambda w: _read_all(self._engine, selected))
+            self._pending = ("refresh", lambda w: _read_all(self._engine, selected, lambda: w.is_cancelled))
 
     def _confirm(self, title, lead, details) -> bool:
         return confirm_dialog.confirm(self, title, lead, details)

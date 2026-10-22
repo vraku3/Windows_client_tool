@@ -3,6 +3,7 @@ import logging
 import os
 import stat
 import time
+from contextvars import ContextVar
 from core.formatting import format_size
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -11,6 +12,7 @@ from modules.cleanup.cleanup_scanner.deleter import is_cloud_only, is_link_attrs
 from modules.cleanup.cleanup_scanner.disk_size import on_disk_size, on_disk_size_of
 
 logger = logging.getLogger(__name__)
+directory_sizes_enabled = ContextVar("cleanup_directory_sizes_enabled", default=True)
 
 @dataclass
 class ScanItem:
@@ -60,6 +62,8 @@ def get_dir_size(path: str) -> int:
     """Local bytes a full clean of `path` would free -- the deleter's own link and
     cloud-placeholder rules, over one scandir walk (no extra stat per file).
     Sparse/compressed files count what they occupy on disk, not `st_size`."""
+    if not directory_sizes_enabled.get():
+        return 0
     total = 0
     stack = [path] if _root_counts(path) else []
     while stack:
@@ -88,6 +92,15 @@ def get_dir_size(path: str) -> int:
 
 def _make_item(path: str, safety: str = "safe", min_age_days: int = 0) -> Optional[ScanItem]:
     """Return ScanItem for path if it exists, else None. Respects min_age_days."""
+    if not directory_sizes_enabled.get():
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            return None
+        # Discovery must not turn an access failure into an empty location.
+        if min_age_days and time.time() - st.st_mtime < min_age_days * 86400:
+            return None
+        return ScanItem(path, 0, stat.S_ISDIR(st.st_mode), safety=safety)
     if not os.path.exists(path):
         return None
     if min_age_days > 0:

@@ -183,17 +183,21 @@ def scan_delivery_optimization(min_age_days: int = 0) -> ScanResult:
 def scan_windows_logs(min_age_days: int = 0) -> ScanResult:
     """CBS, DISM, Windows Update, and setup log files."""
     result = ScanResult()
+    root = os.environ.get("SystemRoot", r"C:\Windows")
     log_patterns = [
-        (r"C:\Windows\Logs\CBS", "*.log"),
-        (r"C:\Windows\Logs\DISM", "dism.log"),
-        (r"C:\Windows\Logs\MoSetup", "*.log"),
-        (r"C:\Windows", "setupapi.*.log"),
-        (r"C:\Windows", "WindowsUpdate.log"),
+        (os.path.join(root, "Logs", "CBS"), "*.log"),
+        (os.path.join(root, "Logs", "CBS"), "CbsPersist_*.cab"),
+        (os.path.join(root, "Logs", "DISM"), "dism.log"),
+        (os.path.join(root, "Logs", "MoSetup"), "*.log"),
+        (root, "setupapi.*.log"),
+        (root, "WindowsUpdate.log"),
     ]
     for dir_path, pattern in log_patterns:
+        age = max(30, min_age_days) if pattern.endswith(".cab") else min_age_days
         for f in glob.glob(os.path.join(dir_path, pattern)):
-            item = _make_item_with_age(f, safety="caution", min_age_days=min_age_days)
+            item = _make_item_with_age(f, safety="caution", min_age_days=age)
             if item:
+                item.keep_newer_than_hours = age * 24
                 result.items.append(item)
                 result.total_size += item.size
     return result

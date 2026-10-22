@@ -2285,10 +2285,21 @@ REFUSED while Game Mode is ON (or its journal is unreadable).
   `delete_items_report` (which records `cleanup_history`), never through
   `run_cleanup_safe_stage` (its safe sweep takes shader caches, Prefetch, the
   Recycle Bin). Component store cleanup is `run_dism_stage`
-  (StartComponentCleanup, never /ResetBase). WU cache and DISM are refused
-  while TrustedInstaller runs or `Microsoft.Update.Installer.IsBusy`, and when
-  that cannot be read. Excluded and said so: shader caches, Recycle Bin,
-  restore points, browser data.
+  (StartComponentCleanup, never /ResetBase). DISM skips when `core.pending_reboot`
+  needs a restart and otherwise coordinates its own lock; WU cache is refused
+  only when `Microsoft.Update.Installer.IsBusy` is true or unreadable.
+  TrustedInstaller/TiWorker are never stopped. Excluded and said so: shader caches, Recycle Bin,
+  restore points, browser data, Prefetch and installer/driver stores. The tree
+  shows present/eligible bytes from a combined cancellable walk; selection
+  totals use eligible bytes and deduplicate across groups. Delivery Optimization
+  is selected by default when present, measured from `FileSizeInCache`, removed
+  only by `Delete-DeliveryOptimizationCache -Force` (absolute PowerShell path).
+  Thumbnail cache reuses the catalog, excluding iconcache; both it and verified
+  legacy TEMP logviewer_cab_ output (>= 1 h) start unticked. Windows.old belongs
+  to the unelevated Windows cleanup recommendations link, never this cleanup.
+  Log Viewer owns UUID extraction folders under LOCALAPPDATA/WindowsTweaker/
+  logviewer-extract, leases them with PID + process creation time, releases on
+  document replacement/close/stop (not navigation), and sweeps stale leases at startup.
 - **Apps you may not use** are suggestions only: UserAssist (ROT13, count @4,
   FILETIME @60; `UEME_*` and implausible dates skipped), BAM for the current
   SID (device paths via QueryDosDevice), Prefetch (exe name only, so it can only

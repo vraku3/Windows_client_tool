@@ -838,6 +838,8 @@ class FakeBackend:
             "scan_memory_dumps": [ScanItem(r"C:\Windows\Minidump\1.dmp", 7, False, safety="caution"),
                                   ScanItem(r"C:\Windows\MEMORY.DMP", 1000, False, safety="danger")],
             "scan_windows_logs": [ScanItem(r"C:\Windows\Logs\CBS\old.log", 3, False, safety="caution")],
+            "scan_logviewer_leftovers": [],
+            "scan_thumbnail_cache": [],
         }
 
     def scan(self, name, min_age_days):
@@ -859,8 +861,29 @@ class FakeBackend:
     def file_newest(self, path):
         return NEWEST
 
+    def measure(self, item, cancelled=lambda: False):
+        where = sp.Location(item.path, item.size, item.is_dir, item.safety, item.keep_newer_than_hours)
+        if not item.is_dir:
+            where.newest = self.file_newest(item.path)
+            return where
+        try:
+            kids = sorted(self.children(item.path), key=lambda e: (-e.size, e.path.lower()))
+        except OSError as error:
+            where.error = str(error)
+            return where
+        where.children, where.rest = kids[:sp.TOP_CHILDREN], kids[sp.TOP_CHILDREN:]
+        stamps = [e.newest for e in kids if e.newest is not None]
+        where.newest = max(stamps) if stamps else None
+        return where
+
     def servicing_busy(self):
         return self.busy
+
+    def delivery_size(self):
+        return 0
+
+    def delivery_clean(self):
+        return {"returncode": 0}
 
     def dism(self, log, cancelled):
         self.dism_runs += 1
@@ -875,7 +898,7 @@ def test_space_scans_only_the_listed_scanners_and_logs_age_floor():
     estimates = {e.id: e for e in sp.SpaceCleaner(backend).estimate()}
     assert {name for name, _age in backend.scanned} == set(sp.SCANNERS) == {
         "scan_temp_files", "scan_wu_cache", "scan_wer_reports", "scan_user_crash_dumps", "scan_minidump",
-        "scan_memory_dumps", "scan_windows_logs"}
+        "scan_memory_dumps", "scan_windows_logs", "scan_logviewer_leftovers", "scan_thumbnail_cache"}
     assert ("scan_windows_logs", 30) in backend.scanned
     assert estimates["dumps"].size == 12                       # nested .dmp not counted twice; danger left out
     assert estimates["wu_cache"].size == 400
@@ -894,13 +917,13 @@ def test_space_deletes_only_listed_items_with_wu_stopped_separately():
 
 
 @pytest.mark.parametrize("busy", [(True, "Windows Update is installing an update"), (None, "unreadable")])
-def test_wu_cache_and_dism_refused_while_servicing_busy_or_unknown(busy):
+def test_wu_cache_refused_but_dism_coordinates_its_own_lock(busy):
     backend = FakeBackend()
     backend.busy = busy
     result = sp.SpaceCleaner(backend).clean({"wu_cache", sp.DISM_ID, "wer"})
-    assert set(result.skipped) == {"wu_cache", sp.DISM_ID}
-    assert busy[1] in result.skipped[sp.DISM_ID]
-    assert backend.dism_runs == 0
+    assert set(result.skipped) == {"wu_cache"}
+    assert busy[1] in result.skipped["wu_cache"]
+    assert backend.dism_runs == 1
     assert backend.deleted == [([r"C:\W\wer"], False, [True])]
 
 
@@ -936,11 +959,13 @@ def test_real_backend_never_uses_the_safe_stage_and_deletes_through_delete_items
     dism_calls = []
     monkeypatch.setattr(stage_runners, "run_dism_stage", lambda app, log, cancelled: dism_calls.append(1) or {"returncode": 0})
     backend = sp.CleanupBackend()
+    monkeypatch.setattr(sp, "scan_logviewer_leftovers", lambda: fake.scan("scan_logviewer_leftovers", 0))
+    monkeypatch.setattr(backend, "delivery_clean", lambda: {"returncode": 0})
     monkeypatch.setattr(backend, "servicing_busy", lambda: (False, ""))
     cleaner = sp.SpaceCleaner(backend)
     cleaner.estimate()
     result = cleaner.clean({g.id for g in sp.GROUPS} | {sp.DISM_ID})
-    assert set(scanned) == set(sp.SCANNERS)
+    assert set(scanned) == set(sp.SCANNERS) - {"scan_logviewer_leftovers"}
     assert [paths for paths, _stop in deleted][0] and all(
         p in {i.path for items in fake.results.values() for i in items} for paths, _ in deleted for p in paths)
     assert [stop for _paths, stop in deleted] == [False, True]

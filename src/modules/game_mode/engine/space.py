@@ -4,22 +4,25 @@ Never journaled and never reverted: caches can be rebuilt, but crash dumps,
 WER reports and old logs are removed for good. They describe past failures. The
 selection is built EXPLICITLY from the scanners in `GROUPS` -- never through
 `stage_runners.run_cleanup_safe_stage`, whose "safe" sweep also takes shader
-caches, Prefetch and the Recycle Bin. Every deletion goes through the Cleanup
+caches, Prefetch and the Recycle Bin. File deletions go through the Cleanup
 module's `delete_items_report` (measured freed bytes, refusals, locked files,
 sign-in-store and exclusion guards), which also records the run in
-`cleanup_history` exactly as the Cleanup tabs do.
+`cleanup_history` exactly as the Cleanup tabs do. Delivery Optimization uses
+Windows' own cache-removal cmdlet; its result is reported separately.
 
 Component store cleanup is `run_dism_stage` (DISM /StartComponentCleanup),
 NEVER /ResetBase: ResetBase makes every installed update permanent (it can no
-longer be uninstalled). Both it and the Windows Update cache are refused while
-Windows servicing is busy (TrustedInstaller running, or the Windows Update
-installer reporting busy), and refused when that cannot be read.
+longer be uninstalled). DISM coordinates its own servicing lock and skips a
+pending restart. Only the WU cache checks the Windows Update installer's IsBusy.
 """
 from __future__ import annotations
 
 import dataclasses
 import logging
 import os
+import stat
+import subprocess
+import time
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -40,9 +43,9 @@ class Group:
     scanners: tuple[str, ...]
     why: str
     min_age_days: int = 0
-    #: Deleting under a running servicing stack races it: stop wuauserv, and
-    #: refuse while servicing is busy.
+    #: WU cache only: check IsBusy, then confirm wuauserv has stopped.
     servicing: bool = False
+    default_checked: bool = False
 
 
 GROUPS = (
@@ -61,6 +64,13 @@ GROUPS = (
     Group("logs", "Windows logs older than 30 days", ("scan_windows_logs",),
           "CBS, DISM, setup and Windows Update logs older than 30 days, useful only to troubleshoot "
           "past failures. Removed for good.", min_age_days=30),
+    Group("app_leftovers", "This app's leftovers", ("scan_logviewer_leftovers",),
+          "Old logviewer_cab_ extraction folders in TEMP, older than 1 hour; verified extraction output only."),
+    Group("delivery", "Delivery Optimization cache", (),
+          "Windows removes cached update delivery data through Delete-DeliveryOptimizationCache; policy refusals are reported.",
+          default_checked=True),
+    Group("thumbnails", "Thumbnail cache", ("scan_thumbnail_cache",),
+          "Explorer rebuilds thumbnails. Icon cache is excluded."),
 )
 BY_ID = {g.id: g for g in GROUPS}
 DISM_ID = "component_store"
@@ -70,6 +80,9 @@ EXCLUDED = (
     ("Recycle Bin", "it is your undo for deleted files"),
     ("Restore points", "they are the way back from a bad update or driver"),
     ("Browser data", "caches, cookies and sign-ins belong to the browser's own settings"),
+    ("Prefetch", "Windows uses it to speed up app starts"),
+    ("Installer and driver stores", "Windows needs them for repair and rollback"),
+    ("Previous Windows installations", "use Windows cleanup recommendations for Windows.old"),
 )
 
 
@@ -93,6 +106,11 @@ class Entry:
     size: int
     is_dir: bool
     newest: float | None = None        # newest modification time inside, epoch seconds
+    eligible: int | None = None
+
+    @property
+    def eligible_bytes(self) -> int:
+        return self.size if self.eligible is None else self.eligible
 
 
 @dataclass
@@ -107,6 +125,11 @@ class Location:
     children: list[Entry] = field(default_factory=list)    # the largest TOP_CHILDREN
     rest: list[Entry] = field(default_factory=list)        # everything else, one row
     error: str = ""
+    eligible: int | None = None
+
+    @property
+    def eligible_bytes(self) -> int:
+        return 0 if self.error or not self.deletable else (self.size if self.eligible is None else self.eligible)
 
     @property
     def deletable(self) -> bool:
@@ -123,6 +146,18 @@ class CleanResult:
     skipped: dict[str, str] = field(default_factory=dict)
     dism: dict | None = None
     cancelled: bool = False
+    kept_recent: int = 0
+    kept_recent_bytes: int = 0
+    cloud_only: int = 0
+    locked_paths: list[str] = field(default_factory=list)
+    denied_paths: list[str] = field(default_factory=list)
+    protected: list[tuple[str, str]] = field(default_factory=list)
+    locations: list[tuple[str, object, int]] = field(default_factory=list)
+    delivery: dict | None = None
+
+    @property
+    def failed(self) -> bool:
+        return bool(self.denied or _stage_failed(self.dism) or _stage_failed(self.delivery))
 
     def text(self) -> str:
         from core.formatting import format_size
@@ -131,17 +166,53 @@ class CleanResult:
             lines.append(f"{self.locked} file(s) in use were left alone.")
         if self.denied:
             lines.append(f"{self.denied} item(s) could not be deleted (access denied).")
+        for path, report, hours in self.locations:
+            recent = getattr(report, "kept_recent", 0)
+            protected = getattr(report, "protected", [])
+            denied = [p for p in report.denied if _norm(p) not in {_norm(p) for p, _ in protected}]
+            reasons = "; ".join(dict.fromkeys(why for _, why in protected))
+            lines.append(f"{path}: Freed {format_size(report.freed)}; kept {recent} recent file(s)"
+                         + (f" (newer than {hours} h)" if hours else "")
+                         + (f" ({format_size(getattr(report, 'kept_recent_bytes', 0))})"
+                            if getattr(report, "kept_recent_bytes", 0) else "")
+                         + f"; {len(report.locked)} in use; {len(protected)} protected"
+                         + (f" ({reasons})" if reasons else "")
+                         + f"; {getattr(report, 'cloud_only', 0)} cloud-only; {len(denied)} access denied.")
+            for kind, paths in (("In use", report.locked), ("Access denied", denied),
+                                ("Protected", [f"{p} -- {why}" for p, why in protected])):
+                lines += [f"  {kind}: {p}" for p in paths[:10]]
+                if len(paths) > 10:
+                    lines.append(f"  {kind}: (+{len(paths) - 10} more)")
         lines += [f"Refused: {path} -- {why}" for path, why in self.refused[:20]]
         if len(self.refused) > 20:
             lines.append(f"(+{len(self.refused) - 20} more refusals)")
         lines += [f"{label_of(key)}: {why}" for key, why in self.skipped.items()]
         if self.dism is not None:
-            code = self.dism.get("returncode")
-            lines.append("Component store cleanup: " + ("completed." if code == 0 else
-                                                         f"FAILED (exit {code})."))
+            lines.append("Component store cleanup: " + _stage_text(self.dism))
+        if self.delivery is not None:
+            lines.append("Delivery Optimization cache: " + _stage_text(self.delivery))
         if self.cancelled:
             lines.append("Stopped before it finished; what had been deleted is counted above.")
         return "\n".join(lines)
+
+
+def _stage_failed(stage) -> bool:
+    return bool(stage and stage.get("status") != "SKIPPED" and
+                (stage.get("error") or stage.get("status") == "FAILED" or
+                 stage.get("returncode") not in (None, 0, 3010)))
+
+
+def _stage_text(stage) -> str:
+    if stage.get("status") == "SKIPPED":
+        lead = "skipped: restart first" if stage.get("reboot_required") else "skipped"
+    elif _stage_failed(stage):
+        lead = "FAILED: " + (stage.get("error") or (f"exit {stage['returncode']}"
+                            if stage.get("returncode") is not None else "operation failed"))
+        if stage.get("reboot_required"):
+            lead += "; restart required"
+    else:
+        lead = "completed" + ("; restart required" if stage.get("reboot_required") or stage.get("returncode") == 3010 else "")
+    return lead + ("\n" + stage["output"] if stage.get("output") else "")
 
 
 def label_of(key: str) -> str:
@@ -152,41 +223,16 @@ def _norm(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
 
 
-def newest_mtime(path: str) -> float | None:
-    """Newest modification time of any file under `path` (links not followed).
-    Uses the find data scandir already holds -- no extra stat per file."""
-    newest, stack = None, [path]
-    while stack:
-        folder = stack.pop()
-        try:
-            entries = list(os.scandir(folder))
-        except OSError as error:
-            logger.debug("optimise OS: newest-file walk cannot list %s: %s", folder, error)
-            continue
-        for entry in entries:
-            try:
-                if entry.is_symlink() or entry.is_junction():
-                    continue
-                if entry.is_dir(follow_symlinks=False):
-                    stack.append(entry.path)
-                    continue
-                when = entry.stat(follow_symlinks=False).st_mtime
-            except OSError as error:
-                logger.debug("optimise OS: newest-file walk cannot read %s: %s", entry.path, error)
-                continue
-            newest = when if newest is None else max(newest, when)
-    return newest
-
-
 def _dedupe(items: list) -> list:
     """Drop an item that IS, or lies inside, a directory item already kept
     (scan_minidump's folder and scan_memory_dumps' *.dmp in it)."""
-    kept, roots = [], []
-    for item in sorted(items, key=lambda i: (len(os.path.normcase(i.path)), i.path)):
-        norm = os.path.normcase(os.path.normpath(item.path))
-        if any(norm == r or norm.startswith(r.rstrip("\\") + "\\") for r in roots):
+    kept, roots, seen = [], [], set()
+    for item in sorted(items, key=lambda i: (len(_norm(i.path)), _norm(i.path))):
+        norm = _norm(item.path)
+        if norm in seen or any(norm.startswith(r.rstrip(os.sep) + os.sep) for r in roots):
             continue
         kept.append(item)
+        seen.add(norm)
         if item.is_dir:
             roots.append(norm)
     return kept
@@ -208,58 +254,121 @@ class CleanupBackend:
     def scan(self, name: str, min_age_days: int):
         if name not in SCANNERS:
             raise ValueError(f"{name} is not one of the Free-up-space scanners")
+        if name == "scan_logviewer_leftovers":
+            return scan_logviewer_leftovers()
         from modules.cleanup import cleanup_scanner
         from modules.cleanup.cleanup_scanner.scan_cache import cached_scan
-        return cached_scan(getattr(cleanup_scanner, name), min_age_days)
+        result = cached_scan(getattr(cleanup_scanner, name), min_age_days)
+        if name == "scan_thumbnail_cache":
+            result = dataclasses.replace(result, items=[i for i in result.items
+                if os.path.basename(i.path).lower().startswith("thumbcache_")])
+        return result
+
+    def discover(self, name: str, min_age_days: int):
+        """List targets without a size walk or caching incomplete measurements."""
+        from modules.cleanup import cleanup_scanner
+        from modules.cleanup.cleanup_scanner._common import directory_sizes_enabled
+        token = directory_sizes_enabled.set(False)
+        try:
+            if name == "scan_logviewer_leftovers":
+                return scan_logviewer_leftovers()
+            if name == "scan_windows_logs":
+                root = os.environ.get("SystemRoot", r"C:\Windows")
+                for folder in (root, *(os.path.join(root, "Logs", d) for d in ("CBS", "DISM", "MoSetup"))):
+                    try:
+                        with os.scandir(folder):
+                            pass
+                    except FileNotFoundError:
+                        logger.debug("optimise OS: %s is absent (nothing to scan there)", folder)
+                        continue
+            scanner = getattr(cleanup_scanner, name)
+            # glob() silently converts an unreadable parent into no matches.
+            # Check our catalog's wildcard parents before calling the scanner.
+            spec = getattr(scanner, "spec", None)
+            if spec is not None:
+                from modules.cleanup.cleanup_scanner.catalog import expand
+                for raw in spec.paths:
+                    path = expand(raw)
+                    if path and any(ch in path for ch in "*?["):
+                        try:
+                            with os.scandir(os.path.dirname(path)):
+                                pass
+                        except FileNotFoundError:
+                            logger.debug("optimise OS: %s is absent (nothing to scan there)",
+                                         os.path.dirname(path))
+                            continue
+            result = scanner(min_age_days=min_age_days)
+            if name == "scan_thumbnail_cache":
+                result.items = [i for i in result.items if os.path.basename(i.path).lower().startswith("thumbcache_")]
+            return result
+        finally:
+            directory_sizes_enabled.reset(token)
 
     def delete(self, items: list, stop_wuauserv: bool, cancelled):
         from modules.cleanup.cleanup_scanner.scanners_system import delete_items_report
         return delete_items_report(items, stop_wuauserv=stop_wuauserv, cancelled=cancelled)
 
-    def children(self, path: str) -> list[Entry]:
-        """The top-level entries of `path`, each measured the way the deleter
-        counts it (`get_dir_size`: on-disk bytes, links and cloud placeholders
-        skipped). Raises OSError when `path` itself cannot be listed."""
-        from modules.cleanup.cleanup_scanner._common import get_dir_size
-        out = []
-        for entry in list(os.scandir(path)):
-            try:
-                if entry.is_symlink() or entry.is_junction():
-                    out.append(Entry(entry.path, 0, False, None))     # unlinked, never followed
-                elif entry.is_dir(follow_symlinks=False):
-                    out.append(Entry(entry.path, get_dir_size(entry.path), True, newest_mtime(entry.path)))
-                else:
-                    out.append(Entry(entry.path, _file_size(entry.path),
-                                     False, entry.stat(follow_symlinks=False).st_mtime))
-            except OSError as error:
-                logger.debug("optimise OS: cannot measure %s: %s", entry.path, error)
-        return out
+    def measure(self, item, cancelled=lambda: False) -> Location:
+        """One combined, cancellable walk: present, eligible, newest and breakdown."""
+        from modules.cleanup.cleanup_scanner.deleter import is_cloud_only, is_link_attrs
+        where = Location(item.path, 0, item.is_dir, item.safety, item.keep_newer_than_hours, eligible=0)
+        cutoff = time.time() - item.keep_newer_than_hours * 3600
 
-    def file_newest(self, path: str) -> float | None:
+        def measure_path(path, is_dir):
+            total, eligible, newest = 0, 0, None
+            stack = [path]
+            while stack:
+                if cancelled():
+                    raise ScanCancelled()
+                current = stack.pop()
+                st = os.lstat(current)
+                attrs = getattr(st, "st_file_attributes", 0)
+                if stat.S_ISLNK(st.st_mode) or is_link_attrs(attrs) or is_cloud_only(attrs):
+                    continue
+                if stat.S_ISDIR(st.st_mode):
+                    with os.scandir(current) as entries:
+                        for entry in entries:
+                            if cancelled():
+                                raise ScanCancelled()
+                            stack.append(entry.path)
+                else:
+                    size = _file_size(current)
+                    total += size
+                    newest = st.st_mtime if newest is None else max(newest, st.st_mtime)
+                    if not item.keep_newer_than_hours or st.st_mtime <= cutoff:
+                        eligible += size
+            return Entry(path, total, is_dir, newest, eligible)
+
         try:
-            return os.lstat(path).st_mtime
+            if cancelled():
+                raise ScanCancelled()
+            st = os.lstat(item.path)
+            attrs = getattr(st, "st_file_attributes", 0)
+            if stat.S_ISLNK(st.st_mode) or is_link_attrs(attrs) or is_cloud_only(attrs):
+                return where
+            if not item.is_dir:
+                entry = measure_path(item.path, False)
+                where.size, where.eligible, where.newest = entry.size, entry.eligible, entry.newest
+                return where
+            kids = []
+            with os.scandir(item.path) as entries:
+                for entry in entries:
+                    if cancelled():
+                        raise ScanCancelled()
+                    kids.append(measure_path(entry.path, entry.is_dir(follow_symlinks=False)))
+            kids.sort(key=lambda e: (-e.size, e.path.lower()))
+            where.size = sum(e.size for e in kids)
+            where.eligible = sum(e.eligible_bytes for e in kids)
+            stamps = [e.newest for e in kids if e.newest is not None]
+            where.newest = max(stamps) if stamps else None
+            where.children, where.rest = kids[:TOP_CHILDREN], kids[TOP_CHILDREN:]
         except OSError as error:
-            logger.debug("optimise OS: cannot stat %s: %s", path, error)
-            return None
+            logger.warning("optimise OS: cannot measure %s: %s", item.path, error)
+            where.error = str(error)
+        return where
 
     def servicing_busy(self) -> tuple[bool | None, str]:
         """(busy, why). None = could not tell, which callers treat as busy."""
-        try:
-            import win32service as svc
-            manager = svc.OpenSCManager(None, None, svc.SC_MANAGER_CONNECT)
-            try:
-                handle = svc.OpenService(manager, "TrustedInstaller", svc.SERVICE_QUERY_STATUS)
-                try:
-                    state = svc.QueryServiceStatus(handle)[1]
-                finally:
-                    svc.CloseServiceHandle(handle)
-            finally:
-                svc.CloseServiceHandle(manager)
-        except Exception as error:      # pywintypes.error is not an OSError
-            logger.warning("optimise OS: TrustedInstaller unreadable: %s", error)
-            return None, f"Windows Modules Installer state could not be read ({error})"
-        if state != svc.SERVICE_STOPPED:
-            return True, "Windows Modules Installer (TrustedInstaller) is running -- servicing is in progress"
         try:
             import pythoncom
             import win32com.client
@@ -279,16 +388,66 @@ class CleanupBackend:
         from modules.updates.stage_runners import run_dism_stage
         return run_dism_stage(None, log, cancelled)
 
+    def delivery_size(self) -> int:
+        return delivery_size()
+
+    def delivery_clean(self) -> dict:
+        output = _delivery_command("Delete-DeliveryOptimizationCache -Force -ErrorAction Stop")
+        return {"returncode": 0, "output": output + "\nWindows managed the cache removal; freed bytes were not measured."}
+
+
+class ScanCancelled(Exception):
+    """A cancelled breakdown must never look like a completed empty scan."""
+
+
+def _delivery_command(command: str) -> str:
+    from core.system_paths import powershell_exe
+    done = subprocess.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
+                           "$ErrorActionPreference='Stop'; " + command], capture_output=True,
+                          text=True, timeout=180, creationflags=subprocess.CREATE_NO_WINDOW)
+    output = ((done.stdout or "") + (done.stderr or "")).strip()
+    if done.returncode:
+        raise OSError(output or f"Delivery Optimization command exited {done.returncode}")
+    return output
+
+
+def delivery_size() -> int:
+    """DO's locally cached bytes, rather than the full downloads' FileSize.
+
+    Windows' DeliveryOptimizationStatus.psm1 exposes FileSizeInCache on its
+    DOSwarmStats objects. This remains an estimate, never measured freed bytes.
+    """
+    output = _delivery_command("$n = (Get-DeliveryOptimizationStatus -ErrorAction Stop | "
+                               "Measure-Object -Property FileSizeInCache -Sum).Sum; if ($null -eq $n) { 0 } else { [long]$n }")
+    return int(output.strip())
+
+
+def scan_logviewer_leftovers():
+    """Conservative migration cleanup: flat, old CBS expand output only."""
+    from modules.cleanup.cleanup_scanner._common import ScanItem, ScanResult
+    from modules.log_viewer.archives import legacy_cab_output
+    root = os.environ.get("TEMP", "")
+    result = ScanResult()
+    if not root:
+        return result
+    with os.scandir(root) as entries:
+        for entry in entries:
+            if legacy_cab_output(entry.path):
+                result.items.append(ScanItem(entry.path, 0, True, keep_root=False, keep_newer_than_hours=1))
+    return result
+
 
 class SpaceCleaner:
     def __init__(self, backend=None) -> None:
         self.backend = backend if backend is not None else CleanupBackend()
 
-    def _items(self, group: Group) -> list:
+    def _items(self, group: Group, discover=False) -> list:
         items = []
         for name in group.scanners:
-            result = self.backend.scan(name, group.min_age_days)
-            items.extend(result.items)
+            scan = getattr(self.backend, "discover", self.backend.scan) if discover else self.backend.scan
+            result = scan(name, group.min_age_days)
+            items.extend(dataclasses.replace(i, keep_newer_than_hours=max(i.keep_newer_than_hours, group.min_age_days * 24))
+                         for i in result.items)
         return _dedupe(items)
 
     def estimate(self) -> list[Estimate]:
@@ -303,32 +462,24 @@ class SpaceCleaner:
                 out.append(Estimate(group.id, error=str(error)))
         return out
 
-    def _location(self, item) -> Location:
-        where = Location(item.path, item.size, item.is_dir, item.safety, item.keep_newer_than_hours)
-        if not item.is_dir:
-            where.newest = self.backend.file_newest(item.path)
-            return where
-        try:
-            kids = sorted(self.backend.children(item.path), key=lambda e: (-e.size, e.path.lower()))
-        except OSError as error:
-            logger.warning("optimise OS: cannot list %s: %s", item.path, error)
-            where.error = str(error)
-            return where
-        where.children, where.rest = kids[:TOP_CHILDREN], kids[TOP_CHILDREN:]
-        stamps = [e.newest for e in kids if e.newest is not None]
-        where.newest = max(stamps) if stamps else None
-        return where
-
-    def breakdown(self) -> dict[str, list[Location] | str]:
+    def breakdown(self, cancelled=lambda: False) -> dict[str, list[Location] | str]:
         """Per group, the locations a clean would touch: each scan item and, for
         a folder, its largest top-level entries. Slow (walks every folder): call
         it on a worker. A group that cannot be scanned maps to its error text."""
         out: dict[str, list[Location] | str] = {}
         for group in GROUPS:
+            if cancelled():
+                raise ScanCancelled()
             try:
-                items = sorted(self._items(group), key=lambda i: (-i.size, i.path.lower()))
-                out[group.id] = [self._location(item) for item in items]
-            except (OSError, ValueError, RuntimeError) as error:
+                if group.id == "delivery":
+                    size = self.backend.delivery_size()
+                    out[group.id] = ([Location("Delivery Optimization (Windows reported estimate)", size, False, eligible=size)]
+                                     if size else [])
+                    continue
+                items = sorted(self._items(group, discover=True), key=lambda i: (-i.size, i.path.lower()))
+                out[group.id] = sorted([self.backend.measure(item, cancelled) for item in items],
+                                       key=lambda w: (-w.size, w.path.lower()))
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 logger.warning("optimise OS: %s breakdown failed: %s", group.id, error)
                 out[group.id] = str(error)
         return out
@@ -364,11 +515,16 @@ class SpaceCleaner:
         Without it a selected group is cleaned whole."""
         result = CleanResult()
         servicing = None
-        if DISM_ID in selected or any(BY_ID[k].servicing for k in selected if k in BY_ID):
+        if any(BY_ID[k].servicing for k in selected if k in BY_ID):
             servicing = self.backend.servicing_busy()
         plain, wu = [], []
         for group in GROUPS:
             if group.id not in selected:
+                continue
+            if cancelled():
+                result.cancelled = True
+                break
+            if group.id == "delivery":
                 continue
             if group.servicing and servicing[0] is not False:
                 result.skipped[group.id] = f"Refused: {servicing[1]}. Try again when it has finished."
@@ -386,22 +542,55 @@ class SpaceCleaner:
                     continue
                 item.selected = True
                 (wu if group.servicing else plain).append(item)
+        # Deduplicate across groups and service batches. Give WU targets their
+        # stopped-service batch even if a broader temp target contains one.
+        all_items = _dedupe(plain + wu)
+        wu_paths = {_norm(i.path) for i in wu}
+
+        def needs_stop(item):
+            root = _norm(item.path)
+            return any(p == root or (item.is_dir and p.startswith(root.rstrip(os.sep) + os.sep)) for p in wu_paths)
+        plain = [i for i in all_items if not needs_stop(i)]
+        wu = [i for i in all_items if needs_stop(i)]
         for batch, stop in ((plain, False), (wu, True)):
             if not batch or cancelled():
                 result.cancelled = result.cancelled or (bool(batch) and cancelled())
                 continue
-            report, refused, _per_item = self.backend.delete(batch, stop, cancelled)
+            report, refused, per_item = self.backend.delete(batch, stop, cancelled)
             result.freed += report.freed
             result.files += report.files
             result.locked += len(report.locked)
-            result.denied += len(report.denied)
+            protected = getattr(report, "protected", [])
+            protected_paths = {_norm(p) for p, _ in protected}
+            denied = [p for p in report.denied if _norm(p) not in protected_paths]
+            result.denied += len(denied)
+            result.denied_paths.extend(denied)
+            result.locked_paths.extend(report.locked)
+            result.protected.extend(protected)
+            result.kept_recent += getattr(report, "kept_recent", 0)
+            result.kept_recent_bytes += getattr(report, "kept_recent_bytes", 0)
+            result.cloud_only += getattr(report, "cloud_only", 0)
+            hours = {_norm(i.path): i.keep_newer_than_hours for i in batch}
+            result.locations.extend((p, r, hours.get(_norm(p), 0)) for p, r in per_item)
             result.refused += list(refused)
             result.cancelled = result.cancelled or report.cancelled
         if DISM_ID in selected:
-            if servicing[0] is not False:
-                result.skipped[DISM_ID] = f"Refused: {servicing[1]}. Try again when it has finished."
-            elif cancelled():
+            if cancelled():
                 result.cancelled = True
             else:
-                result.dism = self.backend.dism(log, cancelled)
+                try:
+                    result.dism = self.backend.dism(log, cancelled)
+                except (OSError, subprocess.SubprocessError) as error:
+                    logger.warning("optimise OS: component cleanup failed: %s", error)
+                    parts = [getattr(error, "stdout", "") or getattr(error, "output", ""),
+                             getattr(error, "stderr", "")]
+                    output = "\n".join(p.decode(errors="replace") if isinstance(p, bytes) else p for p in parts if p)
+                    result.dism = {"status": "FAILED", "error": str(error), "output": output}
+        if "delivery" in selected and not cancelled():
+            try:
+                result.delivery = self.backend.delivery_clean()
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                logger.warning("optimise OS: delivery cleanup refused: %s", error)
+                result.delivery = {"status": "FAILED", "error": str(error)}
+        result.cancelled = result.cancelled or cancelled()
         return result

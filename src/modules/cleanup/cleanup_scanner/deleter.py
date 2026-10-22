@@ -58,6 +58,7 @@ class DeleteReport:
     # Also present in denied for older callers; reasons distinguish guards
     # from filesystem access failures in maintenance reports.
     protected: List[tuple] = field(default_factory=list)
+    kept_recent_bytes: int = 0
 
     def merge(self, other: "DeleteReport") -> None:
         self.freed += other.freed
@@ -68,6 +69,7 @@ class DeleteReport:
         self.cloud_only += other.cloud_only
         self.cancelled = self.cancelled or other.cancelled
         self.protected.extend(other.protected)
+        self.kept_recent_bytes += other.kept_recent_bytes
 
 
 def long_path(path: str) -> str:
@@ -233,6 +235,7 @@ def _clear(folder: str, floor: float, now: float, cancelled, report: DeleteRepor
             continue
         if floor and now - st.st_mtime < floor:
             report.kept_recent += 1
+            report.kept_recent_bytes += on_disk_size(entry.path, st)
             continue
         _remove_file(entry.path, on_disk_size(entry.path, st), report)
 
@@ -272,6 +275,7 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
     if not is_dir:
         if keep_newer_than_s and now - st.st_mtime < keep_newer_than_s:
             report.kept_recent += 1
+            report.kept_recent_bytes += on_disk_size(target, st)
         else:
             _remove_file(target, on_disk_size(target, st), report)
         return report

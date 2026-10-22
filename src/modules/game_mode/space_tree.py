@@ -10,6 +10,7 @@ from __future__ import annotations
 import ntpath
 from dataclasses import dataclass, field
 from datetime import datetime
+from types import SimpleNamespace
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QHeaderView, QTreeWidget, QTreeWidgetItem
@@ -20,7 +21,7 @@ from .engine import space
 
 ROLE = Qt.ItemDataRole.UserRole
 CHECKABLE = Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-COLUMNS = ["Location", "Size", "Newest file", "Safety"]
+COLUMNS = ["Location", "Present", "Newest file / status", "Safety", "Eligible"]
 
 
 @dataclass
@@ -45,7 +46,7 @@ def build_tree(parent) -> QTreeWidget:
     tree.setUniformRowHeights(True)
     head = tree.header()
     head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-    for column in (1, 2, 3):
+    for column in (1, 2, 3, 4):
         head.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
     head.setStretchLastSection(False)
     return tree
@@ -78,31 +79,39 @@ def _add_children(row, where: space.Location) -> None:
     rule = _age_rule(where.keep_newer_than_hours)
     for entry in where.children:
         name = ntpath.basename(entry.path) + ("\\" if entry.is_dir else "")
-        _row(row, [name, format_size(entry.size), newest_text(entry.newest), where.safety],
+        _row(row, [name, format_size(entry.size), newest_text(entry.newest), where.safety, format_size(entry.eligible_bytes)],
              f"{entry.path}\n{format_size(entry.size)} on disk.{rule}",
-             ("child", [(entry.path, entry.is_dir, entry.size)]))
+             ("child", [(entry.path, entry.is_dir, entry.eligible_bytes)]))
     if where.rest:
         size = sum(e.size for e in where.rest)
+        eligible = sum(e.eligible_bytes for e in where.rest)
         stamps = [e.newest for e in where.rest if e.newest]
         _row(row, [f"{len(where.rest)} more ({format_size(size)})", format_size(size),
-                   newest_text(max(stamps) if stamps else None), where.safety],
+                   newest_text(max(stamps) if stamps else None), where.safety, format_size(eligible)],
              f"The {len(where.rest)} smaller entries in {where.path}, together.{rule}",
-             ("child", [(e.path, e.is_dir, e.size) for e in where.rest]))
+             ("child", [(e.path, e.is_dir, e.eligible_bytes) for e in where.rest]))
 
 
 def _add_location(group_row, gid: str, where: space.Location) -> None:
     rule = _age_rule(where.keep_newer_than_hours)
     if not where.deletable:
         _row(group_row, [where.path, format_size(where.size), newest_text(where.newest),
-                         "danger -- not part of this cleanup"],
+                         "danger -- not part of this cleanup", "--"],
              f"{where.path}\nMarked dangerous by its scanner; never deleted here.", None, checkable=False)
         return
-    status = newest_text(where.newest) if not where.error else "could not be listed"
+    status = newest_text(where.newest)
+    if where.error:
+        status = "could not check"
+    elif where.size == 0:
+        status = "Nothing to clean"
+    elif where.eligible_bytes == 0 and where.keep_newer_than_hours:
+        status = f"kept: all files newer than {where.keep_newer_than_hours} h"
     tip = f"{where.path}\n{format_size(where.size)}.{rule}" + (
-        f"\nIts contents could not be listed ({where.error}); it can only be cleaned whole."
+        f"\nCould not check its contents ({where.error})."
         if where.error else "")
-    row = _row(group_row, [where.path, format_size(where.size), status, where.safety], tip,
-               ("item", gid, where.path, where.size))
+    row = _row(group_row, [where.path, format_size(where.size) if not where.error else "--", status, where.safety,
+                           format_size(where.eligible_bytes) if not where.error else "--"], tip,
+               ("item", gid, where.path, where.eligible_bytes, where.is_dir), checkable=not bool(where.error))
     if where.children or where.rest:
         row.setFlags(row.flags() | Qt.ItemFlag.ItemIsAutoTristate)
         _add_children(row, where)
@@ -115,11 +124,12 @@ def fill(tree: QTreeWidget, breakdown) -> None:
     for group in space.GROUPS:
         found = None if breakdown is None else breakdown.get(group.id)
         if found is None or isinstance(found, str):
-            text = "not measured yet -- click Refresh" if found is None else f"could not be scanned ({found})"
+            text = "not measured yet -- click Refresh" if found is None else f"could not check ({found})"
             _row(tree, [group.label, "", text, ""], f"{group.why}\n{text}", ("group", group.id), checkable=False)
             continue
         total = sum(w.size for w in found if w.deletable)
-        row = _row(tree, [group.label, format_size(total), f"{len(found)} location(s)", ""],
+        eligible = sum(w.eligible_bytes for w in found)
+        row = _row(tree, [group.label, format_size(total), f"{len(found)} location(s)" if found else "Nothing to clean", "", format_size(eligible)],
                    group.why, ("group", group.id), checkable=bool(found))
         font = row.font(0)
         font.setBold(True)
@@ -128,6 +138,8 @@ def fill(tree: QTreeWidget, breakdown) -> None:
             row.setFlags(row.flags() | Qt.ItemFlag.ItemIsAutoTristate)
         for where in found:
             _add_location(row, group.id, where)
+        if found and group.default_checked:
+            row.setCheckState(0, Qt.CheckState.Checked)
     tree.blockSignals(False)
 
 
@@ -140,28 +152,28 @@ def chosen(tree: QTreeWidget) -> Chosen:
     age floor and guards apply to everything in it); a partly ticked one only
     through its ticked entries."""
     out = Chosen()
+    candidates = []
     for g in range(tree.topLevelItemCount()):
         group_row = tree.topLevelItem(g)
         gid = group_row.data(0, ROLE)[1]
-        picks, rows = {}, []
         for row in _children_of(group_row):
             data = row.data(0, ROLE)
             if not data or row.checkState(0) == Qt.CheckState.Unchecked:
                 continue
-            _kind, _gid, path, size = data
+            _kind, _gid, path, size, is_dir = data
             if row.checkState(0) == Qt.CheckState.Checked:
-                picks[path] = None
-                rows.append((path, size))
+                candidates.append(SimpleNamespace(gid=gid, root=path, path=path, size=size, is_dir=is_dir, whole=True))
                 continue
-            sub = []
             for child in _children_of(row):
                 if child.checkState(0) == Qt.CheckState.Checked:
                     for child_path, is_dir, child_size in child.data(0, ROLE)[1]:
-                        sub.append((child_path, is_dir))
-                        rows.append((child_path, child_size))
-            if sub:
-                picks[path] = sub
-        if picks:
-            out.choice[gid] = picks
-            out.rows[gid] = rows
+                        candidates.append(SimpleNamespace(gid=gid, root=path, path=child_path,
+                            size=child_size, is_dir=is_dir, whole=False))
+    for item in space._dedupe(candidates):
+        picks = out.choice.setdefault(item.gid, {})
+        out.rows.setdefault(item.gid, []).append((item.path, item.size))
+        if item.whole:
+            picks[item.root] = None
+        else:
+            picks.setdefault(item.root, []).append((item.path, item.is_dir))
     return out

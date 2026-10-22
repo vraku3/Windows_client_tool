@@ -25,6 +25,11 @@ from modules.log_viewer.archives import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_extractions(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+
 def test_a_cab_is_recognised_by_its_extension():
     assert is_cab(r"C:\logs\CbsPersist_1.cab")
     assert is_cab(r"C:\logs\CbsPersist_1.CAB")

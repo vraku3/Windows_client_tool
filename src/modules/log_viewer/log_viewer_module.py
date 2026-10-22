@@ -763,6 +763,7 @@ class LogViewerWidget(QWidget):
             opened.append(extracted)
         if paths and not opened:
             return
+        self._release_extractions(keep=opened)
         self._paths = opened
         entry = remember_as or (paths[0] if paths else "")
         # Only a FOLDER is watched for newcomers. Opening one file is not a
@@ -780,6 +781,7 @@ class LogViewerWidget(QWidget):
         """Every log sitting directly in `folder`, as one timeline."""
         found = LogSet.logs_in_folder(folder)
         if not found:
+            self._release_extractions()
             self.model.clear()
             self.detail.clear()
             self._set = None
@@ -2336,12 +2338,27 @@ class LogViewerWidget(QWidget):
         else:
             self._timer.stop()
 
-    def stop(self) -> None:
+    def _release_extractions(self, keep=()) -> None:
+        from .archives import release_extraction
+        for path in list(self._extracted):
+            if path not in keep:
+                release_extraction(path, keep=keep)
+                self._extracted.pop(path, None)
+
+    def pause(self) -> None:
         self._timer.stop()
         # Saved here rather than on every drag: the splitter emits while it
         # is being moved, and writing the config file on each pixel would be
         # a lot of disk for a preference.
         self.save_layout_now()
+
+    def stop(self) -> None:
+        self.pause()
+        self._release_extractions()
+
+    def closeEvent(self, event) -> None:
+        self.stop()
+        super().closeEvent(event)
 
 
 class LogViewerModule(BaseModule):
@@ -2350,6 +2367,11 @@ class LogViewerModule(BaseModule):
     description = "CMTrace-style viewer for ConfigMgr and plain text logs"
     requires_admin = False
     group = ModuleGroup.DIAGNOSE
+
+    def on_start(self, app) -> None:
+        super().on_start(app)
+        from .archives import cleanup_stale_extractions
+        cleanup_stale_extractions()
 
     def __init__(self) -> None:
         super().__init__()
@@ -2385,10 +2407,12 @@ class LogViewerModule(BaseModule):
     def on_deactivate(self) -> None:
         # Following holds a timer and re-reads a file nobody is looking at.
         if self._widget is not None:
-            self._widget.stop()
+            self._widget.pause()
 
     def on_stop(self) -> None:
-        self.on_deactivate()
+        if self._widget is not None:
+            self._widget.stop()
+        super().on_stop()
 
     def get_status_info(self) -> str:
         if self._widget is None or not self._widget._path:

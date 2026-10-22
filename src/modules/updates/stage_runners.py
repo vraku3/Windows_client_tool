@@ -90,7 +90,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     ]
     installed = sum(1 for r in results if r.success)
     log(f"Windows Update: {installed}/{len(results)} installed.")
-    pending_count = sum(bool(r.get("reboot_required")) for r in results_dicts)
+    pending_count = sum(bool(r.get("reboot_required")) and r.get("result_code") in (None, 2)
+                        for r in results_dicts)
     if pending_count:
         log(f"Restart required to finish {pending_count} update(s)")
 
@@ -134,6 +135,7 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         outcome = install_update(u.winget_id, output_cb=log, is_cancelled=is_cancelled,
                                  target_version=u.available_version,
                                  before_version=u.installed_version,
+                                 package_name=u.name,
                                  verify=app.config.get("updates.verify_after_update", True))
         log(f"  {outcome.state}: {outcome.detail}")
         results.append({"name": u.name, "id": u.winget_id, "before": u.installed_version,
@@ -277,7 +279,7 @@ def stage_failures(stage: str, result: dict) -> list:
         if stage == "wu" and (r.get("result_code") in (0, 1, 3, 4, 5) or
                                (not r.get("success", True) and not pending)):
             problems.append(f"wu: {r.get('kb') or r.get('title')}: {r.get('message', 'failed')}")
-        elif stage in ("winget", "store") and r.get("state") in ("FAILED", "STILL RUNNING"):
+        elif stage in ("winget", "store") and r.get("state") in ("FAILED", "BROKEN", "STILL RUNNING"):
             problems.append(f"{stage}: {r.get('id') or r.get('name')}: {r.get('after') or r['state']}")
     return problems
 
@@ -330,8 +332,16 @@ def normalize_stage_data(data: dict) -> dict:
     dism = data.get("dism", {}) or {}
     return {
         "wu_results": wu.get("results", []),
-        "wu_installed": wu.get("installed_count", 0),
-        "wu_pending_restart": wu.get("pending_restart_count", 0),
+        "wu_installed": wu.get("installed_count"),
+        "wu_pending_restart": wu.get("pending_restart_count"),
+        "apps_confirmed": (sum(bool(r.get("confirmed")) for r in winget["results"])
+                           if "results" in winget else None),
+        "apps_need_you": (sum(not r.get("confirmed", False) for r in winget["results"])
+                          if "results" in winget else None),
+        "machine_restart_pending": data.get("machine_restart_pending"),
+        "outstanding": data.get("outstanding"),
+        "failures": [problem for stage in STAGE_RUNNERS if stage in data
+                     for problem in stage_failures(stage, data[stage])],
         "reboot_required": bool(wu.get("reboot_required") or dism.get("reboot_required")),
         "wu_held": wu.get("held", []),
         "winget_results": winget.get("results", []),
@@ -342,3 +352,77 @@ def normalize_stage_data(data: dict) -> dict:
         "cleanup_areas": cleanup.get("areas", []),
         "dism_output": dism.get("output"),
     }
+
+
+def finalize_run(data: dict) -> None:
+    """Final read-only inventory, deliberately unfiltered by blocklists/settings.
+
+    WUA itself excludes hidden/installed updates; its held drivers stay excluded.
+    An unreadable source is represented explicitly, never as an empty inventory.
+    """
+    from modules.updates.windows_updater import fetch_pending_updates
+    from modules.updates.winget_updater import fetch_updates
+    from core.pending_reboot import check
+    outstanding = {}
+    try:
+        outstanding["windows"] = [u.title for u in fetch_pending_updates(
+            include_hidden=False, include_drivers=True) if not u.held]
+    except Exception as exc:
+        logger.warning("Final Windows Update scan failed", exc_info=True)
+        outstanding["windows_error"] = str(exc)
+    states = {r.get("id"): r.get("state") for r in data.get("winget", {}).get("results", [])}
+    try:
+        outstanding["apps"] = [{"name": u.name, "id": u.winget_id,
+                                "state": states.get(u.winget_id) or "still offered"}
+                               for u in fetch_updates() if u.source.casefold() != "msstore"]
+        # A broken portable can disappear from upgrade's table despite being
+        # unusable. Preserve these measured failures in the final inventory.
+        ids = {r["id"] for r in outstanding["apps"]}
+        outstanding["apps"] += [{"name": r.get("name") or r["id"], "id": r["id"], "state": "BROKEN"}
+                                for r in data.get("winget", {}).get("results", [])
+                                if r.get("state") == "BROKEN" and r["id"] not in ids]
+    except Exception as exc:
+        logger.warning("Final winget scan failed", exc_info=True)
+        outstanding["apps_error"] = str(exc)
+    try:
+        state = check()
+        if getattr(state, "unreadable", []) and not state.needed:
+            raise RuntimeError("; ".join(state.unreadable))
+        data["machine_restart_pending"] = bool(state.needed)
+    except Exception as exc:
+        logger.warning("Final restart check failed", exc_info=True)
+        data["machine_restart_pending"] = None
+        outstanding["restart_error"] = str(exc)
+    outstanding["restart_pending"] = data["machine_restart_pending"]
+    outstanding["store"] = ("scan triggered, not verified" if data.get("store", {}).get("triggered")
+                             else "not triggered, not verified")
+    data["outstanding"] = outstanding
+
+
+def outstanding_text(outstanding: dict) -> str:
+    lines = ["Still outstanding"]
+    if "windows" in outstanding:
+        lines.append(f"{len(outstanding['windows'])} Windows updates")
+        lines.extend("  " + title for title in outstanding["windows"])
+    else:
+        lines.append("Windows updates: could not check -- " + outstanding.get("windows_error", "not checked"))
+    if "apps" in outstanding:
+        lines.append(f"{len(outstanding['apps'])} apps")
+        lines.extend(f"  {r['name']} ({r['state']})" for r in outstanding["apps"])
+    else:
+        lines.append("Apps: could not check -- " + outstanding.get("apps_error", "not checked"))
+    pending = outstanding.get("restart_pending")
+    lines.append("Machine restart pending: " + ("could not check" if pending is None else "yes" if pending else "no"))
+    lines.append("Store: " + outstanding.get("store", "not verified"))
+    return "\n".join(lines)
+
+
+def write_session_log(app_data_dir: str, data: dict, lines: list) -> str:
+    """Keep full raw stage output, with the final inventory at the top."""
+    from datetime import datetime
+    folder = os.path.join(app_data_dir, "updates")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "session-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".log")
+    with open(path, "w", encoding="utf-8") as stream:
+        stream.write(outstanding_text(data.get("outstanding") or {}) + "\n\n" + "\n".join(lines))
+    return path

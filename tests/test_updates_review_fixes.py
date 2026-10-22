@@ -42,7 +42,7 @@ def test_pending_history_requires_install_identity_current_boot(monkeypatch, ope
     monkeypatch.setattr(pending_reboot, "check", lambda: NS(needed=needed, reasons=["KB5001234"]))
     identity = _Update()
     identity.Identity = NS(UpdateID="offer")
-    entry = NS(Title=identity.Title, Operation=operation, ResultCode=1,
+    entry = NS(Title=identity.Title, Operation=operation, ResultCode=2,
                UpdateIdentity=NS(UpdateID="offer" if same_id else "other"),
                Date=datetime.now(timezone.utc) if fresh else datetime(2000, 1, 1, tzinfo=timezone.utc))
     searcher = NS(Search=lambda _: NS(Updates=_Coll([identity])),
@@ -70,8 +70,8 @@ def test_verified_scan_keeps_missing_restart_row():
 
 
 @pytest.mark.parametrize("downloaded,minimum,expected,unknown", [
-    (True, None, 0, False), (False, 20, 20, False),
-    (False, 0, 0, False), (False, None, 0, True)])
+    (True, None, 0, False), (False, 20, 10240, True),
+    (False, 0, 10240, True), (False, None, 10240, True)])
 def test_download_preflight_does_not_use_huge_max(downloaded, minimum, expected, unknown):
     identity = NS(IsDownloaded=downloaded)
     if minimum is not None:
@@ -79,14 +79,14 @@ def test_download_preflight_does_not_use_huge_max(downloaded, minimum, expected,
     update = wu.WindowsUpdate("KB1", "T", "c", 92638, "d", identity)
     warnings = []
     assert wu.download_size_mb([update], warnings.append) == expected
-    assert any("size unknown" in line for line in warnings) is unknown
+    assert any("size uncertain" in line for line in warnings) is unknown
 
 
 def test_incomplete_notification_includes_stage_failure_and_totals():
     from modules.updates.unattended_runner import completion_message
     text = completion_message({"wu_installed": 2}, "r.html", False, ["dism: failed"])
     assert "Maintenance INCOMPLETE: 1 problem(s) (first: dism: failed)" in text
-    assert "2 updates installed" in text
+    assert "Windows installed: 2" in text
 
 
 def test_notification_uses_shared_absolute_powershell(tmp_path, monkeypatch):
@@ -144,6 +144,8 @@ def test_unattended_stage_failure_drives_exit_and_notification(tmp_path, monkeyp
     monkeypatch.setattr(history_writer, "load_history", lambda *a: [])
     monkeypatch.setattr(report_generator, "write_report", lambda *a: "r.html")
     monkeypatch.setattr(pending_reboot, "check", lambda: NS(needed=False))
+    monkeypatch.setattr(wu, "fetch_pending_updates", lambda **k: [])
+    monkeypatch.setattr("modules.updates.winget_updater.fetch_updates", lambda **k: [])
     messages = []
     monkeypatch.setattr(maintenance_notify, "notify_finished", lambda text, path: messages.append(text))
     assert unattended_runner.run_unattended(["dism"]) == 1
@@ -163,21 +165,20 @@ def test_verified_failed_restart_result_stays_failure(code):
         offered = wu.WindowsUpdate("KB1", "T", "c", 1, "d")
         result = wu.InstallResult("KB1", "T", False, 1, "error; restart required", True, code)
         tab._on_verify_done([result], {"updates": [offered], "held": []})
-        assert offered.pending_restart is (code == 3)
+        assert not offered.pending_restart
+        assert tab._install_btn.isEnabled()
         assert tab._table.item(0, 7).text().startswith("FAILED")
     finally:
         tab.deleteLater()
 
 
-def test_partial_install_restart_row_survives_missing_offer_without_hiding_error():
+def test_partial_install_is_not_retained_as_installed_when_offer_disappears():
     from modules.updates.updates_module import _WinUpdatesTab
     tab = _WinUpdatesTab()
     try:
         result = wu.InstallResult("KB1", "T", False, -2145124329,
                                   "installed with errors -- restart to finish; 0x80240017", True, 3)
         tab._on_verify_done([result], {"updates": [], "held": []})
-        assert len(tab._updates) == 1
-        text = tab._table.item(0, 7).text()
-        assert "errors" in text and "0x80240017" in text and "restart to finish" in text
+        assert tab._updates == []
     finally:
         tab.deleteLater()

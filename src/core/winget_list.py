@@ -11,7 +11,11 @@ and Run All stage all decide through `verdict()` so they cannot disagree.
 spaces (`ARP\\Machine\\X64\\...`) and names carry their own dots.
 """
 import re
+import os
+import logging
 from typing import Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 UPDATED = "UPDATED"
 UNCONFIRMED = "UNCONFIRMED"      # could not prove it either way
@@ -19,6 +23,7 @@ NOT_APPLICABLE = "NOT APPLICABLE"  # winget had nothing that applies to this PC
 NEEDS_USER = "NEEDS USER"        # per-user install, refused from an elevated process
 NEEDS_INPUT = "NEEDS INPUT"      # the package wants an answer only a person can give
 FAILED = "FAILED"                # read back: the old version is still installed
+BROKEN = "BROKEN"                # portable metadata exists, program files do not
 STILL_RUNNING = "STILL RUNNING"  # do not overlap a potentially running installer
 SKIPPED = "SKIPPED"
 
@@ -36,6 +41,64 @@ NEEDS_INPUT_MARKERS = (
     "0x8a150042",
 )
 LOCATION_MARKERS = ("requires an install location", "specify the install root")
+
+
+def portable_snapshot(winget_id: str, scope: str = "") -> list:
+    """Remember indexed portable folders and links BEFORE winget can remove them.
+
+    The portable index is the Packages directory, independent of installed.db.
+    Retaining the pre-install paths catches a deleted directory/link afterwards.
+    """
+    roots = []
+    if scope != "machine" and os.environ.get("LOCALAPPDATA"):
+        roots.append(("user", os.path.join(os.environ["LOCALAPPDATA"], "Microsoft", "WinGet")))
+    if scope != "user" and os.environ.get("ProgramFiles"):
+        roots.append(("machine", os.path.join(os.environ["ProgramFiles"], "WinGet")))
+    result = []
+    for kind, root in roots:
+        packages = os.path.join(root, "Packages")
+        if not os.path.isdir(packages):
+            continue
+        try:
+            for name in os.listdir(packages):
+                if not name.casefold().startswith(winget_id.casefold() + "_"):
+                    continue
+                folder = os.path.join(packages, name)
+                links = []
+                link_root = os.path.join(root, "Links")
+                if os.path.isdir(link_root):
+                    for link_name in os.listdir(link_root):
+                        link = os.path.join(link_root, link_name)
+                        target = os.path.normcase(os.path.realpath(link))
+                        real_folder = os.path.normcase(os.path.realpath(folder))
+                        try:
+                            if os.path.commonpath([target, real_folder]) == real_folder:
+                                links.append(link)
+                        except ValueError:
+                            logger.debug("Portable link %s targets another drive", link)
+                result.append((kind, folder, links))
+        except (OSError, ValueError):
+            logger.warning("Could not read portable index %s", packages, exc_info=True)
+    return result
+
+
+def portable_problem(snapshot: list, winget_id: str, version: str) -> Optional[str]:
+    for scope, folder, links in snapshot:
+        has_exe = any(name.casefold().endswith(".exe") and os.path.isfile(os.path.join(root, name))
+                      for root, _dirs, files in os.walk(folder) for name in files)
+        real_folder = os.path.normcase(os.path.realpath(folder))
+        links_ok = True
+        for link in links:
+            try:
+                target = os.path.normcase(os.path.realpath(link))
+                if not os.path.isfile(link) or os.path.commonpath([target, real_folder]) != real_folder:
+                    links_ok = False
+            except (OSError, ValueError):
+                links_ok = False
+        if not has_exe or not links_ok:
+            return (f"winget recorded {version or 'an unknown version'} but the program files are missing "
+                    f"-- reinstall: winget install --id {winget_id} --exact --scope {scope} --force")
+    return None
 
 
 def needs_install_location(output: str) -> bool:

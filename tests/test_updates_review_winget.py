@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
 import os
+import re
 
 import pytest
 
@@ -44,16 +45,17 @@ def test_user_upgrade_arguments_and_capped_log(tmp_path, monkeypatch):
     calls, lines = [], []
     def task(exe, args, **kwargs):
         calls.append(args)
-        with open(args[args.index("--log") + 1], "wb") as f:
+        path = re.search(r"Out-File -Encoding utf8 '([^']+)'", args[-1])[1]
+        with open(path, "wb") as f:
             f.write(b"x" * 70000 + b"\nrestart needed\n")
         return 3010, ""
     monkeypatch.setattr(limited_task, "run_limited", task)
     rc, reason, output = wg._run_user_upgrade("Acme.App", r"C:\Program Files\App", lines.append)
     assert rc == 3010 and not reason and "restart needed" in output
     assert len(output) <= 65536
-    assert "--include-unknown" in calls[0]
-    assert calls[0][calls[0].index("--location") + 1] == r"C:\Program Files\App"
-    log = calls[0][calls[0].index("--log") + 1]
+    assert "'--include-unknown'" in calls[0][-1]
+    assert "'--location' 'C:\\Program Files\\App'" in calls[0][-1]
+    log = re.search(r"Out-File -Encoding utf8 '([^']+)'", calls[0][-1])[1]
     assert os.path.dirname(log) == str(tmp_path / "WindowsTweaker" / "updates")
     assert "winget-user-Acme.App-" in log and any(log in line for line in lines)
 

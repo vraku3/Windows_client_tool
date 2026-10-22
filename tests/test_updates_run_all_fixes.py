@@ -150,7 +150,8 @@ def test_unattended_notification_counts_confirmed_and_restart():
     from modules.updates.unattended_runner import completion_message
     message = completion_message({"wu_installed": 1, "wu_pending_restart": 2,
         "winget_results": [{"confirmed": True}, {"state": "NEEDS INPUT"}]}, "report.html", True)
-    assert "2 updates installed, 1 need you" in message
+    assert "Windows installed: 1" in message and "apps confirmed: 1" in message
+    assert "Windows awaiting restart: 2" in message and "apps needing you / broken: 1" in message
     assert "restart to finish" in message and "report: report.html" in message
 
 
@@ -221,7 +222,8 @@ def test_notification_starts_hidden_without_wait(tmp_path, monkeypatch):
     args, kwargs = calls[0]
     assert args[args.index("-WindowStyle") + 1] == "Hidden"
     script = base64.b64decode(args[-1]).decode("utf-16-le")
-    assert "User''s" in script and "ShowBalloonTip" in script
+    assert "$env:WCT_NOTIFY_TEXT" in script and "ShowBalloonTip" in script
+    assert "User's" in kwargs["env"]["WCT_NOTIFY_TEXT"]
     assert kwargs["creationflags"] == maintenance_notify.subprocess.CREATE_NO_WINDOW
 
 

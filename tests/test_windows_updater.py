@@ -302,7 +302,7 @@ def test_pending_installation_identity_prevents_reinstall_without_com_flag(monke
     monkeypatch.setattr(pending_reboot, "check", lambda: NS(needed=True, reasons=["Windows Update"]))
     identity = _Update(kbs=("5127648",))
     identity.Identity = NS(UpdateID="same-offer")
-    history = _Coll([NS(Title="Security Update KB5127648", ResultCode=1, Operation=1,
+    history = _Coll([NS(Title="Security Update KB5127648", ResultCode=2, Operation=1,
                         UpdateIdentity=NS(UpdateID="same-offer"), Date=datetime.now(timezone.utc))])
     searcher = NS(Search=lambda criteria: NS(Updates=_Coll([identity])),
                   GetTotalHistoryCount=lambda: 1, QueryHistory=lambda start, count: history)

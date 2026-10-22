@@ -12,27 +12,28 @@ logger = logging.getLogger(__name__)
 def notify_finished(message: str, app_data_dir: str) -> None:
     # A short-lived shell process owns the tray icon long enough to display it;
     # the maintenance process does not wait for its notification window.
-    literal = message.replace("'", "''")
-    script = f"""
+    script = """
 $ErrorActionPreference = 'Stop'
-try {{
+try {
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
     $maintenanceIcon = New-Object System.Windows.Forms.NotifyIcon
     $maintenanceIcon.Icon = [System.Drawing.SystemIcons]::Information
     $maintenanceIcon.Visible = $true
-    $maintenanceIcon.ShowBalloonTip(10000, 'WinClientTool', '{literal}', [System.Windows.Forms.ToolTipIcon]::Info)
+    $maintenanceIcon.ShowBalloonTip(10000, 'WinClientTool', $env:WCT_NOTIFY_TEXT, [System.Windows.Forms.ToolTipIcon]::Info)
     Start-Sleep -Seconds 10
     $maintenanceIcon.Dispose()
-}} catch {{ Write-Error $_; exit 1 }}
+} catch { Write-Error $_; exit 1 }
 """
     try:
         folder = os.path.join(app_data_dir, "updates")
         os.makedirs(folder, exist_ok=True)
         encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        env = os.environ.copy()
+        env["WCT_NOTIFY_TEXT"] = message
         with open(os.path.join(folder, "notification.log"), "ab") as output:
             subprocess.Popen([powershell_exe(), "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                               "-EncodedCommand", encoded], stdout=output, stderr=output,
-                             creationflags=subprocess.CREATE_NO_WINDOW)
+                             creationflags=subprocess.CREATE_NO_WINDOW, env=env)
     except Exception:
         logger.warning("Unattended completion notification failed", exc_info=True)

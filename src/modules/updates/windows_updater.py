@@ -80,7 +80,8 @@ def _pending_restart_ids(searcher) -> set:
         for i in range(history.Count):
             try:
                 entry = history.Item(i)
-                if int(entry.Operation) == 1 and entry.Date.timestamp() >= boot:
+                if (int(entry.Operation) == 1 and int(entry.ResultCode) == 2
+                        and entry.Date.timestamp() >= boot):
                     update_id = _com_str(entry.UpdateIdentity, "UpdateID")
                     if update_id:
                         identities.add(update_id.casefold())
@@ -210,7 +211,7 @@ class InstallResult:
 
     @property
     def pending_restart(self) -> bool:
-        return self.reboot_required and self.result_code in (None, 2, 3)
+        return self.reboot_required and self.result_code in (None, 2)
 
 
 def download_size_mb(updates: List[WindowsUpdate], warn: Callable[[str], None]) -> float:
@@ -227,7 +228,9 @@ def download_size_mb(updates: List[WindowsUpdate], warn: Callable[[str], None]) 
             try:
                 size = float(update.identity.MinDownloadSize) / (1024 * 1024)
             except Exception:
-                size = update.min_size_mb if update.min_size_mb > 0 else None
+                size = update.min_size_mb
+            size = max(size if math.isfinite(size) else 0, 10 * 1024)
+            warn(f"Windows Update: {update.title}: size uncertain; budgeting {size:.0f} MB")
         if size is None or not math.isfinite(size) or size < 0 or (size == 0 and update.size_mb == 0):
             warn(f"Windows Update: {update.title}: download size unknown; checking minimum free space")
             continue

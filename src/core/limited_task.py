@@ -1,6 +1,6 @@
 """One-shot interactive task at LIMITED run level, as in Game Mode's shell restart.
 
-Call on a COM-initialized worker. No shell, script, persisted task or password.
+Call on a COM-initialized worker. No persisted task or password.
 """
 import logging
 import subprocess
@@ -56,6 +56,7 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
     name = TASK_PREFIX + uuid.uuid4().hex
     folder = None
     registered = False
+    launch_attempted = False
     try:
         service = win32com.client.Dispatch("Schedule.Service")
         service.Connect()
@@ -73,11 +74,13 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
         task.Settings.DisallowStartIfOnBatteries = False
         task.Settings.StopIfGoingOnBatteries = False
         task.Settings.ExecutionTimeLimit = "PT0S"
-        action = task.Actions.Create(0)  # TASK_ACTION_EXEC, never cmd / powershell
+        action = task.Actions.Create(0)  # TASK_ACTION_EXEC
         action.Path = executable
         action.Arguments = subprocess.list2cmdline(args)
         entry = folder.RegisterTaskDefinition(name, task, 2, sid, None, 3)
         registered = True
+        # Run can dispatch successfully and then lose its COM reply.
+        launch_attempted = True
         entry.Run(None)
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
@@ -91,7 +94,8 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
         return None, "STILL RUNNING: installer still running after 10 minutes (unelevated task timed out)"
     except Exception as exc:
         logger.warning("Limited task result unavailable: %s", exc, exc_info=True)
-        return None, f"unelevated task result unreadable: {exc}"
+        prefix = "STILL RUNNING: launched, completion unknown; " if launch_attempted else "failed before launch: "
+        return None, f"{prefix}unelevated task result unreadable: {exc}"
     finally:
         if registered:
             try:

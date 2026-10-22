@@ -10,7 +10,7 @@ def test_normalize_stage_data_empty_input():
     result = normalize_stage_data({})
     assert result == {
         "wu_results": [],
-        "wu_installed": 0,
+        "wu_installed": None,
         "wu_held": [],
         "winget_results": [],
         "store_triggered": 0,
@@ -20,7 +20,12 @@ def test_normalize_stage_data_empty_input():
         "cleanup_areas": [],
         "cleanup_left": "",
         "reboot_required": False,
-        "wu_pending_restart": 0,
+        "wu_pending_restart": None,
+        "apps_confirmed": None,
+        "apps_need_you": None,
+        "machine_restart_pending": None,
+        "outstanding": None,
+        "failures": [],
     }
 
 

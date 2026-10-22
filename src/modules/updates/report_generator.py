@@ -8,6 +8,7 @@ import html
 import logging
 import os
 import socket
+import re
 from core.formatting import format_size as _fmt_size
 from datetime import datetime
 from typing import List, Optional
@@ -17,6 +18,14 @@ logger = logging.getLogger(__name__)
 
 def _esc(v) -> str:
     return html.escape(str(v) if v is not None else "")
+
+
+def _shown(value) -> str:
+    return "-" if value is None else _esc(value)
+
+
+def _restart(value) -> str:
+    return "-" if value is None else "yes" if value else "no"
 
 
 def render_update_report_html(data: dict, history: List[dict]) -> str:
@@ -33,7 +42,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     cleanup_freed = data.get("cleanup_freed", 0)
     cleanup_deleted = data.get("cleanup_deleted", 0)
     dism_output = data.get("dism_output")
-    pending_restart = data.get("wu_pending_restart", 0)
+    pending_restart = data.get("wu_pending_restart")
 
     wu_rows = "".join(
         f"<tr><td>{_esc(r.get('title'))}</td><td>{_esc(r.get('kb'))}</td>"
@@ -54,18 +63,21 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     ) or "<tr><td colspan=5>No winget updates this run.</td></tr>"
 
     hist_rows = "".join(
-        f"<tr><td>{_esc(e.get('ts'))}</td><td>{_esc(_fmt_size(e.get('freed', 0)))}</td>"
-        f"<td>{_esc(e.get('updates', 0))}</td><td>{_esc(e.get('pending_restart', 0))}</td></tr>"
+        f"<tr><td>{_esc(e.get('ts'))}</td><td>{_esc(_fmt_size(e['freed'])) if e.get('freed') is not None else '-'}</td>"
+        f"<td>{_shown(e.get('updates'))}</td><td>{_shown(e.get('pending_restart'))}</td>"
+        f"<td>{_shown(e.get('apps_confirmed'))}</td><td>{_shown(e.get('apps_need_you'))}</td>"
+        f"<td>{_restart(e.get('machine_restart_pending'))}</td></tr>"
         for e in list(history)[-20:][::-1]
-    ) or "<tr><td colspan=4>No prior runs recorded.</td></tr>"
+    ) or "<tr><td colspan=7>No prior runs recorded.</td></tr>"
 
     held_suffix = f", {len(wu_held)} held" if wu_held else ""
     cards = f"""
       <div class="card"><div class="k">Windows Update</div>
         <div class="v {'ok' if all(r.get('success') for r in wu_results) or not wu_results else 'warn'}">
-          {len([r for r in wu_results if r.get('success')])}/{len(wu_results)} installed{held_suffix}
+          {_shown(data.get('wu_installed'))}/{len(wu_results)} installed{held_suffix}; {_shown(pending_restart)} awaiting restart
           {f'; Restart required to finish {pending_restart} update(s)' if pending_restart else ''}</div></div>
-      <div class="card"><div class="k">Winget</div><div class="v">{sum(bool(r.get('confirmed')) for r in winget_results)} confirmed updated</div></div>
+      <div class="card"><div class="k">Winget</div><div class="v">{_shown(data.get('apps_confirmed'))} confirmed updated; {_shown(data.get('apps_need_you'))} needing you / broken</div></div>
+      <div class="card"><div class="k">Machine restart pending</div><div class="v">{_restart(data.get('machine_restart_pending'))}</div></div>
       <div class="card"><div class="k">Microsoft Store</div>
         <div class="v">{'scan triggered' if store_triggered else 'not run'}</div></div>
       <div class="card"><div class="k">Cleanup freed</div>
@@ -74,6 +86,8 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 
     dism_section = ""
     if dism_output:
+        dism_output = "\n".join(line for line in dism_output.splitlines()
+                                if not re.match(r"^\s*\[[=\s.]*\d+(?:\.\d+)?%[=\s.]*\]\s*$", line))
         dism_section = f"""
         <h2>DISM Component Store Cleanup</h2>
         <pre>{_esc(dism_output)}</pre>
@@ -85,6 +99,9 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     cleanup_section = (f"<h2>Cleanup by area</h2><p>{_esc(data.get('cleanup_left', ''))}</p>"
                        "<table><tr><th>Area</th><th>Cleaned</th><th>Left and why</th></tr>"
                        f"{cleanup_rows}</table>") if cleanup_rows else ""
+
+    from modules.updates.stage_runners import outstanding_text
+    outstanding_section = "<pre>" + _esc(outstanding_text(data.get("outstanding") or {})) + "</pre>"
 
     return f"""<!DOCTYPE html>
 <html>
@@ -109,6 +126,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 <body>
 <h1>&#x1f6e0;&#xfe0f; Maintenance Report</h1>
 <div class="sub">Generated: {_esc(generated)} &nbsp;|&nbsp; Host: <b>{_esc(hostname)}</b></div>
+{outstanding_section}
 <div class="cards">{cards}</div>
 
 <h2>Windows Update</h2>
@@ -119,7 +137,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 {dism_section}
 {cleanup_section}
 <h2>Run history (last 20)</h2>
-<table><tr><th>Date</th><th>Freed</th><th>Updates installed</th><th>Pending restart</th></tr>{hist_rows}</table>
+<table><tr><th>Date</th><th>Freed</th><th>Windows updates installed</th><th>Windows awaiting restart</th><th>Apps confirmed</th><th>Apps needing you / broken</th><th>Machine restart pending</th></tr>{hist_rows}</table>
 </body></html>"""
 
 

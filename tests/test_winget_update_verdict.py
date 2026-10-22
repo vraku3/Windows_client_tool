@@ -80,7 +80,7 @@ def test_run_all_stage_reports_each_package_from_its_own_read_back(monkeypatch):
     targets = {}
 
     def fake_install(winget_id, output_cb, is_cancelled=lambda: False, target_version="",
-                     before_version="", verify=True):
+                     before_version="", verify=True, package_name=""):
         targets[winget_id] = target_version
         return outcomes[winget_id]
     monkeypatch.setattr(wu, "install_update", fake_install)

@@ -8,7 +8,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,18 +37,23 @@ def load_history(app_data_dir: str) -> List[dict]:
 def append_run(
     app_data_dir: str,
     freed_bytes: int = 0,
-    updates_installed: int = 0,
-    winget_count: int = 0,
-    pending_restart: int = 0,
+    updates_installed: Optional[int] = None,
+    winget_count: Optional[int] = None,
+    pending_restart: Optional[int] = None,
+    apps_need_you: Optional[int] = None,
+    machine_restart_pending: Optional[bool] = None,
 ) -> None:
     """Append one run entry, capped at the most recent MAX_ENTRIES."""
     history = load_history(app_data_dir)
     history.append({
         "ts": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "freed": int(freed_bytes),
-        "updates": int(updates_installed),
-        "wg": int(winget_count),
-        "pending_restart": int(pending_restart),
+        "updates": int(updates_installed) if updates_installed is not None else None,
+        "wg": int(winget_count) if winget_count is not None else None,
+        "apps_confirmed": int(winget_count) if winget_count is not None else None,
+        "pending_restart": int(pending_restart) if pending_restart is not None else None,
+        "apps_need_you": int(apps_need_you) if apps_need_you is not None else None,
+        "machine_restart_pending": machine_restart_pending,
     })
     if len(history) > MAX_ENTRIES:
         history = history[-MAX_ENTRIES:]

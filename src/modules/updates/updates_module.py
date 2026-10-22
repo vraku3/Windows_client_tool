@@ -268,6 +268,7 @@ class _AppUpdatesTab(QWidget):
 
         targets = {u.winget_id: u.available_version for u in self._updates if u.winget_id in ids}
         befores = {u.winget_id: u.installed_version for u in self._updates if u.winget_id in ids}
+        names = {u.winget_id: u.name for u in self._updates if u.winget_id in ids}
         verify = bool(self.app.config.get("updates.verify_after_update", True)) if self.app else True
 
         def _run(worker):
@@ -288,6 +289,7 @@ class _AppUpdatesTab(QWidget):
                     is_cancelled=lambda: worker.is_cancelled,
                     target_version=targets.get(wid, ""),
                     before_version=befores.get(wid, ""),
+                    package_name=names.get(wid, ""),
                     verify=verify,
                 )
                 worker.signals.log_line.emit(f"  {outcome.state}: {outcome.detail}")
@@ -654,7 +656,7 @@ class _WinUpdatesTab(QWidget):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         installed = sum(1 for r in results if r.success)
-        pending = sum(r.reboot_required for r in results)
+        pending = sum(r.pending_restart for r in results)
         restart_note = f" Restart required to finish {pending} update(s)" if pending else ""
         self._status_lbl.setText(f"{installed}/{len(results)} installed." + restart_note)
         _maybe_toast(
@@ -702,8 +704,11 @@ class _WinUpdatesTab(QWidget):
         after_updates, held = split_scan(payload)
         self._held = held
         waiting = {(r.kb, r.title) for r in results if r.pending_restart}
+        failed = {(r.kb, r.title) for r in results if r.result_code in (0, 1, 3, 4, 5)}
         for update in after_updates:
-            if (update.kb, update.title) in waiting:
+            if (update.kb, update.title) in failed:
+                update.pending_restart = False
+            elif (update.kb, update.title) in waiting:
                 # The install result is newer evidence than a lagging scan.
                 update.pending_restart = True
         present = {(u.kb, u.title) for u in after_updates}

@@ -120,25 +120,37 @@ class _RunAllTab(QWidget):
         # A cancelled Worker emits `cancelled`, never `result`: the stages
         # already run live here so Stop still records and reports them.
         data = {}
+        lines = []
 
         def _run(worker):
-            from modules.updates.stage_runners import STAGE_LABELS, STAGE_RUNNERS
+            from modules.updates.stage_runners import STAGE_LABELS, STAGE_RUNNERS, finalize_run, write_session_log
+            def log(line):
+                lines.append(line)
+                worker.signals.log_line.emit(line)
             for stage in stages:
                 if worker.is_cancelled:
-                    worker.signals.log_line.emit("Cancelled.")
+                    log("Cancelled.")
                     break
-                worker.signals.log_line.emit(f"--- stage: {STAGE_LABELS.get(stage, stage)} ---")
+                log(f"--- stage: {STAGE_LABELS.get(stage, stage)} ---")
                 fn = STAGE_RUNNERS[stage]
                 try:
                     data[stage] = fn(
                         app,
-                        lambda line: worker.signals.log_line.emit(line),
+                        log,
                         lambda: worker.is_cancelled,
                     )
                 except Exception as e:
                     logger.exception("Stage %s failed", stage)
-                    worker.signals.log_line.emit(f"Stage {stage} failed: {e}")
-                    data[stage] = {}
+                    log(f"Stage {stage} failed: {e}")
+                    data[stage] = {"error": str(e)}
+                if any(r.get("state") == "STILL RUNNING" for r in data[stage].get("results", [])):
+                    log("Remaining stages stopped: installer completion unknown.")
+                    break
+            finalize_run(data)
+            try:
+                data["session_log"] = write_session_log(app.app_data_dir, data, lines)
+            except OSError:
+                logger.warning("Could not write maintenance session log", exc_info=True)
             return dict(data)
 
         w = COMWorker(_run)
@@ -163,17 +175,23 @@ class _RunAllTab(QWidget):
         self._stop_btn.setEnabled(False)
         self._report_btn.setEnabled(True)
         self._last_data = self._normalize_data(data)
+        from modules.updates.stage_runners import outstanding_text
+        self._log.setPlainText(outstanding_text(data.get("outstanding") or {}) + "\n\n" + self._log.toPlainText())
         held = len(self._last_data.get("wu_held") or [])
         held_note = f" {held} AMD display driver update(s) held on purpose." if held else ""
+        failures = self._last_data.get("failures", [])
         self._status_lbl.setText(("Stopped -- the stages already run are reported."
-                                  if cancelled else "Run complete.") + held_note)
+                                  if cancelled else f"Run incomplete: {len(failures)} problem(s)." if failures
+                                  else "Run complete.") + held_note)
 
         from modules.updates.history_writer import append_run
         append_run(
             self.app.app_data_dir,
             freed_bytes=self._last_data.get("cleanup_freed", 0),
             updates_installed=self._last_data.get("wu_installed", 0),
-            winget_count=len(self._last_data.get("winget_results", [])),
+            winget_count=self._last_data.get("apps_confirmed"),
+            apps_need_you=self._last_data.get("apps_need_you"),
+            machine_restart_pending=self._last_data.get("machine_restart_pending"),
             pending_restart=self._last_data.get("wu_pending_restart", 0),
         )
 
@@ -217,11 +235,14 @@ class _RunAllTab(QWidget):
         if not self.app.config.get("app.toast_on_long_ops", True):
             return
         from core.events import NOTIFY_BALLOON, BalloonNotifyData
+        from modules.updates.unattended_runner import completion_message
         self.app.event_bus.publish(
             NOTIFY_BALLOON,
             BalloonNotifyData(
                 title="Maintenance run complete",
-                message="Run All finished — see the Updates module for the report.",
+                message=completion_message(self._last_data, "Updates module",
+                                           self._last_data.get("machine_restart_pending"),
+                                           self._last_data.get("failures")),
             ),
         )
 

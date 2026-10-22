@@ -52,6 +52,27 @@ SHOW_NORMAL = 1
 SHOW_MIN_NO_ACTIVE = 7
 
 
+def desktop_account() -> Optional[str]:
+    """Account owning the desktop shell which receives unelevated launches."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        import psutil
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetShellWindow.restype = wintypes.HWND
+        user32.GetShellWindow.argtypes = []
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        pid = wintypes.DWORD()
+        hwnd = user32.GetShellWindow()
+        if not hwnd or not user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid)) or not pid.value:
+            return None
+        return psutil.Process(pid.value).username()
+    except (OSError, psutil.Error) as error:
+        logger.warning("Could not read desktop shell account: %s", error)
+        return None
+
+
 def _call(program: str, args: str, cwd: str, out: List[Optional[str]],
           show: int = SHOW_NORMAL) -> None:
     import pythoncom

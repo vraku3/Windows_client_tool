@@ -185,7 +185,7 @@ def group_processes(snapshot, windows: Optional[Dict[int, List[str]]] = None):
         if pid in claimed:
             # Already absorbed as a sibling of an app seen earlier.
             continue
-        members = _family(snapshot, pid)
+        members = set(_family(snapshot, pid)) - claimed
         claimed.update(members)
 
         key = (info.details.path or info.name).lower()

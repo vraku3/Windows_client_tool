@@ -1,8 +1,7 @@
-"""Task Manager's Processes tab.
+"""All processes by default, with an optional app grouping.
 
-The readable one. Where Details lists 284 rows, this shows three groups and
-rolls each app up to a single line -- Chrome's 21 processes become "Google
-Chrome, 2.2 GB", which is a thing someone can actually decide about.
+The grouped view rolls each app up to a summary and labels how many real
+process rows are inside it. Counts distinguish listed from collapsed rows.
 
 The heat tint is not decoration. Task Manager shades the value cells so the
 eye finds the expensive row without reading the numbers, and the shade is
@@ -12,18 +11,19 @@ out.
 """
 import logging
 import time
+from dataclasses import replace
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import (QButtonGroup, QHBoxLayout, QHeaderView, QLabel,
+from PyQt6.QtWidgets import (QButtonGroup, QComboBox, QHBoxLayout, QHeaderView, QLabel,
                              QLineEdit, QMenu, QPlainTextEdit, QPushButton,
                              QSplitter, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout, QWidget)
 
 from core.semantic_colors import semantic
-from core.worker import Worker
+from core.worker import Worker, retire
 
 from core.procengine.columns import fmt_bytes, fmt_percent, fmt_rate
 from core.procengine.grouping import group_processes, totals
@@ -44,6 +44,7 @@ COLUMNS = BASE_COLUMNS + tuple(c.title for c in pv.COLUMNS)
 FIRST_EXTRA = len(BASE_COLUMNS)
 CPU, MEMORY, DISK = 1, 2, 3
 CONFIG_COLUMNS = "modules.dashboard.process_columns"
+CONFIG_VIEW = "modules.dashboard.process_view_mode"
 SERVICES_TTL_S = 15.0
 
 #: Roles carrying the sortable value and the pid behind a row.
@@ -52,7 +53,7 @@ PID_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 class ProcessesTab(QWidget):
-    """Grouped process view. Owns its workers, per CLAUDE.md."""
+    """Flat or grouped process view. Owns its workers, per CLAUDE.md."""
 
     snapshot_taken = pyqtSignal(object)
 
@@ -62,6 +63,8 @@ class ProcessesTab(QWidget):
         self._source = SnapshotSource()
         self._app = None
         self._busy = False
+        self._read_worker = None
+        self._services_worker = None
         #: Which app rows the user had opened, so a refresh does not fold
         #: the tree shut once a second.
         self._expanded: set = set()
@@ -86,6 +89,10 @@ class ProcessesTab(QWidget):
         layout.addWidget(self.error_banner)
 
         top = QHBoxLayout()
+        self.view_mode = QComboBox(self)
+        self.view_mode.addItem("All processes", "flat")
+        self.view_mode.addItem("Grouped by app", "grouped")
+        self.view_mode.currentIndexChanged.connect(self._view_changed)
         self.filter_box = QLineEdit(self)
         self.filter_box.setPlaceholderText(
             "Filter by name, PID, user, path or command line…")
@@ -106,6 +113,7 @@ class ProcessesTab(QWidget):
         top.addWidget(self.end_button)
         layout.addLayout(top)
         layout.addLayout(self._build_chips())
+        self._view_changed()
 
         split = QSplitter(Qt.Orientation.Vertical, self)
         split.addWidget(self._build_tree())
@@ -122,7 +130,10 @@ class ProcessesTab(QWidget):
         self.menu.changed.connect(self.refresh)
         self._snapshot = None
 
-    def _build_chips(self) -> QHBoxLayout:
+    def _build_chips(self) -> QVBoxLayout:
+        rows = QVBoxLayout()
+        controls = QHBoxLayout()
+        controls.addWidget(self.view_mode)
         row = QHBoxLayout()
         row.setContentsMargins(4, 0, 4, 0)
         self._chips = {}
@@ -137,18 +148,30 @@ class ProcessesTab(QWidget):
             self._chips[key] = (chip, label)
             row.addWidget(chip)
         row.addStretch(1)
+        self.reset_button = QPushButton("Reset filters", self)
+        self.reset_button.clicked.connect(self._reset_filters)
+        controls.addWidget(self.reset_button)
+        self.expand_button = QPushButton("Expand all", self)
+        self.collapse_button = QPushButton("Collapse all", self)
+        self.expand_button.clicked.connect(lambda: self.tree_expand_all(True))
+        self.collapse_button.clicked.connect(lambda: self.tree_expand_all(False))
+        controls.addWidget(self.expand_button)
+        controls.addWidget(self.collapse_button)
+        controls.addStretch(1)
         columns = QPushButton("Columns…", self)
         columns.setToolTip("Choose which extra columns to show")
         columns.clicked.connect(
             lambda: self._choose_columns(columns.mapToGlobal(columns.rect().bottomLeft())))
-        row.addWidget(columns)
-        return row
+        controls.addWidget(columns)
+        rows.addLayout(controls)
+        rows.addLayout(row)
+        return rows
 
     def _build_tree(self) -> QTreeWidget:
         self.tree = QTreeWidget(self)
         self.tree.setColumnCount(len(COLUMNS))
         self.tree.setHeaderLabels(list(COLUMNS))
-        self.tree.setRootIsDecorated(True)
+        self.tree.setRootIsDecorated(self.view_mode.currentData() == "grouped")
         self.tree.setAlternatingRowColors(False)
         self.tree.setUniformRowHeights(True)
         self.tree.setSortingEnabled(False)
@@ -230,14 +253,39 @@ class ProcessesTab(QWidget):
 
     def _set_filter(self, key: str) -> None:
         self._filter = key
+        self._chips.get(key, self._chips["all"])[0].setChecked(True)
         self._rebuild()
+
+    def _reset_filters(self) -> None:
+        self.filter_box.blockSignals(True)
+        self.filter_box.clear()
+        self.filter_box.blockSignals(False)
+        self._set_filter("all")
+
+    def _view_changed(self) -> None:
+        grouped = self.view_mode.currentData() == "grouped"
+        self.expand_button.setVisible(grouped)
+        self.collapse_button.setVisible(grouped)
+        if hasattr(self, "tree"):
+            self.tree.setRootIsDecorated(grouped)
+        config = getattr(self._app, "config", None)
+        if config is not None:
+            config.set(CONFIG_VIEW, self.view_mode.currentData())
+        self._rebuild()
+
+    def tree_expand_all(self, opened=True) -> None:
+        for item in _walk(self.tree):
+            if item.childCount():
+                item.setExpanded(opened if item.data(0, PID_ROLE) is not None else True)
 
     def _refresh_chip_counts(self) -> None:
         if self._snapshot is None:
             return
-        counts = pv.filter_counts(self._snapshot.by_pid.values())
+        needle = self.filter_box.text().strip().lower()
+        counts = pv.filter_counts(i for i in self._snapshot.by_pid.values()
+                                  if not needle or _matches(i, needle))
         for key, (chip, label) in self._chips.items():
-            chip.setText(label if key == "all" else f"{label} ({counts[key]})")
+            chip.setText(f"{label} ({counts[key]})")
 
     def _sort_by(self, column: int) -> None:
         descending = True
@@ -264,6 +312,9 @@ class ProcessesTab(QWidget):
         self._app = app
         self.menu.set_app(app)
         self._load_saved_columns()
+        config = getattr(app, "config", None)
+        mode = config.get(CONFIG_VIEW, "flat") if config is not None else "flat"
+        self.view_mode.setCurrentIndex(1 if mode == "grouped" else 0)
 
     def start(self) -> None:
         if self._net_wanted:
@@ -308,14 +359,7 @@ class ProcessesTab(QWidget):
             self._rebuild()
 
     def cancel_all(self) -> None:
-        for worker in self._workers:
-            worker.cancel()
-        self._workers.clear()
-        # A cancelled Worker emits `cancelled`, never `result`/`error`, so the
-        # flags its handlers would have cleared stayed True: leaving the tab
-        # mid-refresh froze the process list for the life of the app.
-        self._busy = False
-        self._services_busy = False
+        retire(self._workers)
 
     # ---- reading --------------------------------------------------------
 
@@ -328,10 +372,24 @@ class ProcessesTab(QWidget):
             return
         self._busy = True
         worker = Worker(lambda _worker: self._read())
-        worker.signals.result.connect(self._apply)
-        worker.signals.error.connect(self._failed)
+        self._read_worker = worker
+        worker.signals.result.connect(
+            lambda result: self._apply(result) if self._current(worker, "_read_worker") else None)
+        worker.signals.error.connect(
+            lambda message: self._failed(message) if self._current(worker, "_read_worker") else None)
+        worker.signals.finished.connect(lambda: self._finished(worker, "_read_worker", "_busy"))
         self._workers.append(worker)
         pool.start(worker)
+
+    def _current(self, worker, slot) -> bool:
+        return getattr(self, slot) is worker and not worker.is_cancelled
+
+    def _finished(self, worker, slot, busy) -> None:
+        if getattr(self, slot) is worker:
+            setattr(self, slot, None)
+            setattr(self, busy, False)
+        if worker in self._workers:
+            self._workers.remove(worker)
 
     def _read(self):
         snapshot = self._source.read()
@@ -340,9 +398,9 @@ class ProcessesTab(QWidget):
         return snapshot, group_processes(snapshot)
 
     def _apply(self, result) -> None:
-        self._busy = False
         snapshot, groups = result
         self._snapshot = snapshot
+        self.menu.set_snapshot(snapshot)
         self._groups = groups
         self._recycle.update(snapshot)
         from . import net_trace
@@ -353,7 +411,6 @@ class ProcessesTab(QWidget):
         self.snapshot_taken.emit(snapshot)
 
     def _failed(self, message) -> None:
-        self._busy = False
         logger.error("Processes refresh failed: %s", message)
         self.status.setText(f"Could not read the process list: {message}")
 
@@ -372,32 +429,48 @@ class ProcessesTab(QWidget):
         self.tree.blockSignals(True)
         self.tree.clear()
         shown = 0
+        collapsed = 0
         peak = self._peaks()
-        for group in self._groups:
+        self._refresh_chip_counts()
+        grouped = self.view_mode.currentData() == "grouped"
+        if not grouped:
+            rows = [i for i in self._snapshot.by_pid.values()
+                    if (not needle or _matches(i, needle)) and pv.passes(self._filter, i)]
+            for info in self._sorted(rows):
+                self._process_item(self.tree, info, peak)
+            shown = len(rows)
+        for group in self._groups if grouped else []:
             rows = self._rows_for(group, needle)
             if not rows:
                 continue
-            header = QTreeWidgetItem([f"{group.name} ({len(rows)})"])
+            count = sum(len(getattr(row, "members", [row])) for row in rows)
+            label = (f"{group.name} ({len(rows)} apps, {count} processes)"
+                     if group.name == "Apps" else f"{group.name} ({count} processes)")
+            header = QTreeWidgetItem([label])
             header.setFirstColumnSpanned(True)
             header.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.tree.addTopLevelItem(header)
             header.setExpanded(True)
             for row in rows:
-                shown += self._add_row(header, row, peak)
+                listed = self._add_row(header, row, peak)
+                shown += listed
+                collapsed += len(getattr(row, "members", [row])) - listed
         self._restore_selection(selected)
         self.tree.blockSignals(False)
         self.tree.setUpdatesEnabled(True)
         self._selection_changed()
-        self._update_status(shown)
+        self._update_status(shown, collapsed)
 
     def _rows_for(self, group, needle: str) -> List:
         kept = []
         for row in group.rows:
-            if needle and not _matches(row, needle):
-                continue
-            if self._filter != "all" and not _passes_filter(row, self._filter):
-                continue
-            kept.append(row)
+            members = getattr(row, "members", None)
+            matches = [m for m in (members if members is not None else [row])
+                       if (not needle or _matches(m, needle)) and pv.passes(self._filter, m)]
+            if matches:
+                kept.append(replace(row, members=matches,
+                                    pid=row.pid if any(m.pid == row.pid for m in matches) else matches[0].pid)
+                            if members is not None else row)
         return self._sorted(kept)
 
     def _add_row(self, parent, row, peak) -> int:
@@ -408,7 +481,7 @@ class ProcessesTab(QWidget):
             return 1
 
         summed = totals(members)
-        item = QTreeWidgetItem(parent, [row.title])
+        item = QTreeWidgetItem(parent, [f"{row.title} ({len(members)} processes)"])
         item.setData(0, PID_ROLE, row.pid)
         self._set_value(item, CPU, summed["cpu"], fmt_percent, peak["cpu"])
         self._set_value(item, MEMORY, summed["memory"], fmt_bytes,
@@ -416,20 +489,14 @@ class ProcessesTab(QWidget):
         self._set_value(item, DISK, summed["disk"], fmt_rate, peak["disk"])
         item.setText(4, str(row.pid))
         self._fill_extra(item, members)
-        if len(members) > 1:
-            for member in sorted(members, key=lambda info: info.pid):
-                self._process_item(item, member, peak)
-            item.setExpanded(row.pid in self._expanded)
-        else:
-            # A single-process "app" never reaches `_process_item` (the loop
-            # above is skipped), so without this its own row got none of the
-            # elevated/self/reused flags below -- an app that happens to run
-            # as one process (this tool, run from source, is one: "Python"
-            # with a single member) silently lost every badge a two-process
-            # app would have shown. Real on this machine: `is_self` matches
-            # exactly the lone "Python" row while the tab is open.
+        for member in self._sorted(members):
+            self._process_item(item, member, peak)
+        item.setExpanded(row.pid in self._expanded or bool(self.filter_box.text().strip())
+                         or self._filter != "all")
+        if len(members) == 1:
+            # Keep the representative's badges on its app summary as well.
             self._apply_row_flags(item, members[0])
-        return len(members)
+        return len(members) if item.isExpanded() else 0
 
     def _process_item(self, parent, info, peak) -> None:
         label = info.details.description or info.name
@@ -505,17 +572,36 @@ class ProcessesTab(QWidget):
     def _remember(self, item, opened: bool) -> None:
         pid = item.data(0, PID_ROLE)
         if pid is None:
+            self._update_visible_status()
             return
         if opened:
             self._expanded.add(pid)
         else:
             self._expanded.discard(pid)
+        self._update_visible_status()
+
+    def _update_visible_status(self) -> None:
+        shown = collapsed = 0
+        for item in _walk(self.tree):
+            if item.data(0, PID_ROLE) is None:
+                continue
+            if item.childCount():
+                if not item.isExpanded():
+                    collapsed += item.childCount()
+            else:
+                ancestor = item.parent()
+                visible = True
+                while ancestor is not None:
+                    visible = visible and ancestor.isExpanded()
+                    ancestor = ancestor.parent()
+                shown += int(visible)
+        self._update_status(shown, collapsed)
 
     def _selected_pids(self) -> List[int]:
         pids = []
         for item in self.tree.selectedItems():
             pid = item.data(0, PID_ROLE)
-            if pid is not None:
+            if pid is not None and pid not in pids:
                 pids.append(pid)
         return pids
 
@@ -557,20 +643,23 @@ class ProcessesTab(QWidget):
         if stale and not self._services_busy and pool is not None:
             self._services_busy = True
             worker = Worker(lambda _w: pv.services_by_pid())
-            worker.signals.result.connect(self._on_services)
-            worker.signals.error.connect(self._on_services_error)
+            self._services_worker = worker
+            worker.signals.result.connect(
+                lambda value: self._on_services(value) if self._current(worker, "_services_worker") else None)
+            worker.signals.error.connect(
+                lambda error: self._on_services_error(error) if self._current(worker, "_services_worker") else None)
+            worker.signals.finished.connect(
+                lambda: self._finished(worker, "_services_worker", "_services_busy"))
             self._workers.append(worker)
             pool.start(worker)
         return (self._services or {}).get(pid)
 
     def _on_services(self, mapping) -> None:
-        self._services_busy = False
         self._services_at = time.monotonic()
         self._services = mapping
         self._selection_changed()
 
     def _on_services_error(self, message) -> None:
-        self._services_busy = False
         logger.warning("service map unreadable: %s", message)
 
     def _show_menu(self, position) -> None:
@@ -588,18 +677,23 @@ class ProcessesTab(QWidget):
         if pids:
             self.menu._end(pids)
 
-    def _update_status(self, shown: int) -> None:
+    def _update_status(self, shown: int, collapsed: int = 0) -> None:
         if self._snapshot is None:
             return
-        total = len(self._snapshot.by_pid)
-        parts = [f"{shown:,} of {total:,} processes"]
+        parts = [f"{shown:,} processes listed"]
+        if self.view_mode.currentData() == "grouped":
+            parts.append(f"{collapsed:,} inside collapsed apps")
         if self._recycle.total:
             last = self._recycle.events[-1]
             parts.append(f"{self._recycle.total} PID reuse(s) seen (latest: {last.pid} "
                          f"{last.old_name} -> {last.new_name})")
-        if self._snapshot.refused:
-            parts.append(f"{self._snapshot.refused:,} could not be read "
-                         f"(run as administrator to see them)")
+        needle = self.filter_box.text().strip().lower()
+        refused = sum(pv.passes("unreadable", i) for i in self._snapshot.by_pid.values()
+                      if (not needle or _matches(i, needle)) and pv.passes(self._filter, i))
+        if refused:
+            from core.admin_utils import is_admin
+            hint = " (run as administrator for more)" if not is_admin() else ""
+            parts.append(f"{refused:,} processes' details could not be read{hint}")
         self.status.setText("   ·   ".join(parts))
 
 
@@ -614,9 +708,7 @@ def _disk_of(info) -> Optional[float]:
 def _matches(row, needle: str) -> bool:
     members = getattr(row, "members", None)
     if members is not None:
-        if needle in row.title.lower():
-            return True
-        return any(needle in member.name.lower() for member in members)
+        return any(_matches(member, needle) for member in members)
     details = row.details
     return (needle in row.name.lower()
             or needle in (details.description or "").lower()

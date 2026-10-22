@@ -65,6 +65,11 @@ class Snapshot:
     refused: int = 0
 
 
+def details_unreadable(info: ProcessInfo) -> bool:
+    """Kernel pseudo-processes have no image path; their rows remain listed."""
+    return info.pid not in (0, 4) and info.details.path is None
+
+
 def build_tree(rows) -> List[TreeNode]:
     """The parent/child tree over `rows`.
 
@@ -209,7 +214,8 @@ class SnapshotSource:
         tree = build_tree(rows)
         _link(tree, by_pid)
         return Snapshot(by_pid=by_pid, roots=tree, taken_at=now,
-                        readable=readable, refused=len(rows) - readable)
+                        readable=readable,
+                        refused=sum(details_unreadable(info) for info in by_pid.values()))
 
     def _is_ours(self, details: ProcessDetails) -> bool:
         if not details.user or not self._own_user:

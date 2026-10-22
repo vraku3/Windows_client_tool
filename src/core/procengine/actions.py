@@ -19,6 +19,7 @@ Qt-free, like the rest of the engine.
 """
 import ctypes
 import logging
+import math
 import os
 import subprocess
 import sys
@@ -59,6 +60,8 @@ _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL,
                                   wintypes.DWORD]
 _kernel32.CloseHandle.restype = wintypes.BOOL
 _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+_kernel32.GetProcessTimes.restype = wintypes.BOOL
+_kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
 _ntdll.NtSuspendProcess.restype = ctypes.c_long
 _ntdll.NtSuspendProcess.argtypes = [wintypes.HANDLE]
 _ntdll.NtResumeProcess.restype = ctypes.c_long
@@ -117,7 +120,80 @@ def _exists(pid: int) -> bool:
     return psutil.pid_exists(pid)
 
 
-def end_process(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
+def creation_seconds(ticks: int):
+    """Snapshot FILETIME to psutil's Unix seconds, without guessing missing times."""
+    if not ticks or ticks < 116444736000000000:
+        return None
+    return (ticks - 116444736000000000) / 10_000_000
+
+
+def _checked_process(pid, create_time):
+    """Open and validate the selected incarnation before any side effect."""
+    try:
+        process = psutil.Process(pid)
+        if create_time is not None:
+            actual = process.create_time()
+            if (not math.isfinite(create_time) or create_time <= 0
+                    or abs(actual - create_time) > 0.01):
+                return None, Result(False, f"process {pid} has exited; a different process now has this PID")
+        return process, None
+    except psutil.NoSuchProcess:
+        return None, Result(False, f"Process {pid} is no longer running.")
+    except psutil.AccessDenied:
+        return None, Result(False, "Access denied while checking process identity — try running as administrator.")
+
+
+def _handle_identity_error(handle, pid, create_time):
+    """Close the PID-reuse gap between psutil's check and OpenProcess."""
+    if create_time is None:
+        return None
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not _kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                     ctypes.byref(kernel), ctypes.byref(user)):
+        return Result(False, f"Could not verify process {pid}: {_reason(ctypes.get_last_error())}")
+    actual = creation_seconds((created.dwHighDateTime << 32) | created.dwLowDateTime)
+    if actual is None or abs(actual - create_time) > 0.01:
+        return Result(False, f"process {pid} has exited; a different process now has this PID")
+    return None
+
+
+@dataclass(frozen=True)
+class RestartContext:
+    exe: str
+    command_line: str
+    elevated: bool
+    account: str
+
+
+def prepare_restart(pid, create_time=None):
+    """Read the launch account and elevation before asking or ending anything."""
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return None, error
+    from .details import resolve
+    facts = resolve(pid)
+    if facts.elevated is None:
+        return None, Result(False, "Could not read process elevation; Restart refused.")
+    exe, command_line = _launch_facts(process)
+    if not exe:
+        return None, Result(False, f"Could not read the executable path of process {pid} to restart it.")
+    if facts.elevated:
+        # ShellExecute runas uses the caller's interactive account/UAC credentials.
+        try:
+            account = psutil.Process(os.getpid()).username()
+        except psutil.Error as error:
+            return None, Result(False, f"Could not read the relaunch account; Restart refused: {error}")
+    else:
+        # The desktop shell owns the unelevated token, which may be another account
+        # when this app was started with alternate administrator credentials.
+        from core.shell_launch import desktop_account
+        account = desktop_account()
+        if not account:
+            return None, Result(False, "Could not read the desktop shell account; Restart refused.")
+    return RestartContext(exe, command_line, facts.elevated, account), None
+
+
+def end_process(pid: int, timeout: float = KILL_TIMEOUT, *, create_time=None) -> Result:
     """Kill `pid` and wait for it to be gone.
 
     The wait is the point. Without it this returns success the instant the
@@ -125,10 +201,9 @@ def end_process(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
     """
     if pid in UNKILLABLE:
         return Result(False, f"{UNKILLABLE[pid].capitalize()} cannot be ended.")
-    try:
-        process = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return Result(False, f"Process {pid} is no longer running.")
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return error
 
     try:
         process.kill()
@@ -154,7 +229,8 @@ def end_process(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
     return Result(True, "")
 
 
-def end_process_tree(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
+def end_process_tree(pid: int, timeout: float = KILL_TIMEOUT, *, create_time=None,
+                     members=None) -> Result:
     """Kill `pid` and every descendant.
 
     Children first, so the parent cannot spawn replacements while its
@@ -170,24 +246,45 @@ def end_process_tree(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
     """
     if pid in UNKILLABLE:
         return Result(False, f"{UNKILLABLE[pid].capitalize()} cannot be ended.")
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return error
     if not is_running(pid):
         return Result(False, f"Process {pid} is no longer running.")
+    try:
+        identity = process.create_time() if create_time is None else create_time
+    except psutil.Error as error:
+        return Result(False, f"Could not verify process {pid}: {error}")
 
-    from .snapshot import descendants_of
+    from .snapshot import descendants_of, system_processes
 
     try:
-        descendants = descendants_of(pid)
+        if members is None:
+            rows = system_processes()
+            root = next((row for row in rows if row.pid == pid), None)
+            root_time = creation_seconds(root.create_time) if root is not None else None
+            if root_time is None or abs(root_time - identity) > 0.01:
+                return Result(False, f"process {pid} has exited; a different process now has this PID")
+            descendants = descendants_of(pid, rows)
+            wanted = set(descendants + [pid])
+            members = {row.pid: creation_seconds(row.create_time) for row in rows
+                       if row.pid in wanted}
+        else:
+            descendants = [member for member in members if member != pid]
     except OSError as error:
         return Result(False, f"Could not read the process tree: {error}")
 
     failures: List[str] = []
     for child_pid in descendants:
-        result = end_process(child_pid, timeout=timeout)
+        child_identity = members.get(child_pid)
+        result = (end_process(child_pid, timeout=timeout, create_time=child_identity)
+                  if child_identity is not None else Result(False, "Could not read process identity."))
         if not result.ok and is_running(child_pid):
             failures.append(f"PID {child_pid}: {result.message}")
 
     if is_running(pid):
-        result = end_process(pid, timeout=timeout)
+        result = (end_process(pid, timeout=timeout, create_time=identity)
+                  if identity is not None else Result(False, "Could not read process identity."))
         if not result.ok and is_running(pid):
             failures.append(f"PID {pid}: {result.message}")
 
@@ -198,20 +295,27 @@ def end_process_tree(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
     return Result(True, "")
 
 
-def suspend_process(pid: int) -> Result:
-    return _suspend_or_resume(pid, _ntdll.NtSuspendProcess, "suspend")
+def suspend_process(pid: int, *, create_time=None) -> Result:
+    return _suspend_or_resume(pid, _ntdll.NtSuspendProcess, "suspend", create_time)
 
 
-def resume_process(pid: int) -> Result:
-    return _suspend_or_resume(pid, _ntdll.NtResumeProcess, "resume")
+def resume_process(pid: int, *, create_time=None) -> Result:
+    return _suspend_or_resume(pid, _ntdll.NtResumeProcess, "resume", create_time)
 
 
-def _suspend_or_resume(pid: int, call, verb: str) -> Result:
-    handle = _kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
+def _suspend_or_resume(pid: int, call, verb: str, create_time=None) -> Result:
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return error
+    access = PROCESS_SUSPEND_RESUME | (0x1000 if create_time is not None else 0)
+    handle = _kernel32.OpenProcess(access, False, pid)
     if not handle:
         return Result(False, f"Could not open process {pid} to {verb} it: "
                              f"{_reason(ctypes.get_last_error())}")
     try:
+        error = _handle_identity_error(handle, pid, create_time)
+        if error is not None:
+            return error
         status = call(handle)
     finally:
         _kernel32.CloseHandle(handle)
@@ -222,11 +326,14 @@ def _suspend_or_resume(pid: int, call, verb: str) -> Result:
     return Result(True, "")
 
 
-def set_priority(pid: int, level: str) -> Result:
+def set_priority(pid: int, level: str, *, create_time=None) -> Result:
     if level not in PRIORITY_LEVELS:
         return Result(False, f"Unknown priority '{level}'.")
     try:
-        psutil.Process(pid).nice(PRIORITY_LEVELS[level])
+        process, error = _checked_process(pid, create_time)
+        if error is not None:
+            return error
+        process.nice(PRIORITY_LEVELS[level])
         return Result(True, "")
     except psutil.NoSuchProcess:
         return Result(False, f"Process {pid} is no longer running.")
@@ -236,7 +343,7 @@ def set_priority(pid: int, level: str) -> Result:
         return Result(False, str(error))
 
 
-def set_affinity(pid: int, cores: List[int]) -> Result:
+def set_affinity(pid: int, cores: List[int], *, create_time=None) -> Result:
     if not cores:
         # A process pinned to no cores would never be scheduled again.
         return Result(False, "Choose at least one processor core.")
@@ -246,7 +353,10 @@ def set_affinity(pid: int, cores: List[int]) -> Result:
         return Result(False,
                       f"This machine has no core {', '.join(map(str, unknown))}.")
     try:
-        psutil.Process(pid).cpu_affinity(list(cores))
+        process, error = _checked_process(pid, create_time)
+        if error is not None:
+            return error
+        process.cpu_affinity(list(cores))
         return Result(True, "")
     except psutil.NoSuchProcess:
         return Result(False, f"Process {pid} is no longer running.")
@@ -256,18 +366,24 @@ def set_affinity(pid: int, cores: List[int]) -> Result:
         return Result(False, str(error))
 
 
-def create_dump(pid: int, path: str, full: bool = True) -> Result:
+def create_dump(pid: int, path: str, full: bool = True, *, create_time=None) -> Result:
     """Write a minidump of `pid` to `path`.
 
     Verified by reading the file back: `MiniDumpWriteDump` can return
     success having written a truncated file when the target dies mid-write.
     """
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return error
     handle = _kernel32.OpenProcess(
         PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
     if not handle:
         return Result(False, f"Could not open process {pid}: "
                              f"{_reason(ctypes.get_last_error())}")
     try:
+        error = _handle_identity_error(handle, pid, create_time)
+        if error is not None:
+            return error
         return _write_dump(handle, pid, path, full)
     finally:
         _kernel32.CloseHandle(handle)
@@ -324,7 +440,8 @@ def _verify_dump(path: str) -> Result:
     return Result(True, "")
 
 
-def restart_process(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
+def restart_process(pid: int, timeout: float = KILL_TIMEOUT, *, create_time=None,
+                    context=None) -> Result:
     """End `pid` and start it again the same way it was running.
 
     "Restart" only means what it can honestly deliver: the old process is
@@ -343,24 +460,30 @@ def restart_process(pid: int, timeout: float = KILL_TIMEOUT) -> Result:
     if pid in UNKILLABLE:
         return Result(False, f"{UNKILLABLE[pid].capitalize()} cannot be "
                              f"restarted.")
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return error
     try:
-        process = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return Result(False, f"Process {pid} is no longer running.")
-
-    exe, command_line = _launch_facts(process)
-    if not exe:
-        return Result(False, f"Could not read the executable path of "
-                             f"process {pid} to restart it.")
-
-    ended = end_process(pid, timeout=timeout)
+        identity = process.create_time() if create_time is None else create_time
+    except psutil.Error as error:
+        return Result(False, f"Could not verify process {pid}: {error}")
+    current, error = prepare_restart(pid, identity)
+    if error is not None:
+        return error
+    if context is not None and context != current:
+        return Result(False, "The relaunch account, elevation or command changed; confirm Restart again.")
+    ended = end_process(pid, timeout=timeout, create_time=identity)
     if not ended.ok:
         return Result(False, f"Could not end process {pid}: {ended.message}")
 
-    return _launch(exe, command_line, runas=False)
+    if not current.elevated:
+        from core.shell_launch import launch
+        failure = launch(current.exe, current.command_line)
+        return Result(failure is None, failure or "")
+    return _launch(current.exe, current.command_line, runas=True)
 
 
-def run_as(pid: int) -> Result:
+def run_as(pid: int, *, create_time=None) -> Result:
     """Start the process's executable elevated, leaving `pid` alone.
 
     "Run as administrator": a new, elevated instance of the same program.
@@ -373,10 +496,9 @@ def run_as(pid: int) -> Result:
     if pid in UNKILLABLE:
         return Result(False, f"{UNKILLABLE[pid].capitalize()} cannot be "
                              f"run elevated.")
-    try:
-        process = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return Result(False, f"Process {pid} is no longer running.")
+    process, error = _checked_process(pid, create_time)
+    if error is not None:
+        return error
 
     exe, command_line = _launch_facts(process)
     if not exe:

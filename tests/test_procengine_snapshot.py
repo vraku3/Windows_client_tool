@@ -157,7 +157,9 @@ def test_reading_twice_is_cheap_because_the_cold_data_is_cached():
 def test_a_snapshot_reports_when_it_could_not_see_everything(snapshot):
     """Unelevated, about half the machine refuses. The pane has to be able
     to say so rather than showing blanks."""
-    assert snapshot.readable + snapshot.refused == len(snapshot.by_pid)
+    from core.procengine.snapshot import details_unreadable
+    assert snapshot.readable == sum(i.details.path is not None for i in snapshot.by_pid.values())
+    assert snapshot.refused == sum(details_unreadable(i) for i in snapshot.by_pid.values())
     assert snapshot.refused >= 0
 
 

@@ -186,7 +186,17 @@ def test_a_dump_of_a_process_we_cannot_open_is_refused(tmp_path):
 
 # ---- restart and run-as -------------------------------------------------
 
-def test_restart_ends_the_process_and_relaunches_it(sleeper, monkeypatch):
+
+@pytest.fixture
+def restart_shell(monkeypatch):
+    """These tests verify real termination, but must never launch a replacement."""
+    from dataclasses import replace
+    from core.procengine import details
+    original = details.resolve
+    monkeypatch.setattr(details, "resolve", lambda pid: replace(original(pid), elevated=False))
+    monkeypatch.setattr("core.shell_launch.desktop_account", lambda: "TEST\\desktop")
+
+def test_restart_ends_the_process_and_relaunches_it(sleeper, monkeypatch, restart_shell):
     """Restart = end + relaunch with the same executable.
 
     The real launch is monkeypatched so the test does not spawn a stray
@@ -195,9 +205,8 @@ def test_restart_ends_the_process_and_relaunches_it(sleeper, monkeypatch):
     file and command line.
     """
     launched = []
-    monkeypatch.setattr("core.procengine.actions._launch",
-                        lambda exe, cmdline, runas: launched.append(
-                            (exe, cmdline, runas)) or Result(True, ""))
+    monkeypatch.setattr("core.shell_launch.launch",
+                        lambda exe, cmdline: launched.append((exe, cmdline, False)))
 
     old_pid = sleeper.pid
     result = restart_process(old_pid)
@@ -210,12 +219,11 @@ def test_restart_ends_the_process_and_relaunches_it(sleeper, monkeypatch):
     assert runas is False
 
 
-def test_restart_passes_the_process_arguments_through(sleeper, monkeypatch):
+def test_restart_passes_the_process_arguments_through(sleeper, monkeypatch, restart_shell):
     """The relaunch reproduces how the process was started."""
     launched = []
-    monkeypatch.setattr("core.procengine.actions._launch",
-                        lambda exe, cmdline, runas: launched.append(cmdline)
-                        or Result(True, ""))
+    monkeypatch.setattr("core.shell_launch.launch",
+                        lambda exe, cmdline: launched.append(cmdline))
 
     restart_process(sleeper.pid)
 
@@ -224,10 +232,9 @@ def test_restart_passes_the_process_arguments_through(sleeper, monkeypatch):
         "the new instance did not get the sleeper's own arguments"
 
 
-def test_restart_reports_a_failed_relaunch(sleeper, monkeypatch):
-    monkeypatch.setattr("core.procengine.actions._launch",
-                        lambda exe, cmdline, runas:
-                        Result(False, "The launch failed: error 5."))
+def test_restart_reports_a_failed_relaunch(sleeper, monkeypatch, restart_shell):
+    monkeypatch.setattr("core.shell_launch.launch",
+                        lambda exe, cmdline: "The launch failed: error 5.")
     result = restart_process(sleeper.pid)
     assert not result.ok
     assert result.message

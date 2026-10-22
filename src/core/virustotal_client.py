@@ -20,6 +20,7 @@ class VTResult:
     total: int = 0
     score: Optional[str] = None       # e.g. "3/72"
     details: Optional[dict] = None    # full last_analysis_results
+    error: Optional[str] = None       # None for a confirmed response, including 404
 
 
 def compute_sha256(path: str) -> Optional[str]:
@@ -56,9 +57,9 @@ def check_hash(sha256: str, api_key: str) -> VTResult:
             score=f"{malicious}/{total}",
             details=attrs.get("last_analysis_results"),
         )
-    except requests.RequestException as e:
+    except (requests.RequestException, ValueError, KeyError, TypeError) as e:
         logger.error("VT hash check failed: %s", e)
-        return VTResult(found=False, sha256=sha256)
+        return VTResult(found=False, sha256=sha256, error=str(e) or type(e).__name__)
 
 
 class VTClient:
@@ -73,7 +74,8 @@ class VTClient:
         if sha256 in self._cache:
             return self._cache[sha256]
         result = check_hash(sha256, self._api_key)
-        self._cache[sha256] = result
+        if not result.error:
+            self._cache[sha256] = result
         return result
 
     def submit_file(self, path: str, sha256: str = "") -> Optional[str]:

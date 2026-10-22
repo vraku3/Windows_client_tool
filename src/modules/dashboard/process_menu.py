@@ -20,7 +20,7 @@ import subprocess
 import webbrowser
 from typing import List
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QFileDialog, QInputDialog, QMenu,
                              QMessageBox)
 
@@ -28,6 +28,8 @@ from core.procengine.actions import (PRIORITY_LABELS, create_dump, end_process,
                                  end_process_tree, restart_process,
                                  resume_process, run_as, set_affinity,
                                  set_priority, suspend_process)
+from core.procengine.actions import Result, creation_seconds, prepare_restart
+from core.worker import Worker, retire
 from core.procengine.snapshot import descendants_of
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,45 @@ class ProcessMenu(QObject):
         super().__init__(widget)
         self._widget = widget
         self._app = None
+        self._snapshot = None
+        self._workers = []
+        widget.destroyed.connect(lambda: retire(self._workers))
+
+    def set_snapshot(self, snapshot) -> None:
+        self._snapshot = snapshot
+
+    def _identities(self, pids, info=None):
+        rows = self._snapshot.by_pid if self._snapshot is not None else {}
+        if info is not None:
+            rows = dict(rows)
+            rows[info.pid] = info
+        return {pid: creation_seconds(rows[pid].raw.create_time) if pid in rows else None
+                for pid in pids}
+
+    def _run_actions(self, title, pids, action, identities=None):
+        # Freeze identities before confirmation/dispatch; a later refresh must
+        # never substitute the new occupant of a selected PID.
+        identities = dict(identities if identities is not None else self._identities(pids))
+        def work(_worker):
+            return [(pid, action(pid, identities[pid]) if identities.get(pid) is not None
+                     else Result(False, "Could not read the selected process identity; action refused."))
+                    for pid in pids]
+        self._background(work, lambda outcomes: self._report(title, outcomes))
+
+    def _background(self, work, result):
+        worker = Worker(work)
+        worker.signals.result.connect(
+            lambda value: result(value) if _widget_valid(self._widget) else None)
+        worker.signals.error.connect(
+            lambda message: self._show_error(message) if _widget_valid(self._widget) else None)
+        worker.signals.finished.connect(lambda: self._release(worker))
+        self._workers.append(worker)
+        pool = getattr(self._app, "thread_pool", None) or QThreadPool.globalInstance()
+        pool.start(worker)
+
+    def _release(self, worker):
+        if worker in self._workers:
+            self._workers.remove(worker)
 
     def set_app(self, app) -> None:
         """The app gives access to config (VirusTotal API key) and the
@@ -65,43 +106,45 @@ class ProcessMenu(QObject):
         if not pids:
             return
         menu = QMenu(self._widget)
+        identities = self._identities(pids, info)
+        snapshot = self._snapshot
         many = len(pids) > 1
 
         end = menu.addAction(f"End task ({len(pids)})" if many else "End task")
-        end.triggered.connect(lambda: self._end(pids))
+        end.triggered.connect(lambda: self._end(pids, identities))
 
         tree = menu.addAction("End process tree")
         tree.setEnabled(not many)
-        tree.triggered.connect(lambda: self._end_tree(pids[0]))
+        tree.triggered.connect(lambda: self._end_tree(pids[0], identities, snapshot))
 
         restart = menu.addAction("Restart")
         restart.setEnabled(not many)
-        restart.triggered.connect(lambda: self._restart(pids[0]))
+        restart.triggered.connect(lambda: self._restart(pids[0], identities))
 
         menu.addSeparator()
         menu.addAction("Suspend").triggered.connect(
-            lambda: self._simple(pids, suspend_process, "Suspend", True))
+            lambda: self._simple(pids, suspend_process, "Suspend", True, identities))
         menu.addAction("Resume").triggered.connect(
-            lambda: self._simple(pids, resume_process, "Resume", False))
+            lambda: self._simple(pids, resume_process, "Resume", False, identities))
 
         runas = menu.addAction("Run as administrator")
         runas.setEnabled(not many)
-        runas.triggered.connect(lambda: self._run_as(pids[0]))
+        runas.triggered.connect(lambda: self._run_as(pids[0], identities))
 
         priority = menu.addMenu("Set priority")
         for key, label in PRIORITY_LABELS:
             action = priority.addAction(label)
             action.triggered.connect(
-                lambda _checked=False, k=key: self._priority(pids, k))
+                lambda _checked=False, k=key: self._priority(pids, k, identities))
 
         affinity = menu.addAction("Set affinity…")
         affinity.setEnabled(not many)
-        affinity.triggered.connect(lambda: self._affinity(pids[0]))
+        affinity.triggered.connect(lambda: self._affinity(pids[0], identities))
 
         menu.addSeparator()
         dump = menu.addAction("Create dump file…")
         dump.setEnabled(not many)
-        dump.triggered.connect(lambda: self._dump(pids[0], info))
+        dump.triggered.connect(lambda: self._dump(pids[0], info, identities))
 
         location = menu.addAction("Open file location")
         location.setEnabled(not many and bool(_path_of(info)))
@@ -133,23 +176,29 @@ class ProcessMenu(QObject):
 
     # ---- the destructive ones -------------------------------------------
 
-    def _end(self, pids: List[int]) -> None:
+    def _end(self, pids: List[int], identities=None) -> None:
+        identities = identities if identities is not None else self._identities(pids)
         if not self._confirm(
                 "End task",
                 f"End {len(pids)} processes?" if len(pids) > 1
                 else f"End process {pids[0]}?",
                 "Unsaved work in the process will be lost."):
             return
-        self._report("End task",
-                     [(pid, end_process(pid)) for pid in pids])
+        self._run_actions("End task", pids,
+                          lambda pid, created: end_process(pid, create_time=created), identities)
 
-    def _end_tree(self, pid: int) -> None:
+    def _end_tree(self, pid: int, identities=None, snapshot=None) -> None:
         """Counts the tree before asking. "End 23 processes?" is a different
         question from "End task?", and the person deserves the real one."""
-        try:
-            members = descendants_of(pid)
-        except OSError:
-            members = []
+        identities = identities if identities is not None else self._identities([pid])
+        snapshot = snapshot if snapshot is not None else self._snapshot
+        if snapshot is None:
+            self._show_error("Could not read the selected process tree; action refused.")
+            return
+        rows = [i.raw for i in snapshot.by_pid.values()]
+        members = descendants_of(pid, rows)
+        tree_identities = {p: creation_seconds(snapshot.by_pid[p].raw.create_time)
+                           for p in [pid] + members if p in snapshot.by_pid}
         total = len(members) + 1
         if not self._confirm(
                 "End process tree",
@@ -158,38 +207,58 @@ class ProcessMenu(QObject):
                 f"({total} in total)?",
                 "Unsaved work in any of them will be lost."):
             return
-        self._report("End process tree", [(pid, end_process_tree(pid))])
+        self._run_actions("End process tree", [pid],
+                          lambda p, created: end_process_tree(p, create_time=created,
+                                                              members=tree_identities), identities)
 
-    def _restart(self, pid: int) -> None:
+    def _restart(self, pid: int, identities=None) -> None:
+        identities = identities if identities is not None else self._identities([pid])
+        if identities.get(pid) is None:
+            self._show_error("Could not read the selected process identity; Restart refused.")
+            return
+        self._background(lambda _w: prepare_restart(pid, identities[pid]),
+                         lambda prepared: self._confirm_restart(pid, identities, prepared))
+
+    def _confirm_restart(self, pid, identities, prepared):
+        context, error = prepared
+        if error is not None:
+            self._report("Restart", [(pid, error)])
+            return
+        elevation = "elevated (UAC may ask for credentials)" if context.elevated else "unelevated through the desktop shell"
         if not self._confirm(
                 "Restart",
                 f"Restart process {pid}?",
                 "The process will be ended and started again. Unsaved work "
-                "in it will be lost."):
+                f"in it will be lost. Relaunch account: {context.account}; {elevation}."):
             return
-        self._report("Restart", [(pid, restart_process(pid))])
+        self._run_actions("Restart", [pid],
+                          lambda p, created: restart_process(p, create_time=created, context=context), identities)
 
-    def _run_as(self, pid: int) -> None:
+    def _run_as(self, pid: int, identities=None) -> None:
+        identities = identities if identities is not None else self._identities([pid])
         if not self._confirm(
                 "Run as administrator",
                 f"Start a new elevated instance of process {pid}?",
                 "This process keeps running. Windows will ask to elevate "
                 "the new instance."):
             return
-        self._report("Run as administrator", [(pid, run_as(pid))])
+        self._run_actions("Run as administrator", [pid],
+                          lambda p, created: run_as(p, create_time=created), identities)
 
-    def _simple(self, pids, action, title: str, confirm: bool) -> None:
+    def _simple(self, pids, action, title: str, confirm: bool, identities=None) -> None:
+        identities = identities if identities is not None else self._identities(pids)
         if confirm and not self._confirm(
                 title, f"{title} {len(pids)} process(es)?",
                 "A suspended process stops responding until it is resumed."):
             return
-        self._report(title, [(pid, action(pid)) for pid in pids])
+        self._run_actions(title, pids, lambda p, created: action(p, create_time=created), identities)
 
-    def _priority(self, pids, level: str) -> None:
-        self._report("Set priority",
-                     [(pid, set_priority(pid, level)) for pid in pids])
+    def _priority(self, pids, level: str, identities=None) -> None:
+        self._run_actions("Set priority", pids,
+                          lambda p, created: set_priority(p, level, create_time=created), identities)
 
-    def _affinity(self, pid: int) -> None:
+    def _affinity(self, pid: int, identities=None) -> None:
+        identities = identities if identities is not None else self._identities([pid])
         cores = os.cpu_count() or 1
         text, ok = QInputDialog.getText(
             self._widget, "Set affinity",
@@ -202,16 +271,19 @@ class ProcessMenu(QObject):
         except ValueError:
             self._show_error("Set affinity: that is not a list of core numbers.")
             return
-        self._report("Set affinity", [(pid, set_affinity(pid, chosen))])
+        self._run_actions("Set affinity", [pid],
+                          lambda p, created: set_affinity(p, chosen, create_time=created), identities)
 
-    def _dump(self, pid: int, info) -> None:
+    def _dump(self, pid: int, info, identities=None) -> None:
+        identities = identities if identities is not None else self._identities([pid], info)
         name = getattr(info, "name", None) or f"process-{pid}"
         target, _filter = QFileDialog.getSaveFileName(
             self._widget, "Save dump", f"{name}-{pid}.dmp",
             "Dump files (*.dmp)")
         if not target:
             return
-        self._report("Create dump", [(pid, create_dump(pid, target))])
+        self._run_actions("Create dump", [pid],
+                          lambda p, created: create_dump(p, target, create_time=created), identities)
 
     # ---- the harmless ones ----------------------------------------------
 
@@ -314,11 +386,14 @@ class ProcessMenu(QObject):
         if self._widget is None or not _widget_valid(self._widget):
             return
 
+        if result.error:
+            QMessageBox.information(self._widget, "VirusTotal",
+                                    f"Lookup failed: {result.error}")
+            return
         if not result.found:
             QMessageBox.information(
                 self._widget, "VirusTotal",
-                "This file is unknown to VirusTotal (0 detections "
-                "recorded). SHA-256:\n" + result.sha256)
+                "This file is unknown to VirusTotal. SHA-256:\n" + result.sha256)
             return
         icon = "🟢" if result.malicious == 0 else (
             "🟠" if result.malicious <= 3 else "🔴")

@@ -46,8 +46,8 @@ def test_chip_labels_carry_counts(tab):
 
 
 def _memory_column(tab):
-    group = tab.tree.topLevelItem(0)
-    return [group.child(i).data(pt.MEMORY, pt.VALUE_ROLE) or 0 for i in range(group.childCount())]
+    return [tab.tree.topLevelItem(i).data(pt.MEMORY, pt.VALUE_ROLE) or 0
+            for i in range(tab.tree.topLevelItemCount())]
 
 
 def test_sorting_by_memory_orders_rows_within_a_group(tab):

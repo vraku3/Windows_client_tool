@@ -64,8 +64,6 @@ class ProcessSearchProvider(SearchProvider):
         for info in snapshot.by_pid.values():
             if _matches(info, lowered):
                 hits.append(info)
-                if len(hits) >= MAX_RESULTS:
-                    break
         if not hits:
             return []
 
@@ -82,7 +80,7 @@ class ProcessSearchProvider(SearchProvider):
                 relevance=_relevance(info, lowered, rank),
             ))
         results.sort(key=lambda result: result.relevance, reverse=True)
-        return results
+        return results[:MAX_RESULTS]
 
     def get_filterable_fields(self) -> List[FilterField]:
         return [FilterField(name="type", label="Type", values=[PROCESS])]
@@ -112,8 +110,8 @@ def _summary(info) -> str:
 
 def _relevance(info, needle: str, rank: int) -> float:
     if needle == str(info.pid) or needle == info.name.lower():
-        return 1.0 - rank * 0.001
-    return 0.9 - rank * 0.005
+        return 1.0
+    return 0.9 / (1 + rank * 0.005)
 
 
 def _start_time(info) -> datetime.datetime:

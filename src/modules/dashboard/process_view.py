@@ -120,7 +120,10 @@ def aggregate_text(column: Column, members) -> str:
         if column.key == "network":
             return _rate_text(total)
         return f"{int(total):,}"
-    unique = {column.text(m) for m in members if column.text(m)}
+    texts = [column.text(m) for m in members]
+    if texts and any(not text for text in texts):
+        return "mixed / partly unreadable"
+    unique = set(texts)
     return unique.pop() if len(unique) == 1 else ("(varies)" if unique else "")
 
 
@@ -157,7 +160,8 @@ def _recent(info) -> bool:
 
 
 def _unreadable(info) -> bool:
-    return info.details.path is None and info.pid > 4
+    from core.procengine.snapshot import details_unreadable
+    return details_unreadable(info)
 
 
 def is_self(info) -> bool:
@@ -225,7 +229,10 @@ def detail_text(info, snapshot, services: Optional[List[str]] = None) -> str:
     """Everything worth reading about one process, as plain text."""
     d, r = info.details, info.raw
     parent = snapshot.by_pid.get(r.ppid) if snapshot is not None else None
-    children = ([p for p in snapshot.by_pid.values() if p.raw.ppid == r.pid]
+    if parent is not None and (parent.pid == r.pid or parent.raw.create_time > r.create_time):
+        parent = None
+    children = ([p for p in snapshot.by_pid.values() if p.raw.ppid == r.pid
+                 and p.pid != r.pid and p.raw.create_time >= r.create_time]
                 if snapshot is not None else [])
     started = started_at(info)
     lines = [

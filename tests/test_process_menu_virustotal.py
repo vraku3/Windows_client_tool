@@ -14,6 +14,8 @@ KERNEL32 = os.path.join(os.environ["SystemRoot"], "System32", "kernel32.dll")
 
 
 class _FakeInfo:
+    pid = 12345
+    raw = type("R", (), {"create_time": 116444737000000000})()
     name = "kernel32.dll"
     details = type("D", (), {"path": KERNEL32})()
 

@@ -13,6 +13,7 @@ from core.procengine.grouping import GROUP_ORDER
 @pytest.fixture
 def tab(qapp):
     widget = ProcessesTab()
+    widget.view_mode.setCurrentIndex(1)  # these tests exercise grouped mode
     widget.refresh()
     widget.refresh()
     yield widget

@@ -249,6 +249,7 @@ class DetailsTab(QWidget):
         pool.start(worker)
 
     def _apply(self, snapshot) -> None:
+        self.menu.set_snapshot(snapshot)
         self._busy = False
         self.model.set_snapshot(snapshot)
         self._update_status(snapshot)

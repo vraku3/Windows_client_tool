@@ -39,6 +39,7 @@ def append_run(
     freed_bytes: int = 0,
     updates_installed: int = 0,
     winget_count: int = 0,
+    pending_restart: int = 0,
 ) -> None:
     """Append one run entry, capped at the most recent MAX_ENTRIES."""
     history = load_history(app_data_dir)
@@ -47,6 +48,7 @@ def append_run(
         "freed": int(freed_bytes),
         "updates": int(updates_installed),
         "wg": int(winget_count),
+        "pending_restart": int(pending_restart),
     })
     if len(history) > MAX_ENTRIES:
         history = history[-MAX_ENTRIES:]

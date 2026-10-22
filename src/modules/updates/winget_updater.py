@@ -1,7 +1,11 @@
 import logging
+import os
+import re
+import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Callable, Optional
 
@@ -208,6 +212,96 @@ class UpdateOutcome:
 INSTALL_TIMEOUT_S = 45 * 60
 
 
+def _arp_entries():
+    """Only machine uninstall entries, in both registry views."""
+    import winreg
+    root = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, root, 0, winreg.KEY_READ | view) as key:
+                for i in range(winreg.QueryInfoKey(key)[0]):
+                    name = winreg.EnumKey(key, i)
+                    try:
+                        with winreg.OpenKey(key, name, 0, winreg.KEY_READ | view) as sub:
+                            row = {"key": name}
+                            for field in ("InstallLocation", "WinGetPackageIdentifier"):
+                                try:
+                                    row[field] = str(winreg.QueryValueEx(sub, field)[0])
+                                except FileNotFoundError:
+                                    row[field] = ""
+                            yield row
+                    except OSError:
+                        logger.debug("Uninstall entry %s unreadable", name, exc_info=True)
+        except OSError:
+            logger.debug("Uninstall hive/view unreadable", exc_info=True)
+
+
+def find_install_location(winget_id: str) -> Optional[str]:
+    """An exact machine ARP identity inside a real Program Files folder."""
+    roots = [os.path.normcase(os.path.realpath(value)) for name in
+             ("ProgramFiles", "ProgramFiles(x86)") if (value := os.environ.get(name))]
+    matches = set()
+    for row in _arp_entries():
+        if not any(row.get(field, "").casefold() == winget_id.casefold()
+                   for field in ("key", "WinGetPackageIdentifier")):
+            continue
+        location = os.path.expandvars(row.get("InstallLocation", "")).strip().strip('"')
+        if not location or not os.path.isabs(location) or not os.path.isdir(location):
+            continue
+        try:
+            real = os.path.normcase(os.path.realpath(location))
+            if any(os.path.commonpath([real, root]) == root and real != root for root in roots):
+                matches.add(real)
+        except (OSError, ValueError):
+            logger.warning("Cannot validate install location %s", location, exc_info=True)
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _run_user_upgrade(winget_id: str, location: Optional[str] = None,
+                      output_cb: Optional[Callable[[str], None]] = None) -> tuple:
+    """(exit code, task reason, capped winget log) from the LIMITED retry."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+\-]{0,199}", winget_id):
+        return None, "package identifier cannot be used in an unelevated task", ""
+    executable = shutil.which("winget")
+    if not executable:
+        return None, "winget executable could not be located for the unelevated task", ""
+    from core.limited_task import run_limited
+    try:
+        folder = os.path.join(os.environ["APPDATA"], "WindowsTweaker", "updates")
+        os.makedirs(folder, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        log_path = os.path.join(folder, f"winget-user-{winget_id}-{stamp}.log")
+        args = ["upgrade", "--id", winget_id, "--exact", "--silent", "--include-unknown",
+                "--scope", "user", "--accept-package-agreements", "--accept-source-agreements",
+                "--disable-interactivity", "--log", log_path]
+        if location:
+            args += ["--location", location]
+        logger.info("Unelevated winget log: %s", log_path)
+        if output_cb:
+            output_cb(f"Unelevated winget log: {log_path}")
+        rc, reason = run_limited(executable, args, timeout_s=600)
+        output = ""
+        try:
+            with open(log_path, "rb") as log:
+                bom = log.read(2)
+                log.seek(0, os.SEEK_END)
+                offset = max(0, log.tell() - (64 * 1024 - 2))
+                encoding = {b"\xff\xfe": "utf-16-le", b"\xfe\xff": "utf-16-be"}.get(bom, "utf-8-sig")
+                if encoding.startswith("utf-16"):
+                    offset += offset % 2
+                log.seek(offset)
+                # Final refusal/restart wording is near the end of verbose
+                # logs. Including the BOM read, read no more than 64 KiB.
+                raw = log.read(64 * 1024 - 2)
+            output = raw.decode(encoding, errors="replace")
+        except OSError:
+            logger.warning("Could not read unelevated winget log %s", log_path, exc_info=True)
+        return rc, reason, output
+    except (OSError, KeyError) as exc:
+        logger.warning("Could not prepare unelevated winget log", exc_info=True)
+        return None, f"unelevated task log unavailable: {exc}", ""
+
+
 def install_update(
     winget_id: str,
     output_cb: Callable[[str], None],
@@ -225,24 +319,50 @@ def install_update(
     # A running installer is never killed: a cancel stops the batch BEFORE
     # the next package (the caller checks between packages). Killing winget's
     # tree mid-install can leave an application half-written.
+    args = ["upgrade", "--id", winget_id, "--exact", "--silent", "--include-unknown",
+            "--accept-source-agreements", "--accept-package-agreements"]
+    upgrade_rc = []
+    location = None
+    user_retry = False
     output = _run_winget(
-        ["upgrade", "--id", winget_id, "--exact", "--silent", "--include-unknown",
-         "--accept-source-agreements", "--accept-package-agreements"],
+        args,
+        returncode_out=upgrade_rc,
         output_cb=output_cb,
         # Never killed on Cancel; ended only if it is clearly stuck (an
         # installer waiting on a hidden dialog). The read-back then decides.
         timeout_s=INSTALL_TIMEOUT_S,
     )
+    if winget_list.needs_install_location(output):
+        location = find_install_location(winget_id)
+        if location:
+            output_cb(f"Retrying with the installed folder: {location}")
+            upgrade_rc.clear()
+            output = _run_winget(args + ["--location", location], output_cb=output_cb,
+                                 returncode_out=upgrade_rc, timeout_s=INSTALL_TIMEOUT_S)
+    if winget_list.PER_USER_REFUSAL in output.lower():
+        output_cb("Retrying for the current user through a LIMITED one-shot task...")
+        user_retry = True
+        rc, reason, output = _run_user_upgrade(winget_id, location, output_cb)
+        if rc is None:
+            state = winget_list.STILL_RUNNING if reason.startswith("STILL RUNNING:") else winget_list.UNCONFIRMED
+            return UpdateOutcome(winget_id, state, reason)
+        upgrade_rc = [rc]
+        output_cb(f"Unelevated winget finished (exit {rc}).")
     refused = winget_list.refusal(output)
     if refused:
         return UpdateOutcome(winget_id, *refused)
     if not verify:
         return UpdateOutcome(winget_id, winget_list.UNCONFIRMED,
                              "Not checked: verification after update is turned off in Settings.")
-    listed = _run_winget(["list", "--id", winget_id, "--exact",
-                          "--accept-source-agreements", "--disable-interactivity"])
-    state, detail = winget_list.verdict(0, listed, winget_id, target_version,
-                                        before=before_version, upgrade_output=output)
+    list_rc = []
+    list_args = ["list", "--id", winget_id, "--exact",
+                 "--accept-source-agreements", "--disable-interactivity"]
+    if user_retry:
+        list_args += ["--scope", "user"]
+    listed = _run_winget(list_args, returncode_out=list_rc)
+    state, detail = winget_list.verdict(list_rc[0] if list_rc else 0, listed, winget_id, target_version,
+                                        before=before_version, upgrade_output=output,
+                                        upgrade_rc=upgrade_rc[0] if upgrade_rc else None)
     return UpdateOutcome(winget_id, state, detail)
 
 

@@ -17,7 +17,10 @@ be exercised without a display.
 """
 import ctypes
 import logging
+import os
+import re
 import subprocess
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
@@ -39,7 +42,7 @@ _SCHED_RESULT_TEXT = {
 # an exact prefix, never a first-colon split — several other keys the same
 # output carries (e.g. "Repeat: Every:") contain a colon in the KEY itself,
 # which would desync a naive split(":", 1) parser. These five never do.
-_KEYS = ("Status", "Scheduled Task State", "Last Run Time", "Last Result", "Next Run Time")
+_KEYS = ("Status", "Scheduled Task State", "Last Run Time", "Last Result", "Next Run Time", "Task To Run")
 
 
 @dataclass
@@ -58,6 +61,27 @@ class TaskHealth:
     last_result_text: str = ""
     next_run: Optional[str] = None
     error: Optional[str] = None
+    exe_path: Optional[str] = None
+
+
+def _command_executable(command: str) -> Optional[str]:
+    command = command.strip()
+    match = re.match(r'^"([^"]+)"|^(.+?\.exe)(?:\s|$)', command, re.I)
+    return (match.group(1) or match.group(2)) if match else None
+
+
+def task_copy_mismatch(health: TaskHealth, running_exe: str) -> bool:
+    return bool(health.exe_path and os.path.normcase(os.path.abspath(health.exe_path)) !=
+                os.path.normcase(os.path.abspath(running_exe)))
+
+
+def latest_report(app_data_dir: str) -> Optional[str]:
+    try:
+        reports = list((Path(app_data_dir) / "updates").glob("report-*.html"))
+        return str(max(reports, key=lambda p: p.name)) if reports else None
+    except OSError:
+        logger.warning("Could not find the latest maintenance report", exc_info=True)
+        return None
 
 
 def _decode_task_result(code: int) -> str:
@@ -150,4 +174,5 @@ def check_task_health(task_name: str) -> TaskHealth:
         last_result_code=last_result_code,
         last_result_text=last_result_text,
         next_run=_clean(fields.get("Next Run Time")),
+        exe_path=_command_executable(fields.get("Task To Run", "")),
     )

@@ -26,6 +26,7 @@ cannot be proven from the capability name); Sense.Client (Defender for Endpoint)
 from __future__ import annotations
 
 import ctypes
+from core.system_paths import powershell_exe
 import json
 import logging
 import os
@@ -1009,24 +1010,6 @@ def _package_state(spec: Spec, raw: str) -> bool | str:
     if state not in table:
         raise OSError(f"{spec.target_name}: state {raw!r} -- not acted on")
     return table[state]
-
-
-def powershell_exe() -> str:
-    """Windows PowerShell by ABSOLUTE path, from GetSystemDirectoryW.
-
-    A bare "powershell.exe" is searched for in the launching program's own folder and the
-    current directory before System32 (CreateProcessW's documented order). The portable
-    exe runs elevated from a user-writable folder, so a planted powershell.exe beside it
-    would run as administrator. %SystemRoot% is not trusted either: a process can inherit
-    an altered environment."""
-    buf = ctypes.create_unicode_buffer(260)
-    length = ctypes.windll.kernel32.GetSystemDirectoryW(buf, len(buf))
-    if not 0 < length < len(buf):
-        raise OSError("the System32 folder could not be read")
-    path = os.path.join(buf.value, "WindowsPowerShell", "v1.0", "powershell.exe")
-    if not os.path.isfile(path):
-        raise OSError(f"Windows PowerShell not found at {path}")
-    return path
 
 
 def _powershell(script: str, timeout: float) -> str:

@@ -1,6 +1,8 @@
 import os
+import html
 import subprocess
 import sys
+from dataclasses import replace
 from typing import List, Optional
 
 from PyQt6.QtWidgets import (
@@ -9,8 +11,8 @@ from PyQt6.QtWidgets import (
     QCheckBox, QTimeEdit, QComboBox, QProgressBar, QLineEdit, QMessageBox,
     QGroupBox, QScrollArea, QSpinBox, QSplitter,
 )
-from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer, QUrl
+from PyQt6.QtGui import QFont, QColor, QDesktopServices
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
@@ -21,12 +23,12 @@ from core.events import NOTIFY_BALLOON, BalloonNotifyData
 from core.table_ui import centered_item, center_header, set_role
 from core.widget_life import widget_is_valid
 from modules.updates.winget_updater import (
-    fetch_updates, install_update, show_package_details, AppUpdate,
+    fetch_updates, install_update, show_package_details, AppUpdate, UpdateOutcome,
 )
 from modules.updates.windows_updater import (
     fetch_pending_updates, install_updates_iter, hide_update,
     WindowsUpdate, InstallResult, size_text, severity_text, reboot_text,
-    HELD_TEXT, wu_status_text, split_scan,
+    HELD_TEXT, wu_status_text, split_scan, update_status_text,
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
 from modules.updates.run_all_tab import _RunAllTab
@@ -270,7 +272,13 @@ class _AppUpdatesTab(QWidget):
 
         def _run(worker):
             outcomes = {}
+            stopped_reason = ""
             for i, wid in enumerate(ids):
+                if stopped_reason:
+                    outcomes[wid] = UpdateOutcome(wid, "SKIPPED", stopped_reason)
+                    worker.signals.log_line.emit(f"SKIPPED {wid}: {stopped_reason}")
+                    worker.signals.progress.emit(i + 1)
+                    continue
                 if worker.is_cancelled:
                     worker.signals.log_line.emit("Cancelled.")
                     break
@@ -284,6 +292,8 @@ class _AppUpdatesTab(QWidget):
                 )
                 worker.signals.log_line.emit(f"  {outcome.state}: {outcome.detail}")
                 outcomes[wid] = outcome
+                if outcome.state == "STILL RUNNING":
+                    stopped_reason = outcome.detail
                 worker.signals.progress.emit(i + 1)
             return outcomes
 
@@ -526,7 +536,7 @@ class _WinUpdatesTab(QWidget):
         self._progress.hide()
         self._render_table()
         self._status_lbl.setText(wu_status_text(updates, held))
-        self._install_btn.setEnabled(len(updates) > 0)
+        self._install_btn.setEnabled(any(not u.pending_restart for u in updates))
         try:
             self._reboot_banner.setVisible(is_reboot_pending())
         except Exception:
@@ -544,13 +554,16 @@ class _WinUpdatesTab(QWidget):
             self._table.setItem(row, 5, centered_item(reboot_text(u)))
             self._table.setItem(row, 6, centered_item(u.release_date))
             key = u.kb or u.title
-            result_text = (results or {}).get(key, "")
+            result_text = (results or {}).get(key, "") or update_status_text(u)
             result_item = centered_item(result_text)
             if result_text.startswith("OK"):
                 result_item.setForeground(QColor(semantic("success")))
             elif result_text:
                 result_item.setForeground(QColor("#e06c75"))
             self._table.setItem(row, 7, result_item)
+            if u.pending_restart:
+                for col in range(self._table.columnCount()):
+                    self._table.item(row, col).setFlags(Qt.ItemFlag.ItemIsEnabled)
         self._render_held_rows()
 
     def _render_held_rows(self) -> None:
@@ -581,10 +594,15 @@ class _WinUpdatesTab(QWidget):
         selected_rows = {i.row() for i in self._table.selectedIndexes()}
         if not selected_rows:
             return
-        selected = [self._updates[r] for r in selected_rows if r < len(self._updates)]
+        selected = [self._updates[r] for r in selected_rows if r < len(self._updates)
+                    and not self._updates[r].pending_restart]
+        if not selected:
+            return
 
         from core.disk_space import check_wu_preflight
-        reason = check_wu_preflight(sum(u.size_mb for u in selected))
+        from modules.updates.windows_updater import download_size_mb
+        warnings = []
+        reason = check_wu_preflight(download_size_mb(selected, warnings.append))
         if reason:
             self._status_lbl.setText(f"Blocked: {reason}")
             return
@@ -592,6 +610,8 @@ class _WinUpdatesTab(QWidget):
         self._refresh_btn.setEnabled(False)
         self._install_btn.setEnabled(False)
         self._log.clear()
+        for warning in warnings:
+            self._log.appendPlainText(warning)
         self._progress.setRange(0, len(selected))
         self._progress.setValue(0)
         self._progress.show()
@@ -634,18 +654,21 @@ class _WinUpdatesTab(QWidget):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         installed = sum(1 for r in results if r.success)
-        self._status_lbl.setText(f"{installed}/{len(results)} installed.")
+        pending = sum(r.reboot_required for r in results)
+        restart_note = f" Restart required to finish {pending} update(s)" if pending else ""
+        self._status_lbl.setText(f"{installed}/{len(results)} installed." + restart_note)
         _maybe_toast(
             self.app, self._op_timer, "Windows Update finished",
-            f"{installed}/{len(results)} update(s) installed.",
+            f"{installed}/{len(results)} update(s) installed." + restart_note,
         )
 
         if self.app is not None:
             from modules.updates.history_writer import append_run
-            append_run(self.app.app_data_dir, freed_bytes=0, updates_installed=installed, winget_count=0)
+            append_run(self.app.app_data_dir, freed_bytes=0, updates_installed=installed,
+                       winget_count=0, pending_restart=pending)
 
         try:
-            self._reboot_banner.setVisible(is_reboot_pending())
+            self._reboot_banner.setVisible(bool(pending) or is_reboot_pending())
         except Exception:
             logger.warning("Ignored Exception", exc_info=True)
 
@@ -678,11 +701,31 @@ class _WinUpdatesTab(QWidget):
             return
         after_updates, held = split_scan(payload)
         self._held = held
+        waiting = {(r.kb, r.title) for r in results if r.pending_restart}
+        for update in after_updates:
+            if (update.kb, update.title) in waiting:
+                # The install result is newer evidence than a lagging scan.
+                update.pending_restart = True
+        present = {(u.kb, u.title) for u in after_updates}
+        previous = {(u.kb, u.title): u for u in self._updates}
+        for result in results:
+            key = (result.kb, result.title)
+            if key in waiting and key not in present:
+                old = previous.get(key)
+                retained = (replace(old, identity=None, pending_restart=True) if old else
+                            WindowsUpdate(result.kb, result.title, "", 0, "",
+                                          pending_restart=True))
+                after_updates.append(retained)
+                present.add(key)
         still_pending_titles = {u.title for u in after_updates}
         verify_map = {}
         for r in results:
             key = r.kb or r.title
-            if not r.success:
+            if r.result_code in (0, 1, 3, 4, 5):
+                verify_map[key] = f"FAILED — {r.message}"
+            elif r.pending_restart:
+                verify_map[key] = "Installed -- restart to finish"
+            elif not r.success:
                 verify_map[key] = f"FAILED — {r.message}"
             elif r.title in still_pending_titles:
                 verify_map[key] = "UNCHANGED — still pending"
@@ -690,10 +733,8 @@ class _WinUpdatesTab(QWidget):
                 verify_map[key] = "OK — CONFIRMED"
         self._updates = after_updates
         self._render_table(verify_map)
-        held_note = f", {len(held)} held (AMD display driver, kept on purpose)" if held else ""
-        self._status_lbl.setText(
-            f"Verified — {len(after_updates)} update(s) still pending{held_note}.")
-        self._install_btn.setEnabled(len(after_updates) > 0)
+        self._status_lbl.setText("Verified — " + wu_status_text(after_updates, held))
+        self._install_btn.setEnabled(any(not u.pending_restart for u in after_updates))
 
     def _do_hide(self) -> None:
         rows = sorted({i.row() for i in self._table.selectedIndexes()}, reverse=True)
@@ -889,6 +930,16 @@ class _UpdateSettingsTab(QWidget):
         self._task_health_lbl = QLabel("Task health: not checked yet.")
         self._task_health_lbl.setWordWrap(True)
         sched_lay.addWidget(self._task_health_lbl)
+        self._task_copy_lbl = QLabel("")
+        self._task_copy_lbl.setWordWrap(True)
+        sched_lay.addWidget(self._task_copy_lbl)
+        self._task_copy_btn = QPushButton("Update task to this copy")
+        self._task_copy_btn.hide()
+        self._task_copy_btn.clicked.connect(self._save_schedule)
+        sched_lay.addWidget(self._task_copy_btn)
+        self._latest_report_lbl = QLabel("")
+        self._latest_report_lbl.linkActivated.connect(lambda link: QDesktopServices.openUrl(QUrl(link)))
+        sched_lay.addWidget(self._latest_report_lbl)
         layout.addWidget(sched_box)
 
         # -- Legacy quick winget-only schedule (kept as-is for existing users) --
@@ -975,8 +1026,19 @@ class _UpdateSettingsTab(QWidget):
         `schtasks` and reflect it in `_task_health_lbl`. Cheap enough
         (~tens of ms, measured) to run synchronously on the UI thread, same
         as every other schtasks call already in this class."""
-        from modules.updates.task_health import check_task_health
+        from modules.updates.task_health import check_task_health, task_copy_mismatch, latest_report
         health = check_task_health(UNATTENDED_TASK_NAME)
+        self._task_copy_btn.hide()
+        self._task_copy_lbl.setText(f"Task executable: {health.exe_path or 'unreadable / not registered'}")
+        if task_copy_mismatch(health, sys.executable):
+            set_role(self._task_copy_lbl, "statusWarning")
+            self._task_copy_lbl.setText(f"Warning: task runs another copy: {health.exe_path}\n"
+                                       f"This copy: {sys.executable}")
+            self._task_copy_btn.show()
+        report = latest_report(self.app.app_data_dir) if self.app else None
+        self._latest_report_lbl.setText(
+            f'<a href="{html.escape(QUrl.fromLocalFile(report).toString(), quote=True)}">Latest maintenance report</a>'
+            if report else "Latest maintenance report: none yet")
 
         if health.exists is None:
             set_role(self._task_health_lbl, "statusWarning")

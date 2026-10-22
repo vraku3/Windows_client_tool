@@ -44,10 +44,12 @@ def test_no_applicable_upgrade_is_not_success(monkeypatch):
 
 
 def test_per_user_refusal_says_what_to_do(monkeypatch):
+    # The retry is exercised separately; never start a real task in a test.
+    monkeypatch.setattr(wu, "_run_user_upgrade", lambda package, *a: (None, "task result unreadable", ""))
     _fake_winget(monkeypatch, "The package installed for user scope cannot be uninstalled "
                               "when running with administrator privileges.", "")
     outcome = wu.install_update("Acme.App", lambda line: None, target_version="2.0")
-    assert outcome.state == wl.NEEDS_USER and "without admin" in outcome.detail
+    assert outcome.state == wl.UNCONFIRMED and "unreadable" in outcome.detail
 
 
 def test_an_unreadable_list_is_unconfirmed_never_updated(monkeypatch):

@@ -89,6 +89,10 @@ def write_version_info(project_root: str) -> str:
 
 
 HIDDEN_IMPORTS = [
+    "core.system_paths",
+    "core.limited_task",                    # imported inside winget_updater's retry
+    "modules.updates.maintenance_notify",   # imported inside unattended_runner
+    "modules.updates.task_health",
     "core.game_folders",
     "modules.cleanup.cleanup_scanner.knowledge",
     "modules.cleanup.cleanup_scanner.scan_snapshot",

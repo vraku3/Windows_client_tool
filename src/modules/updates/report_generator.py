@@ -33,6 +33,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     cleanup_freed = data.get("cleanup_freed", 0)
     cleanup_deleted = data.get("cleanup_deleted", 0)
     dism_output = data.get("dism_output")
+    pending_restart = data.get("wu_pending_restart", 0)
 
     wu_rows = "".join(
         f"<tr><td>{_esc(r.get('title'))}</td><td>{_esc(r.get('kb'))}</td>"
@@ -54,16 +55,17 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 
     hist_rows = "".join(
         f"<tr><td>{_esc(e.get('ts'))}</td><td>{_esc(_fmt_size(e.get('freed', 0)))}</td>"
-        f"<td>{_esc(e.get('updates', 0))}</td></tr>"
+        f"<td>{_esc(e.get('updates', 0))}</td><td>{_esc(e.get('pending_restart', 0))}</td></tr>"
         for e in list(history)[-20:][::-1]
-    ) or "<tr><td colspan=3>No prior runs recorded.</td></tr>"
+    ) or "<tr><td colspan=4>No prior runs recorded.</td></tr>"
 
     held_suffix = f", {len(wu_held)} held" if wu_held else ""
     cards = f"""
       <div class="card"><div class="k">Windows Update</div>
         <div class="v {'ok' if all(r.get('success') for r in wu_results) or not wu_results else 'warn'}">
-          {len([r for r in wu_results if r.get('success')])}/{len(wu_results)} installed{held_suffix}</div></div>
-      <div class="card"><div class="k">Winget</div><div class="v">{len(winget_results)} updated</div></div>
+          {len([r for r in wu_results if r.get('success')])}/{len(wu_results)} installed{held_suffix}
+          {f'; Restart required to finish {pending_restart} update(s)' if pending_restart else ''}</div></div>
+      <div class="card"><div class="k">Winget</div><div class="v">{sum(bool(r.get('confirmed')) for r in winget_results)} confirmed updated</div></div>
       <div class="card"><div class="k">Microsoft Store</div>
         <div class="v">{'scan triggered' if store_triggered else 'not run'}</div></div>
       <div class="card"><div class="k">Cleanup freed</div>
@@ -76,6 +78,13 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
         <h2>DISM Component Store Cleanup</h2>
         <pre>{_esc(dism_output)}</pre>
         """
+
+    cleanup_rows = "".join(
+        f"<tr><td>{_esc(area.get('area'))}</td><td>{_esc(_fmt_size(area.get('freed', 0)))}</td>"
+        f"<td>{_esc(area.get('left'))}</td></tr>" for area in data.get("cleanup_areas", []))
+    cleanup_section = (f"<h2>Cleanup by area</h2><p>{_esc(data.get('cleanup_left', ''))}</p>"
+                       "<table><tr><th>Area</th><th>Cleaned</th><th>Left and why</th></tr>"
+                       f"{cleanup_rows}</table>") if cleanup_rows else ""
 
     return f"""<!DOCTYPE html>
 <html>
@@ -108,8 +117,9 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 <h2>Winget packages</h2>
 <table><tr><th>Package</th><th>Id</th><th>Before</th><th>After</th><th>Result</th></tr>{wg_rows}</table>
 {dism_section}
+{cleanup_section}
 <h2>Run history (last 20)</h2>
-<table><tr><th>Date</th><th>Freed</th><th>Updates installed</th></tr>{hist_rows}</table>
+<table><tr><th>Date</th><th>Freed</th><th>Updates installed</th><th>Pending restart</th></tr>{hist_rows}</table>
 </body></html>"""
 
 

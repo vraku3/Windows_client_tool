@@ -17,6 +17,10 @@ def test_normalize_stage_data_empty_input():
         "cleanup_freed": 0,
         "cleanup_deleted": 0,
         "dism_output": None,
+        "cleanup_areas": [],
+        "cleanup_left": "",
+        "reboot_required": False,
+        "wu_pending_restart": 0,
     }
 
 
@@ -47,7 +51,7 @@ def test_normalize_stage_data_tolerates_none_stage_values():
     assert result["cleanup_freed"] == 0
 
 
-def test_run_health_stage_calls_findings_not_servicing(monkeypatch):
+def test_run_health_stage_calls_findings_not_servicing(monkeypatch, tmp_path):
     from modules.updates.stage_runners import run_health_stage
 
     calls = []
@@ -66,9 +70,8 @@ def test_run_health_stage_calls_findings_not_servicing(monkeypatch):
     class _FakeApp:
         app_data_dir = "."
 
-    import tempfile
     fake_app = _FakeApp()
-    fake_app.app_data_dir = tempfile.mkdtemp()
+    fake_app.app_data_dir = str(tmp_path)
 
     result = run_health_stage(fake_app, lambda msg: None, lambda: False)
 

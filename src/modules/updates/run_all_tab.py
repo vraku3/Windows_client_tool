@@ -174,6 +174,7 @@ class _RunAllTab(QWidget):
             freed_bytes=self._last_data.get("cleanup_freed", 0),
             updates_installed=self._last_data.get("wu_installed", 0),
             winget_count=len(self._last_data.get("winget_results", [])),
+            pending_restart=self._last_data.get("wu_pending_restart", 0),
         )
 
         self._do_report()

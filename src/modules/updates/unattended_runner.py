@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 VALID_STAGES = ("wu", "winget", "store", "cleanup", "dism", "health")
 
 
+def completion_message(data: dict, report_path, reboot_required: bool, failures=None) -> str:
+    packages = data.get("winget_results", [])
+    installed = data.get("wu_installed", 0) + sum(bool(r.get("confirmed")) for r in packages)
+    need_you = sum(not r.get("confirmed", False) for r in packages)
+    need_you += sum(not r.get("success", False) and
+                    not (r.get("reboot_required") and r.get("result_code") in (None, 2))
+                    for r in data.get("wu_results", []))
+    prefix = (f"Maintenance INCOMPLETE: {len(failures)} problem(s) (first: {failures[0]})"
+              if failures else "Maintenance finished")
+    return (f"{prefix}: {installed} updates installed, {need_you} need you"
+            + (" -- restart to finish" if reboot_required else "")
+            + f" -- report: {report_path or 'could not be written'}")
+
+
 def run_unattended(stages: List[str]) -> int:
     from core.admin_utils import is_admin
 
@@ -45,17 +59,19 @@ def run_unattended(stages: List[str]) -> int:
                                                    normalize_stage_data, stage_failures)
 
         data = {}
+        failures = []
         for stage in valid_stages:
             logger.info("--- unattended stage: %s ---", STAGE_LABELS.get(stage, stage))
             fn = STAGE_RUNNERS[stage]
             try:
                 data[stage] = fn(app, logger.info, lambda: False)
-                for problem in stage_failures(stage, data[stage]):
-                    logger.error("Unattended stage failure -- %s", problem)
-                    exit_code = 1
-            except Exception:
+            except Exception as exc:
                 logger.exception("Unattended stage %s failed", stage)
-                data[stage] = {}
+                data[stage] = {"error": str(exc) or type(exc).__name__}
+            problems = stage_failures(stage, data[stage])
+            failures.extend(problems)
+            for problem in problems:
+                logger.error("Unattended stage failure -- %s", problem)
                 exit_code = 1
 
         normalized = normalize_stage_data(data)
@@ -64,6 +80,7 @@ def run_unattended(stages: List[str]) -> int:
             freed_bytes=normalized.get("cleanup_freed", 0),
             updates_installed=normalized.get("wu_installed", 0),
             winget_count=len(normalized.get("winget_results", [])),
+            pending_restart=normalized.get("wu_pending_restart", 0),
         )
         history = load_history(app.app_data_dir)
         html_text = render_update_report_html(normalized, history)
@@ -72,6 +89,14 @@ def run_unattended(stages: List[str]) -> int:
             logger.warning("Unattended run complete. Report not written — low disk space.")
         else:
             logger.info("Unattended run complete. Report: %s", path)
+        from core.pending_reboot import check
+        from modules.updates.maintenance_notify import notify_finished
+        restart = normalized.get("reboot_required", False)
+        try:
+            restart = restart or check().needed
+        except Exception:
+            logger.warning("Could not read restart status for notification", exc_info=True)
+        notify_finished(completion_message(normalized, path, restart, failures), app.app_data_dir)
     except Exception:
         logger.exception("Unattended run failed")
         exit_code = 1

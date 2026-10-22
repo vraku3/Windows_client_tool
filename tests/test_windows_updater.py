@@ -235,3 +235,88 @@ def test_a_non_com_failure_keeps_its_own_message(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         windows_updater.fetch_pending_updates()
     assert "COM is not registered" in str(exc.value)
+
+
+def test_scan_marks_reboot_required_update_as_installed_waiting(monkeypatch):
+    u = _Update()
+    u.IsInstalled = False
+    u.RebootRequired = True
+    _install_fake_session(monkeypatch, [u])
+    updates = windows_updater.fetch_pending_updates()
+    assert updates[0].pending_restart
+    assert windows_updater.update_status_text(updates[0]) == "Installed -- restart to finish"
+
+
+@pytest.mark.parametrize("aggregate,per_update,code", [(True, False, 2), (False, True, 2), (True, True, 2)])
+def test_install_reboot_is_pending_not_success(monkeypatch, aggregate, per_update, code):
+    import win32com.client
+    from types import SimpleNamespace as NS
+    identity = _Update()
+    identity.IsDownloaded = True
+    identity.EulaAccepted = True
+    calls = []
+    result = NS(ResultCode=code, HResult=0, RebootRequired=aggregate,
+                GetUpdateResult=lambda i: NS(RebootRequired=per_update))
+    installer = NS(Install=lambda: calls.append("install") or result)
+    session = NS(CreateUpdateDownloader=lambda: NS(), CreateUpdateInstaller=lambda: installer)
+    monkeypatch.setattr(win32com.client, "Dispatch", lambda name: (
+        NS(Add=lambda u: None) if name.endswith("UpdateColl") else session))
+    lines = []
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 92638, "d", identity=identity)
+    results = windows_updater.install_updates_iter([u], output_cb=lines.append)
+    assert len(calls) == 1 and results[0].reboot_required and not results[0].success
+    assert results[0].message == "installed -- restart to finish"
+    assert "92638" not in " ".join(lines)
+
+
+def test_install_does_not_reinstall_identity_now_awaiting_restart(monkeypatch):
+    import win32com.client
+    from types import SimpleNamespace as NS
+    identity = _Update()
+    identity.RebootRequired = True
+    session = NS(CreateUpdateDownloader=lambda: NS(), CreateUpdateInstaller=lambda: NS())
+    monkeypatch.setattr(win32com.client, "Dispatch", lambda name: session)
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 1, "d", identity=identity)
+    results = windows_updater.install_updates_iter([u])
+    assert results[0].reboot_required and not results[0].success
+
+
+def test_unreadable_restart_properties_keep_existing_scan_behavior(monkeypatch):
+    class Unreadable(_Update):
+        @property
+        def RebootRequired(self):
+            raise OSError("refused")
+        @property
+        def IsInstalled(self):
+            raise OSError("refused")
+    _install_fake_session(monkeypatch, [Unreadable()])
+    updates = windows_updater.fetch_pending_updates()
+    assert len(updates) == 1 and not updates[0].pending_restart
+
+
+def test_pending_installation_identity_prevents_reinstall_without_com_flag(monkeypatch):
+    from types import SimpleNamespace as NS
+    from datetime import datetime, timezone
+    import win32com.client
+    from core import pending_reboot
+    monkeypatch.setattr(pending_reboot, "check", lambda: NS(needed=True, reasons=["Windows Update"]))
+    identity = _Update(kbs=("5127648",))
+    identity.Identity = NS(UpdateID="same-offer")
+    history = _Coll([NS(Title="Security Update KB5127648", ResultCode=1, Operation=1,
+                        UpdateIdentity=NS(UpdateID="same-offer"), Date=datetime.now(timezone.utc))])
+    searcher = NS(Search=lambda criteria: NS(Updates=_Coll([identity])),
+                  GetTotalHistoryCount=lambda: 1, QueryHistory=lambda start, count: history)
+    monkeypatch.setattr(win32com.client, "Dispatch", lambda _: NS(CreateUpdateSearcher=lambda: searcher))
+    assert windows_updater.fetch_pending_updates()[0].pending_restart
+
+
+def test_unreadable_or_preboot_history_does_not_block_current_offer(monkeypatch):
+    from types import SimpleNamespace as NS
+    from datetime import datetime, timezone
+    from core import pending_reboot
+    monkeypatch.setattr(pending_reboot, "check", lambda: NS(needed=True, reasons=[]))
+    history = _Coll([NS(Title="KB1", ResultCode=2, Date=datetime.now(timezone.utc)),
+                     NS(Title="KB1", ResultCode=1, Date=datetime.now(timezone.utc)),
+                     NS(Title="KB2", ResultCode=1, Date=datetime(2020, 1, 1, tzinfo=timezone.utc))])
+    searcher = NS(GetTotalHistoryCount=lambda: 3, QueryHistory=lambda start, count: history)
+    assert windows_updater._pending_restart_ids(searcher) == set()

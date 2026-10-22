@@ -19,6 +19,8 @@ NOT_APPLICABLE = "NOT APPLICABLE"  # winget had nothing that applies to this PC
 NEEDS_USER = "NEEDS USER"        # per-user install, refused from an elevated process
 NEEDS_INPUT = "NEEDS INPUT"      # the package wants an answer only a person can give
 FAILED = "FAILED"                # read back: the old version is still installed
+STILL_RUNNING = "STILL RUNNING"  # do not overlap a potentially running installer
+SKIPPED = "SKIPPED"
 
 PER_USER_REFUSAL = "cannot be uninstalled when running with administrator privileges"
 NO_APPLICABLE = "no applicable upgrade found"
@@ -33,6 +35,11 @@ NEEDS_INPUT_MARKERS = (
     "error reading input in prompt",
     "0x8a150042",
 )
+LOCATION_MARKERS = ("requires an install location", "specify the install root")
+
+
+def needs_install_location(output: str) -> bool:
+    return any(marker in output.lower() for marker in LOCATION_MARKERS)
 
 
 def parse_list_row(output: str, winget_id: str) -> Optional[Tuple[str, str]]:

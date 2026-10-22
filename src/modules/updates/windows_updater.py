@@ -1,4 +1,5 @@
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
 
@@ -18,7 +19,7 @@ class WindowsUpdate:
     title: str
     classification: str
     #: `IUpdate.MaxDownloadSize`, in MB -- an UPPER BOUND, not the delta that
-    #: actually downloads. The disk-space preflight uses this worst case.
+    #: actually downloads. See download_size_mb for the disk-space estimate.
     size_mb: float
     release_date: str
     identity: object = field(default=None, repr=False)  # IUpdate COM object, stored for install
@@ -36,6 +37,8 @@ class WindowsUpdate:
     #: A held entry is only ever SHOWN: it carries no COM identity, and
     #: `install_updates_iter` refuses it whatever list it arrives in.
     held: bool = False
+    pending_restart: bool = False
+    downloaded: bool = False
 
 
 #: What every surface says for a held update instead of hiding it.
@@ -43,6 +46,60 @@ class WindowsUpdate:
 #: itself (Settings > Windows Update) is not stopped from offering it.
 HELD_TEXT = ("Held by WinClientTool: AMD display driver -- kept on the installed "
              "version on purpose")
+RESTART_TEXT = "Installed -- restart to finish"
+
+
+def update_status_text(u: WindowsUpdate) -> str:
+    return RESTART_TEXT if u.pending_restart else (HELD_TEXT if u.held else "")
+
+
+def _com_bool(obj, attr: str) -> Optional[bool]:
+    try:
+        value = getattr(obj, attr)
+        return bool(value) if value is not None else None
+    except Exception:
+        logger.debug("update attribute %s is unreadable", attr, exc_info=True)
+        return None
+
+
+def _pending_restart_ids(searcher) -> set:
+    """Current-boot installation identities while Windows needs a restart.
+
+    A KB can cover unrelated offers or many Defender revisions; only the
+    exact UpdateID and installation operation associate history with an offer.
+    """
+    identities = set()
+    try:
+        from core.pending_reboot import check
+        from psutil import boot_time
+        state = check()
+        if not state.needed:
+            return set()
+        history = searcher.QueryHistory(0, min(100, searcher.GetTotalHistoryCount()))
+        boot = boot_time()
+        for i in range(history.Count):
+            try:
+                entry = history.Item(i)
+                if int(entry.Operation) == 1 and entry.Date.timestamp() >= boot:
+                    update_id = _com_str(entry.UpdateIdentity, "UpdateID")
+                    if update_id:
+                        identities.add(update_id.casefold())
+            except Exception:
+                logger.debug("Pending installation history entry unreadable", exc_info=True)
+    except Exception:
+        logger.debug("Pending installation history unreadable; using per-update flags", exc_info=True)
+    return identities
+
+
+def _awaiting_restart(identity, pending_ids: set) -> bool:
+    if _com_bool(identity, "RebootRequired") is True:
+        return True
+    try:
+        update_id = _com_str(identity.Identity, "UpdateID")
+        return bool(update_id) and update_id.casefold() in pending_ids
+    except Exception:
+        logger.debug("Offer identity unreadable; treating it as installable", exc_info=True)
+        return False
 
 #: tagInstallationRebootBehavior, read from wuapi.dll's generated type module.
 _REBOOT_TEXT = {"0": "No", "1": "Yes", "2": "May ask"}
@@ -69,8 +126,11 @@ def wu_status_text(updates: List["WindowsUpdate"], held: List["WindowsUpdate"]) 
         extra.append(f"{reboot} need a restart")
     if held:
         extra.append(f"{len(held)} held (AMD display driver, kept on purpose)")
+    waiting = sum(u.pending_restart for u in updates)
+    if waiting:
+        extra.append(f"{waiting} installed -- restart to finish")
     suffix = (" — " + ", ".join(extra)) if extra else ""
-    return f"{len(updates)} pending update(s){suffix}."
+    return f"{len(updates) - waiting} pending update(s){suffix}."
 
 
 def split_scan(payload) -> "tuple[List[WindowsUpdate], List[WindowsUpdate]]":
@@ -126,6 +186,11 @@ def size_text(u: "WindowsUpdate") -> str:
     bare reads as a broken figure, so it is shown as `<= max`, or as a
     `min-max` range when WUA also reports a smaller minimum.
     """
+    if u.downloaded:
+        return "already downloaded"
+    if u.size_mb > 10 * 1024:
+        return ("size not known in advance (Windows Update reports up to "
+                f"{u.size_mb / 1024:.0f} GB for the whole package set)")
     if u.size_mb <= 0:
         return "—"
     if u.min_size_mb and u.min_size_mb < u.size_mb:
@@ -140,6 +205,34 @@ class InstallResult:
     success: bool
     hresult: Optional[int]
     message: str
+    reboot_required: bool = False
+    result_code: Optional[int] = None
+
+    @property
+    def pending_restart(self) -> bool:
+        return self.reboot_required and self.result_code in (None, 2, 3)
+
+
+def download_size_mb(updates: List[WindowsUpdate], warn: Callable[[str], None]) -> float:
+    """Estimate download space, keeping WUA's enormous bundle bounds out.
+
+    The normal install-space floor still applies in check_wu_preflight.
+    """
+    total = 0.0
+    for update in updates:
+        if update.downloaded or _com_bool(update.identity, "IsDownloaded") is True:
+            continue
+        size = update.size_mb
+        if size > 10 * 1024:
+            try:
+                size = float(update.identity.MinDownloadSize) / (1024 * 1024)
+            except Exception:
+                size = update.min_size_mb if update.min_size_mb > 0 else None
+        if size is None or not math.isfinite(size) or size < 0 or (size == 0 and update.size_mb == 0):
+            warn(f"Windows Update: {update.title}: download size unknown; checking minimum free space")
+            continue
+        total += size
+    return total
 
 
 def fetch_pending_updates(
@@ -186,6 +279,7 @@ def fetch_pending_updates(
         session = win32com.client.Dispatch("Microsoft.Update.Session")
         searcher = session.CreateUpdateSearcher()
         result = searcher.Search(criteria)
+        pending_ids = _pending_restart_ids(searcher)
         for i in range(result.Updates.Count):
             u = result.Updates.Item(i)
             # KB numbers
@@ -238,6 +332,8 @@ def fetch_pending_updates(
                 size_mb=size_mb, min_size_mb=min_size_mb,
                 severity=severity, reboot=reboot,
                 release_date=release_date, identity=u, is_hidden=hidden,
+                pending_restart=_awaiting_restart(u, pending_ids),
+                downloaded=_com_bool(u, "IsDownloaded") is True,
             ))
     except Exception as e:
         raise RuntimeError(f"Failed to query Windows Updates: {_explain(e)}") from e
@@ -342,6 +438,11 @@ def install_updates_iter(
     installer = session.CreateUpdateInstaller()
     total = len(updates)
     results: List[InstallResult] = []
+    try:
+        pending_ids = _pending_restart_ids(session.CreateUpdateSearcher())
+    except Exception:
+        logger.debug("Pending installation searcher unreadable; using per-update flags", exc_info=True)
+        pending_ids = set()
 
     for i, u in enumerate(updates):
         if is_cancelled and is_cancelled():
@@ -349,6 +450,7 @@ def install_updates_iter(
             break
         if progress_cb:
             progress_cb(i, total, u.title)
+        u.downloaded = u.downloaded or _com_bool(u.identity, "IsDownloaded") is True
         _log(f"[{i + 1}/{total}] {u.title}  ({size_text(u)})")
 
         # Defence in depth: the scan already keeps these out, but a held driver
@@ -368,6 +470,11 @@ def install_updates_iter(
             _log(f"  {HELD_TEXT}")
             continue
 
+        if u.pending_restart or _awaiting_restart(u.identity, pending_ids):
+            _log(f"  {RESTART_TEXT}")
+            results.append(InstallResult(u.kb, u.title, False, None, RESTART_TEXT, True))
+            continue
+
         if u.identity is None:
             results.append(InstallResult(u.kb, u.title, False, None, "stale scan — no COM identity, re-scan first"))
             continue
@@ -381,7 +488,7 @@ def install_updates_iter(
             logger.warning("Could not check/accept EULA for %s", u.title, exc_info=True)
 
         try:
-            if not u.identity.IsDownloaded:
+            if _com_bool(u.identity, "IsDownloaded") is not True:
                 downloader.Updates = coll
                 dl_result = downloader.Download()
                 dl_code = int(dl_result.ResultCode)
@@ -396,12 +503,23 @@ def install_updates_iter(
             installer.Updates = coll
             install_result = installer.Install()
             code = int(install_result.ResultCode)
-            success = code == 2
-            msg = _RESULT_TEXT.get(code, str(code))
-            if not success:
+            reboot_required = _com_bool(install_result, "RebootRequired") is True
+            try:
+                reboot_required = (_com_bool(install_result.GetUpdateResult(0), "RebootRequired") is True
+                                   or reboot_required)
+            except Exception:
+                logger.debug("Per-update install result unreadable", exc_info=True)
+            success = code == 2 and not reboot_required
+            msg = {2: "installed -- restart to finish" if reboot_required else "success",
+                   3: "installed with errors" + (" -- restart to finish" if reboot_required else ""),
+                   4: "failed", 5: "aborted"}.get(code, _RESULT_TEXT.get(code, str(code)))
+            if code != 2:
                 msg += " — " + decode_wu_error(install_result.HResult)
+                if reboot_required and code != 3:
+                    msg += "; a restart is also required"
             _log(f"  install: {msg}")
-            results.append(InstallResult(u.kb, u.title, success, install_result.HResult, msg))
+            results.append(InstallResult(u.kb, u.title, success, install_result.HResult, msg,
+                                         reboot_required, code))
         except Exception as e:
             detail = _explain(e)
             _log(f"  error: {detail}")

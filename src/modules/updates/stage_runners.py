@@ -10,6 +10,7 @@ thread (COMWorker on the GUI side, explicit pythoncom.CoInitialize() in the
 unattended runner).
 """
 import logging
+import os
 from core.formatting import format_size as _fmt_size
 from typing import Callable
 
@@ -22,7 +23,7 @@ CancelFn = Callable[[], bool]
 def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """Scan + install pending Windows Updates. Returns results + reboot flag."""
     from modules.updates.windows_updater import (
-        fetch_pending_updates, install_updates_iter, HELD_TEXT,
+        fetch_pending_updates, install_updates_iter, download_size_mb, HELD_TEXT,
     )
 
     patterns = app.config.get("updates.blocklist_patterns", [])
@@ -39,18 +40,27 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
             for u in held_found]
     for h in held:
         log(f"Windows Update: held -- {h['title']} ({HELD_TEXT})")
+    waiting = [{"kb": u.kb, "title": u.title, "success": False, "reboot_required": True,
+                "message": "Installed -- restart to finish"} for u in updates if u.pending_restart]
+    updates = [u for u in updates if not u.pending_restart]
+    for entry in waiting:
+        log(f"Windows Update: {entry['title']}: {entry['message']}")
     if not updates:
-        log("Windows Update: nothing to install." if held
+        log("Windows Update: nothing to install." if held or waiting
             else "Windows Update: system is up to date.")
-        return {"results": [], "reboot_required": False, "installed_count": 0, "held": held}
+        if waiting:
+            log(f"Restart required to finish {len(waiting)} update(s)")
+        return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
+                "pending_restart_count": len(waiting), "held": held}
     log(f"Windows Update: {len(updates)} update(s) found"
         + (f", {len(held)} held." if held else "."))
 
     from core.disk_space import check_wu_preflight
-    reason = check_wu_preflight(sum(u.size_mb for u in updates))
+    reason = check_wu_preflight(download_size_mb(updates, log))
     if reason:
         log(f"Windows Update: skipped — {reason}")
-        return {"results": [], "reboot_required": False, "installed_count": 0, "held": held}
+        return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
+                "pending_restart_count": len(waiting), "held": held}
 
     if app.config.get("updates.restore_point_before_install", True):
         from core.system_restore import create_restore_point
@@ -61,8 +71,9 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
             # would leave no way back. Turn the setting off to proceed without.
             log("Windows Update: NOT installed -- the System Restore point that Settings asks "
                 "for could not be created (System Restore off or blocked by policy?).")
-            return {"results": [], "reboot_required": False, "installed_count": 0,
-                    "held": held, "error": "restore point could not be created"}
+            return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
+                    "pending_restart_count": len(waiting), "held": held,
+                    "error": "restore point could not be created"}
         log("Restore point created.")
 
     def _progress(done, total, title):
@@ -72,12 +83,16 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     results = install_updates_iter(
         updates, progress_cb=_progress, output_cb=log, is_cancelled=is_cancelled
     )
-    results_dicts = [
-        {"kb": r.kb, "title": r.title, "success": r.success, "message": r.message}
+    results_dicts = waiting + [
+        {"kb": r.kb, "title": r.title, "success": r.success, "message": r.message,
+         "reboot_required": r.reboot_required, "result_code": r.result_code}
         for r in results
     ]
     installed = sum(1 for r in results if r.success)
     log(f"Windows Update: {installed}/{len(results)} installed.")
+    pending_count = sum(bool(r.get("reboot_required")) for r in results_dicts)
+    if pending_count:
+        log(f"Restart required to finish {pending_count} update(s)")
 
     reboot_required = False
     try:
@@ -86,8 +101,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     except Exception:
         logger.warning("Could not check reboot-pending state", exc_info=True)
 
-    return {"results": results_dicts, "reboot_required": reboot_required,
-            "installed_count": installed, "held": held}
+    return {"results": results_dicts, "reboot_required": reboot_required or bool(pending_count),
+            "installed_count": installed, "pending_restart_count": pending_count, "held": held}
 
 
 def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
@@ -103,7 +118,13 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     log(f"winget: {len(before)} package(s) have updates.")
 
     results = []
+    stopped_reason = ""
     for i, u in enumerate(before):
+        if stopped_reason:
+            log(f"SKIPPED {u.winget_id}: {stopped_reason}")
+            results.append({"name": u.name, "id": u.winget_id, "before": u.installed_version,
+                            "confirmed": False, "state": "SKIPPED", "after": stopped_reason})
+            continue
         if is_cancelled():
             log("Cancelled.")
             break
@@ -118,6 +139,8 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         results.append({"name": u.name, "id": u.winget_id, "before": u.installed_version,
                         "confirmed": bool(outcome), "state": outcome.state,
                         "after": outcome.detail})
+        if outcome.state == "STILL RUNNING":
+            stopped_reason = outcome.detail
 
     if results:
         changed = sum(1 for r in results if r["confirmed"])
@@ -134,53 +157,97 @@ def run_store_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
 
 
 def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
-    """Scan and delete every 'safe'-tagged item across the cleanup module's
-    category groups — reuses the exact same logic as Cleanup's Overview tab
-    'Clean All Safe' rather than re-implementing it."""
-    from modules.cleanup.cleanup_scanner import _OV_GROUPS
+    """Cached catalog + overview scans, selected with Quick Cleanup's Light preset."""
     from modules.cleanup import cleanup_scanner as cs
+    from modules.cleanup.cleanup_scanner import catalog, scan_cache
+    from modules.cleanup.cleanup_scanner.knowledge import entry_for, effective_safety, id_for_scanner
+    from modules.cleanup.cleanup_scanner.scanners_system import _is_inside
+    from modules.cleanup import cleanup_presets
 
     log("Cleanup: scanning safe categories...")
-    all_items = []
-    needs_wu = False
-    total = 0
-    for group_name, scanners in _OV_GROUPS:
-        if scanners is None or is_cancelled():
+    sources = [(area, fn) for area, scanners in cs._OV_GROUPS for fn in (scanners or [])]
+    for category, area in catalog.CATEGORY_TABS.items():
+        sources.extend((area, fn) for fn, (_label, safety) in
+                       catalog.scanners_for(category, present_only=True).items() if safety == "safe")
+    results, names, areas, seen = {}, {}, {}, set()
+    for area, fn in sources:
+        if is_cancelled():
+            break
+        name = fn.__name__
+        spec = getattr(fn, "spec", None)
+        if (name in seen or name in cleanup_presets.NEVER_INCLUDED or
+                (spec and spec.disabled_reason) or
+                effective_safety(spec.safety if spec else "safe",
+                                 entry_for(id_for_scanner(fn))) != "safe"):
             continue
-        for fn in scanners:
-            try:
-                r = fn(min_age_days=0)
-                for item in r.items:
-                    if item.safety == "safe":
-                        item.selected = True
-                        all_items.append(item)
-                        total += item.size
-                if fn == cs.scan_wu_cache:
-                    needs_wu = True
-            except Exception as e:
-                logger.warning("Cleanup scan %s failed: %s", getattr(fn, "__name__", fn), e)
+        seen.add(name)
+        try:
+            results[name] = scan_cache.cached_scan(fn, 0)
+            names[name] = name
+            for item in results[name].items:
+                areas.setdefault(item.path, area)
+        except Exception as e:
+            logger.warning("Cleanup scan %s failed: %s", name, e)
+            log(f"Cleanup: {area}: scan failed -- {e}")
+
+    all_items = cleanup_presets.items_for_preset("light", results, names)
+    for item in all_items:
+        item.selected = True
+    total = sum(item.size for item in all_items)
+    wu_root = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "SoftwareDistribution")
+    needs_wu = any(_is_inside(item.path, wu_root) for item in all_items)
 
     if not all_items:
         log("Cleanup: nothing to clean.")
         return {"freed": 0, "deleted": 0}
 
     log(f"Cleanup: deleting {len(all_items)} item(s), {_fmt_size(total)}...")
-    report, refused, _per_item = cs.delete_items_report(
+    report, refused, per_item = cs.delete_items_report(
         all_items, stop_wuauserv=needs_wu, cancelled=is_cancelled)
-    deleted, errors = report.files, len(refused) + len(report.locked) + len(report.denied)
+    deleted = report.files
     log(
         f"Cleanup: {deleted} file(s) deleted"
-        + (f", {errors} left or refused" if errors else "")
+        + f", {cleanup_left_text(report, refused)}"
         + f" — {_fmt_size(report.freed)} freed."
         + (" Cancelled before it finished." if report.cancelled else "")
     )
-    return {"freed": report.freed, "deleted": deleted, "cancelled": report.cancelled}
+    from modules.cleanup.cleanup_scanner.deleter import DeleteReport
+    by_area = {}
+    for path, one in per_item:
+        by_area.setdefault(areas[path], [DeleteReport(), []])[0].merge(one)
+    for path, reason in refused:
+        by_area.setdefault(areas.get(path, "Windows Update"), [DeleteReport(), []])[1].append((path, reason))
+    summaries = []
+    for area, (one, rejections) in by_area.items():
+        summary = {"area": area, "freed": one.freed, "left": cleanup_left_text(one, rejections)}
+        summaries.append(summary)
+        log(f"Cleanup: {area}: {_fmt_size(one.freed)} cleaned; {summary['left']}.")
+    return {"freed": report.freed, "deleted": deleted, "cancelled": report.cancelled,
+            "left": cleanup_left_text(report, refused), "areas": summaries}
+
+
+def cleanup_left_text(report, refused) -> str:
+    """Explain measured outcomes, separating protection from access failures."""
+    protected = getattr(report, "protected", [])
+    protected_paths = {path for path, _reason in protected}
+    denied = sum(path not in protected_paths for path in report.denied)
+    reasons = protected + list(refused)
+    return (f"{len(report.locked)} in use (locked), {report.kept_recent} kept (newer than 24 h), "
+            f"{denied} access denied, {report.cloud_only} cloud-only, "
+            f"{len(reasons)} protected/refused"
+            + (f" (first reason: {reasons[0][1]})" if reasons else ""))
 
 
 def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """DISM /StartComponentCleanup — the slow WinSxS cleanup, not the fast
     /AnalyzeComponentStore preview (that one lives in the Cleanup module)."""
     import subprocess
+    from core import pending_reboot
+    restart_message = ("SKIPPED: a restart is pending (Windows Update/servicing) -- "
+                       "run component cleanup after restarting")
+    if pending_reboot.check().needed:
+        log(f"DISM: {restart_message}")
+        return {"status": "SKIPPED", "reboot_required": True, "output": restart_message}
     log("DISM: running StartComponentCleanup (this can take several minutes)...")
     proc = subprocess.run(
         ["dism", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
@@ -189,6 +256,10 @@ def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     )
     output = (proc.stdout or "") + (proc.stderr or "")
     log(output or "(no output)")
+    if proc.returncode & 0xFFFFFFFF == 0x800F0806:
+        log(f"DISM: {restart_message}")
+        return {"status": "SKIPPED", "reboot_required": True, "returncode": proc.returncode,
+                "output": restart_message + "\n" + output}
     if proc.returncode != 0:
         log(f"DISM: FAILED (exit {proc.returncode}).")
     return {"output": output, "returncode": proc.returncode,
@@ -202,10 +273,12 @@ def stage_failures(stage: str, result: dict) -> list:
         return [f"{stage}: no result"]
     problems = [f"{stage}: {result['error']}"] if result.get("error") else []
     for r in result.get("results", []) or []:
-        if stage == "wu" and not r.get("success", True):
+        pending = r.get("reboot_required") and r.get("result_code") in (None, 2)
+        if stage == "wu" and (r.get("result_code") in (0, 1, 3, 4, 5) or
+                               (not r.get("success", True) and not pending)):
             problems.append(f"wu: {r.get('kb') or r.get('title')}: {r.get('message', 'failed')}")
-        elif stage in ("winget", "store") and r.get("state") == "FAILED":
-            problems.append(f"{stage}: {r.get('id') or r.get('name')}: failed")
+        elif stage in ("winget", "store") and r.get("state") in ("FAILED", "STILL RUNNING"):
+            problems.append(f"{stage}: {r.get('id') or r.get('name')}: {r.get('after') or r['state']}")
     return problems
 
 
@@ -258,10 +331,14 @@ def normalize_stage_data(data: dict) -> dict:
     return {
         "wu_results": wu.get("results", []),
         "wu_installed": wu.get("installed_count", 0),
+        "wu_pending_restart": wu.get("pending_restart_count", 0),
+        "reboot_required": bool(wu.get("reboot_required") or dism.get("reboot_required")),
         "wu_held": wu.get("held", []),
         "winget_results": winget.get("results", []),
         "store_triggered": store.get("triggered", 0),
         "cleanup_freed": cleanup.get("freed", 0),
         "cleanup_deleted": cleanup.get("deleted", 0),
+        "cleanup_left": cleanup.get("left", ""),
+        "cleanup_areas": cleanup.get("areas", []),
         "dism_output": dism.get("output"),
     }

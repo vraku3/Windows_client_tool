@@ -20,6 +20,11 @@ from PyQt6.QtWidgets import QLabel
 
 from core.table_ui import set_role
 
+import pytest
+
+# App-wide restyles must not repolish windows earlier modules left (conftest).
+pytestmark = pytest.mark.usefixtures("fresh_widgets")
+
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
 #: 204 when the ratchet went in. Only ever lower it.

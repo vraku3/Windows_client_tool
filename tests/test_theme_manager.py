@@ -1,6 +1,11 @@
 from core.theme_manager import ThemeManager
 
 
+import pytest
+
+# App-wide restyles must not repolish windows earlier modules left (conftest).
+pytestmark = pytest.mark.usefixtures("fresh_widgets")
+
 def test_apply_valid_theme(tmp_path):
     styles_dir = str(tmp_path)
     (tmp_path / "dark.qss").write_text("QMainWindow { background: #1e1e1e; }")

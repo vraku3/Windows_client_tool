@@ -14,6 +14,9 @@ from core.semantic_colors import (
     PANE_BACKGROUND, SEMANTIC_PALETTES, semantic, set_theme,
 )
 
+# App-wide restyles must not repolish windows earlier modules left (conftest).
+pytestmark = pytest.mark.usefixtures("fresh_widgets")
+
 #: dark and light, plus the four phosphor themes derived from dark (core/phosphor.py).
 ALL_THEMES = {"dark", "light", "green", "amber", "blue", "mono"}
 

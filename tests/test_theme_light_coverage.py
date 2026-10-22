@@ -27,6 +27,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 
+
+# App-wide restyles must not repolish windows earlier modules left (conftest).
+pytestmark = pytest.mark.usefixtures("fresh_widgets")
+
 QApplication.instance() or QApplication(sys.argv)
 
 from core.module_registry import ModuleRegistry  # noqa: E402

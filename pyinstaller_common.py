@@ -89,6 +89,9 @@ def write_version_info(project_root: str) -> str:
 
 
 HIDDEN_IMPORTS = [
+    "modules.quick_fix.browser_links",
+    "modules.quick_fix.browser_links_card",
+    "win32crypt",
     "core.system_paths",
     "core.limited_task",                    # imported inside winget_updater's retry
     "modules.updates.maintenance_notify",   # imported inside unattended_runner
@@ -418,6 +421,17 @@ HIDDEN_IMPORTS = [
     # inside __init__, per the composite-hosting convention -- the frozen
     # build runs fine until someone opens the Scripts tab.
     "modules.file_forensics.file_forensics_module",
+    "modules.stress_test",
+    "modules.stress_test.engine",
+    "modules.stress_test.engine.cpu_load",
+    "modules.stress_test.engine.ram_test",
+    "modules.stress_test.engine.safety",
+    "modules.stress_test.engine.sensors",
+    "modules.stress_test.engine.session",
+    "modules.stress_test.engine.report",
+    "modules.stress_test.stress_module",
+    "modules.stress_test.stress_tab",
+    "modules.stress_test.stress_charts",
     # Script Library (2026-10-16): imported inside ScriptsModule.__init__.
     "modules.scripts_hub.library_module",
     "modules.scripts_hub.library",

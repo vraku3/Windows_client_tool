@@ -13,6 +13,11 @@ import tempfile
 
 from core.theme_manager import ThemeManager
 
+import pytest
+
+# App-wide restyles must not repolish windows earlier modules left (conftest).
+pytestmark = pytest.mark.usefixtures("fresh_widgets")
+
 STYLES = os.path.join(os.path.dirname(__file__), "..", "src", "ui", "styles")
 
 

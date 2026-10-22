@@ -13,6 +13,9 @@ from modules.treesize.ui.shell import TreeSizeShell
 from modules.treesize.ui.theme import DARK, LIGHT, stylesheet
 from modules.treesize.ui.views.details import DetailsView, SIZE_COLUMN
 
+# App-wide restyles must not repolish windows earlier modules left (conftest).
+pytestmark = pytest.mark.usefixtures("fresh_widgets")
+
 
 def _scan():
     s = NodeStore()

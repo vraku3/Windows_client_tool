@@ -321,7 +321,10 @@ def test_a_failed_action_is_reported_rather_than_swallowed(tab, qapp,
     monkeypatch.setattr("modules.dashboard.process_menu.end_process",
                         lambda pid, **kw: Result(False, "Access is denied."))
 
-    tab.menu._end([999_999])
+    tab.menu._end([os.getpid()])  # a selected snapshot identity is required
+    from PyQt6.QtCore import QThreadPool
+    assert QThreadPool.globalInstance().waitForDone(2000)
+    qapp.processEvents()
 
     assert "Access is denied." in tab.error_banner.text()
     assert not tab.error_banner.isHidden()

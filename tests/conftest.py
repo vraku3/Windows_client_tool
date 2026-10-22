@@ -16,6 +16,27 @@ def qapp():
     yield app
 
 
+@pytest.fixture(scope="module")
+def fresh_widgets(qapp):
+    """Delete windows earlier test modules left behind, before an app-wide restyle.
+
+    `app.setStyleSheet` repolishes EVERY live widget. Thousands of half-torn-down
+    widgets from earlier modules made the theme tests crash natively in whole-suite
+    runs (access violation / 0xC0000409, 2 of 2 runs on 2026-10-22), never alone.
+    Only `qapp` is session-scoped, so nothing later still needs these windows.
+    Opt in per module (pytestmark); an autouse version broke other tests before.
+    """
+    import gc
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    for widget in QApplication.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    qapp.processEvents()
+    gc.collect()
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_scan_cache_cleared():
     """Don't let one test's measurement answer another test's scan.

@@ -54,7 +54,7 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
     import pythoncom
     pythoncom.CoInitialize()
     name = TASK_PREFIX + uuid.uuid4().hex
-    folder = None
+    service = folder = task = action = entry = None
     registered = False
     launch_attempted = False
     try:
@@ -102,4 +102,9 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
                 folder.DeleteTask(name, 0)
             except Exception:
                 logger.warning("Could not delete one-shot task %s", name, exc_info=True)
+        # Release every COM object BEFORE uninitialising: dropping them after
+        # CoUninitialize printed "Win32 exception occurred releasing IUnknown"
+        # on a real reinstall (2026-10-22) -- a release into a torn-down
+        # apartment, which on a worker thread can take the process down.
+        service = folder = task = action = entry = None
         pythoncom.CoUninitialize()

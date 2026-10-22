@@ -250,8 +250,10 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_31_entries(registered):
-    """31: Game Mode (2026-10-16) is a genuinely new OPTIMIZE entry -- a
+def test_the_sidebar_is_32_entries(registered):
+    """32: Stress Test (2026-10-22) adds CPU/RAM stability testing in TOOLS.
+
+    31: Game Mode (2026-10-16) is a genuinely new OPTIMIZE entry -- a
     reversible ON/OFF session plus gaming advice; no existing hub owns
     either: 30 + 1.
 
@@ -271,7 +273,7 @@ def test_the_sidebar_is_31_entries(registered):
     new Scripts hub (docs/superpowers/specs/
     2026-09-18-scripts-file-forensics-design.md) is a genuinely new sidebar
     entry, not a fold of existing ones: 28 + 1 = 29."""
-    assert len(registered) == 31
+    assert len(registered) == 32
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

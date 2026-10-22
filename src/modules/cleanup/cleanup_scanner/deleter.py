@@ -55,6 +55,9 @@ class DeleteReport:
     kept_recent: int = 0
     cloud_only: int = 0
     cancelled: bool = False
+    # Also present in denied for older callers; reasons distinguish guards
+    # from filesystem access failures in maintenance reports.
+    protected: List[tuple] = field(default_factory=list)
 
     def merge(self, other: "DeleteReport") -> None:
         self.freed += other.freed
@@ -64,6 +67,7 @@ class DeleteReport:
         self.kept_recent += other.kept_recent
         self.cloud_only += other.cloud_only
         self.cancelled = self.cancelled or other.cancelled
+        self.protected.extend(other.protected)
 
 
 def long_path(path: str) -> str:
@@ -158,10 +162,12 @@ def _rmdir(path: str, report: DeleteReport) -> None:
 
 def _skipped(entry: os.DirEntry, skip, is_dir: bool, report: DeleteReport) -> bool:
     """True (and listed as denied) when the caller's guard protects this entry."""
-    if not skip(_short(entry.path), is_dir):
+    reason = skip(_short(entry.path), is_dir)
+    if not reason:
         return False
     logger.warning("not deleting %s: protected", _short(entry.path))
     report.denied.append(_short(entry.path))
+    report.protected.append((_short(entry.path), reason if isinstance(reason, str) else "protected data"))
     return True
 
 
@@ -250,9 +256,11 @@ def delete_path(path: str, is_dir: bool, *, keep_root: bool = True,
         report.denied.append(_short(target))
         return report
     # The root's type is what lstat says, never the caller's flag.
-    if skip(_short(target), bool(getattr(st, "st_file_attributes", 0) & _ATTR_DIRECTORY) or stat.S_ISDIR(st.st_mode)):
+    reason = skip(_short(target), bool(getattr(st, "st_file_attributes", 0) & _ATTR_DIRECTORY) or stat.S_ISDIR(st.st_mode))
+    if reason:
         logger.warning("not deleting %s: protected", _short(target))
         report.denied.append(_short(target))
+        report.protected.append((_short(target), reason if isinstance(reason, str) else "protected data"))
         return report
     if is_cloud_only(getattr(st, "st_file_attributes", 0)):
         report.cloud_only += 1

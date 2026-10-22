@@ -16,6 +16,15 @@ def test_record_report_keeps_measured_bytes_and_every_kind_of_leftover(tmp_path,
     assert entry["refused"] == [[r"C:\Pkg\LocalCache", "holds an app's sign-in"]]
 
 
+def test_walk_protection_is_recorded_with_reason_not_as_access_denied(tmp_path, monkeypatch):
+    monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
+    report = DeleteReport(denied=["profile"], protected=[("profile", "holds sign-in data")])
+    ch.record_report(report, [])
+    entry = ch.recent_deleted(1)[0]
+    assert entry["denied_count"] == 0
+    assert entry["refused"] == [["profile", "holds sign-in data"]]
+
+
 def test_record_report_keeps_the_largest_removed_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(ch, "_deleted_path", lambda: str(tmp_path / "log.json"))
     removed = [(rf"C:\t\{i}.tmp", i) for i in range(1, 101)]

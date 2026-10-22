@@ -175,6 +175,10 @@ def record_report(report, refused, owners=None, removed=(), categories=None,
     if not (report.files or report.locked or report.denied or report.kept_recent
             or report.cloud_only or refused or removed or report.cancelled):
         return
+    protected = getattr(report, "protected", [])
+    protected_paths = {path for path, _reason in protected}
+    denied = [path for path in report.denied if path not in protected_paths]
+    refusals = list(refused) + list(protected)
     _append_entry({
         "at": datetime.now().isoformat(timespec="seconds"),
         "count": report.files,
@@ -183,11 +187,11 @@ def record_report(report, refused, owners=None, removed=(), categories=None,
         "locked": report.locked[:LEFTOVER_PATHS],
         "locked_count": len(report.locked),
         "owners": dict(owners or {}),
-        "denied": report.denied[:LEFTOVER_PATHS],
-        "denied_count": len(report.denied),
+        "denied": denied[:LEFTOVER_PATHS],
+        "denied_count": len(denied),
         "kept_recent": report.kept_recent,
         "cloud_only": report.cloud_only,
-        "refused": [[path, reason] for path, reason in refused][:PATHS_PER_ENTRY],
+        "refused": [[path, reason] for path, reason in refusals][:PATHS_PER_ENTRY],
         "cancelled": bool(report.cancelled),
         **_optional_fields(categories, preset, source),
     })

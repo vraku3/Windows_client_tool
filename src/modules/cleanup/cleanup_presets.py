@@ -56,6 +56,8 @@ def items_for_preset(preset_id: str, results: dict, id_to_scanner_name: dict) ->
     """Every ScanItem the given preset selects, across a QuickCleanupTab-
     shaped `results` dict ({category_id: ScanResult}), honoring
     NEVER_INCLUDED regardless of what the preset's own safety_levels say.
+    Research can raise an item's safety level before selection; it never
+    lowers the scanner's rating.
 
     `id_to_scanner_name` maps a category id (e.g. "large") to the real
     scanner function's __name__, needed because NEVER_INCLUDED excludes
@@ -76,6 +78,7 @@ def items_for_preset(preset_id: str, results: dict, id_to_scanner_name: dict) ->
             f"data-driven preset; light/thorough/aggressive are the only "
             f"valid ids here")
     allowed = PRESETS[preset_id]["safety_levels"]
+    from modules.cleanup.cleanup_scanner.knowledge import entry_for, effective_safety
     selected = []
     for cid, result in results.items():
         scanner_name = id_to_scanner_name.get(cid)
@@ -84,7 +87,9 @@ def items_for_preset(preset_id: str, results: dict, id_to_scanner_name: dict) ->
         items = getattr(result, "items", None)
         if items is None:
             continue  # e.g. browser results are a list of BrowserResult, not a ScanResult
+        research = entry_for((scanner_name or "").removeprefix("scan_"))
         for item in items:
-            if item.safety in allowed:
+            if effective_safety(item.safety, research) in allowed:
                 selected.append(item)
-    return selected
+    from modules.cleanup.cleanup_scanner._common import dedupe_items
+    return dedupe_items(selected)

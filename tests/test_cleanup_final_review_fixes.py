@@ -85,9 +85,12 @@ def test_delete_items_report_is_exported_through_the_facade():
 
 def _fake_stage_scanners(monkeypatch, items):
     import modules.cleanup.cleanup_scanner as pkg
+    from modules.cleanup.cleanup_scanner import catalog, scan_cache
+    monkeypatch.setattr(catalog, "scanners_for", lambda *a, **k: {})
+    scan_cache.invalidate()
 
     def scan(min_age_days=0):
-        return types.SimpleNamespace(items=items)
+        return cs.ScanResult(items, sum(i.size for i in items))
     monkeypatch.setattr(pkg, "_OV_GROUPS", [("Fake", [scan]), ("Browser Caches", None)])
 
 

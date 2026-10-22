@@ -7,6 +7,7 @@ import string
 import subprocess
 import time
 import psutil
+from functools import lru_cache
 from typing import List, Callable, Optional, Tuple
 
 from modules.cleanup.cleanup_scanner._common import (
@@ -1871,13 +1872,14 @@ _STATE_SEQUENCES = (("steam", "downloads"),
 _HTMLCACHE_LEAVES = frozenset({"cache", "code cache", "gpucache"})
 
 
-def _named_user_data(path: str) -> bool:
+def _named_user_data(path: str, include_sign_in: bool = True) -> bool:
     """State recognised by its folder NAMES, so a custom install location
     (a Steam library on D:, a portable Epic) is guarded too. Never a guess
     from the word 'cache'."""
     norm = _norm(path)
     parts = norm.split(os.sep)
-    if any(part in SIGN_IN_DIRS or part in _STATE_DIR_NAMES for part in parts):
+    sign_in_names = SIGN_IN_DIRS if include_sign_in else {"blob_storage"}
+    if any(part in sign_in_names or part in _STATE_DIR_NAMES for part in parts):
         return True
     for seq in _STATE_SEQUENCES:
         width = len(seq)
@@ -1911,7 +1913,7 @@ def _installer_orphan(path: str, is_dir: bool) -> bool:
 
 
 def _state_path_protected(path: str, is_dir: bool, *, contains: bool = False,
-                          resolved: Optional[str] = None) -> bool:
+                          resolved: Optional[str] = None, include_sign_in: bool = True) -> bool:
     """Path guards shared by the refusal check and every deleting-walk entry:
     the path as written AND as resolved (``resolved`` when the caller already
     knows it) is, or is inside -- or with ``contains``, holds -- protected state."""
@@ -1924,7 +1926,7 @@ def _state_path_protected(path: str, is_dir: bool, *, contains: bool = False,
         if any(_inside_norm(candidate, root) or
                (contains and is_dir and _inside_norm(root, candidate)) for root in roots):
             return True
-        if _named_user_data(candidate):
+        if _named_user_data(candidate, include_sign_in=include_sign_in):
             return True
         if _inside_norm(candidate, installer):
             if not _installer_orphan(candidate, is_dir):
@@ -1990,6 +1992,79 @@ def _resolved(path: str) -> str:
         return path
 
 
+@lru_cache(maxsize=16)
+def _resolved_temp_roots(roots: tuple) -> tuple:
+    return tuple(_norm(_resolved(root)) for root in roots)
+
+
+def _temp_container(item: ScanItem, resolved: Optional[str] = None) -> bool:
+    """The contents-only exception belongs to these exact temp containers."""
+    if not item.is_dir or not item.keep_root:
+        return False
+    roots = [os.environ[name] for name in ("TEMP", "TMP") if os.environ.get(name)]
+    for name in ("LOCALAPPDATA", "SystemRoot"):
+        if os.environ.get(name):
+            roots.append(os.path.join(os.environ[name], "Temp"))
+    real = _norm(resolved if resolved is not None else _resolved(item.path))
+    return real in _resolved_temp_roots(tuple(roots))
+
+
+def _temp_protected_subtrees(item: ScanItem, cancelled: Callable[[], bool]):
+    """One cancellable walk; retain entire children that hold protected state.
+
+    Store their ancestors too (except the selected container), so the deleting
+    walk needs only set membership/parent lookups, never another recursive scan.
+    Links are retained without traversing them. Unreadable branches stay intact.
+    """
+    root = os.path.abspath(item.path)
+    root_norm, root_real = _norm(root), _resolved(root)
+    protected = set()
+
+    def retain(path):
+        current = _norm(path)
+        while current != root_norm and _inside_norm(current, root_norm):
+            if current in protected:
+                break
+            protected.add(current)
+            current = os.path.dirname(current)
+
+    pending = [root]
+    while pending:
+        if cancelled():
+            return protected, None, True
+        folder = pending.pop()
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    if cancelled():
+                        return protected, None, True
+                    try:
+                        st = entry.stat(follow_symlinks=False)
+                        attrs = getattr(st, "st_file_attributes", 0)
+                        link = entry.is_symlink() or entry.is_junction() or bool(attrs & 0x400)
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                        if link:
+                            retain(entry.path)
+                            continue
+                        resolved = root_real + entry.path[len(root):]
+                        if entry.name.lower().endswith(OUTLOOK_DATA_EXTENSIONS):
+                            return protected, "it is, or holds, Outlook mailbox data (.ost/.pst)", False
+                        if _state_path_protected(entry.path, is_dir, resolved=resolved,
+                                                 include_sign_in=False):
+                            return protected, "it is, or holds, installed software, system databases or personal state", False
+                        if _protected_entry(entry.path, is_dir, resolved=resolved):
+                            retain(entry.path if is_dir else folder)
+                        elif is_dir:
+                            pending.append(entry.path)
+                    except OSError as exc:
+                        logger.warning("cannot check protected state in %s: %s", entry.path, exc)
+                        retain(entry.path)
+        except OSError as exc:
+            logger.warning("cannot check protected state in %s: %s", folder, exc)
+            retain(folder)
+    return protected, None, False
+
+
 def _refusal_reason(item: ScanItem) -> Optional[str]:
     """Why ``item`` must never be deleted, or None. Cheapest checks first; one walk at most.
 
@@ -2017,12 +2092,17 @@ def _refusal_reason(item: ScanItem) -> Optional[str]:
         return "it is inside this application's own folder"
     if is_or_holds(protected_system_dirs()):
         return "uninstall and repair of installed software depend on it"
-    if is_or_holds(sign_in_stores()):
+    temp_container = _temp_container(item, resolved)
+    if inside(sign_in_stores()) or (not temp_container and is_or_holds(sign_in_stores())):
         return "it is, or holds, a sign-in token store"
     if is_or_holds(protected_user_data_dirs()):
         return "it is, or holds, Outlook mailbox data (.ost/.pst)"
     if any(_state_path_protected(path, item.is_dir, contains=True) for path in paths):
         return "it is, or holds, installed software, system databases or personal state"
+    if temp_container:
+        # delete_items_report performs the single cancellable pre-walk before
+        # deleting anything. All other roots keep the containing-folder refusal.
+        return None
     for path in paths:
         outlook, sign_in = held_user_data(path, item.is_dir, first_only=True)
         if outlook:
@@ -2147,7 +2227,7 @@ def delete_items_report(items: List[ScanItem],
     # an app left open over a day -- were deletable there.
     own_dirs = protected_app_dirs()
 
-    def _skip_for(item: ScanItem):
+    def _skip_for(item: ScanItem, protected_subtrees: set):
         # The walk never follows a link, so below the root an entry resolves
         # to the root's resolved path plus the same tail: one realpath per
         # item, not one per file (~90 us each, measured; %TEMP% is 100k).
@@ -2159,9 +2239,18 @@ def delete_items_report(items: List[ScanItem],
             resolved = None
             if _inside_norm(os.path.normcase(path), root_norm):
                 resolved = root_real + path[len(root):]
-            return (_protected_entry(path, is_dir, resolved=resolved)
-                    or (bool(own_dirs) and any(_is_inside(path, d) for d in own_dirs))
-                    or (bool(exclusions) and is_excluded(path, exclusions)))
+            if _protected_entry(path, is_dir, resolved=resolved):
+                return "protected system, personal or sign-in data"
+            if bool(own_dirs) and any(_is_inside(path, d) for d in own_dirs):
+                return "this application's own folder"
+            if bool(exclusions) and is_excluded(path, exclusions):
+                return "excluded by the user"
+            current = _norm(path)
+            while current != root_norm and _inside_norm(current, root_norm):
+                if current in protected_subtrees:
+                    return "subtree holds protected system, personal or sign-in data"
+                current = os.path.dirname(current)
+            return False
         return _skip
 
     def _do_delete(service=None):
@@ -2188,13 +2277,19 @@ def delete_items_report(items: List[ScanItem],
                 report.merge(unreadable)
                 continue
             reason = _refusal_reason(item)
+            protected_subtrees = set()
+            if not reason and _temp_container(item):
+                protected_subtrees, reason, stopped = _temp_protected_subtrees(item, cancelled)
+                if stopped:
+                    report.cancelled = True
+                    break
             if reason:
                 logger.warning("Refusing to delete %s: %s", item.path, reason)
                 refused.append((item.path, reason))
                 continue
             one = delete_path(item.path, item.is_dir, keep_root=item.keep_root,
                               keep_newer_than_s=item.keep_newer_than_hours * 3600,
-                              cancelled=cancelled, skip=_skip_for(item))
+                              cancelled=cancelled, skip=_skip_for(item, protected_subtrees))
             per_item.append((item.path, one))
             report.merge(one)
         from modules.cleanup import cleanup_history

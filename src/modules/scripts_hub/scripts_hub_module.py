@@ -18,5 +18,11 @@ class ScriptsModule(CompositeModule):
         super().__init__()
         from modules.file_forensics.file_forensics_module import FileForensicsModule
         from modules.scripts_hub.library_module import ScriptLibraryModule
+        from modules.nav_pane.nav_pane_module import NavPaneModule
 
-        self.children = [ScriptLibraryModule(), FileForensicsModule()]
+        self.children = [ScriptLibraryModule(), FileForensicsModule(), NavPaneModule()]
+
+    def wrap(self, tabs):
+        for index, child in enumerate(self.children):
+            tabs.setTabToolTip(index, child.description)
+        return tabs

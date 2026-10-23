@@ -89,6 +89,18 @@ def write_version_info(project_root: str) -> str:
 
 
 HIDDEN_IMPORTS = [
+    "modules.nav_pane.nav_pane_module",
+    "modules.nav_pane.form",
+    "modules.nav_pane.widgets",
+    "modules.nav_pane.engine.model",
+    "modules.nav_pane.engine.registry",
+    "modules.nav_pane.engine.journal",
+    "modules.nav_pane.engine.onedrive",
+    "modules.nav_pane.engine.junction",
+    "modules.nav_pane.engine.inspection",
+    "modules.nav_pane.engine.transactions",
+    "modules.nav_pane.engine.operations",
+    "modules.nav_pane.engine.shell",
     "core.app_facts", "ui.app_facts", "modules.app_buster.engine.autodesk_info",
     "modules.quick_fix.browser_links",
     "modules.quick_fix.browser_links_card",

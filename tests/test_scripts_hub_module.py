@@ -7,9 +7,10 @@ def module(qapp):
     return ScriptsModule()
 
 
-def test_the_hub_hosts_the_library_then_file_forensics(module):
+def test_the_hub_hosts_the_library_then_file_forensics_then_nav_pane(module):
     assert [type(c).__name__ for c in module.children] == ["ScriptLibraryModule",
-                                                           "FileForensicsModule"]
+                                                           "FileForensicsModule",
+                                                           "NavPaneModule"]
 
 
 def test_the_hub_builds_a_widget_with_one_tab(module, qapp):

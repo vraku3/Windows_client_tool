@@ -386,8 +386,10 @@ class RegistryBackend:
         while True:
             try:
                 name, data, _kind = winreg.EnumValue(key, index)
-            except OSError:
-                return
+            except OSError as error:
+                if getattr(error, 'winerror', None) == 259:  # ERROR_NO_MORE_ITEMS
+                    return
+                raise
             index += 1
             yield name, data
 
@@ -398,8 +400,10 @@ class RegistryBackend:
         while True:
             try:
                 yield winreg.EnumKey(key, index)
-            except OSError:
-                return
+            except OSError as error:
+                if getattr(error, 'winerror', None) == 259:
+                    return
+                raise
             index += 1
 
     def userassist(self):

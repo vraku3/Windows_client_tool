@@ -14,6 +14,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer, QUrl
 from PyQt6.QtGui import QFont, QColor, QDesktopServices
 
+from ui.app_facts import bind_row
+
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker, COMWorker
@@ -121,7 +123,7 @@ class _AppUpdatesTab(QWidget):
 
         # Updates table
         self._table = QTableWidget(0, 6)
-        self._table.setHorizontalHeaderLabels(["Name", "ID", "Installed", "Available", "Source", "Result"])
+        self._table.setHorizontalHeaderLabels(["Name", "ID", "Installed version", "Available", "Source", "Result"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         center_header(self._table)
@@ -219,6 +221,7 @@ class _AppUpdatesTab(QWidget):
             elif result_text:
                 result_item.setForeground(QColor(semantic("warning")))
             self._table.setItem(row, 5, result_item)
+            bind_row(self._table, row, u, safety=False)
         self._apply_filter(self._filter_edit.text())
 
     def _apply_filter(self, text: str) -> None:

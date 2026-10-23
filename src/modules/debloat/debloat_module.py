@@ -14,6 +14,9 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 
+from ui.app_facts import bind_row
+from core.app_facts import AppKey
+
 from core.appx_service import dir_size, fetch_packages, invalidate_cache
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
@@ -601,6 +604,9 @@ class DebloatToolsModule(BaseModule):
             elif pkg in PROTECTED_APPS:
                 status_item.setForeground(QColor(semantic("warning")))
             self._apps_table.setItem(row, 3, status_item)
+            if present:
+                bind_row(self._apps_table, row, AppKey(name=entry.get("name", pkg),
+                         package_name=pkg, install_location=locations.get(pkg, "")), name_column=1)
 
         self._apps_table.setSortingEnabled(True)
         # T23: restore the last sort column/order this session saved in

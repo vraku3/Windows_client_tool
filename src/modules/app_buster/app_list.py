@@ -18,6 +18,8 @@ from PyQt6.QtWidgets import (QApplication, QFileIconProvider, QStyle, QStyledIte
                              QStyleOptionButton, QStyleOptionViewItem)
 
 from core.semantic_colors import chrome, semantic
+from core.app_facts import tooltip, colour_role
+from ui.app_facts import ModelFactsController
 
 from .engine import model as m
 from .engine import views
@@ -75,6 +77,7 @@ class AppModel(QAbstractTableModel):
         self.fields: List[str] = [k for k, _l, on in views.FIELDS if on]
         self.checked: Set[str] = set()
         self.icons = IconCache()
+        self._facts_loader = ModelFactsController(self)
         self.on_check = None            # callback(key, checked)
 
     # ---- data in ---------------------------------------------------------------------------
@@ -82,6 +85,7 @@ class AppModel(QAbstractTableModel):
         self.beginResetModel()
         self.rows = list(rows)
         self.endResetModel()
+        self._facts_loader.request(self.rows)
 
     def set_fields(self, fields: Sequence[str]) -> None:
         self.beginResetModel()
@@ -135,7 +139,14 @@ class AppModel(QAbstractTableModel):
             return Qt.CheckState.Checked if rec.key in self.checked else Qt.CheckState.Unchecked
         if role == Qt.ItemDataRole.DecorationRole and index.column() == 0:
             return self.icons.get(rec)
+        facts = rec.extra.get('_facts')
+        if role == Qt.ItemDataRole.ForegroundRole and key == 'uninstall_safety' and facts:
+            return QColor(semantic(colour_role(facts)))
         if role == Qt.ItemDataRole.ToolTipRole:
+            if key == 'uninstall_safety' and facts:
+                return facts.breaks
+            if key == 'name':
+                return tooltip(facts) if facts else rec.extra.get('_facts_error') or '\u2026'
             if key == "recommendation":
                 return m.RECOMMENDATION_TIP.get(rec.recommendation, "") + " " + rec.extra.get("why", "")
             if rec.type in (m.ORPHANED, m.DEFECT):
@@ -180,7 +191,7 @@ class CardDelegate(QStyledItemDelegate):
     """One wide row per app: checkbox, icon, name, the chosen facts beneath,
     and a recommendation badge on the right."""
 
-    HEIGHT = 54
+    HEIGHT = 78
 
     def __init__(self, model: AppModel, parent=None) -> None:
         super().__init__(parent)
@@ -225,12 +236,17 @@ class CardDelegate(QStyledItemDelegate):
                          painter.fontMetrics().elidedText(title, Qt.TextElideMode.ElideRight, text_w))
         painter.setFont(option.font)
         painter.setPen(QColor(chrome("text_muted")))
-        sub = views.subline(rec, self._model.fields) or rec.type
+        sub = views.subline(rec, [f for f in self._model.fields
+                                 if f not in ('installed', 'last_used', 'uninstall_safety')]) or rec.type
         if rec.type in (m.ORPHANED, m.DEFECT):
             sub = f"{rec.type} · {rec.purpose or rec.reason}"
         painter.drawText(QRect(text_left, rect.top() + 28, text_w, 20),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                          painter.fontMetrics().elidedText(sub, Qt.TextElideMode.ElideRight, text_w))
+        summary = views.subline(rec, ('uninstall_safety', 'installed', 'last_used'))
+        painter.drawText(QRect(text_left, rect.top() + 50, text_w, 20),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         painter.fontMetrics().elidedText(summary, Qt.TextElideMode.ElideRight, text_w))
         if "recommendation" in self._model.fields:
             colour = QColor(semantic(_BADGE_MEANING.get(rec.recommendation, "info")))
             badge = QRect(rect.right() - badge_w - 8, rect.top() + (rect.height() - 22) // 2, badge_w, 22)

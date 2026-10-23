@@ -253,4 +253,7 @@ def test_real_icon_overlay_handlers_are_readable_and_mostly_healthy():
     entries = sr.get_icon_overlay_handlers()
     assert len(entries) > 0
     orphaned = [e for e in entries if e.extra.startswith("ORPHANED")]
-    assert len(orphaned) == 0  # confirmed clean on this real machine (9 of 9)
+    # Was 0 of 9 here; AutoCAD 2027 (2026-10-22) then registered "AutoCAD Digital
+    # Signatures Icon Overlay Handler" -> AcSignIcon.dll, which does not exist --
+    # a real orphan the reader correctly reports. "Mostly healthy", not "none".
+    assert len(orphaned) <= 2, orphaned

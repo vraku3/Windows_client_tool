@@ -49,6 +49,8 @@ FIELDS: Tuple[Tuple[str, str, bool], ...] = (
     ("storage", "Storage", True),
     ("status", "Status", False),
     ("installed", "Installed", True),
+    ("last_used", "Last used", True),
+    ("uninstall_safety", "Uninstall safety", True),
     ("version", "Version", True),
     ("update", "Update", False),
     ("available", "Available", False),
@@ -60,10 +62,12 @@ SORTS: Tuple[Tuple[str, str], ...] = (
     ("publisher", "Publisher"), ("recommendation", "Recommendation"), ("version", "Version"),
     ("status", "Status"), ("available", "Available"), ("type", "Type"),
     ("updates", "Updates available"),
+    ("last_used", "Last used"), ("uninstall_safety", "Uninstall safety"),
 )
 
 #: The sort a Details column header maps to.
-FIELD_SORT = {"name": "name", "recommendation": "recommendation", "publisher": "publisher",
+FIELD_SORT = {"last_used": "last_used", "uninstall_safety": "uninstall_safety",
+              "name": "name", "recommendation": "recommendation", "publisher": "publisher",
               "storage": "storage", "status": "status", "installed": "recent",
               "version": "version", "update": "updates", "available": "available", "type": "type"}
 
@@ -175,6 +179,8 @@ def sort_key(sort: str) -> Callable[[m.AppRecord], tuple]:
     default direction handles."""
     name = lambda r: r.name.lower()                      # noqa: E731
     keys = {
+        "last_used": lambda r: (_facts_stamp(r), name(r)),
+        "uninstall_safety": lambda r: (field_text(r, 'uninstall_safety'), name(r)),
         "recent": lambda r: (r.installed or datetime.min, name(r)),
         "name": lambda r: (name(r),),
         "storage": lambda r: (r.storage if r.storage is not None else -1, name(r)),
@@ -251,7 +257,25 @@ def human_bytes(n: Optional[int]) -> str:
     return ""
 
 
+def _facts_stamp(record):
+    facts = record.extra.get('_facts')
+    return facts.last_used.timestamp() if facts and facts.last_used else float('-inf')
+
+
+def facts_text(record):
+    from core.app_facts import tooltip
+    facts = record.extra.get('_facts')
+    return tooltip(facts) if facts else record.extra.get('_facts_error') or 'App facts: \u2026'
+
+
 def field_text(r: m.AppRecord, key: str) -> str:
+    if key in ('installed', 'last_used', 'uninstall_safety'):
+        from core.app_facts import installed_text, last_used_text
+        facts = r.extra.get('_facts')
+        if not facts:
+            return r.extra.get('_facts_error') or '\u2026'
+        return {'installed': installed_text(facts), 'last_used': last_used_text(facts),
+                'uninstall_safety': facts.verdict}[key]
     if key == "name":
         return r.name
     if key == "storage":
@@ -274,6 +298,8 @@ def subline(r: m.AppRecord, fields: Sequence[str]) -> str:
         text = field_text(r, key)
         if text:
             parts.append(f"Installed {text}" if key == "installed" else
+                         f"Last used {text}" if key == "last_used" else
+                         f"Uninstall safety: {text}" if key == "uninstall_safety" else
                          f"Update {r.update}" if key == "update" else text)
     return "  ·  ".join(parts)
 
@@ -318,6 +344,7 @@ def properties(r: m.AppRecord) -> List[Tuple[str, str]]:
                  ("Presumed vendor", r.vendor or "unknown"), ("Likely purpose", r.purpose or "unknown"),
                  ("Confidence", r.confidence or "Unknown")]
         rows += [("Removes", p) for p in r.leftover_paths]
+    rows.append(("App facts", facts_text(r)))
     return rows
 
 
@@ -350,6 +377,7 @@ def about_html(r: m.AppRecord) -> str:
                    for k, v in detail if v)
     if rows:
         parts.append(f"<h3>Details</h3><table>{rows}</table>")
+    parts.append("<h3>App facts</h3><p>" + escape(facts_text(r)).replace("\n", "<br>") + "</p>")
     return "".join(parts)
 
 

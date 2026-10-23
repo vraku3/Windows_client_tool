@@ -310,8 +310,11 @@ def _diagnostic_tail(start: float, end: float) -> str:
     root = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Packages",
                         "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe", "LocalState", "DiagOutputDir")
     try:
+        # File times come from a coarser clock than time.time(): a log created
+        # just after `start` can carry a creation time slightly BEFORE it (the
+        # whole-suite run missed the log this way). Allow a small margin.
         paths = [p for p in glob.glob(os.path.join(root, "WinGet-*.log"))
-                 if start <= os.path.getctime(p) <= end]
+                 if start - 2 <= os.path.getctime(p) <= end + 2]
         if not paths:
             return "winget diagnostic log: no log created during the task window"
         path = max(paths, key=os.path.getmtime)

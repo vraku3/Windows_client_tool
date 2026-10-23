@@ -7,6 +7,9 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
                              QLineEdit, QMenu, QPushButton, QTableWidget,
                              QVBoxLayout)
 
+from ui.app_facts import bind_row
+from core.app_facts import AppKey
+
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 
 from . import installed_apps as ia
@@ -99,6 +102,13 @@ class InstalledAppsTab(DashTab):
         self._repopulate()
 
     def _key(self, entry, column):
+        if column >= len(HEADERS):
+            from core.app_facts import AppFactsIndex
+            index = AppFactsIndex._cached
+            facts = index.lookup(AppKey.from_entry(entry)) if index else None
+            if column == len(HEADERS):
+                return facts.last_used.timestamp() if facts and facts.last_used else float('-inf')
+            return facts.verdict if facts else ""
         if column == 4:
             return ia.size_bytes(entry.size_mb) or -1
         if column == 3:
@@ -121,6 +131,7 @@ class InstalledAppsTab(DashTab):
                 table.setItem(row, col, numeric_item(text, text))
             table.item(row, 0).setData(Qt.ItemDataRole.UserRole, e)
             table.item(row, 0).setToolTip(e.uninstall_string or "")
+            bind_row(table, row, e)
         table.horizontalHeader().setSortIndicator(*self._sort)
         total, unknown = ia.total_size(shown)
         self.status.setText(

@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from ui.app_facts import bind_row
+
 from core.formatting import human_size
 from core.appx_service import (  # noqa: F401  (fetch_packages: tests patch it here)
     _version_key, dedupe_by_name, dir_size_detailed, fetch_packages,
@@ -754,6 +756,7 @@ class StoreAppsModule(BaseModule):
             self._table.setItem(row, 7, self._provisioned_cell(
                 None if provisioned_map is None else name in provisioned_map))
             self._table.setItem(row, _COL_SOURCE, self._source_cell(app))
+            bind_row(self._table, row, app)
 
         for name in provisioned_only:
             self._add_provisioned_only_row(name)

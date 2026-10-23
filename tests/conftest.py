@@ -92,3 +92,12 @@ def _catalog_readers_restored():
         control = catalog.get(control_id)
         if control is not None and control.reader is not reader:
             object.__setattr__(control, "reader", reader)
+
+
+@pytest.fixture(autouse=True)
+def _app_facts_no_machine_scan(monkeypatch):
+    """Populating a fake app list must never start a real registry/usage scan."""
+    from core.app_facts import AppFactsIndex
+    monkeypatch.setattr(AppFactsIndex, '_cached', AppFactsIndex())
+    monkeypatch.setattr(AppFactsIndex, '_failure', None)
+    yield

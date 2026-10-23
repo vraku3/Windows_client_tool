@@ -69,6 +69,9 @@ class AppBusterWidget(QWidget):
         self._descending = bool(self._cfg("descending", True))
         self._model = AppModel(self)
         self._model.fields = list(self._cfg("fields", self._model.fields))
+        for field in ('installed', 'last_used', 'uninstall_safety'):
+            if field not in self._model.fields:
+                self._model.fields.append(field)
         self._model.on_check = lambda _k, _on: self._update_action_bar()
         self._build()
 
@@ -140,6 +143,8 @@ class AppBusterWidget(QWidget):
         for view in (self._cards, self._table):
             view.selectionModel().selectionChanged.connect(lambda *_: self._show_about())
         self._about = QTextBrowser(self)
+        self._model.dataChanged.connect(lambda *_: self._show_about())
+        self._model._facts_loader.updated.connect(lambda: self._apply(keep_rows=True))
         self._about.setOpenExternalLinks(False)
         self._about.setMinimumWidth(300)
         self._about.setPlaceholderText("Select an app to see what it is, what it does, and what "

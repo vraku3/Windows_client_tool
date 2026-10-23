@@ -11,6 +11,9 @@ from PyQt6.QtWidgets import (
     QTextEdit, QVBoxLayout, QWidget,
 )
 
+from ui.app_facts import bind_list
+from core.app_facts import AppKey
+
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
@@ -642,6 +645,7 @@ class AppManagerTab(QWidget):
                 item.setCheckState(Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, pkg)
             self._installed_list.addItem(item)
+            bind_list(self._installed_list, item, AppKey(name=pkg, package_name=pkg))
         self._populating = False
         # A package that has since been removed must not linger in the queue.
         self._remove_queue &= set(installed_appx)
@@ -670,6 +674,7 @@ class AppManagerTab(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, app.app_id)
             item.setToolTip(app.app_id)
             self._desktop_list.addItem(item)
+            bind_list(self._desktop_list, item, AppKey(name=app.name, winget_id=app.app_id))
         self._populating = False
         self._remove_winget_queue &= {app.app_id for app in apps}
         #: Names of what is installed, for the catalog list: plenty of apps

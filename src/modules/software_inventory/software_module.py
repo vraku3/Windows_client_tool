@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from ui.app_facts import bind_row, selected_facts
+
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
@@ -76,6 +78,8 @@ class _SoftwarePane(QWidget):
         split = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
+        from ui.app_facts import _controller
+        _controller(self.table, 0, True).updated.connect(self._on_selection)
         fit_table(self.table, stretch=[0, 2], content=[1, 3, 4, 5, 6, 7])
         self.table.horizontalHeader().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
         self.table.horizontalHeader().setStretchLastSection(True)
@@ -284,6 +288,7 @@ class _SoftwarePane(QWidget):
             paint_severity(cells[8], "info")
         for c, item in enumerate(cells):
             self.table.setItem(r, c, item)
+        bind_row(self.table, r, e)
 
     # ── selection and actions ───────────────────────────────────────────────
 
@@ -296,7 +301,7 @@ class _SoftwarePane(QWidget):
 
     def _on_selection(self) -> None:
         row = self.selected_row()
-        self.detail.setPlainText(sa.detail_text(row) if row else "")
+        self.detail.setPlainText(sa.detail_text(row) + "\n\n" + selected_facts(self.table) if row else "")
         e = row.entry if row else None
         self.uninstall_btn.setEnabled(bool(e and e.uninstall_string))
         self.copy_cmd_btn.setEnabled(bool(e and (e.uninstall_string or e.msi_uninstall)))

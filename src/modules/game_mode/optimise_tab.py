@@ -13,6 +13,9 @@ from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QPlain
                              QPushButton, QRadioButton, QStackedWidget, QTabWidget, QTreeWidget,
                              QTreeWidgetItem, QVBoxLayout, QWidget)
 
+from ui.app_facts import bind_tree
+from core.app_facts import AppKey
+
 from core.formatting import format_size
 from core.table_ui import set_role
 from core.widget_life import widget_is_valid
@@ -311,6 +314,8 @@ class OptimiseTab(QWidget):
                 item = QTreeWidgetItem([app.name, app.kind, state, last, app.source, app.location])
                 item.setToolTip(2, state)
                 self._usage_tree.addTopLevelItem(item)
+                bind_tree(self._usage_tree, item, AppKey(name=app.name, publisher=app.publisher,
+                          install_location=app.location))
 
     def _details_changed(self, item, previous=None) -> None:
         if item is None:

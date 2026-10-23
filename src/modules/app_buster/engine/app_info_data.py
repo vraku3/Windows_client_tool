@@ -840,5 +840,10 @@ DESKTOP_RAW: List[Tuple[str, About]] = [
     (r"^Deluge", _e("Deluge.", "BitTorrent client.", "Safe to remove; downloads stay.")),
 ]
 
+from .autodesk_info import ENTRIES as _AUTODESK
+
+DESKTOP_RAW[:0] = [(pattern, _e(what, does, remove))
+                   for pattern, _verdict, what, does, remove in _AUTODESK]
+
 DESKTOP: List[Tuple[Pattern[str], About]] = [(re.compile(p, re.IGNORECASE), a)
                                              for p, a in DESKTOP_RAW]

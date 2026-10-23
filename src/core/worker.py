@@ -50,6 +50,19 @@ def _release_later(worker) -> None:
     QTimer.singleShot(RELEASE_AFTER_MS, lambda: _RETIRING.discard(worker))
 
 
+def track(worker) -> None:
+    """Hold `worker` until its own `finished` has been delivered, whoever owns it.
+
+    For owners that can vanish while their worker runs (a menu, a controller
+    attached to a list). The alternative they used -- `widget.destroyed.connect(
+    lambda: retire(...))` -- runs Python while the C++ widget is being torn
+    down, often from inside Python's own garbage collection, and crashed the
+    NEXT test natively (0xC0000409) in whole-suite runs (2026-10-23).
+    """
+    _RETIRING.add(worker)
+    worker.signals.finished.connect(lambda ref=weakref.ref(worker): _release_later(ref()))
+
+
 def retire(workers: list) -> None:
     """Cancel every worker in `workers` and empty the list -- SAFELY.
 

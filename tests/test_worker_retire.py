@@ -83,3 +83,26 @@ def test_cleanup_widgets_retire_rather_than_drop_their_workers():
     for module in (drive_summary_bar, quick_cleanup_tab, recommendations_panel, _scan_tab):
         source = inspect.getsource(module)
         assert "retire(" in source, module.__name__
+
+
+def test_track_holds_a_worker_whose_owner_is_gone_until_finished(qapp, monkeypatch):
+    monkeypatch.setattr(wk, "RELEASE_AFTER_MS", 50)
+    gate = threading.Event()
+    w = wk.Worker(lambda _w: gate.wait(5))
+    wk.track(w)
+    QThreadPool.globalInstance().start(w)
+    owner = [w]
+    del owner                                  # the owner's list is gone
+    assert w in wk._RETIRING                   # but the worker is still held
+    gate.set()
+    _pump(qapp, lambda: w not in wk._RETIRING)
+    assert w not in wk._RETIRING
+
+
+def test_no_module_connects_destroyed_to_a_python_lambda():
+    import pathlib, re
+    src = pathlib.Path(__file__).resolve().parents[1] / "src"
+    hits = [f"{p.relative_to(src)}:{n}" for p in src.rglob("*.py")
+            for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+            if re.search(r"\.destroyed\.connect\(\s*lambda", line)]
+    assert hits == [], "use core.worker.track() instead: " + ", ".join(hits)

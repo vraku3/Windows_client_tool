@@ -29,7 +29,7 @@ from core.procengine.actions import (PRIORITY_LABELS, create_dump, end_process,
                                  resume_process, run_as, set_affinity,
                                  set_priority, suspend_process)
 from core.procengine.actions import Result, creation_seconds, prepare_restart
-from core.worker import Worker, retire
+from core.worker import Worker, retire, track
 from core.procengine.snapshot import descendants_of
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,6 @@ class ProcessMenu(QObject):
         self._app = None
         self._snapshot = None
         self._workers = []
-        widget.destroyed.connect(lambda: retire(self._workers))
 
     def set_snapshot(self, snapshot) -> None:
         self._snapshot = snapshot
@@ -90,6 +89,7 @@ class ProcessMenu(QObject):
             lambda message: self._show_error(message) if _widget_valid(self._widget) else None)
         worker.signals.finished.connect(lambda: self._release(worker))
         self._workers.append(worker)
+        track(worker)    # alive until finished even if this menu's window goes first
         pool = getattr(self._app, "thread_pool", None) or QThreadPool.globalInstance()
         pool.start(worker)
 

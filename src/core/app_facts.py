@@ -3,11 +3,16 @@ from __future__ import annotations
 
 import logging
 import ntpath
+from html import escape
+from time import monotonic
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from threading import Lock
 
 logger = logging.getLogger(__name__)
+
+REGISTRY_DATE = ("installer-reported date (registry InstallDate; MSI and many installers rewrite it "
+                 "on update/repair, so it can be the last servicing)")
 
 
 def date_value(value):
@@ -36,6 +41,7 @@ class AppKey:
     winget_id: str = ""
     registry_key: str = ""
     installed: datetime | None = None
+    installed_source: str = ""
 
     @classmethod
     def from_entry(cls, entry):
@@ -55,7 +61,8 @@ class AppKey:
                    display_icon=get("display_icon", "icon_path"),
                    package_name=get("package_name", "Name"), family=get("family", "PackageFamilyName"),
                    full_name=get("full_name", "PackageFullName"), winget_id=get("winget_id", "app_id"),
-                   registry_key=registry_key, installed=date_value(get("installed", "install_date")))
+                   registry_key=registry_key, installed=date_value(get("installed", "install_date")),
+                   installed_source=get("installed_source") or (REGISTRY_DATE if registry_key or get("install_date") else ""))
 
 
 @dataclass(frozen=True)
@@ -65,10 +72,11 @@ class AppFacts:
     installed: datetime | None = None
     installed_source: str = "not recorded by the installer"
     last_used: datetime | None = None
-    last_used_source: str = "no usage record (Windows keeps none for this app)"
+    last_used_source: str = "Unknown -- no matching usage evidence found"
     verdict: str = "Unknown"
     breaks: str = "Removal consequences are not known."
     confidence: str = "from the installer only"
+    collected: datetime | None = None
 
 
 def _norm(text):
@@ -88,25 +96,33 @@ def _protected(key):
              key.full_name, key.winget_id, key.registry_key, key.display_icon)
     if protected(*texts) or any(word in " | ".join(texts).casefold()
                                for word in ("sysmon", "amd3dvcache", "msteams", "microsoftteams")):
-        return ("Keep: on the protected list (the owner's keep list, security software, drivers, "
-                "runtimes, games and what they depend on) -- never suggested for removal.")
+        # Metadata can justify caution, but cannot authenticate an installed product.
+        from modules.app_buster.engine.windows_apps import KNOWN_PUBLISHER_IDS
+        family = _family(key)
+        verified_package = bool(family and family.rsplit('_', 1)[-1] in KNOWN_PUBLISHER_IDS
+                                and protected(family))
+        verified_desktop = (key.registry_key.upper().startswith('HKLM\\')
+                            and bool(key.publisher) and protected(key.publisher))
+        if not (verified_package or verified_desktop):
+            return "Keep (name matches a protected app -- not verified)."
+        return "Keep: on the protected list (verified package identity or machine publisher)."
     return ""
 
 
 def _fallback(key):
     from modules.app_buster.engine.autodesk_info import entry
-    researched = entry(key.name)
+    researched = entry(key.name, key.publisher, key.registry_key)
     if researched is not None:
         verdict, what, does, breaks = researched
         return AppFacts(what, does, key.installed,
-                        "installer" if key.installed else "not recorded by the installer",
+                        (key.installed_source or "installer-reported date; source not recorded") if key.installed else "not recorded by the installer",
                         verdict=verdict, breaks=breaks, confidence="researched")
     publisher = f" Publisher: {key.publisher}." if key.publisher else ""
     location = f" Install folder: {key.install_location}." if key.install_location else ""
     reason = _protected(key)
     return AppFacts(f"{key.name or key.package_name}: not in the catalog.{publisher}",
                     "The installer provides no researched description of its purpose." + location,
-                    key.installed, "installer" if key.installed else "not recorded by the installer",
+                    key.installed, (key.installed_source or "installer-reported date; source not recorded") if key.installed else "not recorded by the installer",
                     verdict="Keep" if reason else "Unknown", breaks=reason or "Removal consequences are not known.")
 
 
@@ -131,23 +147,37 @@ def _usage(key, evidence, errors):
     exe = usage._icon_exe(key.display_icon)
     found = [e for e in evidence if
              (family and e.key == "family:" + family) or
-             (exe and e.key in ("path:" + exe, "exe:" + ntpath.basename(exe))) or
+             (exe and e.key == "path:" + exe) or
              (folder and e.key.startswith("path:" + folder + "\\"))]
     if found:
         best = max(found, key=lambda e: e.when)
         detail = best.source + ("; some sources could not read: " + "; ".join(errors) if errors else "")
         return best.when, detail
+    possible = [e for e in evidence if exe and e.key == "exe:" + ntpath.basename(exe)]
+    if possible:
+        best = max(possible, key=lambda e: e.when)
+        detail = (f"possibly used {best.when:%Y-%m-%d} (Prefetch: an executable named "
+                  f"{ntpath.basename(exe)} ran -- not proof it was this install)")
+        if errors:
+            detail += "; could not read: " + "; ".join(errors)
+        return None, detail
     if errors:
         return None, "could not read: " + "; ".join(errors)
-    return None, "no usage record (Windows keeps none for this app)"
+    if not (family or folder or exe):
+        return None, "cannot be matched: the installer records no program path"
+    return None, "Unknown -- no matching usage evidence found"
 
 
 class AppFactsIndex:
     _lock = Lock()
+    _build_lock = Lock()
+    _generation = 0
     _cached = None
     _failure = None
+    _failed_at = float("-inf")
 
     def __init__(self, records=(), evidence=(), errors=(), problems=()):
+        self.collected = datetime.now().astimezone()
         self.records = list(records)
         self.evidence, self.errors, self.problems = list(evidence), list(errors), list(problems)
         self.maps = [{} for _ in range(6)]
@@ -157,22 +187,39 @@ class AppFactsIndex:
                     mapping.setdefault(token, []).append(record)
 
     @classmethod
+    def invalidate(cls):
+        """Discard successful scans; failure retries remain limited to once per 30 seconds."""
+        with cls._lock:
+            cls._cached = None
+            cls._generation += 1
+
+    @classmethod
     def build(cls):
         """Call on a Worker; simultaneous screens share one scan and evidence read."""
-        with cls._lock:
-            if cls._failure is not None:
-                raise RuntimeError(cls._failure)
-            if cls._cached is None:
-                try:
-                    from modules.app_buster.engine.scan import scan
-                    result = scan()
-                    evidence, errors = read_usage()
-                    cls._cached = cls(result.rows, evidence, errors, result.problems)
-                except Exception as error:
-                    logger.warning('App facts catalog could not read: %s', error)
+        with cls._build_lock:
+            with cls._lock:
+                if cls._failure is not None and monotonic() - cls._failed_at < 30:
+                    raise RuntimeError(cls._failure)
+                if cls._cached is not None:
+                    return cls._cached
+                generation = cls._generation
+            try:
+                from modules.app_buster.engine.scan import scan
+                result = scan()
+                evidence, errors = read_usage()
+                index = cls(result.rows, evidence, errors, result.problems)
+            except Exception as error:
+                logger.warning('App facts catalog could not read: %s', error)
+                with cls._lock:
                     cls._failure = str(error)
-                    raise
-            return cls._cached
+                    cls._failed_at = monotonic()
+                raise
+            with cls._lock:
+                # A refresh during the scan must not republish that stale scan.
+                if generation == cls._generation:
+                    cls._cached = index
+                cls._failure = None
+            return index
 
     @staticmethod
     def _tokens(key):
@@ -182,27 +229,40 @@ class AppFactsIndex:
                 name)
 
     def _match(self, key):
-        for position, (mapping, token) in enumerate(zip(self.maps, self._tokens(key))):
-            if position == 5 and key.publisher:
-                continue
-            matches = mapping.get(token, [])
+        # Strong identifiers win before any folder/display-name heuristics.
+        for mapping, token in zip(self.maps[:3], self._tokens(key)[:3]):
+            matches = mapping.get(token, []) if token else []
             if len(matches) == 1:
                 return matches[0]
-            if matches:
-                # Shared folders/families must not attribute one product's facts to another.
-                exact = [r for r in matches if r.name.casefold() == key.name.casefold()]
-                if len(exact) == 1:
-                    return exact[0]
-        # Some screens have only an AppX package name; accept only a unique exact identifier.
+            exact = [r for r in matches if r.name.casefold() == key.name.casefold()]
+            if len(exact) == 1:
+                return exact[0]
         packages = [r for r in self.records if key.package_name and
                     r.package_name.casefold() == key.package_name.casefold()]
-        return packages[0] if len(packages) == 1 else None
+        if len(packages) == 1:
+            return packages[0]
+
+        def compatible(record):
+            candidate = AppKey.from_entry(record)
+            for field in ('registry_key', 'package_name', 'name', 'publisher'):
+                wanted, actual = getattr(key, field), getattr(candidate, field)
+                normalize = _norm if field == 'registry_key' else lambda text: text.strip().casefold()
+                if wanted and normalize(wanted) != normalize(actual):
+                    return False
+            return True
+
+        for mapping, token in zip(self.maps[3:], self._tokens(key)[3:]):
+            matches = [r for r in mapping.get(token, []) if compatible(r)] if token else []
+            if len(matches) == 1:
+                return matches[0]
+        return None
 
     def lookup(self, key):
         record = self._match(key)
         facts = _fallback(key) if record is None else _record_facts(record)
-        if facts.installed is None and key.installed is not None:
-            facts = replace(facts, installed=key.installed, installed_source='installer')
+        if key.installed is not None:
+            facts = replace(facts, installed=key.installed, installed_source=key.installed_source or (facts.installed_source if facts.installed else
+                            "installer-reported date; source not recorded"))
         usage_key = key if record is None else AppKey.from_entry(record)
         if record is not None:
             usage_key = replace(usage_key, **{
@@ -211,10 +271,10 @@ class AppFactsIndex:
         last, source = _usage(usage_key, self.evidence, self.errors)
         reason = _protected(key) or _protected(usage_key)
         if reason:
-            facts = replace(facts, verdict="Keep", breaks=reason + " " + facts.breaks)
+            facts = replace(facts, verdict="Cannot remove" if facts.verdict == "Cannot remove" else "Keep", breaks=facts.breaks if facts.breaks.startswith(reason) else reason + " " + facts.breaks)
         if record is None and self.problems:
             facts = replace(facts, what=facts.what + " Catalog could not read: " + "; ".join(self.problems))
-        return replace(facts, last_used=last, last_used_source=source)
+        return replace(facts, last_used=last, last_used_source=source, collected=self.collected)
 
 
 def _record_facts(record):
@@ -228,10 +288,12 @@ def _record_facts(record):
         verdict = "Unknown"
     if not record.removable or record.type in ("System app", "Framework"):
         verdict = "Cannot remove"
-    verdict = autodesk_verdict(record.name) or verdict
-    # Many installers (Chrome, Office, Steam...) rewrite InstallDate on every update.
-    source = ("registry InstallDate -- installers often rewrite it when they update, so it can be "
-              "the last update" if record.type == "Desktop app" else "AppX install time")
+    if verdict != "Cannot remove":
+        verdict = autodesk_verdict(record.name, record.publisher, record.registry_key) or verdict
+    source = (REGISTRY_DATE if record.registry_key or record.type in ("Desktop app", "Defect", "Orphaned")
+              else record.extra.get('installed_source') or
+              ("estimate: creation time of the app's data folder" if record.extra.get('data_folder')
+               else "date source not recorded"))
     return AppFacts(info.what, info.does, record.installed,
                     source if record.installed else "not recorded by the installer",
                     verdict=verdict, breaks=info.remove + (" " + why if not curated else ""),
@@ -255,7 +317,7 @@ def colour_role(facts):
             "Optional": "info", "Unknown": "warning"}[facts.verdict]
 
 
-def tooltip(facts):
+def facts_text(facts):
     if facts.last_used:
         moment = facts.last_used.replace(tzinfo=facts.last_used.tzinfo or timezone.utc).astimezone()
         last = f"{moment:%Y-%m-%d %H:%M} ({last_used_text(facts)})"
@@ -265,4 +327,9 @@ def tooltip(facts):
             f"Installed: {installed_text(facts)} ({facts.installed_source})\n"
             f"Last used: {last}\nUsage evidence: {facts.last_used_source}\n"
             f"Uninstall safety: {facts.verdict}\nWhat could break: {facts.breaks}\n"
-            f"Confidence: {facts.confidence}")
+            f"Confidence: {facts.confidence}"
+            + (f"\nfacts collected {facts.collected:%H:%M}" if facts.collected else ""))
+
+
+def tooltip(facts):
+    return "<qt>" + escape(facts_text(facts)).replace("\n", "<br>") + "</qt>"

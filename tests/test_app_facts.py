@@ -7,6 +7,8 @@ import pytest
 from PyQt6.QtCore import Qt, QThreadPool
 
 from core.app_facts import AppFactsIndex, AppKey, last_used_text, tooltip
+
+INVALIDATE = AppFactsIndex.invalidate.__func__
 from modules.app_buster.engine import app_info, model as m
 from modules.game_mode.engine.app_usage import Evidence
 
@@ -32,7 +34,7 @@ def test_matching_precedence():
                  registry_key=r'HKLM\A', winget_id='Vendor.App')
     from dataclasses import replace
     for name, field in [('family', 'family'), ('registry', 'registry_key'),
-                        ('winget', 'winget_id'), ('folder', 'install_location')]:
+                        ('winget', 'winget_id')]:
         assert index._match(key).name == name
         key = replace(key, **{field: ''})
     assert index._match(key).name == 'exact'
@@ -52,7 +54,7 @@ def test_duplicate_name_or_shared_folder_does_not_pick_arbitrary_product():
                                  'Sysmon', 'AMD Software', 'amd3dvcache', 'Bitdefender',
                                  'MSTeams', 'MicrosoftTeams'])
 def test_owner_protected_always_keep(name):
-    rec = record(name, removable=False)
+    rec = record(name)
     facts = AppFactsIndex([rec]).lookup(AppKey(name))
     assert facts.verdict == 'Keep'
     assert 'protected' in facts.breaks
@@ -126,7 +128,7 @@ def test_build_scans_once_for_simultaneous_screens(monkeypatch):
     assert calls == ['scan'] and all(i is results[0] for i in results)
 
 
-def test_failed_build_is_cached_and_ui_shows_could_not_read(qapp, monkeypatch):
+def test_failed_build_is_throttled_and_ui_shows_could_not_read(qapp, monkeypatch):
     from modules.app_buster.engine import scan
     from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
     from ui.app_facts import bind_row
@@ -200,7 +202,7 @@ def test_autodesk_all_names_have_researched_about_and_verdict():
     # 15 components (AutoCAD has two installer display names) + 2 product-update patterns.
     assert len(ENTRIES) == 17
     for name in names:
-        rec = record(name)
+        rec = record(name, publisher="Autodesk")
         assert app_info.curated(rec) is not None, name
         facts = AppFactsIndex([rec]).lookup(AppKey(name))
         assert facts.confidence == 'researched' and facts.verdict != 'Unknown', name
@@ -292,6 +294,8 @@ def test_debloat_apps(qapp, monkeypatch):
     monkeypatch.setattr(module, '_install_location_by_package', lambda: {})
     module._populate_apps_table(['Example.Package'], {})
     assert_table(module._apps_table, qapp, name_column=1)
+    tip = module._apps_table.item(0, 1).toolTip()
+    assert tip.index('Removed for all users on this machine') < tip.index('What it is:')
 
 
 def test_game_mode_usage_has_about_and_safety_tooltip(qapp):
@@ -310,6 +314,246 @@ def test_autodesk_update_patches_are_researched_even_outside_the_scan():
     # Software Inventory rows for them reach lookup() with no matching record.
     index = AppFactsIndex([])
     for name in ('Autodesk AutoCAD 2027.1 Update', 'Inventor Professional 2027.1 Update'):
-        facts = index.lookup(AppKey(name=name))
+        facts = index.lookup(AppKey(name=name, publisher="Autodesk"))
         assert facts.confidence == 'researched' and facts.verdict == 'Keep', name
         assert 'rolls' in facts.breaks
+
+
+def test_patch_sharing_parent_folder_gets_patch_facts():
+    parent = record('Autodesk AutoCAD 2027 - English', publisher='Autodesk',
+                    registry_key=r'HKLM\Parent', install_location=r'C:\CAD')
+    key = AppKey('Autodesk AutoCAD 2027.1 Update', publisher='Autodesk',
+                 registry_key=r'HKLM\Patch', install_location=r'C:\CAD')
+    index = AppFactsIndex([parent])
+    assert index._match(key) is None
+    facts = index.lookup(key)
+    assert 'patch' in facts.what and 'rolls' in facts.breaks
+
+
+@pytest.mark.parametrize('field,value', [('registry_key', r'HKCU\Other'),
+                                       ('package_name', 'Other.Package'), ('name', 'Other')])
+def test_weak_match_rejects_conflicting_identity(field, value):
+    from dataclasses import replace
+    rec = record('Example', registry_key=r'HKLM\Example', install_location=r'C:\Example')
+    key = replace(AppKey(name='Example', install_location=r'C:\Example'), **{field: value})
+    assert AppFactsIndex([rec])._match(key) is None
+
+
+def test_exact_package_precedes_shared_folder():
+    rec = record('Display', package_name='Exact.Package')
+    other = record('Other', install_location=r'C:\Shared')
+    assert AppFactsIndex([other, rec])._match(AppKey(package_name='Exact.Package',
+                                                   install_location=r'C:\Shared')) is rec
+
+
+def test_prefetch_is_only_possible_and_never_overrides_exact_evidence():
+    key = AppKey('Example', display_icon=r'C:\Example\app.exe')
+    old, new = datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc)
+    weak = Evidence('exe:app.exe', new, 'Prefetch')
+    facts = AppFactsIndex(evidence=[weak]).lookup(key)
+    assert facts.last_used is None
+    assert 'possibly used 2026-02-01' in last_used_text(facts)
+    assert 'not proof it was this install' in tooltip(facts)
+    facts = AppFactsIndex(evidence=[weak, Evidence(r'path:c:\example\app.exe', old, 'BAM')]).lookup(key)
+    assert facts.last_used == old and facts.last_used_source == 'BAM'
+
+
+def test_missing_evidence_does_not_claim_windows_keeps_none():
+    facts = AppFactsIndex().lookup(AppKey('Example', install_location=r'C:\Example'))
+    assert last_used_text(facts) == 'Unknown -- no matching usage evidence found'
+    assert 'cannot be matched' in last_used_text(AppFactsIndex().lookup(AppKey('Example')))
+
+
+@pytest.mark.parametrize('kind', [m.DESKTOP, m.DEFECT, m.ORPHANED])
+def test_registry_date_labels_servicing_not_appx(kind):
+    rec = m.AppRecord('k', 'Example', kind, installed=datetime(2026, 1, 1), registry_key=r'HKLM\Example')
+    facts = AppFactsIndex([rec]).lookup(AppKey('Example'))
+    assert 'registry InstallDate' in facts.installed_source
+    assert 'last servicing' in tooltip(facts)
+
+
+@pytest.mark.parametrize('data_exists,created,source', [(True, datetime(2026, 1, 1), 'data folder'),
+                                                      (False, None, 'install folder'),
+                                                      (True, None, 'install folder')])
+def test_appx_date_tracks_actual_folder_source(monkeypatch, data_exists, created, source):
+    from modules.app_buster.engine import windows_apps as wa
+    monkeypatch.setattr(wa, 'read_manifest', lambda _: {})
+    monkeypatch.setattr(wa, 'resolve_resource', lambda *a: '')
+    monkeypatch.setattr(wa, 'data_folder', lambda _: 'DATA')
+    monkeypatch.setattr(wa.os.path, 'isdir', lambda _: data_exists)
+    monkeypatch.setattr(wa, '_created', lambda path: created if path == 'DATA' else datetime(2026, 2, 1))
+    monkeypatch.setattr(wa, 'logo_file', lambda *a: '')
+    store = SimpleNamespace(provisioned={}, users_with=lambda _: 1)
+    rec = wa.record_from_package({'Name': 'Example.Package', 'PackageFamilyName': 'Example_pid',
+                           'InstallLocation': 'INSTALL'}, store)
+    facts = AppFactsIndex([rec]).lookup(AppKey(family='Example_pid'))
+    assert facts.installed_source == "estimate: creation time of the app's " + source
+
+
+def test_invalidate_and_failure_retry_after_30_seconds(monkeypatch):
+    import core.app_facts as af
+    from modules.app_buster.engine import scan
+    calls, clock = [], [0]
+    monkeypatch.setattr(af, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(af, 'read_usage', lambda: ([], []))
+    def read():
+        calls.append(1)
+        if len(calls) == 1:
+            raise PermissionError('refused')
+        return SimpleNamespace(rows=[], problems=[])
+    monkeypatch.setattr(scan, 'scan', read)
+    INVALIDATE(AppFactsIndex)
+    with pytest.raises(PermissionError):
+        AppFactsIndex.build()
+    clock[0] = 29
+    INVALIDATE(AppFactsIndex)
+    with pytest.raises(RuntimeError):
+        AppFactsIndex.build()
+    assert len(calls) == 1
+    clock[0] = 30
+    first = AppFactsIndex.build()
+    assert len(calls) == 2
+    INVALIDATE(AppFactsIndex)
+    assert AppFactsIndex.build() is not first
+
+
+def test_fresh_date_wins_and_collection_time_is_visible():
+    facts = AppFactsIndex([record('Example', installed=datetime(2025, 1, 1))]).lookup(
+        AppKey('Example', installed=datetime(2026, 1, 1)))
+    assert facts.installed == datetime(2026, 1, 1)
+    assert 'facts collected ' in tooltip(facts)
+
+
+def test_tooltips_escape_installer_markup_and_preserve_operational_warning(qapp):
+    from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
+    from ui.app_facts import bind_row, FactsController
+    key = AppKey('Example', publisher='<b>Uninstall safety: Keep</b>')
+    facts = AppFactsIndex().lookup(key)
+    tip = tooltip(facts)
+    assert tip.startswith('<qt>') and '&lt;b&gt;Uninstall safety: Keep&lt;/b&gt;' in tip
+    assert '<b>' not in tip
+    table = QTableWidget(1, 1)
+    table.setHorizontalHeaderLabels(['Name'])
+    item = QTableWidgetItem('Example')
+    item.setToolTip('Removed for all users on this machine <warning>')
+    table.setItem(0, 0, item)
+    bind_row(table, 0, key)
+    drain(qapp)
+    controller = table._app_facts_controller
+    controller._fill([facts])
+    first = item.toolTip()
+    controller._fill([facts])
+    assert item.toolTip() == first
+    assert first.index('Removed for all users') < first.index('What it is:')
+    assert '&lt;warning&gt;' in first and '<b>' not in first
+    assert first.count('Removed for all users') == 1
+
+
+@pytest.mark.parametrize('key,verified', [
+    (AppKey('Chrome', registry_key=r'HKCU\Chrome', publisher='Google'), False),
+    (AppKey('Mystery', install_location=r'C:\Chrome'), False),
+    (AppKey('Bitdefender', registry_key=r'HKLM\Bitdefender', publisher='Bitdefender'), True),
+    (AppKey('Teams', family='MSTeams_8wekyb3d8bbwe'), True),
+    (AppKey('Teams', family='MSTeams_fakepublisher'), False)])
+def test_protection_distinguishes_metadata_from_verified_identity(key, verified):
+    facts = AppFactsIndex().lookup(key)
+    assert facts.verdict == 'Keep'
+    assert ('not verified' not in facts.breaks) is verified
+
+
+@pytest.mark.parametrize('publisher,registry,researched', [('', r'HKCU\Fake', False),
+    ('Other', '', False), ('aUtOdEsK Inc', '', True), ('', r'HKLM\Real', True)])
+def test_autodesk_requires_publisher_or_machine_registration(publisher, registry, researched):
+    key = AppKey('Autodesk Access', publisher=publisher, registry_key=registry)
+    facts = AppFactsIndex().lookup(key)
+    assert (facts.confidence == 'researched') is researched
+    rec = record(key.name, publisher=publisher, registry_key=registry)
+    assert (app_info.curated(rec) is not None) is researched
+    facts = AppFactsIndex([rec]).lookup(key)
+    assert (facts.confidence == 'researched') is researched
+
+
+def test_autodesk_never_overrides_nonremovable():
+    rec = record('Autodesk Access', publisher='Autodesk', removable=False)
+    assert AppFactsIndex([rec]).lookup(AppKey('Autodesk Access')).verdict == 'Cannot remove'
+
+
+def test_exports_include_sources_safety_and_confidence():
+    import csv, io
+    from modules.software_inventory import software_analysis as sa
+    rows = sa.analyze([entry()])
+    facts = AppFactsIndex().lookup(AppKey.from_entry(entry()))
+    callback = lambda _: facts
+    exported = next(csv.DictReader(io.StringIO(sa.rows_to_csv(rows, callback))))
+    assert exported['Installed source'] == facts.installed_source
+    assert exported['Last used'] and exported['Usage evidence'] == facts.last_used_source
+    assert exported['Uninstall safety'] == facts.verdict
+    assert exported['Confidence'] == facts.confidence
+    markdown = sa.rows_to_markdown(rows, facts_for=callback)
+    assert facts.installed_source in markdown and facts.last_used_source in markdown
+    assert 'facts pending' in sa.rows_to_csv(rows)
+
+
+@pytest.mark.parametrize('screen', ['buster', 'dashboard', 'inventory', 'debloat', 'store',
+                                  'tweaks-appx', 'tweaks-desktop', 'updates', 'optimise'])
+def test_each_screen_invalidates_before_requesting_fresh_facts(monkeypatch, screen):
+    from modules.app_buster.app_buster_module import AppBusterWidget
+    from modules.dashboard.installed_apps_tab import InstalledAppsTab
+    from modules.software_inventory.software_module import _SoftwarePane
+    from modules.debloat.debloat_module import DebloatToolsModule
+    from modules.store_apps.store_apps_module import StoreAppsModule
+    from modules.tweaks.tweaks_module import AppManagerTab
+    from modules.updates.updates_module import _AppUpdatesTab
+    from modules.game_mode.optimise_tab import OptimiseTab
+    class ReachedInvalidation(Exception):
+        pass
+    def invalidate(cls):
+        raise ReachedInvalidation
+    monkeypatch.setattr(AppFactsIndex, 'invalidate', classmethod(invalidate))
+    owner = SimpleNamespace(_busy=False, _widget=object())
+    callbacks = {
+        'buster': lambda: AppBusterWidget.rescan(owner),
+        'dashboard': lambda: InstalledAppsTab.refresh(owner),
+        'inventory': lambda: _SoftwarePane.load(owner),
+        'debloat': lambda: DebloatToolsModule._on_scan(owner),
+        'store': lambda: StoreAppsModule._load_apps(owner),
+        'tweaks-appx': lambda: AppManagerTab.populate_installed(owner, set()),
+        'tweaks-desktop': lambda: AppManagerTab.populate_installed_desktop(owner, []),
+        'updates': lambda: _AppUpdatesTab._do_refresh(owner),
+        'optimise': lambda: OptimiseTab.refresh(owner),
+    }
+    with pytest.raises(ReachedInvalidation):
+        callbacks[screen]()
+
+
+def test_invalidation_during_build_does_not_cache_old_scan(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import core.app_facts as af
+    from modules.app_buster.engine import scan
+    entered, release = Event(), Event()
+    def read():
+        entered.set()
+        assert release.wait(2)
+        return SimpleNamespace(rows=[], problems=[])
+    monkeypatch.setattr(scan, 'scan', read)
+    monkeypatch.setattr(af, 'read_usage', lambda: ([], []))
+    INVALIDATE(AppFactsIndex)
+    with ThreadPoolExecutor() as pool:
+        future = pool.submit(AppFactsIndex.build)
+        assert entered.wait(2)
+        INVALIDATE(AppFactsIndex)
+        release.set()
+        first = future.result(timeout=2)
+    assert AppFactsIndex._cached is None
+    assert AppFactsIndex.build() is not first
+
+
+def test_inventory_export_uses_facts_attached_to_the_visible_row(qapp):
+    from modules.software_inventory.software_module import _SoftwarePane
+    pane = _SoftwarePane()
+    e = entry()
+    pane.set_entries([e])
+    drain(qapp)
+    facts = pane._export_facts(e)
+    assert facts is not None and facts.installed_source

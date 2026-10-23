@@ -20,6 +20,9 @@ _GUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 def curated(rec: m.AppRecord) -> Optional[About]:
     """The hand-written entry for this row, or None."""
     if rec.type == m.DESKTOP:
+        from .autodesk_info import ENTRIES, trusted
+        if any(re.search(pattern, rec.name or "", re.I) for pattern, *_ in ENTRIES) and not trusted(rec.publisher, rec.registry_key):
+            return None
         return next((a for pattern, a in DESKTOP if pattern.search(rec.name or "")), None)
     pkg = (rec.package_name or "").lower()
     if not pkg:

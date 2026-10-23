@@ -15,8 +15,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ui.app_facts import bind_row, selected_facts
+from ui.app_facts import bind_row, selected_facts, FACTS_ROLE, KEY_ROLE
 
+from core.app_facts import AppKey, AppFactsIndex
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
@@ -155,6 +156,7 @@ class _SoftwarePane(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def load(self) -> None:
+        AppFactsIndex.invalidate()
         self.refresh_btn.setEnabled(False)
         self.status.setText("Loading...")
         self._progress.show()
@@ -340,6 +342,14 @@ class _SoftwarePane(QWidget):
         self.status.setText(f"Uninstall launched for {e.name}. Press Refresh when it finishes; "
                             "the entry disappears if the removal succeeded.")
 
+    def _export_facts(self, entry):
+        key = AppKey.from_entry(entry)
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.data(KEY_ROLE) == key:
+                return item.data(FACTS_ROLE)
+        return None
+
     def _export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "software.csv", "CSV (*.csv)")
         if not path:
@@ -347,7 +357,7 @@ class _SoftwarePane(QWidget):
         rows = self._visible_rows()
         try:
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
-                f.write(sa.rows_to_csv(rows))
+                f.write(sa.rows_to_csv(rows, self._export_facts))
         except OSError as e:
             self.status.setText(f"Export failed: {e}")
             logger.warning("Software CSV export failed: %s", e)
@@ -356,7 +366,7 @@ class _SoftwarePane(QWidget):
 
     def _copy_markdown(self) -> None:
         rows = self._visible_rows()
-        QApplication.clipboard().setText(sa.rows_to_markdown(rows, socket.gethostname()))
+        QApplication.clipboard().setText(sa.rows_to_markdown(rows, socket.gethostname(), self._export_facts))
         self.status.setText(f"Copied {len(rows)} rows as Markdown.")
 
     def cancel(self) -> None:

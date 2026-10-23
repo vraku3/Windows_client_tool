@@ -1,17 +1,21 @@
 """Asynchronous app-facts presentation shared by installed-app lists."""
+from html import escape
+from time import monotonic
+
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, Qt, QThreadPool, QTimer, pyqtSlot, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QListWidget
 
 from core.app_facts import (AppKey, AppFactsIndex, colour_role, installed_text,
-                            last_used_text, tooltip)
+                            last_used_text, tooltip, facts_text)
 from core.semantic_colors import semantic
 from core.worker import Worker, retire, track
 
 KEY_ROLE = Qt.ItemDataRole.UserRole + 96
 FACTS_ROLE = Qt.ItemDataRole.UserRole + 97
 BASE_TEXT_ROLE = Qt.ItemDataRole.UserRole + 98
+BASE_TIP_ROLE = Qt.ItemDataRole.UserRole + 99
 
 
 class DateItem(QTableWidgetItem):
@@ -28,11 +32,13 @@ def bind_row(table, row, entry, name_column=0, safety=True):
     item = table.item(row, name_column)
     if item is None:
         return
+    item.setData(BASE_TIP_ROLE, item.toolTip())
     item.setData(KEY_ROLE, entry if isinstance(entry, AppKey) else AppKey.from_entry(entry))
     _controller(table, name_column, safety).schedule()
 
 
 def bind_list(widget, item, key):
+    item.setData(BASE_TIP_ROLE, item.toolTip())
     item.setData(KEY_ROLE, key)
     item.setData(BASE_TEXT_ROLE, item.text())
     item.setData(FACTS_ROLE, None)
@@ -40,6 +46,7 @@ def bind_list(widget, item, key):
 
 
 def bind_tree(widget, item, key):
+    item.setData(0, BASE_TIP_ROLE, item.toolTip(0))
     item.setData(0, KEY_ROLE, key)
     _controller(widget, 0, True).schedule()
 
@@ -145,7 +152,10 @@ class FactsController(QObject):
         self.updated.emit()
 
     def _fill_item(self, item, facts, status):
-        tip = tooltip(facts) if facts else status
+        tip = tooltip(facts) if facts else '<qt>' + escape(status) + '</qt>'
+        base_tip = self._get(item, BASE_TIP_ROLE)
+        if base_tip:
+            tip = '<qt>' + escape(base_tip).replace('\n', '<br>') + '<br>---<br>' + tip[4:-5] + '</qt>'
         values = [installed_text(facts), last_used_text(facts), facts.verdict] if facts else [status] * 3
         widget = self.widget
         if isinstance(widget, QTableWidget):
@@ -154,7 +164,7 @@ class FactsController(QObject):
             dates = [facts.installed, facts.last_used, None] if facts else [None] * 3
             for n, col in enumerate(self.columns):
                 cell = DateItem(values[n], dates[n]) if n < 2 else QTableWidgetItem(values[n])
-                cell.setToolTip(facts.breaks if n == 2 and facts else tip)
+                cell.setToolTip(tip)
                 if n == 2 and facts:
                     cell.setForeground(QColor(semantic(colour_role(facts))))
                 widget.setItem(item.row(), col, cell)
@@ -172,7 +182,7 @@ def selected_facts(table, column=0):
     row = table.currentRow()
     item = table.item(row, column) if row >= 0 else None
     facts = item.data(FACTS_ROLE) if item else None
-    return tooltip(facts) if facts else 'App facts: â€¦'
+    return facts_text(facts) if facts else 'App facts: â€¦'
 
 
 class ModelFactsController(QObject):
@@ -186,7 +196,9 @@ class ModelFactsController(QObject):
         self._pending = set()
 
     def request(self, rows):
-        rows = [r for r in rows if '_facts' not in r.extra and r.key not in self._pending]
+        rows = [r for r in rows if ('_facts' not in r.extra or
+                (r.extra.get('_facts_error') and monotonic() >= r.extra.get('_facts_retry_at', 0)))
+                and r.key not in self._pending]
         if not rows:
             return
         if not self._pending:
@@ -213,6 +225,7 @@ class ModelFactsController(QObject):
         for record, facts, error in payload:
             record.extra['_facts'] = facts
             record.extra['_facts_error'] = error
+            record.extra['_facts_retry_at'] = monotonic() + 30 if error else 0
             self._pending.discard(record.key)
         self.model.refresh_values()
         self.updated.emit()

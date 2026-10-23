@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 
 from ui.app_facts import bind_row
 
+from core.app_facts import AppFactsIndex
 from core.formatting import human_size
 from core.appx_service import (  # noqa: F401  (fetch_packages: tests patch it here)
     _version_key, dedupe_by_name, dir_size_detailed, fetch_packages,
@@ -560,6 +561,7 @@ class StoreAppsModule(BaseModule):
             return
         if self._busy:
             return
+        AppFactsIndex.invalidate()
         state = self._capture_state()
         self._progress.setVisible(True)
         self._load_error = ""

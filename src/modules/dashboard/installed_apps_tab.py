@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
                              QVBoxLayout)
 
 from ui.app_facts import bind_row
-from core.app_facts import AppKey
+from core.app_facts import AppKey, AppFactsIndex
 
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 
@@ -73,6 +73,7 @@ class InstalledAppsTab(DashTab):
         if self._busy:
             return
         self._busy = True
+        AppFactsIndex.invalidate()
         self.status.setText("Reading installed software…")
         from modules.software_inventory.software_module import fetch_software
         self.run(lambda _w: fetch_software(), self._apply)
@@ -103,7 +104,6 @@ class InstalledAppsTab(DashTab):
 
     def _key(self, entry, column):
         if column >= len(HEADERS):
-            from core.app_facts import AppFactsIndex
             index = AppFactsIndex._cached
             facts = index.lookup(AppKey.from_entry(entry)) if index else None
             if column == len(HEADERS):

@@ -66,13 +66,20 @@ ENTRIES = [
 ]
 
 
-def verdict(name):
-    return next((v for pattern, v, *_ in ENTRIES if re.search(pattern, name, re.I)), None)
+def trusted(publisher="", registry_key=""):
+    return "autodesk" in publisher.casefold() or registry_key.upper().startswith("HKLM\\")
 
 
-def entry(name):
+def verdict(name, publisher="", registry_key=""):
+    hit = entry(name, publisher, registry_key)
+    return hit[0] if hit else None
+
+
+def entry(name, publisher="", registry_key=""):
     """(verdict, what, does, what removing costs) for a researched Autodesk name, or None.
 
     For screens whose rows App Buster's scan does not list (product update
     patches are hidden there as children of their product)."""
+    if not trusted(publisher, registry_key):
+        return None
     return next((tuple(rest) for pattern, *rest in ENTRIES if re.search(pattern, name or "", re.I)), None)

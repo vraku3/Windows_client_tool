@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QHBoxLa
                              QPushButton, QSplitter, QStackedWidget, QTabBar, QTableView,
                              QTextBrowser, QToolButton, QVBoxLayout, QWidget)
 
+from core.app_facts import AppFactsIndex
 from core.admin_utils import is_admin
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
@@ -307,6 +308,7 @@ class AppBusterWidget(QWidget):
         if self._busy:
             return
         self._busy = True
+        AppFactsIndex.invalidate()
         self._counter.setText("Scanning… 0 apps found")
         self._counter.show()
         load_baseline = not self._baseline_loaded

@@ -352,6 +352,8 @@ def record_from_package(pkg: dict, store: StoreView) -> Optional[m.AppRecord]:
     # The manifest's PublisherDisplayName is what Settings shows; the
     # certificate subject can be a bare GUID (ChatGPT's is CN=50BDFD77-...).
     publisher = resolve_resource(str(manifest.get("publisher") or ""), name, full) or         _publisher_name(pkg.get("Publisher") or "", pkg.get("PublisherId") or "")
+    data_created = _created(data_dir) if data_dir and os.path.isdir(data_dir) else None
+    installed = data_created or _created(location)
     return m.AppRecord(
         # Frameworks install side by side per architecture under ONE family
         # (15 x86/x64 pairs here: VCLibs, UI.Xaml, WindowsAppRuntime ...).
@@ -360,14 +362,15 @@ def record_from_package(pkg: dict, store: StoreView) -> Optional[m.AppRecord]:
         status=m.INSTALLED if removable else m.UNREMOVABLE,
         publisher=publisher, version=str(pkg.get("Version") or ""),
         architecture=str(pkg.get("Architecture") or ""), description=description,
-        installed=(_created(data_dir) if data_dir and os.path.isdir(data_dir) else None)
-        or _created(location),
+        installed=installed,
         available=available, hidden=bool(manifest.get("hidden")) if manifest else False,
         removable=removable, install_location=location,
         icon_path=logo_file(location, str(manifest.get("logo") or "")),
         package_name=name, full_name=full, family=family,
         publisher_id=pkg.get("PublisherId") or "", signature=str(pkg.get("SignatureKind") or ""),
-        extra={"data_folder": data_dir} if data_dir and os.path.isdir(data_dir) else {},
+        extra={"data_folder": data_dir if data_dir and os.path.isdir(data_dir) else "",
+               "installed_source": "estimate: creation time of the app's " +
+               ("data folder" if data_created else "install folder")},
     )
 
 
@@ -409,6 +412,7 @@ def _unregistered(full: str, status: str, when: Optional[datetime], family: str 
         hidden=True, removable=False, install_location=location if os.path.isdir(location) else "",
         package_name=name, full_name=full if status == m.INSTALLABLE else "", family=family,
         publisher_id=pid,
+        extra={"installed_source": "estimate: registry provisioning key last-write time"} if when else {},
         description="On this PC but not installed for your account." if status == m.INSTALLABLE
         else "Its files are staged on this PC, but it is registered for no account.",
     )

@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.app_facts import bind_list
-from core.app_facts import AppKey
+from core.app_facts import AppKey, AppFactsIndex
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
@@ -633,6 +633,7 @@ class AppManagerTab(QWidget):
 
     def populate_installed(self, installed_appx: set) -> None:
         self._populating = True
+        AppFactsIndex.invalidate()
         self._installed_list.clear()
         for pkg in sorted(installed_appx):
             item = QListWidgetItem(pkg)
@@ -659,6 +660,7 @@ class AppManagerTab(QWidget):
         machine for removal.
         """
         self._populating = True
+        AppFactsIndex.invalidate()
         self._desktop_list.clear()
         for app in sorted(apps, key=lambda a: a.name.lower()):
             item = QListWidgetItem(app.display)

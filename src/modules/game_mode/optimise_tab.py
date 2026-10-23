@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QPlain
                              QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ui.app_facts import bind_tree
-from core.app_facts import AppKey
+from core.app_facts import AppKey, AppFactsIndex
 
 from core.formatting import format_size
 from core.table_ui import set_role
@@ -325,6 +325,7 @@ class OptimiseTab(QWidget):
         self._notes.setPlainText(f"{spec.label}\n\nNow: {optimise.display(row.before)}\n\n{item.text(4)}")
 
     def refresh(self) -> None:
+        AppFactsIndex.invalidate()
         selected = set(self._selected)
         self._start("refresh", lambda worker: _read_all(self._engine, selected, lambda: worker.is_cancelled))
 

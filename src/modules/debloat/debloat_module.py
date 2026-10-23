@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 
 from ui.app_facts import bind_row
-from core.app_facts import AppKey
+from core.app_facts import AppKey, AppFactsIndex
 
 from core.appx_service import dir_size, fetch_packages, invalidate_cache
 from core.base_module import BaseModule
@@ -471,6 +471,7 @@ class DebloatToolsModule(BaseModule):
         return self._debloat_entries
 
     def _on_scan(self) -> None:
+        AppFactsIndex.invalidate()
         self._scan_btn.setEnabled(False)
         self._apps_status.setText("Scanning installed apps...")
         w = Worker(self._do_scan)

@@ -100,4 +100,6 @@ def _app_facts_no_machine_scan(monkeypatch):
     from core.app_facts import AppFactsIndex
     monkeypatch.setattr(AppFactsIndex, '_cached', AppFactsIndex())
     monkeypatch.setattr(AppFactsIndex, '_failure', None)
+    monkeypatch.setattr(AppFactsIndex, '_failed_at', float('-inf'))
+    monkeypatch.setattr(AppFactsIndex, 'invalidate', classmethod(lambda cls: None))
     yield

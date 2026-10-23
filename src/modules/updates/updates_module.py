@@ -16,6 +16,7 @@ from PyQt6.QtGui import QFont, QColor, QDesktopServices
 
 from ui.app_facts import bind_row
 
+from core.app_facts import AppFactsIndex
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker, COMWorker
@@ -173,6 +174,7 @@ class _AppUpdatesTab(QWidget):
     # ------------------------------------------------------------------
 
     def _do_refresh(self):
+        AppFactsIndex.invalidate()
         self._loaded = True
         self._refresh_btn.setEnabled(False)
         self._update_sel_btn.setEnabled(False)

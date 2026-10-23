@@ -436,9 +436,12 @@ def parse_winget_upgrades(output: str) -> Optional[Dict[str, str]]:
 # Export / copy
 # --------------------------------------------------------------------------
 
+FACT_COLUMNS = ["Installed source", "Last used", "Usage evidence", "Uninstall safety", "Confidence"]
+
+
 EXPORT_COLUMNS = ["Name", "Version", "Publisher", "Install date", "Size", "Architecture",
                   "Category", "Product code", "Uninstall command", "Quiet uninstall",
-                  "Install location", "Registry key", "End of support", "Note"]
+                  "Install location", "Registry key", "End of support", "Note"] + FACT_COLUMNS
 
 
 def _note(r: Row) -> str:
@@ -454,7 +457,7 @@ def _note(r: Row) -> str:
     return "; ".join(notes)
 
 
-def row_values(r: Row) -> List[str]:
+def row_values(r: Row, facts_for=None) -> List[str]:
     e = r.entry
     category = ("System component" if e.system_component else "Update" if e.is_update
                 else r.family or "Application")
@@ -462,24 +465,36 @@ def row_values(r: Row) -> List[str]:
             e.product_code, e.uninstall_string, e.quiet_uninstall or (
                 f"{e.msi_uninstall} /qn" if e.msi_uninstall and e.windows_installer else ""),
             e.install_location, e.registry_key,
-            f"{r.eol.end_of_support:%Y-%m-%d}" if r.eol else "", _note(r)]
+            f"{r.eol.end_of_support:%Y-%m-%d}" if r.eol else "", _note(r)] + _fact_values(r, facts_for)
 
 
-def rows_to_csv(rows: Sequence[Row]) -> str:
+def _fact_values(row, facts_for=None):
+    from core.app_facts import REGISTRY_DATE, last_used_text
+    facts = facts_for(row.entry) if facts_for else None
+    if facts is None:
+        return [REGISTRY_DATE if row.entry.install_date else "not recorded by the installer",
+                "Unknown -- facts pending or could not be read", "facts pending or could not be read",
+                "Unknown", "facts pending or could not be read"]
+    last = facts.last_used.isoformat() if facts.last_used else last_used_text(facts)
+    return [facts.installed_source, last, facts.last_used_source, facts.verdict, facts.confidence]
+
+
+def rows_to_csv(rows: Sequence[Row], facts_for=None) -> str:
     buf = io.StringIO()
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(EXPORT_COLUMNS)
     for r in rows:
-        w.writerow(row_values(r))
+        w.writerow(row_values(r, facts_for))
     return buf.getvalue()
 
 
-def rows_to_markdown(rows: Sequence[Row], host: str = "") -> str:
+def rows_to_markdown(rows: Sequence[Row], host: str = "", facts_for=None) -> str:
     lines = [f"### Installed software{': ' + host if host else ''} ({len(rows)})", "",
-             "| Name | Version | Publisher | Installed | Arch | Note |", "|---|---|---|---|---|---|"]
+             "| Name | Version | Publisher | Installed | Arch | Note | " + " | ".join(FACT_COLUMNS) + " |",
+             "|" + "---|" * (6 + len(FACT_COLUMNS))]
     for r in rows:
         e = r.entry
-        cells = [e.name, e.version, e.publisher, e.install_date, e.type_, _note(r)]
+        cells = [e.name, e.version, e.publisher, e.install_date, e.type_, _note(r)] + _fact_values(r, facts_for)
         lines.append("| " + " | ".join((c or "-").replace("|", "/") for c in cells) + " |")
     return "\n".join(lines) + "\n"
 

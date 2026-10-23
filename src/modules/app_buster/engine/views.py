@@ -263,9 +263,9 @@ def _facts_stamp(record):
 
 
 def facts_text(record):
-    from core.app_facts import tooltip
+    from core.app_facts import facts_text as plain_facts
     facts = record.extra.get('_facts')
-    return tooltip(facts) if facts else record.extra.get('_facts_error') or 'App facts: \u2026'
+    return plain_facts(facts) if facts else record.extra.get('_facts_error') or 'App facts: \u2026'
 
 
 def field_text(r: m.AppRecord, key: str) -> str:

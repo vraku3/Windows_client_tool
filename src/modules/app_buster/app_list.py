@@ -143,8 +143,8 @@ class AppModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.ForegroundRole and key == 'uninstall_safety' and facts:
             return QColor(semantic(colour_role(facts)))
         if role == Qt.ItemDataRole.ToolTipRole:
-            if key == 'uninstall_safety' and facts:
-                return facts.breaks
+            if key in ('uninstall_safety', 'installed', 'last_used') and facts:
+                return tooltip(facts)
             if key == 'name':
                 return tooltip(facts) if facts else rec.extra.get('_facts_error') or '\u2026'
             if key == "recommendation":

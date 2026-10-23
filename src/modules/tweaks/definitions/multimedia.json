@@ -285,7 +285,7 @@
   {
     "id": "mm_disable_windows_startup_sound",
     "name": "Disable the Windows Startup Sound",
-    "description": "Silences the chime played at the sign-in screen.",
+    "description": "Sets the startup-sound registry setting to request silencing the Windows startup chime. Other notification and app sounds are controlled separately.",
     "category": "Multimedia",
     "risk": "low",
     "requires_admin": true,

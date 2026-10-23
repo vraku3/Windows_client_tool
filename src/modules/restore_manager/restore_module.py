@@ -1,5 +1,9 @@
 """System Restore pane: restore points with age and gaps, System Protection and
 shadow-storage state per drive, computed findings, and guarded deletion."""
+
+from modules.restore_manager.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import logging
 import subprocess
 from dataclasses import dataclass, field
@@ -144,6 +148,7 @@ class RestoreManagerModule(BaseModule):
         layout.addWidget(head)
         self._drive_table = QTableWidget(0, len(DRIVE_COLUMNS))
         self._drive_table.setHorizontalHeaderLabels(DRIVE_COLUMNS)
+        describe_headers(self._drive_table)
         fit_table(self._drive_table, stretch=[0], content=[1, 2, 3, 4, 5])
         self._drive_table.verticalHeader().setVisible(False)
         self._drive_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -155,6 +160,7 @@ class RestoreManagerModule(BaseModule):
         self._table = QTableWidget()
         self._table.setColumnCount(len(POINT_COLUMNS))
         self._table.setHorizontalHeaderLabels(POINT_COLUMNS)
+        describe_headers(self._table)
         fit_table(self._table, stretch=[0], content=[1, 2, 3, 4])
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
@@ -169,42 +175,50 @@ class RestoreManagerModule(BaseModule):
         info.setWordWrap(True)
         info.setObjectName("infoNote")
         layout.addWidget(info)
+        explain_widget(self._widget, introduction=True)
         return self._widget
 
     def _build_toolbar(self) -> QHBoxLayout:
         toolbar = QHBoxLayout()
         self._create_btn = QPushButton("Create Restore Point")
+        describe_control(self._create_btn, '_create_btn')
         self._create_btn.setObjectName("accentButton")
         self._create_btn.clicked.connect(self._create_restore_point)
         toolbar.addWidget(self._create_btn)
 
         refresh_btn = QPushButton("Refresh")
+        describe_control(refresh_btn, 'refresh_btn')
         refresh_btn.clicked.connect(self._load_restore_points)
         toolbar.addWidget(refresh_btn)
 
         self._delete_btn = QPushButton("Delete Selected")
+        describe_control(self._delete_btn, '_delete_btn')
         self._delete_btn.setToolTip("Permanently remove the restore point(s) selected in the table")
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._delete_selected)
         toolbar.addWidget(self._delete_btn)
 
         self._older_btn = QPushButton("Delete Older Than...")
+        describe_control(self._older_btn, '_older_btn')
         self._older_btn.setToolTip("Delete restore points older than a number of days; the newest is always kept")
         self._older_btn.setEnabled(False)
         self._older_btn.clicked.connect(self._delete_older_than)
         toolbar.addWidget(self._older_btn)
 
         self._prune_btn = QPushButton("Keep Only Latest")
+        describe_control(self._prune_btn, '_prune_btn')
         self._prune_btn.setToolTip("Delete every restore point except the most recent one")
         self._prune_btn.setEnabled(False)
         self._prune_btn.clicked.connect(self._delete_all_but_latest)
         toolbar.addWidget(self._prune_btn)
 
         self._copy_btn = QPushButton("Copy as Markdown")
+        describe_control(self._copy_btn, '_copy_btn')
         self._copy_btn.clicked.connect(self._copy_markdown)
         toolbar.addWidget(self._copy_btn)
 
         open_sysprops_btn = QPushButton("System Properties")
+        describe_control(open_sysprops_btn, 'open_sysprops_btn')
         open_sysprops_btn.setToolTip("Turn protection on or off and set the shadow-storage limit")
         open_sysprops_btn.clicked.connect(self._open_system_properties)
         toolbar.addWidget(open_sysprops_btn)
@@ -307,11 +321,16 @@ class RestoreManagerModule(BaseModule):
             date_text = p.created.strftime("%Y-%m-%d %H:%M") if p.created else (raw_time or "Unknown")
             age = None if p.age_days is None else round(p.age_days, 1)
             self._table.setItem(row, 0, name_item)
+            describe_cell(self._table, 0, self._table.item(row, 0))
             self._table.setItem(row, 1, centered_item(date_text))
+            describe_cell(self._table, 1, self._table.item(row, 1))
             self._table.setItem(row, 2, centered_item(p.kind))
+            describe_cell(self._table, 2, self._table.item(row, 2))
             self._table.setItem(row, 3, numeric_item("n/a" if age is None else f"{age:g} d", age))
+            describe_cell(self._table, 3, self._table.item(row, 3))
             gap = None if p.gap_days is None else round(p.gap_days, 1)
             self._table.setItem(row, 4, numeric_item("-" if gap is None else f"{gap:g} d", gap))
+            describe_cell(self._table, 4, self._table.item(row, 4))
         self._table.setSortingEnabled(True)
 
     def _raw_time_for(self, info: ra.PointInfo, raw_by_seq: dict) -> str:
@@ -375,6 +394,7 @@ class RestoreManagerModule(BaseModule):
                 paint_severity(cells[5], "warning")
             for c, item in enumerate(cells):
                 self._drive_table.setItem(r, c, item)
+                describe_cell(self._drive_table, c, self._drive_table.item(r, c))
         fit_table_height(self._drive_table, 8)
 
     # ── create ──────────────────────────────────────────────────────────────

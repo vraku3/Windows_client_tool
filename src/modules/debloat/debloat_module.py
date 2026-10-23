@@ -1,4 +1,7 @@
 """DebloatModule — bloatware removal, privacy hardening, AI feature disabling."""
+
+from ui.help.debloat_widgets import explain
+from ui.help import debloat_text as help_info
 import datetime
 import json
 import logging
@@ -156,6 +159,7 @@ class DebloatToolsModule(BaseModule):
         self._signals.tweak_detected.connect(self._on_tweak_detected)
 
         layout.addWidget(self._tab_widget)
+        explain(self._widget, intro=help_info.INTRO["Debloat"])
         return self._widget
 
     def _build_apps_tab(self) -> QWidget:
@@ -861,6 +865,7 @@ class DebloatToolsModule(BaseModule):
         menu = QMenu(self._apps_table)
         act_copy = menu.addAction("Copy package name")
         act_copy.triggered.connect(lambda: QApplication.clipboard().setText(pkg))
+        explain(menu)
         menu.exec(self._apps_table.viewport().mapToGlobal(pos))
 
     def _on_export_apps(self) -> None:
@@ -1078,12 +1083,15 @@ class DebloatToolsModule(BaseModule):
             chk.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 0, chk)
             name_item = _SortableItem(_step_type_badge(tweak) + tweak.get("name", ""))
+            name_item.setToolTip(help_info.tweak_help(tweak))
+            chk.setToolTip("Select this tweak for later Apply. " + help_info.tweak_help(tweak))
             name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 1, name_item)
             cat_item = QTableWidgetItem(tweak.get("category", ""))
             cat_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, 2, cat_item)
             risk_item = QTableWidgetItem(tweak.get("risk", ""))
+            risk_item.setToolTip("Catalog disruption estimate. " + help_info.tweak_help(tweak))
             risk_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             risk_item.setForeground(QColor(_RISK_COLOR.get(tweak.get("risk", ""), chrome("text"))))
             table.setItem(row, 3, risk_item)
@@ -1325,6 +1333,7 @@ class DebloatToolsModule(BaseModule):
             cmd = (steps[0].get("cmd") or steps[0].get("command", "")) if steps else ""
             act = menu.addAction("Copy command")
             act.triggered.connect(lambda: QApplication.clipboard().setText(cmd))
+        explain(menu)
         menu.exec(table.viewport().mapToGlobal(pos))
 
     def _on_preset(self, preset_name: str, tab_type: str) -> None:
@@ -1562,6 +1571,7 @@ class DebloatHistoryDialog(QDialog):
         btn_row.addStretch()
         btn_row.addWidget(close_btn)
         root.addLayout(btn_row)
+        explain(self)
 
 
 class DebloatModule(CompositeModule):
@@ -1621,6 +1631,10 @@ class DebloatModule(CompositeModule):
         self._removed_banner.hide()
         layout.addWidget(self._removed_banner)
         layout.addWidget(tabs)
+        from modules.app_buster.help_text import INTRO as buster_intro
+        from modules.store_apps.help_text import INTRO as store_intro
+        explain(outer, panes={"App Buster": buster_intro, "Store Apps": store_intro},
+                intro=help_info.INTRO["Debloat"])
         return outer
 
     def note_removed(self, names: List[str]) -> None:

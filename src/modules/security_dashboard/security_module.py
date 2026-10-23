@@ -6,6 +6,9 @@ to toggle Defender settings, firewall profiles, SmartScreen, and more.
 Each toggle stores its previous state for per-setting revert.
 """
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 import ctypes
 import os
 import threading
@@ -245,6 +248,19 @@ class ControlCard(QFrame):
         if self._control.writable:
             self.toggle_button.setText(self._action_text())
             self.toggle_button.setEnabled(self._target() is not None)
+        self._set_help()
+
+    def _set_help(self) -> None:
+        value = None if self._reading is self._UNREAD else self._reading
+        text = help_info.control_help(self._control, value, self._target())
+        self.setToolTip(text)
+        self.title_label.setToolTip(text)
+        self.description_label.setToolTip(text)
+        self.toggle_button.setToolTip(text)
+        self.status_badge.setToolTip(
+            "Latest reading, not a pending target. Unknown means the check could not establish a value; "
+            "a recommendation is compared with this reading, not with its truthiness.")
+        self.staged_label.setToolTip("A proposed value awaiting Review and Apply; it has not been written to Windows.")
 
     # -- the pane's side of it ---------------------------------------------
 
@@ -575,6 +591,7 @@ class ReviewDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(self.apply_button)
         layout.addLayout(buttons)
+        explain(self, help_info.CONTROLS)
 
     def _heading_text(self) -> str:
         """The totals, at the TOP.
@@ -784,6 +801,7 @@ class _CategoryTab(QWidget):
         self._column.setContentsMargins(0, 0, 0, 0)
         self._scroll.setWidget(self._inner)
         root.addWidget(self._scroll, 1)
+        explain(self, intro=help_info.category_intro(category))
 
     def build_cards(self, on_staged) -> None:
         """Create this tab's cards. Once, and only when it is shown.
@@ -957,6 +975,7 @@ class SecurityDashboardModule(BaseModule):
         layout.addWidget(self._pending)
 
         self._widget = w
+        explain(w, help_info.CONTROLS, help_info.HEADERS, help_info.PANES, help_info.INTRO)
         return w
 
     # ── Tab 1: Overview ───────────────────────────────────────────────────
@@ -1621,6 +1640,9 @@ class SecurityDashboardModule(BaseModule):
         self._baseline_menu = menu       # held: a QMenu with no parent is collected
         for name in available_baselines():
             action = menu.addAction(name.capitalize())
+            tip = f"Compare this PC with the {name} baseline and stage supported differences. Review the compatibility costs; no setting changes until Apply is confirmed."
+            action.setToolTip(tip)
+            action.setStatusTip(tip)
             action.triggered.connect(
                 lambda _checked=False, n=name: self._on_baseline_requested(n))
         if not available_baselines():
@@ -1634,6 +1656,7 @@ class SecurityDashboardModule(BaseModule):
             self._on_export_profile)
         menu.addAction("Import and stage…").triggered.connect(
             self._on_import_profile)
+        explain(menu, help_info.CONTROLS)
         return menu
 
     def _on_export_profile(self) -> None:

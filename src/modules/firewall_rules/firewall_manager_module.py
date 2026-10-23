@@ -1,5 +1,9 @@
 """Firewall Rules Manager — view and manage Windows Firewall rules via netsh."""
 
+from modules.firewall_rules.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
+
 import logging
 import ntpath
 import os
@@ -741,6 +745,7 @@ class _GroupsDialog(QDialog):
 
         self._table = QTableWidget(0, len(_GROUP_COLS))
         self._table.setHorizontalHeaderLabels(_GROUP_COLS)
+        describe_headers(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
@@ -753,11 +758,14 @@ class _GroupsDialog(QDialog):
 
         btn_row = QHBoxLayout()
         self._enable_btn = QPushButton("Enable Group")
+        describe_control(self._enable_btn, '_enable_btn')
         self._disable_btn = QPushButton("Disable Group")
+        describe_control(self._disable_btn, '_disable_btn')
         btn_row.addWidget(self._enable_btn)
         btn_row.addWidget(self._disable_btn)
         btn_row.addStretch()
         close_btn = QPushButton("Close")
+        describe_control(close_btn, 'close_btn')
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
         layout.addLayout(btn_row)
@@ -772,6 +780,7 @@ class _GroupsDialog(QDialog):
 
         self.set_groups(groups)
         self._update_buttons()
+        explain_widget(self)
 
     def set_groups(self, groups: List["fa.GroupInfo"]) -> None:
         self._groups = groups
@@ -789,6 +798,7 @@ class _GroupsDialog(QDialog):
                     else:
                         item.setForeground(QColor(semantic("error")))
                 self._table.setItem(row, col, item)
+                describe_cell(self._table, col, self._table.item(row, col))
         self._update_buttons()
 
     def _selected_group(self) -> Optional["fa.GroupInfo"]:
@@ -852,31 +862,43 @@ class FirewallManagerModule(BaseModule):
         toolbar = QHBoxLayout()
 
         self._refresh_btn = QPushButton("Refresh")
+        describe_control(self._refresh_btn, '_refresh_btn')
         self._block_btn = QPushButton("Block Program")
+        describe_control(self._block_btn, '_block_btn')
         self._unblock_btn = QPushButton("Unblock Program")
+        describe_control(self._unblock_btn, '_unblock_btn')
         self._unblock_btn.setToolTip(
             "Remove every firewall block rule that targets a chosen executable"
         )
         self._unblock_folder_btn = QPushButton("Unblock Folder")
+        describe_control(self._unblock_folder_btn, '_unblock_folder_btn')
         self._unblock_folder_btn.setToolTip(
             "Remove every firewall block rule whose program lives under a chosen folder"
         )
         self._open_port_btn = QPushButton("Open Port")
+        describe_control(self._open_port_btn, '_open_port_btn')
         self._delete_btn = QPushButton("Delete Rule")
+        describe_control(self._delete_btn, '_delete_btn')
         self._export_btn = QPushButton("Export Rules")
+        describe_control(self._export_btn, '_export_btn')
         self._import_btn = QPushButton("Import Rules")
+        describe_control(self._import_btn, '_import_btn')
         self._search_edit = QLineEdit()
+        describe_control(self._search_edit, '_search_edit')
         self._search_edit.setPlaceholderText("Search name or program...")
         self._search_edit.setMaximumWidth(220)
         self._search_edit.setMinimumWidth(160)
 
         self._dir_combo = QComboBox()
+        describe_control(self._dir_combo, '_dir_combo')
         self._dir_combo.addItems(["All", "Inbound", "Outbound"])
 
         self._action_combo = QComboBox()
+        describe_control(self._action_combo, '_action_combo')
         self._action_combo.addItems(["All", "Allow", "Block"])
 
         self._profile_combo = QComboBox()
+        describe_control(self._profile_combo, '_profile_combo')
         self._profile_combo.addItems(["All", "Domain", "Private", "Public"])
 
         self._delete_btn.setEnabled(False)
@@ -885,15 +907,19 @@ class FirewallManagerModule(BaseModule):
         # but neither is discoverable, so the buttons carry the shortcuts in
         # their tooltips.
         self._zoom_out_btn = QPushButton("A-")
+        describe_control(self._zoom_out_btn, '_zoom_out_btn')
         self._zoom_out_btn.setToolTip("Smaller text (Ctrl+- or Ctrl+wheel down)")
         self._zoom_out_btn.setFixedWidth(32)
         self._zoom_in_btn = QPushButton("A+")
+        describe_control(self._zoom_in_btn, '_zoom_in_btn')
         self._zoom_in_btn.setToolTip("Larger text (Ctrl++ or Ctrl+wheel up)")
         self._zoom_in_btn.setFixedWidth(32)
         self._zoom_reset_btn = QPushButton("A")
+        describe_control(self._zoom_reset_btn, '_zoom_reset_btn')
         self._zoom_reset_btn.setToolTip("Reset text size (Ctrl+Alt+0)")
         self._zoom_reset_btn.setFixedWidth(28)
         self._fit_btn = QPushButton("Fit Columns")
+        describe_control(self._fit_btn, '_fit_btn')
         self._fit_btn.setToolTip(
             "Widen every column to its widest visible value (capped so one "
             "long path cannot push the rest off-screen)"
@@ -934,6 +960,7 @@ class FirewallManagerModule(BaseModule):
         # ---- Table ----
         self._table = QTableWidget(0, len(_COLS))
         self._table.setHorizontalHeaderLabels(_COLS)
+        describe_headers(self._table)
         self._table.setSortingEnabled(True)
         self._table.setAlternatingRowColors(True)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -996,6 +1023,7 @@ class FirewallManagerModule(BaseModule):
         self._zoom_reset_btn.clicked.connect(self._reset_font)
         self._fit_btn.clicked.connect(self._fit_columns)
 
+        explain_widget(outer, introduction=True)
         return outer
 
     # ------------------------------------------------------------------
@@ -1108,11 +1136,13 @@ class FirewallManagerModule(BaseModule):
     def _build_audit_ui(self, layout: QVBoxLayout, toolbar: QHBoxLayout) -> None:
         from PyQt6.QtWidgets import QListWidget
         self._csv_btn = QPushButton("Export CSV")
+        describe_control(self._csv_btn, '_csv_btn')
         self._csv_btn.setToolTip("Save the rules currently shown as a CSV file")
         self._csv_btn.clicked.connect(self._export_csv)
         toolbar.insertWidget(toolbar.count() - 5, self._csv_btn)
 
         self._groups_btn = QPushButton("Rule Groups...")
+        describe_control(self._groups_btn, '_groups_btn')
         self._groups_btn.setToolTip(
             "Enable or disable every rule in a named group at once "
             "(netsh's own group= selector)"
@@ -1124,6 +1154,7 @@ class FirewallManagerModule(BaseModule):
         self._chip_buttons = {}
         for key, label in fa.CHIPS:
             b = QPushButton(label)
+            describe_control(b, 'b')
             b.setCheckable(True)
             b.setAutoExclusive(True)
             b.setChecked(key == "all")
@@ -1225,6 +1256,7 @@ class FirewallManagerModule(BaseModule):
             )
             return
         self._groups_dialog = _GroupsDialog(self._outer, groups, self._toggle_group)
+        explain_widget(self._groups_dialog)
         self._groups_dialog.exec()
 
     def _toggle_group(self, group_name: str, enable: bool) -> None:
@@ -1825,6 +1857,7 @@ class FirewallManagerModule(BaseModule):
                 if rule.enabled == "No":
                     item.setForeground(QColor("#888888"))
                 self._table.setItem(row, col, item)
+                describe_cell(self._table, col, self._table.item(row, col))
         self._table.setSortingEnabled(True)
 
         total = len(self._all_rules)

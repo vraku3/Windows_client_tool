@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (QGridLayout, QLabel, QSplitter, QTableWidget,
 
 from core.semantic_colors import semantic
 from core.table_ui import centered_item, fit_table, set_role
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,7 @@ class SecurityView(QWidget):
             split.addWidget(table)
         split.setSizes([500, 300, 260])
         layout.addWidget(split, 1)
+        apply_help(self, 'Security')
 
     @staticmethod
     def _table(headers, stretch) -> QTableWidget:

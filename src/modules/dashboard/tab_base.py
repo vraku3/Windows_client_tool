@@ -98,6 +98,8 @@ class DashModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = self.tab_class()
         self._widget.set_app(self.app)
+        from ui.help.dashboard_ui import apply_help
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

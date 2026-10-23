@@ -12,6 +12,10 @@ somewhere you cannot see.
 """
 from __future__ import annotations
 
+from modules.monitor_control.help_widgets import (
+    explain_widget,
+)
+
 import logging
 from typing import List, Optional
 
@@ -55,6 +59,7 @@ class ScreenOverlay(QWidget):
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
         self.setGeometry(screen.geometry())
+        explain_widget(self)
 
     @property
     def screen_name(self) -> str:

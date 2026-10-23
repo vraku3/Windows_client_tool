@@ -21,6 +21,10 @@ instead:
 
 from __future__ import annotations
 
+from modules.gpresult.help_widgets import (
+    describe_control, describe_headers, explain_widget,
+)
+
 import logging
 import os
 import subprocess
@@ -122,28 +126,39 @@ class GPResultModule(BaseModule):
 
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
+        describe_control(self._refresh_btn, '_refresh_btn')
         self._refresh_btn.setToolTip("Re-run gpresult and rebuild the report")
         self._expand_btn = QPushButton("Expand All")
+        describe_control(self._expand_btn, '_expand_btn')
         self._collapse_btn = QPushButton("Collapse All")
+        describe_control(self._collapse_btn, '_collapse_btn')
         self._gpupdate_btn = QPushButton("Refresh Policy...")
+        describe_control(self._gpupdate_btn, '_gpupdate_btn')
         self._gpupdate_btn.setToolTip(
             "Run gpupdate to reapply Group Policy, with live output")
         self._snapshot_btn = QPushButton("Snapshot")
+        describe_control(self._snapshot_btn, '_snapshot_btn')
         self._snapshot_btn.setToolTip(
             "Save this report so a later one can be compared against it")
         self._compare_btn = QPushButton("Compare...")
+        describe_control(self._compare_btn, '_compare_btn')
         self._compare_btn.setToolTip(
             "See what has changed since a saved report")
         self._export_btn = QPushButton("Export HTML")
+        describe_control(self._export_btn, '_export_btn')
         self._export_btn.setToolTip("Microsoft's own full RSOP report")
         self._export_audit_btn = QPushButton("Export Audit Report")
+        describe_control(self._export_audit_btn, '_export_audit_btn')
         self._export_audit_btn.setToolTip(
             "One report over everything this pane found: RSOP, local policy "
             "drift, tattooed registry values, tweaks at risk, and per-user "
             "local policy -- not just gpresult's own RSOP-only report")
         self._gpedit_btn = QPushButton("Open gpedit.msc")
+        describe_control(self._gpedit_btn, '_gpedit_btn')
         self._rsop_btn = QPushButton("Open rsop.msc")
+        describe_control(self._rsop_btn, '_rsop_btn')
         self._search_edit = QLineEdit()
+        describe_control(self._search_edit, '_search_edit')
         self._search_edit.setPlaceholderText("Filter settings, GPOs, groups...")
         self._search_edit.setClearButtonEnabled(True)
         self._search_edit.setMaximumWidth(280)
@@ -194,6 +209,7 @@ class GPResultModule(BaseModule):
         self._tree = QTreeWidget()
         self._tree.setColumnCount(len(_COLS))
         self._tree.setHeaderLabels(_COLS)
+        describe_headers(self._tree)
         self._tree.setAlternatingRowColors(True)
         self._tree.setUniformRowHeights(True)
         self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
@@ -216,6 +232,7 @@ class GPResultModule(BaseModule):
         self._rsop_btn.clicked.connect(lambda: self._open_console("rsop.msc"))
         self._search_edit.textChanged.connect(self._apply_filter)
 
+        explain_widget(outer, introduction=True)
         return outer
 
     # ------------------------------------------------------------------
@@ -847,6 +864,7 @@ class GPResultModule(BaseModule):
     def _open_compare(self) -> None:
         from modules.gpresult.snapshot_dialog import SnapshotCompareDialog
 
+        explain_widget(SnapshotCompareDialog(self._result, self._outer))
         SnapshotCompareDialog(self._result, self._outer).exec()
 
     def _open_gpupdate(self) -> None:
@@ -859,6 +877,7 @@ class GPResultModule(BaseModule):
         from modules.gpresult.gpupdate import STATUS_FAILURE, STATUS_CANCELLED
 
         dialog = GpupdateDialog(self._outer, thread_pool=self.thread_pool)
+        explain_widget(dialog)
         dialog.exec()
 
         outcome = dialog.result_obj

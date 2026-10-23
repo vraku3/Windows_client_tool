@@ -18,6 +18,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
 from .performance_tab import PerformanceTab
+from ui.help.dashboard_ui import apply_help
 
 
 class PerformanceModule(BaseModule):
@@ -39,6 +40,7 @@ class PerformanceModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = PerformanceTab()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

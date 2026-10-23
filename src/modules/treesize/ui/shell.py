@@ -15,6 +15,10 @@ The shell owns wiring and no scanning: it hands a target to a Worker and turns
 results into widget state. That keeps the whole file readable and means the
 engine stays testable without a display.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 import logging
 import os
 
@@ -173,6 +177,7 @@ class TreeSizeShell(QWidget):
         self._wire()
         self.drive_list.refresh()
         self._seed_path_combo()
+        explain_widget(self)
 
     # ---- construction ---------------------------------------------------
 
@@ -182,17 +187,22 @@ class TreeSizeShell(QWidget):
         row.setContentsMargins(6, 3, 6, 3)
         row.setSpacing(4)
         self.back_button = QPushButton("◂", bar)
+        describe_control(self.back_button, 'back_button')
         self.forward_button = QPushButton("▸", bar)
+        describe_control(self.forward_button, 'forward_button')
         self.up_button = QPushButton("▴", bar)
+        describe_control(self.up_button, 'up_button')
         for button in (self.back_button, self.forward_button, self.up_button):
             button.setFixedWidth(28)
             button.setObjectName("navButton")
             row.addWidget(button)
         self.path_combo = QComboBox(bar)
+        describe_control(self.path_combo, 'path_combo')
         self.path_combo.setEditable(True)
         self.path_combo.setMinimumWidth(320)
         row.addWidget(self.path_combo, 1)
         self.go_button = QPushButton("▶", bar)
+        describe_control(self.go_button, 'go_button')
         self.go_button.setFixedWidth(28)
         self.go_button.setObjectName("navButton")
         row.addWidget(self.go_button)
@@ -547,6 +557,7 @@ class TreeSizeShell(QWidget):
             return
         dialog = SearchDialog(self, self)
         dialog.node_activated.connect(self.reveal_node)
+        explain_widget(dialog)
         dialog.exec()
 
     def open_duplicates(self) -> None:
@@ -554,6 +565,7 @@ class TreeSizeShell(QWidget):
             QMessageBox.information(self, "Find duplicates",
                                     "Scan something first.")
             return
+        explain_widget(DuplicatesDialog(self, self))
         DuplicatesDialog(self, self).exec()
 
     def manage_scheduled(self) -> None:
@@ -1474,6 +1486,7 @@ class TreeSizeShell(QWidget):
             return
         menu = self.row_actions.menu_for(int(node), self.directory_tree)
         if menu is not None:
+            explain_widget(menu)
             menu.exec(self.directory_tree.viewport().mapToGlobal(pos))
 
     def _table_context_menu(self, table, pos) -> None:
@@ -1489,6 +1502,7 @@ class TreeSizeShell(QWidget):
             return
         menu = self.row_actions.menu_for(int(node), table)
         if menu is not None:
+            explain_widget(menu)
             menu.exec(table.viewport().mapToGlobal(pos))
 
     # ---- selection ------------------------------------------------------

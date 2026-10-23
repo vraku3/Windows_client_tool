@@ -12,6 +12,10 @@ point of the module is to be recognisable to someone who uses the real thing.
 Actions are exposed as QAction objects on `actions`, keyed by a stable id, so
 the shell wires behaviour without the ribbon knowing what anything does.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import (
@@ -217,10 +221,12 @@ class RibbonGroup(QFrame):
         label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         outer.addWidget(label)
         self._small_column: QVBoxLayout | None = None
+        explain_widget(self)
 
     def add_button(self, action: QAction, large: bool, dropdown: bool,
                    menu: QMenu | None = None) -> QToolButton:
         button = QToolButton(self)
+        describe_control(button, 'button')
         button.setDefaultAction(action)
         button.setAutoRaise(True)
         if dropdown and menu is not None:
@@ -299,6 +305,7 @@ class Ribbon(QWidget):
             self.tab_bar.setTabVisible(index, False)
         self.tab_bar.currentChanged.connect(self._on_tab_changed)
         self.tab_bar.setCurrentIndex(1)
+        explain_widget(self)
 
     def _build_page(self, groups) -> QWidget:
         page = QWidget()
@@ -329,6 +336,7 @@ class Ribbon(QWidget):
         if existing is not None:
             return existing
         action = QAction(label.replace("\n", " "), self)
+        describe_control(action, 'action')
         action.setObjectName(action_id)
         if action_id in CHECKABLE:
             action.setCheckable(True)
@@ -347,7 +355,7 @@ class Ribbon(QWidget):
             if entry is None:
                 menu.addSeparator()
             else:
-                menu.addAction(self._action(entry[0], entry[1]))
+                describe_control(menu.addAction(self._action(entry[0], entry[1])))
         self.menus_by_id[action_id] = menu
         return menu
 
@@ -382,9 +390,9 @@ class Ribbon(QWidget):
                     if sub_label is None:
                         sub.addSeparator()
                     else:
-                        sub.addAction(sub_label, sub_callback)
+                        describe_control(sub.addAction(sub_label, sub_callback))
                 continue
-            menu.addAction(label, callback)
+            describe_control(menu.addAction(label, callback))
 
     def set_enabled(self, action_id: str, enabled: bool) -> None:
         action = self.actions_by_id.get(action_id)

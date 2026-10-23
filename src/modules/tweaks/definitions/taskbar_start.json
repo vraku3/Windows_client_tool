@@ -137,7 +137,7 @@
   {
     "id": "taskbar_disable_recent_apps_in_start",
     "name": "Hide Recently Added Apps in Start",
-    "description": "Stops the Start menu listing apps you installed recently.",
+    "description": "Writes the Start-menu policy below to request hiding recently installed apps from its list. The apps remain installed and can still be launched by other means.",
     "category": "Taskbar & Start", "risk": "low", "requires_admin": false,
     "steps": [
       {"type":"registry","key":"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced","value":"Start_TrackProgs","data":0,"kind":"DWORD"}
@@ -397,7 +397,7 @@
   {
     "id": "taskbar_hide_chat_button",
     "name": "Hide the Chat (Teams) Button",
-    "description": "Removes the Chat button from the Windows 11 taskbar.",
+    "description": "Sets the taskbar Chat registry value below to request hiding its shortcut. This changes taskbar configuration rather than uninstalling Teams.",
     "category": "Taskbar & Start", "risk": "low", "requires_admin": false,
     "applies_to": {"min_build": "WIN11"},
     "steps": [

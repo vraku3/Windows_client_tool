@@ -25,6 +25,9 @@ from core.widget_life import widget_is_valid
 logger = logging.getLogger(__name__)
 
 
+from modules.diagnose.help_ui import explain
+from modules.system_health.help_text import INTRO, CONTROLS, HEADERS, TABS
+
 class _ResetBaseConfirmDialog:
     """Typed-confirmation gate for Reset Base -- a checkbox is too easy
     to click through without reading; typing the literal word forces at
@@ -44,6 +47,7 @@ class _ResetBaseConfirmDialog:
             "Type RESETBASE to continue:"
         ))
         self._confirm_field = QLineEdit()
+        self._confirm_field.setToolTip("Type RESETBASE exactly to enable OK. Accepting proceeds to the restore-point gate and permanent component cleanup; this app cannot restore uninstall options for currently installed updates.")
         lay.addWidget(self._confirm_field)
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -54,6 +58,7 @@ class _ResetBaseConfirmDialog:
         self._buttons.accepted.connect(self._dialog.accept)
         self._buttons.rejected.connect(self._dialog.reject)
         lay.addWidget(self._buttons)
+        explain(self._dialog, "Reset Base permanently removes the ability to uninstall currently installed Windows updates. It needs administrator rights, a clean ScanHealth in this session, typed confirmation and successful restore-point creation; this app cannot undo it.")
 
     def exec(self) -> bool:
         from PyQt6.QtWidgets import QDialog
@@ -86,6 +91,7 @@ class SystemHealthModule(BaseModule):
         self._tabs.addTab(self._build_findings_tab(), "Findings")
         self._tabs.addTab(self._build_servicing_tab(), "Servicing")
 
+        explain(outer, INTRO, CONTROLS, HEADERS, TABS)
         return outer
 
     # ── Findings tab ──────────────────────────────────────────────────
@@ -98,6 +104,7 @@ class SystemHealthModule(BaseModule):
         self._refresh_findings_btn = QPushButton("🔄  Refresh Findings")
         self._refresh_findings_btn.clicked.connect(self._refresh_findings)
         self._findings_status_lbl = QLabel("Click Refresh Findings to check this machine")
+        self._findings_status_lbl.setToolTip("Results of the latest checks, including refused or unavailable evidence where reported. No issues found means these checks found none; it is not a complete certification of PC health.")
         self._findings_status_lbl.setObjectName("muted")
         toolbar.addWidget(self._refresh_findings_btn)
         toolbar.addStretch()
@@ -143,6 +150,7 @@ class SystemHealthModule(BaseModule):
             for finding in results:
                 icon = "⚠️" if finding.severity == "warning" else "ℹ️"
                 item = QListWidgetItem(f"{icon}  {finding.title}\n{finding.detail}")
+                item.setToolTip(finding.copy_text())
                 color = semantic("warning") if finding.severity == "warning" else semantic("info")
                 item.setForeground(QColor(color))
                 self._findings_list.addItem(item)
@@ -191,6 +199,7 @@ class SystemHealthModule(BaseModule):
         lay = QVBoxLayout(tab)
 
         self._servicing_out = QLabel("")
+        self._servicing_out.setToolTip("Output and result from the most recent servicing command. Read the text as well as the exit code: DISM can finish successfully while reporting repairable corruption.")
         self._servicing_out.setWordWrap(True)
         self._servicing_out.setObjectName("muted")
 
@@ -198,7 +207,8 @@ class SystemHealthModule(BaseModule):
         self._scan_health_btn.setToolTip(
             "Runs: dism /Online /Cleanup-Image /ScanHealth\n"
             "Checks the component store for corruption. Read-only, "
-            "does not repair anything. Can take several minutes."
+            "does not repair anything. Can take several minutes. Needs administrator rights; "
+            "starts without confirmation and may record the detected health state."
         )
         self._scan_health_btn.clicked.connect(self._run_scan_health)
         lay.addWidget(self._scan_health_btn)
@@ -207,7 +217,8 @@ class SystemHealthModule(BaseModule):
         self._component_cleanup_btn.setToolTip(
             "Runs: dism /Online /Cleanup-Image /StartComponentCleanup\n"
             "Removes superseded Windows components from WinSxS. "
-            "Can reclaim 2–10 GB. Takes several minutes."
+            "Can reclaim 2–10 GB. Takes several minutes. Asks first and needs administrator rights; "
+            "the amount varies and this app cannot restore removed component files."
         )
         self._component_cleanup_btn.clicked.connect(self._run_component_cleanup)
         lay.addWidget(self._component_cleanup_btn)
@@ -216,7 +227,9 @@ class SystemHealthModule(BaseModule):
         self._reset_base_btn.setEnabled(False)
         self._reset_base_btn.setToolTip(
             "Run Check for Corruption first, with a clean result, before "
-            "Reset Base becomes available."
+            "Reset Base becomes available. Needs administrator rights, typed RESETBASE confirmation "
+            "and successful restore-point creation. Permanently removes uninstall options for "
+            "currently installed Windows updates; this app cannot undo it."
         )
         self._reset_base_btn.clicked.connect(self._on_reset_base_clicked)
         lay.addWidget(self._reset_base_btn)
@@ -225,7 +238,8 @@ class SystemHealthModule(BaseModule):
         self._sfc_btn.setToolTip(
             "Runs: sfc /scannow\n"
             "Scans and repairs protected Windows system files. "
-            "Can take 10-15 minutes."
+            "Can take 10-15 minutes. Asks first and needs administrator rights; repaired files "
+            "are changed on disk and this app has no undo for the repair."
         )
         self._sfc_btn.clicked.connect(self._run_sfc_scan)
         lay.addWidget(self._sfc_btn)
@@ -234,7 +248,8 @@ class SystemHealthModule(BaseModule):
         self._restore_health_btn.setToolTip(
             "Runs: dism /Online /Cleanup-Image /RestoreHealth\n"
             "Repairs component-store corruption ScanHealth detects. "
-            "Can take 10-30 minutes."
+            "Can take 10-30 minutes and may download repair content. Asks first and needs "
+            "administrator rights; this app has no undo for component-store repairs."
         )
         self._restore_health_btn.clicked.connect(self._run_restore_health)
         lay.addWidget(self._restore_health_btn)
@@ -242,7 +257,8 @@ class SystemHealthModule(BaseModule):
         self._chkdsk_btn = QPushButton("🩹  Schedule CHKDSK")
         self._chkdsk_btn.setToolTip(
             "Runs: chkdsk C: /f /r /x\n"
-            "Schedules a full disk check and repair for the next reboot."
+            "Schedules a full disk check and repair for the next reboot. Asks first and needs "
+            "administrator rights; the restart-time scan can take hours and its repairs have no undo here."
         )
         self._chkdsk_btn.clicked.connect(self._run_chkdsk_schedule)
         lay.addWidget(self._chkdsk_btn)

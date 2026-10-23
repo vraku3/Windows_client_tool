@@ -30,6 +30,10 @@ same reasoning as `debloat_module.py` and `store_apps_module.py`.
 """
 from __future__ import annotations
 
+from modules.monitor_control.help_widgets import (
+    describe_control, explain_widget,
+)
+
 import logging
 from typing import List, Optional
 
@@ -145,6 +149,7 @@ class _MonitorCard(QFrame):
         actions = QHBoxLayout()
         actions.addStretch()
         toggle = QPushButton("Disconnect" if view.active else "Connect")
+        describe_control(toggle, 'toggle')
         toggle.setToolTip(
             "Remove this display from the desktop"
             if view.active else "Add this display to the desktop")
@@ -153,6 +158,7 @@ class _MonitorCard(QFrame):
                 self.toggle_requested.emit(t, a))
         actions.addWidget(toggle)
         layout.addLayout(actions)
+        explain_widget(self)
 
     # ── refresh rate, one button per rate ──
 
@@ -182,6 +188,7 @@ class _MonitorCard(QFrame):
         for rate in sorted(view.rates_at_resolution):
             current = abs(rate - view.refresh_hz) < 0.01
             button = QPushButton(f"{rate:g} Hz")
+            describe_control(button, 'button')
             button.setCheckable(True)
             button.setChecked(current)
             button.setEnabled(not current)
@@ -220,6 +227,7 @@ class _MonitorCard(QFrame):
 
         button = QPushButton("Off — click to turn on" if hidden
                              else "On — click to turn off")
+        describe_control(button, 'button')
         button.setToolTip(
             "This monitor's audio output is hidden from Windows' sound "
             "device list. Click to show it again."
@@ -291,6 +299,7 @@ class _MonitorCard(QFrame):
         row.addWidget(name)
 
         slider = QSlider(Qt.Orientation.Horizontal)
+        describe_control(slider, 'slider')
         slider.setMinimum(0)
         slider.setMaximum(value.maximum)
         slider.setValue(value.current)
@@ -332,6 +341,7 @@ class _MonitorCard(QFrame):
             return row
 
         combo = QComboBox()
+        describe_control(combo, 'combo')
         for value, choice in capability.input_source_choices():
             combo.addItem(choice, value)
         current = capability.current_input
@@ -463,6 +473,7 @@ class MonitorControlModule(BaseModule):
         layout.addWidget(self._banner)
 
         self._fix_btn = QPushButton("Use highest refresh rate")
+        describe_control(self._fix_btn, '_fix_btn')
         self._fix_btn.setToolTip(
             "Raise every display to the fastest rate it offers AT the "
             "resolution it is already using. Reverts itself in 15 seconds "
@@ -471,6 +482,7 @@ class MonitorControlModule(BaseModule):
         self._fix_btn.hide()
 
         self._mute_btn = QPushButton("Disable all monitor sound")
+        describe_control(self._mute_btn, '_mute_btn')
         self._mute_btn.setToolTip(
             "Hide the audio output of every monitor that currently has one "
             "from Windows' sound device list, in one step. Each monitor's own "
@@ -486,7 +498,9 @@ class MonitorControlModule(BaseModule):
 
         bar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
+        describe_control(self._refresh_btn, '_refresh_btn')
         self._identify_btn = QPushButton("Identify")
+        describe_control(self._identify_btn, '_identify_btn')
         self._identify_btn.setToolTip(
             "Show a large number on each screen for a few seconds")
         self._status = QLabel("")
@@ -499,6 +513,7 @@ class MonitorControlModule(BaseModule):
         self._arrangement_buttons = {}
         for key, label in dw.ARRANGEMENT_LABELS:
             button = QPushButton(label)
+            describe_control(button, 'button')
             button.setToolTip(f"Switch the desktop to: {label}")
             button.clicked.connect(
                 lambda _checked=False, k=key, t=label: self._do_arrangement(k, t))
@@ -541,6 +556,7 @@ class MonitorControlModule(BaseModule):
                 lambda _s: self._on_screens_changed())
 
         self._widget = outer
+        explain_widget(outer, introduction=True)
         return outer
 
     # ── display profiles ──
@@ -556,6 +572,7 @@ class MonitorControlModule(BaseModule):
         row.addWidget(label)
 
         self._profile_combo = QComboBox()
+        describe_control(self._profile_combo, '_profile_combo')
         self._profile_combo.setMinimumWidth(220)
         self._profile_combo.setToolTip(
             "Saved desktop layouts — every monitor's resolution, refresh "
@@ -563,6 +580,7 @@ class MonitorControlModule(BaseModule):
         row.addWidget(self._profile_combo)
 
         self._profile_apply = QPushButton("Apply")
+        describe_control(self._profile_apply, '_profile_apply')
         self._profile_apply.setToolTip(
             "Reconfigure the desktop to match this profile. Reverts itself "
             "in 15 seconds unless you confirm.")
@@ -570,11 +588,13 @@ class MonitorControlModule(BaseModule):
         row.addWidget(self._profile_apply)
 
         save = QPushButton("Save current…")
+        describe_control(save, 'save')
         save.setToolTip("Save the current layout of all monitors as a profile")
         save.clicked.connect(self._do_save_profile)
         row.addWidget(save)
 
         self._profile_delete = QPushButton("Delete")
+        describe_control(self._profile_delete, '_profile_delete')
         self._profile_delete.clicked.connect(self._do_delete_profile)
         row.addWidget(self._profile_delete)
 
@@ -584,6 +604,7 @@ class MonitorControlModule(BaseModule):
         row.addWidget(windows_label)
 
         keep = QPushButton("Remember positions")
+        describe_control(keep, 'keep')
         keep.setToolTip(
             "Remember where every window is right now, for this session. "
             "Restore puts them back.")
@@ -591,6 +612,7 @@ class MonitorControlModule(BaseModule):
         row.addWidget(keep)
 
         self._windows_restore = QPushButton("Put windows back")
+        describe_control(self._windows_restore, '_windows_restore')
         self._windows_restore.setToolTip(
             "Move every window back to the monitor and position it was "
             "remembered on. A window whose monitor is not connected is left "

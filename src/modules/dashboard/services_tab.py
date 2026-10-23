@@ -29,6 +29,8 @@ from core.worker import COMWorker, Worker
 
 from modules.services_manager import services_module
 from modules.services_manager import service_view as sv
+from ui.help.dashboard_ui import explain_menu
+from ui.help.dashboard_ui import row_help
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +354,11 @@ class ServicesTab(QWidget):
             name_item = self._table.item(row, NAME)
             name_item.setData(Qt.ItemDataRole.UserRole, svc)
             name_item.setToolTip(svc.get("Path") or svc.get("Name") or "")
+            row_help(self._table, row, (("Service", svc.get("Name")),
+                     ("Display name", svc.get("Display Name")),
+                     ("Description", svc.get("Description")),
+                     ("Windows state", status), ("Account", svc.get("StartName")),
+                     ("Executable command", svc.get("Path"))))
             color = colors.get(status)
             if color is not None:
                 self._table.item(row, STATUS).setForeground(color)
@@ -373,6 +380,7 @@ class ServicesTab(QWidget):
             return
         self._table.selectRow(row)
         menu = self._menu_for(svc)
+        explain_menu(menu)
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _menu_for(self, svc: Dict) -> QMenu:
@@ -409,6 +417,7 @@ class ServicesTab(QWidget):
             go.setEnabled(False)
         go.triggered.connect(
             lambda _=False: self._go_to_process(svc, pid))
+        explain_menu(menu)
         return menu
 
     # ---- actions --------------------------------------------------------

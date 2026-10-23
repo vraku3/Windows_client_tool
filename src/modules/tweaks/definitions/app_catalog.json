@@ -5,7 +5,7 @@
     "publisher": "Mozilla",
     "category": "Browsers",
     "winget_id": "Mozilla.Firefox",
-    "description": "Free open-source web browser."
+    "description": "Free open-source web browser. Checking this entry queues Firefox for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "brave",
@@ -13,7 +13,7 @@
     "publisher": "Brave Software",
     "category": "Browsers",
     "winget_id": "Brave.Brave",
-    "description": "Privacy-focused Chromium browser."
+    "description": "Privacy-focused Chromium browser. Checking this entry queues Brave Browser for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "chrome",
@@ -21,7 +21,7 @@
     "publisher": "Google",
     "category": "Browsers",
     "winget_id": "Google.Chrome",
-    "description": "Google Chrome browser."
+    "description": "Google Chrome browser. Checking this entry queues Google Chrome for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "vscode",
@@ -29,7 +29,7 @@
     "publisher": "Microsoft",
     "category": "Development",
     "winget_id": "Microsoft.VisualStudioCode",
-    "description": "Lightweight code editor."
+    "description": "Lightweight code editor. Checking this entry queues Visual Studio Code for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "git",
@@ -37,7 +37,7 @@
     "publisher": "Git SCM",
     "category": "Development",
     "winget_id": "Git.Git",
-    "description": "Distributed version control system."
+    "description": "Distributed version control system. Checking this entry queues Git for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "wt",
@@ -45,7 +45,7 @@
     "publisher": "Microsoft",
     "category": "Development",
     "winget_id": "Microsoft.WindowsTerminal",
-    "description": "Modern terminal for Windows."
+    "description": "Modern terminal for Windows. Checking this entry queues Windows Terminal for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "python",
@@ -53,7 +53,7 @@
     "publisher": "Python Foundation",
     "category": "Development",
     "winget_id": "Python.Python.3.12",
-    "description": "Python programming language."
+    "description": "Python programming language. Checking this entry queues Python 3 for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "nodejs",
@@ -61,7 +61,7 @@
     "publisher": "OpenJS Foundation",
     "category": "Development",
     "winget_id": "OpenJS.NodeJS.LTS",
-    "description": "JavaScript runtime."
+    "description": "JavaScript runtime. Checking this entry queues Node.js LTS for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "docker",
@@ -69,7 +69,7 @@
     "publisher": "Docker",
     "category": "Development",
     "winget_id": "Docker.DockerDesktop",
-    "description": "Container platform for Windows."
+    "description": "Container platform for Windows. Checking this entry queues Docker Desktop for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "vlc",
@@ -77,7 +77,7 @@
     "publisher": "VideoLAN",
     "category": "Media",
     "winget_id": "VideoLAN.VLC",
-    "description": "Free multimedia player."
+    "description": "Free multimedia player. Checking this entry queues VLC Media Player for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "spotify",
@@ -85,7 +85,7 @@
     "publisher": "Spotify AB",
     "category": "Media",
     "winget_id": "Spotify.Spotify",
-    "description": "Music streaming client."
+    "description": "Music streaming client. Checking this entry queues Spotify for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "audacity",
@@ -93,7 +93,7 @@
     "publisher": "Audacity Team",
     "category": "Media",
     "winget_id": "Audacity.Audacity",
-    "description": "Free audio editor."
+    "description": "Free audio editor. Checking this entry queues Audacity for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "handbrake",
@@ -101,7 +101,7 @@
     "publisher": "HandBrake",
     "category": "Media",
     "winget_id": "HandBrake.HandBrake",
-    "description": "Video transcoder."
+    "description": "Video transcoder. Checking this entry queues HandBrake for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "libreoffice",
@@ -109,7 +109,7 @@
     "publisher": "Document Foundation",
     "category": "Productivity",
     "winget_id": "TheDocumentFoundation.LibreOffice",
-    "description": "Free office suite."
+    "description": "Free office suite. Checking this entry queues LibreOffice for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "obsidian",
@@ -117,7 +117,7 @@
     "publisher": "Obsidian",
     "category": "Productivity",
     "winget_id": "Obsidian.Obsidian",
-    "description": "Knowledge base / note-taking app."
+    "description": "Knowledge base / note-taking app. Checking this entry queues Obsidian for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "7zip",
@@ -125,7 +125,7 @@
     "publisher": "Igor Pavlov",
     "category": "System Tools",
     "winget_id": "7zip.7zip",
-    "description": "Free file archiver."
+    "description": "Free file archiver. Checking this entry queues 7-Zip for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "cpuz",
@@ -133,7 +133,7 @@
     "publisher": "CPUID",
     "category": "System Tools",
     "winget_id": "CPUID.CPU-Z",
-    "description": "CPU and system info tool."
+    "description": "CPU and system info tool. Checking this entry queues CPU-Z for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "hwmonitor",
@@ -141,7 +141,7 @@
     "publisher": "CPUID",
     "category": "System Tools",
     "winget_id": "CPUID.HWMonitor",
-    "description": "Hardware monitoring tool."
+    "description": "Hardware monitoring tool. Checking this entry queues HWMonitor for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "crystaldiskinfo",
@@ -149,7 +149,7 @@
     "publisher": "Crystal Dew World",
     "category": "System Tools",
     "winget_id": "CrystalDewWorld.CrystalDiskInfo",
-    "description": "Disk health monitoring."
+    "description": "Disk health monitoring. Checking this entry queues CrystalDiskInfo for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "malwarebytes",
@@ -157,7 +157,7 @@
     "publisher": "Malwarebytes",
     "category": "Security",
     "winget_id": "Malwarebytes.Malwarebytes",
-    "description": "Anti-malware scanner."
+    "description": "Anti-malware scanner. Checking this entry queues Malwarebytes for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "bitwarden",
@@ -165,7 +165,7 @@
     "publisher": "Bitwarden",
     "category": "Security",
     "winget_id": "Bitwarden.Bitwarden",
-    "description": "Open-source password manager."
+    "description": "Open-source password manager. Checking this entry queues Bitwarden for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "keepassxc",
@@ -173,7 +173,7 @@
     "publisher": "KeePassXC Team",
     "category": "Security",
     "winget_id": "KeePassXCTeam.KeePassXC",
-    "description": "Cross-platform password manager."
+    "description": "Cross-platform password manager. Checking this entry queues KeePassXC for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "notepadpp",
@@ -181,7 +181,7 @@
     "publisher": "Don Ho",
     "category": "Utilities",
     "winget_id": "Notepad++.Notepad++",
-    "description": "Advanced text editor."
+    "description": "Advanced text editor. Checking this entry queues Notepad++ for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "everything",
@@ -189,7 +189,7 @@
     "publisher": "voidtools",
     "category": "Utilities",
     "winget_id": "voidtools.Everything",
-    "description": "Instant file search for Windows."
+    "description": "Instant file search for Windows. Checking this entry queues Everything for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "greenshot",
@@ -197,7 +197,7 @@
     "publisher": "Greenshot",
     "category": "Utilities",
     "winget_id": "Greenshot.Greenshot",
-    "description": "Screenshot tool."
+    "description": "Screenshot tool. Checking this entry queues Greenshot for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "sharex",
@@ -205,7 +205,7 @@
     "publisher": "ShareX Team",
     "category": "Utilities",
     "winget_id": "ShareX.ShareX",
-    "description": "Advanced screenshot and recording tool."
+    "description": "Advanced screenshot and recording tool. Checking this entry queues ShareX for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "winscp",
@@ -213,7 +213,7 @@
     "publisher": "Martin Prikryl",
     "category": "Utilities",
     "winget_id": "WinSCP.WinSCP",
-    "description": "SFTP/FTP client."
+    "description": "SFTP/FTP client. Checking this entry queues WinSCP for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   },
   {
     "id": "putty",
@@ -221,6 +221,6 @@
     "publisher": "Simon Tatham",
     "category": "Utilities",
     "winget_id": "PuTTY.PuTTY",
-    "description": "SSH and Telnet client."
+    "description": "SSH and Telnet client. Checking this entry queues PuTTY for installation through winget after confirmation; it does not install until Apply Changes is pressed."
   }
 ]

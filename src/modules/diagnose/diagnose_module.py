@@ -24,6 +24,8 @@ from core.search_provider import SearchQuery, SearchResult
 from core.types import LogEntry
 from core.worker import Worker
 from ui.event_detail_dialog import EventDetailDialog
+from modules.diagnose.help_ui import explain
+from modules.diagnose.help_text import INTRO, CONTROLS, HEADERS, READERS
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +141,10 @@ class DiagnoseModule(CompositeModule):
             if callable(connect):
                 connect(self._open_event_dialog)
 
+        explain(self._widget, INTRO, CONTROLS, HEADERS, READERS)
+        self._search_input.setToolTip(
+            "Search entries already loaded by the diagnostic tabs. Type to search or press Enter; "
+            "unopened tabs may have no cached entries. This does not scan files, clear logs or change Windows.")
         return self._widget
 
     # ------------------------------------------------------------------

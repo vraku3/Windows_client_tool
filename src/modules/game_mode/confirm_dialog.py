@@ -9,6 +9,9 @@ so Enter does nothing destructive.
 """
 from __future__ import annotations
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 import html
 
 from PyQt6.QtCore import QSize
@@ -59,6 +62,7 @@ class ConfirmDialog(QDialog):
         lay.addWidget(self.buttons)
         self._fit(parent)
         self.cancel_button.setFocus()
+        explain(self, help_info.CONTROLS)
 
     def _available(self, parent):
         screen = (parent.screen() if parent is not None else None) or self.screen()

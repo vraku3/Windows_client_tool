@@ -14,6 +14,8 @@ from core.events import NAV_REQUEST_MODULE, NavRequestData
 
 from . import installed_apps as ia
 from .tab_base import DashModule, DashTab, fmt_size, make_chips, numeric_item, set_chip_counts
+from ui.help.dashboard_ui import explain_menu
+from ui.help.dashboard_ui import row_help
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,9 @@ class InstalledAppsTab(DashTab):
                 table.setItem(row, col, numeric_item(text, text))
             table.item(row, 0).setData(Qt.ItemDataRole.UserRole, e)
             table.item(row, 0).setToolTip(e.uninstall_string or "")
+            row_help(table, row, (("Registered name", e.name), ("Version", e.version),
+                     ("Reported publisher", e.publisher), ("Registration", e.type_),
+                     ("Uninstall command (displayed, not executed)", e.uninstall_string)))
             bind_row(table, row, e)
         table.horizontalHeader().setSortIndicator(*self._sort)
         total, unknown = ia.total_size(shown)
@@ -155,6 +160,7 @@ class InstalledAppsTab(DashTab):
             lambda: QApplication.clipboard().setText(entry.uninstall_string))
         menu.addSeparator()
         menu.addAction("Open Software Inventory").triggered.connect(self._open_inventory)
+        explain_menu(menu)
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _open_inventory(self) -> None:

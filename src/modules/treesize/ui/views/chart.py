@@ -9,6 +9,10 @@ than as a flat mosaic. It is a per-tile linear gradient rather than a real
 per-pixel cushion: at tens of thousands of tiles the difference is invisible
 and the cost is not.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtCore import QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QFontMetrics, QLinearGradient, QPainter, QPen,
@@ -49,6 +53,7 @@ class TreemapWidget(QWidget):
         self._colors: dict[int, QColor] = {}
         self.max_depth = 6
         self._mode = Mode.SIZE
+        explain_widget(self)
 
     def set_value_mode(self, mode: Mode) -> None:
         """Spec 5.5's pane mode: what a tile's AREA measures."""
@@ -196,6 +201,7 @@ class SliceChart(QWidget):
         #: should have to work that out again.
         self._rows: list = []
         self.setMinimumHeight(160)
+        explain_widget(self)
 
     def set_value_mode(self, mode: Mode) -> None:
         if mode is self._mode:
@@ -362,6 +368,7 @@ class ChartView(QWidget):
         self._mode_buttons.setExclusive(True)
         for index, label in enumerate(("Treemap", "Pie", "Bar")):
             button = QToolButton(crumb_bar)
+            describe_control(button, 'button')
             button.setText(label)
             button.setCheckable(True)
             button.setChecked(index == 0)
@@ -383,6 +390,7 @@ class ChartView(QWidget):
         self.treemap.node_drilled.connect(self.drill_to)
         self.pie.node_clicked.connect(self.node_clicked)
         self.bars.node_clicked.connect(self.node_clicked)
+        explain_widget(self)
 
     def set_value_mode(self, mode: Mode) -> None:
         """Spec 5.5's Mode. Distinct from set_chart_mode, which chooses
@@ -430,6 +438,7 @@ class ChartView(QWidget):
             if depth:
                 self._crumbs.addWidget(QLabel("›"))
             button = QPushButton(self._store.name(node) if self._store else "")
+            describe_control(button, 'button')
             button.setFlat(True)
             button.setObjectName("breadcrumb")
             button.clicked.connect(lambda _checked=False, n=node: self.drill_to(n))

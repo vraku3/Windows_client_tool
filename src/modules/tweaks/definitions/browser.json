@@ -110,7 +110,7 @@
   {
     "id": "edge_disable_collections",
     "name": "Disable Edge Collections",
-    "description": "Removes the Collections feature and its toolbar button.",
+    "description": "Sets the Microsoft Edge EdgeCollectionsEnabled policy value to zero to request disabling Collections. Existing organisational policies and the installed Edge version can affect the result.",
     "category": "Browsers", "risk": "low", "requires_admin": true,
     "steps": [
       {"type":"registry","key":"HKLM\\SOFTWARE\\Policies\\Microsoft\\Edge","value":"EdgeCollectionsEnabled","data":0,"kind":"DWORD"}

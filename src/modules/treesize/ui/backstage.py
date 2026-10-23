@@ -12,6 +12,10 @@ Two pieces of Office-style chrome the ribbon needs to read as a ribbon:
 The Find box searches the ribbon's own actions, which is what Pro's "Find
 option" does: it finds *commands*, not files.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -43,6 +47,7 @@ class TitleRow(QWidget):
                                       ("result.export", "⇪", "Export")):
             action = ribbon.action(action_id)
             button = QToolButton(self)
+            describe_control(button, 'button')
             button.setText(glyph)
             button.setToolTip(tip)
             button.setAutoRaise(True)
@@ -63,6 +68,7 @@ class TitleRow(QWidget):
         row.addStretch(1)
 
         self.find_box = QLineEdit(self)
+        describe_control(self.find_box, 'find_box')
         self.find_box.setPlaceholderText("Find option (F6)")
         self.find_box.setObjectName("findOption")
         self.find_box.setFixedWidth(200)
@@ -71,6 +77,7 @@ class TitleRow(QWidget):
 
         shortcut = QShortcut(QKeySequence("F6"), self)
         shortcut.activated.connect(self.focus_find)
+        explain_widget(self)
 
     def focus_find(self) -> None:
         self.find_box.setFocus()
@@ -134,6 +141,7 @@ class Backstage(QWidget):
         rail_layout.setSpacing(2)
 
         back = QPushButton("←  Back", rail)
+        describe_control(back, 'back')
         back.setObjectName("backstageBack")
         back.clicked.connect(self.closed)
         rail_layout.addWidget(back)
@@ -146,6 +154,7 @@ class Backstage(QWidget):
                                  ("Options…", "tools.options.open"),
                                  ("About", "help.about")):
             button = QPushButton(label, rail)
+            describe_control(button, 'button')
             button.setObjectName("backstageEntry")
             button.clicked.connect(
                 lambda _c=False, a=action_id: self.action_requested.emit(a))
@@ -166,6 +175,7 @@ class Backstage(QWidget):
         self.recent.itemClicked.connect(self._scan_chosen)
         body_layout.addWidget(self.recent, 1)
         layout.addWidget(body, 1)
+        explain_widget(self)
 
     def set_recent(self, targets) -> None:
         self.recent.clear()

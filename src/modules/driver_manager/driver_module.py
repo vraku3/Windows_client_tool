@@ -175,6 +175,10 @@ def _choose_baseline(parent, metas: list) -> Optional[str]:
     return choice if ok else None
 
 
+from modules.diagnose.help_ui import explain
+from modules.driver_manager.help_text import INTRO, CONTROLS, HEADERS, TABS
+from modules.diagnose.help_ui import explain_menu
+
 class DriverModule(BaseModule):
     name = "Driver Manager"
     icon = "🖨️"
@@ -303,6 +307,7 @@ class DriverModule(BaseModule):
         if cfg is not None:
             restore_column_widths(self._table, cfg.get, self._CONFIG_PREFIX)
 
+        explain(self._widget, INTRO, CONTROLS, HEADERS, TABS)
         return self._widget
 
     def _build_toolbar(self) -> QVBoxLayout:
@@ -357,9 +362,11 @@ class DriverModule(BaseModule):
             "(32 identical processors become one \"AMD Processor  x32\" row). "
             "Double-click a grouped row to see the individual devices.")
         self._status_lbl = QLabel("Click Refresh to load drivers.")
+        self._status_lbl.setToolTip("Counts and results from the latest inventory or driver action. Issue flags use Windows-reported errors and signature metadata; a flag is a reason to inspect details, not proof the device is faulty.")
         interval = self.get_refresh_interval()
         auto_refresh_lbl = QLabel(f"Auto-refreshes every {interval // 1000}s")
         auto_refresh_lbl.setObjectName("muted")
+        auto_refresh_lbl.setToolTip("The app rereads driver inventory on this interval while the module is active. Refreshing does not install or remove drivers.")
         view_row.addWidget(self._refresh_btn)
         view_row.addWidget(QLabel("Filter:"))
         view_row.addWidget(self._filter_edit, 1)
@@ -547,6 +554,9 @@ class DriverModule(BaseModule):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 else:
                     item = centered_item(str(val), sortable=(c == 0))
+                item.setToolTip(f"{d.device_name}\nWindows device ID: {d.device_id or 'not reported'}\n"
+                                f"Driver: {d.version or 'not reported'}; INF: {d.inf_name or 'not reported'}\n"
+                                f"Findings: {d.flags or 'none reported'}\n{HEADERS[COLUMNS[c]]}")
                 if c == 0:
                     # Task 36: device_name alone can't tell two distinct
                     # devices apart. Carry the real identity on the row so
@@ -2114,6 +2124,8 @@ class DriverModule(BaseModule):
         act_details.triggered.connect(lambda: self._show_driver_details(driver))
         if group is not None and group.count > 1:
             act_instances = menu.addAction(f"Show all {group.count} devices...")
+            act_instances.setToolTip("List each device represented by this grouped row. This is a read-only view; double-click a device to inspect its metadata.")
+            act_instances.setStatusTip(act_instances.toolTip())
             act_instances.triggered.connect(
                 lambda: self._show_group_instances(group))
         menu.addSeparator()
@@ -2145,6 +2157,9 @@ class DriverModule(BaseModule):
         act_check_update = menu.addAction(
             f"Check for Vendor Update -- {HELD_STATUS}" if held else "Check for Vendor Update...")
         act_check_update.setEnabled(not held)
+        if held:
+            act_check_update.setToolTip(HELD_REASON)
+            act_check_update.setStatusTip(HELD_REASON)
         act_check_update.triggered.connect(
             lambda: self._check_for_vendor_update(driver) if driver else None)
         act_check_wu = menu.addAction(
@@ -2170,6 +2185,7 @@ class DriverModule(BaseModule):
             act_explain = menu.addAction("Why does this matter?")
             act_explain.triggered.connect(
                 lambda: self._show_flag_explanation(driver.flags))
+        explain_menu(menu, CONTROLS)
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _do_uninstall_driver(self, published: str, device_name: str) -> None:

@@ -3,6 +3,10 @@
 Each ``setup_*`` receives the tab's content layout and the loader's result.
 The loaders run on a COMWorker; the setups run on the UI thread.
 """
+
+from modules.hardware_inventory.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import logging
 from typing import List
 
@@ -34,6 +38,7 @@ def heading(text: str) -> QLabel:
 def make_kv_table() -> QTableWidget:
     t = QTableWidget(0, 2)
     t.setHorizontalHeaderLabels(["Property", "Value"])
+    describe_headers(t)
     fit_table(t, stretch=[1], content=[0])
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
@@ -45,12 +50,15 @@ def fill_kv(table: QTableWidget, rows) -> None:
     table.setRowCount(len(rows))
     for r, (k, v) in enumerate(rows):
         table.setItem(r, 0, centered_item(str(k)))
+        describe_cell(table, 0, table.item(r, 0))
         table.setItem(r, 1, centered_item(str(v)))
+        describe_cell(table, 1, table.item(r, 1))
 
 
 def make_dict_table(columns) -> QTableWidget:
     t = QTableWidget(0, len(columns))
     t.setHorizontalHeaderLabels(columns)
+    describe_headers(t)
     fit_last(t)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
@@ -63,6 +71,7 @@ def fill_dict(table: QTableWidget, rows, columns) -> None:
     for r, row in enumerate(rows):
         for c, col in enumerate(columns):
             table.setItem(r, c, centered_item(str(row.get(col, ""))))
+            describe_cell(table, c, table.item(r, c))
 
 
 def add_findings(layout: QVBoxLayout, findings: List[ap.Finding], all_clear: str) -> None:
@@ -200,6 +209,7 @@ def setup_memory(layout, data) -> None:
         layout.addWidget(note)
     t2 = QTableWidget(len(report.slots), len(MEMORY_COLUMNS))
     t2.setHorizontalHeaderLabels(MEMORY_COLUMNS)
+    describe_headers(t2)
     fit_table(t2, stretch=[10], content=list(range(10)))
     t2.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t2.verticalHeader().setVisible(False)
@@ -207,6 +217,7 @@ def setup_memory(layout, data) -> None:
     for r, s in enumerate(report.slots):
         for c, item in enumerate(_slot_cells(s)):
             t2.setItem(r, c, item)
+            describe_cell(t2, c, t2.item(r, c))
     fit_table_height(t2)
     layout.addWidget(t2)
     add_findings(layout, ap.memory_findings(report.slots, report.max_capacity_bytes),
@@ -232,6 +243,7 @@ def setup_monitors(layout, data) -> None:
         layout.addWidget(note)
     t = QTableWidget(len(monitors), len(MONITOR_COLUMNS))
     t.setHorizontalHeaderLabels(MONITOR_COLUMNS)
+    describe_headers(t)
     fit_table(t, stretch=[6], content=[0, 1, 2, 3, 4, 5])
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
@@ -247,6 +259,7 @@ def setup_monitors(layout, data) -> None:
         paint_severity(cells[5], "ok" if m.active else "info")
         for c, item in enumerate(cells):
             t.setItem(r, c, item)
+            describe_cell(t, c, t.item(r, c))
     fit_table_height(t)
     layout.addWidget(t)
     if not monitors:
@@ -303,11 +316,13 @@ class AssetRecordView(QWidget):
         for label, fmt in (("Copy as Markdown", ap.record_to_markdown),
                            ("Copy as CSV", ap.record_to_csv), ("Copy as JSON", ap.record_to_json)):
             btn = QPushButton(label)
+            describe_control(btn, 'btn')
             btn.clicked.connect(lambda _c=False, f=fmt, name=label: self.copy(f, name))
             row.addWidget(btn)
         vendor, url = ap.warranty_lookup(record.get("Manufacturer", ""), record.get("Serial number", ""),
                                          record.get("Model", ""))
         self.warranty_btn = QPushButton(f"Open {vendor} warranty page" if vendor else "No warranty page known")
+        describe_control(self.warranty_btn, 'warranty_btn')
         self.warranty_btn.setEnabled(bool(url))
         self._url = url
         self.warranty_btn.setToolTip("Opens the vendor's own page in your browser; nothing is sent from here.")
@@ -322,6 +337,7 @@ class AssetRecordView(QWidget):
         if findings:
             box.addWidget(heading("Worth noting"))
             add_findings(box, findings, "")
+        explain_widget(self)
 
     def copy(self, fmt, name: str) -> None:
         QApplication.clipboard().setText(fmt(self.record))

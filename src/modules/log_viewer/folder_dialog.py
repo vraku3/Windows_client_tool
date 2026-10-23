@@ -8,6 +8,10 @@ Measured on the real `C:/Windows/Logs`: 90 logs, 106 MB, twelve subfolders,
 85 of them under 1 MB and one of them 84.5 MB. So the list is ticked by size
 rather than wholesale -- the big archive is offered, not assumed.
 """
+
+from modules.log_viewer.help_widgets import (
+    describe_control, explain_widget,
+)
 import os
 
 from PyQt6.QtCore import Qt
@@ -51,6 +55,7 @@ class FolderPickDialog(QDialog):
         layout.addWidget(self._list)
 
         self._all = QCheckBox("Tick everything", self)
+        describe_control(self._all, '_all')
         self._all.toggled.connect(self.select_all)
         layout.addWidget(self._all)
 
@@ -60,6 +65,7 @@ class FolderPickDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        explain_widget(self)
 
     # ---- what it says ---------------------------------------------------
 

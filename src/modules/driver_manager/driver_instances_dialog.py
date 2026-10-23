@@ -6,7 +6,6 @@ its own details, the same dialog a single ungrouped row opens.
 """
 from typing import Optional
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView,
     QLabel, QTableWidget, QTableWidgetItem, QVBoxLayout,
@@ -14,6 +13,8 @@ from PyQt6.QtWidgets import (
 
 from modules.driver_manager.driver_grouping import DriverGroup
 from modules.driver_manager.driver_reader import DriverInfo
+from modules.diagnose.help_ui import explain
+from modules.driver_manager.help_text import HEADERS
 
 _HEADERS = ["Device Name", "Device ID", "Hardware ID", "Flags"]
 
@@ -65,6 +66,7 @@ class DriverInstancesDialog(QDialog):
         row_layout.addStretch()
         row_layout.addWidget(buttons)
         layout.addLayout(row_layout)
+        explain(self, "These devices share matching driver metadata in the main inventory. Double-click one to read its own details; this view does not install, remove or change drivers and normally needs no administrator rights.", headers=HEADERS)
 
     def member_at(self, row: int) -> Optional[DriverInfo]:
         if 0 <= row < self._group.count:

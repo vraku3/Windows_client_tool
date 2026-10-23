@@ -27,6 +27,11 @@ from modules.tweaks.tweak_categories import CATEGORY_FILES
 from modules.gpresult.tweak_conflicts import policy_managed_tweak_keys
 from core.semantic_colors import semantic
 from ui.error_banner import ErrorBanner
+from ui.module_intro import module_intro
+from modules.tweaks.tweaks_help import (
+    APPS_INTRO, CONTROL_HELP, INTRO, PRESET_HELP, RISK_HELP, SELECTION_HELP,
+    STATUS_HELP, row_help,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +91,7 @@ class _DetailsPanel(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(6)
+        layout.addWidget(module_intro("Review the selected tweak and its exact steps before applying. Apply needs administrator rights; undo is limited to recorded reversible steps."))
 
         self._title = QLabel()
         self._title.setWordWrap(True)
@@ -124,6 +130,7 @@ class _DetailsPanel(QFrame):
 
         self._apply_btn = QPushButton("Apply This Tweak")
         self._apply_btn.setEnabled(False)
+        self._apply_btn.setToolTip("Apply the displayed tweak; high-risk tweaks ask first, low and medium risk run immediately. Requires administrator rights; undo depends on its recorded steps.")
         layout.addWidget(self._apply_btn)
 
         self._tweak = None
@@ -159,11 +166,14 @@ class _DetailsPanel(QFrame):
         label = text.split(" ", 1)[-1]
         shade = semantic(colour) if colour else "#aaaaaa"
         detail = f"<br><span style='color:#999999'>{_escape(reason)}</span>" if reason else ""
+        self._status.setToolTip(STATUS_HELP.get(status, STATUS_HELP[UNKNOWN]) + ("\n" + reason if reason else ""))
         self._status.setText(
             f"<span style='color:{shade}'><b>STATUS: {label.upper()}</b></span>{detail}")
 
         applicable = status != NOT_APPLICABLE
         self._apply_btn.setEnabled(applicable)
+        if self._tweak:
+            self._apply_btn.setToolTip("Apply this tweak; high risk asks first, low/medium runs immediately.\n\n" + row_help(self._tweak, status, reason))
         self._apply_btn.setText(
             "Apply This Tweak" if applicable else "Not Applicable On This PC")
 
@@ -188,6 +198,7 @@ class _DetailsPanel(QFrame):
         self._risk.setText(f"<span style='color:{risk_color}'>RISK: {risk.upper()}</span>")
 
         self._desc.setText(tweak.get("description", "No description."))
+        self._risk.setToolTip(RISK_HELP.get(risk, "Risk not specified."))
 
         managed_keys = self._policy_managed.get(tweak.get("id", ""))
         if managed_keys:
@@ -294,6 +305,7 @@ class TweakRow(QWidget):
         risk_label.setStyleSheet("color: %s;" % semantic(
             "error" if risk == "high"
             else "warning" if risk == "medium" else "success"))
+        risk_label.setToolTip(RISK_HELP.get(risk, "Risk not specified."))
         risk_label.setFixedWidth(70)
         risk_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         risk_label.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
@@ -325,6 +337,18 @@ class TweakRow(QWidget):
         self.setStyleSheet(
             "TweakRow:hover { background-color: #2a2d2e; }"
         )
+        self._update_help()
+
+    def _update_help(self) -> None:
+        tooltip = row_help(self.tweak, self.status, self.status_reason)
+        if self.policy_keys:
+            tooltip += "\n\nWrites into a Group Policy managed branch:\n" + "\n".join(self.policy_keys) + "\nA future local or domain Group Policy can overwrite these settings."
+        self.setToolTip(tooltip)
+        self._name_label.setToolTip(tooltip)
+        self.checkbox.setToolTip("Select this tweak for Apply Selected; checking alone changes nothing.\n\n" + tooltip)
+        self.apply_btn.setToolTip("Apply this tweak now; high risk asks first, low/medium runs immediately.\n\n" + tooltip)
+        self.disable_btn.setToolTip("Disable reverts the latest recorded apply for this tweak without confirmation.\n\n" + tooltip)
+        self.status_label.setToolTip(STATUS_HELP.get(self.status, STATUS_HELP[UNKNOWN]) + ("\nReason: " + self.status_reason if self.status_reason else ""))
 
     def set_status(self, status: str, reason: str = "") -> None:
         """Show the verdict, and put the *why* one hover away.
@@ -341,10 +365,6 @@ class TweakRow(QWidget):
         self.status_label.setStyleSheet(
             f"color: {semantic(colour)};" if colour else "")
 
-        label = text.split(" ", 1)[-1]
-        self.status_label.setToolTip(
-            f"{label}\n{reason}" if reason else label)
-
         # A tweak with nothing to do here must not sit in a bulk selection and
         # then report a failure the user has to go and interpret.
         applicable = status != NOT_APPLICABLE
@@ -355,10 +375,10 @@ class TweakRow(QWidget):
             self.apply_btn.setToolTip(f"Not applicable on this PC — {reason}")
             self._name_label.setStyleSheet("color: #7a7a7a;")
         else:
-            self.apply_btn.setToolTip("")
             self._name_label.setStyleSheet("")
 
         self.disable_btn.setVisible(status in (APPLIED, PARTIAL))
+        self._update_help()
 
     @property
     def is_checked(self) -> bool:
@@ -386,6 +406,12 @@ class TweakTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        category = tweaks[0].get("category", "Windows") if tweaks else "Windows"
+        layout.addWidget(module_intro(
+            f"Review {category} tweaks and their detected settings on this PC. "
+            "Apply changes Windows with administrator rights; selecting rows alone changes nothing. "
+            "Disable restores recorded settings where supported; commands and app removals need separate recovery."))
 
         # Control bar
         bar = QHBoxLayout()
@@ -426,6 +452,10 @@ class TweakTab(QWidget):
         self._count_label = QLabel("0 selected")
         bar.addWidget(self._count_label)
 
+        for button in (self._select_all_btn, self._deselect_all_btn,
+                       self._select_applied_btn, self._select_not_btn):
+            button.setToolTip(SELECTION_HELP[button.text()])
+        self._count_label.setToolTip("Number of checked rows in this category, including filtered-out rows; checking does not mean applied.")
         layout.addLayout(bar)
 
         # Scroll area with rows
@@ -570,11 +600,13 @@ class AppManagerTab(QWidget):
         self._applying = False
 
         layout = QVBoxLayout(self)
+        layout.addWidget(module_intro(APPS_INTRO))
 
         # Filter bar
         filter_bar = QHBoxLayout()
         filter_bar.addWidget(QLabel("Category:"))
         self._cat_combo = QComboBox()
+        self._cat_combo.setToolTip("Filter the available installation catalog by category; queued installs and removals remain queued. This changes no installed apps.")
         self._cat_combo.addItem("All")
         if catalog is not None:
             self._cat_combo.addItems(catalog.categories())
@@ -628,6 +660,11 @@ class AppManagerTab(QWidget):
         apply_bar.addWidget(self._apply_btn)
         layout.addLayout(apply_bar)
 
+        self._apply_btn.setToolTip("Confirm and apply queued app installs and removals together with checked tweaks across all categories. Installers may need administrator rights; removed apps need separate reinstallation and their data is not restored by Revert.")
+        self._apply_label.setToolTip("Counts queued removals and installs, not completed changes. Press Apply Changes to confirm and run them.")
+        self._installed_list.setToolTip("Installed packaged apps reported by Windows; check to queue removal, then Apply Changes asks for confirmation. Locked entries are protected. Revert cannot restore removed apps and their data.")
+        self._desktop_list.setToolTip("Installed programs reported by winget; check to queue an uninstall, then Apply Changes asks for confirmation. The program's uninstaller may ask for administrator rights; reinstall separately to recover.")
+        self._catalog_list.setToolTip("Bundled installation catalog; check to queue an install through winget. Apply Changes asks for confirmation; installers can require administrator rights. Already-detected apps cannot be selected.")
         if catalog is not None:
             self._refresh_catalog_list()
 
@@ -645,6 +682,7 @@ class AppManagerTab(QWidget):
             else:
                 item.setCheckState(Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, pkg)
+            item.setToolTip(f"{pkg}: installed Windows app package. Checking queues removal after confirmation; locked entries are protected. Revert cannot restore the app or its data.")
             self._installed_list.addItem(item)
             bind_list(self._installed_list, item, AppKey(name=pkg, package_name=pkg))
         self._populating = False
@@ -674,7 +712,7 @@ class AppManagerTab(QWidget):
                 item.setText(f"{app.display}  🔒")
             # The row shows a human name; what winget needs is the id.
             item.setData(Qt.ItemDataRole.UserRole, app.app_id)
-            item.setToolTip(app.app_id)
+            item.setToolTip(f"{app.display}\nwinget identifier: {app.app_id}. Check to queue uninstall after confirmation; reinstall separately to recover the app. Revert does not restore its data.")
             self._desktop_list.addItem(item)
             bind_list(self._desktop_list, item, AppKey(name=app.name, winget_id=app.app_id))
         self._populating = False
@@ -729,7 +767,7 @@ class AppManagerTab(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
                 item.setText(item.text() + "  ✅ Installed")
             item.setData(Qt.ItemDataRole.UserRole, entry["winget_id"])
-            item.setToolTip(entry.get("description", ""))
+            item.setToolTip(entry.get("description", "") + "\nwinget identifier: " + entry["winget_id"] + ". Check to queue installation; Apply Changes asks first. An installed badge means detected by identifier or exact name, not verified program health.")
             self._catalog_list.addItem(item)
         self._populating = False
         self._update_apply_label()
@@ -873,8 +911,12 @@ class TweaksModule(BaseModule):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
+        layout.addWidget(module_intro(INTRO))
+
         self._error_banner = ErrorBanner()
         self._error_banner.hide()
+        for button in self._error_banner.findChildren(QPushButton):
+            button.setToolTip("Dismiss this error message; it does not retry the operation or undo any changes.")
         layout.addWidget(self._error_banner)
 
         # Top: preset toolbar + search bar
@@ -910,7 +952,8 @@ class TweaksModule(BaseModule):
             tab = TweakTab(tweaks, policy_managed=policy_managed)
             tab._category_name = category
             self._tab_widgets[category] = tab
-            self._tabs.addTab(tab, category)
+            index = self._tabs.addTab(tab, category)
+            self._tabs.setTabToolTip(index, f"{category}: review settings, select tweaks and apply with administrator rights. Disable restores recorded reversible steps; selection alone changes nothing.")
             tab.row_selected.connect(self._on_row_selected)
             tab.set_row_apply_handler(self._on_row_apply)
             tab.set_row_disable_handler(self._on_row_disable)
@@ -920,7 +963,8 @@ class TweaksModule(BaseModule):
         # Its own Apply Changes button and the bottom bar's Apply Selected do
         # the same thing, so whichever one is pressed, what is checked happens.
         self._app_tab.apply_requested.connect(self._on_apply)
-        self._tabs.addTab(self._app_tab, "Apps")
+        index = self._tabs.addTab(self._app_tab, "Apps")
+        self._tabs.setTabToolTip(index, APPS_INTRO)
 
         main_splitter.addWidget(self._tabs)
 
@@ -935,7 +979,17 @@ class TweaksModule(BaseModule):
         layout.addWidget(self._build_bottom_bar())
         self._signals.status_detected.connect(self._on_status_detected)
         self._signals.apps_detected.connect(self._on_apps_detected)
+        for attribute, tooltip in CONTROL_HELP.items():
+            getattr(self, attribute).setToolTip(tooltip)
+        self._explain_tab_buttons()
         return self._widget
+
+    def _explain_tab_buttons(self) -> None:
+        # Qt creates these scroll arrows inside the tab bar.
+        from PyQt6.QtWidgets import QToolButton
+        for button in self._tabs.tabBar().findChildren(QToolButton):
+            forward = button.objectName() == "ScrollRightButton"
+            button.setToolTip("Show more category tabs to the " + ("right" if forward else "left") + "; this changes no Windows settings.")
 
     def _build_search_bar(self) -> QWidget:
         bar = QWidget()
@@ -994,18 +1048,22 @@ class TweaksModule(BaseModule):
         layout.addWidget(self._preset_combo)
 
         load_btn = QPushButton("Load")
+        load_btn.setToolTip(PRESET_HELP["load_btn"])
         load_btn.clicked.connect(self._on_load_preset)
         layout.addWidget(load_btn)
 
         save_btn = QPushButton("Save As…")
+        save_btn.setToolTip(PRESET_HELP["save_btn"])
         save_btn.clicked.connect(self._on_save_preset)
         layout.addWidget(save_btn)
 
         export_btn = QPushButton("Export…")
+        export_btn.setToolTip(PRESET_HELP["export_btn"])
         export_btn.clicked.connect(self._on_export_preset)
         layout.addWidget(export_btn)
 
         import_btn = QPushButton("Import…")
+        import_btn.setToolTip(PRESET_HELP["import_btn"])
         import_btn.clicked.connect(self._on_import_preset)
         layout.addWidget(import_btn)
 
@@ -1047,10 +1105,12 @@ class TweaksModule(BaseModule):
             "previous session — this is NOT the same as the 'System Restore' "
             "module in the sidebar (that one is Windows' own OS restore points)."
         )
+        undo_btn.setToolTip(undo_btn.toolTip() + "\nOnly recorded reversible steps can be restored; commands and removed app data cannot be recovered this way. Administrator rights are needed to restore system settings.")
         undo_btn.clicked.connect(self._open_restore_manager)
         layout.addWidget(undo_btn)
 
         self._progress = QProgressBar()
+        self._progress.setToolTip("Progress through queued tweaks and app operations; a completed item may still have errors shown in the output.")
         self._progress.setVisible(False)
         self._progress.setMaximumWidth(200)
         layout.addWidget(self._progress)

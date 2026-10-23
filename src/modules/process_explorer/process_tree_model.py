@@ -375,6 +375,10 @@ class ProcessTreeModel(QAbstractItemModel):
 
     def headerData(self, section: int, orientation: Qt.Orientation,
                    role: int = Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return COLUMNS[section]
+        if orientation == Qt.Orientation.Horizontal and 0 <= section < len(COLUMNS):
+            if role == Qt.ItemDataRole.ToolTipRole:
+                from ui.help.dashboard_text import HEADERS
+                return HEADERS.get(COLUMNS[section], "")
+            if role == Qt.ItemDataRole.DisplayRole:
+                return COLUMNS[section]
         return None

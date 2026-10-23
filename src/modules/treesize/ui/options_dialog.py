@@ -8,6 +8,10 @@ Persistence goes through the host's ConfigManager when one is available, so
 TreeSize's settings live where every other module's settings live rather than
 in a private file.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QSpinBox, QVBoxLayout,
@@ -46,17 +50,20 @@ class OptionsDialog(QDialog):
         display = QGroupBox("Display", self)
         form = QFormLayout(display)
         self.unit = QComboBox(display)
+        describe_control(self.unit, 'unit')
         for unit in Unit:
             self.unit.addItem(unit.value, unit.value)
         self.unit.setCurrentIndex(max(0, self.unit.findData(self._settings["unit"])))
         form.addRow("Unit:", self.unit)
 
         self.decimals = QSpinBox(display)
+        describe_control(self.decimals, 'decimals')
         self.decimals.setRange(0, 3)
         self.decimals.setValue(int(self._settings["decimals"]))
         form.addRow("Decimals:", self.decimals)
 
         self.mode = QComboBox(display)
+        describe_control(self.mode, 'mode')
         for mode in Mode:
             self.mode.addItem(mode.value, mode.value)
         self.mode.setCurrentIndex(max(0, self.mode.findData(self._settings["mode"])))
@@ -67,6 +74,7 @@ class OptionsDialog(QDialog):
         scan_form = QFormLayout(scanning)
         self.charge_hardlinks = QCheckBox(
             "Charge every hard link its full size", scanning)
+        describe_control(self.charge_hardlinks, 'charge_hardlinks')
         self.charge_hardlinks.setChecked(bool(self._settings["charge_all_hardlinks"]))
         self.charge_hardlinks.setToolTip(
             "Off (the default, and Pro's) counts a hard-linked file once, under "
@@ -76,6 +84,7 @@ class OptionsDialog(QDialog):
 
         self.collect_owners = QCheckBox(
             "Determine the owner of every file (slower)", scanning)
+        describe_control(self.collect_owners, 'collect_owners')
         self.collect_owners.setChecked(bool(self._settings["collect_owners"]))
         self.collect_owners.setToolTip(
             "Fills the Owner column and the Users view. A walk scan pays one "
@@ -84,10 +93,12 @@ class OptionsDialog(QDialog):
         scan_form.addRow(self.collect_owners)
 
         self.exclude_hidden = QCheckBox("Exclude hidden files", scanning)
+        describe_control(self.exclude_hidden, 'exclude_hidden')
         self.exclude_hidden.setChecked(bool(self._settings["exclude_hidden"]))
         scan_form.addRow(self.exclude_hidden)
 
         self.exclude_patterns = QLineEdit(scanning)
+        describe_control(self.exclude_patterns, 'exclude_patterns')
         self.exclude_patterns.setText(
             ", ".join(self._settings.get("exclude_patterns") or ()))
         self.exclude_patterns.setPlaceholderText("node_modules, *.iso, *.tmp")
@@ -100,6 +111,7 @@ class OptionsDialog(QDialog):
         views = QGroupBox("Views", self)
         view_form = QFormLayout(views)
         self.treemap_depth = QSpinBox(views)
+        describe_control(self.treemap_depth, 'treemap_depth')
         self.treemap_depth.setRange(1, 12)
         self.treemap_depth.setValue(int(self._settings["treemap_depth"]))
         self.treemap_depth.setToolTip(
@@ -108,6 +120,7 @@ class OptionsDialog(QDialog):
         view_form.addRow("Treemap depth:", self.treemap_depth)
 
         self.top_files_limit = QSpinBox(views)
+        describe_control(self.top_files_limit, 'top_files_limit')
         self.top_files_limit.setRange(10, 1000)
         self.top_files_limit.setSingleStep(10)
         self.top_files_limit.setValue(int(self._settings["top_files_limit"]))
@@ -118,6 +131,7 @@ class OptionsDialog(QDialog):
         safety_form = QFormLayout(safety)
         self.confirm_permanent = QCheckBox(
             "Confirm before deleting permanently", safety)
+        describe_control(self.confirm_permanent, 'confirm_permanent')
         self.confirm_permanent.setChecked(
             bool(self._settings["confirm_permanent_delete"]))
         safety_form.addRow(self.confirm_permanent)
@@ -138,6 +152,7 @@ class OptionsDialog(QDialog):
             QDialogButtonBox.StandardButton.RestoreDefaults
         ).clicked.connect(self.restore_defaults)
         layout.addWidget(buttons)
+        explain_widget(self)
 
     def restore_defaults(self) -> None:
         self.unit.setCurrentIndex(max(0, self.unit.findData(DEFAULTS["unit"])))

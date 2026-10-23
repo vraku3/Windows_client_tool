@@ -10,6 +10,10 @@ read that on a log row" -- a real message with a real match coloured in it
 does, and it shows in the same breath that a match is a COLOUR and not a
 block behind the text.
 """
+
+from modules.log_viewer.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QColorDialog, QDialog, QDialogButtonBox,
@@ -47,6 +51,7 @@ class MatchColourDialog(QDialog):
             grid.addWidget(label, row, 0)
 
             swatch = QPushButton(self)
+            describe_control(swatch, 'swatch')
             swatch.setMinimumWidth(120)
             swatch.clicked.connect(
                 lambda _checked=False, m=meaning: self._pick(m))
@@ -72,6 +77,7 @@ class MatchColourDialog(QDialog):
         layout.addWidget(box)
 
         self._refresh()
+        explain_widget(self)
 
     # ---- what the caller reads ------------------------------------------
 

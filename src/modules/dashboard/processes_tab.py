@@ -32,6 +32,7 @@ from ui.error_banner import ErrorBanner
 from . import process_view as pv
 from .recycle_watch import RecycleWatch
 from .process_menu import ProcessMenu
+from ui.help.dashboard_ui import explain_menu
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +233,7 @@ class ProcessesTab(QWidget):
             action.setChecked(column.key in self._visible_extra)
             action.toggled.connect(
                 lambda on, k=column.key: self._toggle_column(k, on))
+        explain_menu(menu)
         menu.exec(position)
 
     def _toggle_column(self, key: str, shown: bool) -> None:

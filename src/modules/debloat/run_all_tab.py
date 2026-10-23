@@ -4,6 +4,9 @@ actual write goes through the same TweakEngine.apply_tweak / app-removal
 path the Apps and Tweaks tabs already use; this file adds no new way to
 change the machine, only a way to run several presets back to back.
 """
+
+from ui.help.debloat_widgets import explain
+from ui.help import debloat_text as help_info
 import logging
 from typing import Callable, Dict, List, Set
 
@@ -85,6 +88,7 @@ class RunAllTab(QWidget):
         self._checks: Dict[str, QCheckBox] = {}
         for key, label in _PRESET_LABELS:
             chk = QCheckBox(label)
+            chk.setToolTip(f"Include {label} in the next Run All pass. Checking this starts nothing; Run All asks before applying tweaks and removing apps, and not every step has an undo.")
             chk.setChecked(False)
             self._checks[key] = chk
             checks_row.addWidget(chk)
@@ -108,6 +112,7 @@ class RunAllTab(QWidget):
         self._log.setReadOnly(True)
         self._log.setFont(QFont("Consolas", 9))
         layout.addWidget(self._log, 1)
+        explain(self, intro=help_info.INTRO["Run All"])
 
     def _selected_presets(self) -> List[str]:
         return [key for key, _label in _PRESET_LABELS if self._checks[key].isChecked()]

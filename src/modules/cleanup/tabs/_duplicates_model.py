@@ -70,6 +70,9 @@ class DuplicatesModel(QAbstractItemModel):
         return group, group.files[file_index] if file_index >= 0 else None
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.ToolTipRole:
+            from modules.cleanup.help_text import HEADERS as HELP
+            return HELP.get(HEADERS[section])
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return HEADERS[section]
         return None

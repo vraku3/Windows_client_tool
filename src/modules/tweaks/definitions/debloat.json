@@ -2,7 +2,7 @@
   {
     "id": "remove_bing_weather",
     "name": "Bing Weather",
-    "description": "Weather app with ad-powered news feed.",
+    "description": "This entry targets Bing Weather: Weather app with ad-powered news feed. Applying removes the matching installed app package (Microsoft.BingWeather) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -18,7 +18,7 @@
   {
     "id": "remove_bing_news",
     "name": "Microsoft News",
-    "description": "News aggregator with Microsoft Start integration.",
+    "description": "This entry targets Microsoft News: News aggregator with Microsoft Start integration. Applying removes the matching installed app package (Microsoft.BingNews) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -34,7 +34,7 @@
   {
     "id": "remove_bing_finance",
     "name": "Bing Finance",
-    "description": "Finance tracking app.",
+    "description": "This entry targets Bing Finance: Finance tracking app. Applying removes the matching installed app package (Microsoft.BingFinance) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -50,7 +50,7 @@
   {
     "id": "remove_bing_sports",
     "name": "Bing Sports",
-    "description": "Sports news and scores.",
+    "description": "This entry targets Bing Sports: Sports news and scores. Applying removes the matching installed app package (Microsoft.BingSports) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -66,7 +66,7 @@
   {
     "id": "remove_bing_travel",
     "name": "Bing Travel",
-    "description": "Travel planning app.",
+    "description": "This entry targets Bing Travel: Travel planning app. Applying removes the matching installed app package (Microsoft.BingTravel) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -82,7 +82,7 @@
   {
     "id": "remove_bing_food",
     "name": "Bing Food & Drink",
-    "description": "Food and drink recipes app.",
+    "description": "This entry targets Bing Food & Drink: Food and drink recipes app. Applying removes the matching installed app package (Microsoft.BingFoodAndDrink) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -98,7 +98,7 @@
   {
     "id": "remove_bing_health",
     "name": "Bing Health & Fitness",
-    "description": "Health tracking app.",
+    "description": "This entry targets Bing Health & Fitness: Health tracking app. Applying removes the matching installed app package (Microsoft.BingHealthAndFitness) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -114,7 +114,7 @@
   {
     "id": "remove_bing_translator",
     "name": "Bing Translator",
-    "description": "Translation app.",
+    "description": "This entry targets Bing Translator: Translation app. Applying removes the matching installed app package (Microsoft.BingTranslator) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -130,7 +130,7 @@
   {
     "id": "remove_bing_search",
     "name": "Bing Search",
-    "description": "Web search app.",
+    "description": "This entry targets Bing Search: Web search app. Applying removes the matching installed app package (Microsoft.BingSearch) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
@@ -146,7 +146,7 @@
   {
     "id": "remove_calc",
     "name": "Calculator",
-    "description": "System calculator.",
+    "description": "This entry targets Calculator: System calculator. Applying removes the matching installed app package (Microsoft.WindowsCalculator) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -162,7 +162,7 @@
   {
     "id": "remove_camera",
     "name": "Windows Camera",
-    "description": "Camera app.",
+    "description": "This entry targets Windows Camera: Camera app. Applying removes the matching installed app package (Microsoft.WindowsCamera) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -178,7 +178,7 @@
   {
     "id": "remove_alarms",
     "name": "Alarms & Clock",
-    "description": "Alarm clock app.",
+    "description": "This entry targets Alarms & Clock: Alarm clock app. Applying removes the matching installed app package (Microsoft.WindowsAlarms) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -194,7 +194,7 @@
   {
     "id": "remove_snipping",
     "name": "Snipping Tool",
-    "description": "Screen capture tool.",
+    "description": "This entry targets Snipping Tool: Screen capture tool. Applying removes the matching installed app package (Microsoft.ScreenSketch) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -210,7 +210,7 @@
   {
     "id": "remove_notepad",
     "name": "Notepad",
-    "description": "System text editor.",
+    "description": "This entry targets Notepad: System text editor. Applying removes the matching installed app package (Microsoft.WindowsNotepad) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -226,7 +226,7 @@
   {
     "id": "remove_paint",
     "name": "Paint",
-    "description": "Simple image editor.",
+    "description": "This entry targets Paint: Simple image editor. Applying removes the matching installed app package (Microsoft.Paint) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -242,7 +242,7 @@
   {
     "id": "remove_sound_recorder",
     "name": "Sound Recorder",
-    "description": "Audio recording app.",
+    "description": "This entry targets Sound Recorder: Audio recording app. Applying removes the matching installed app package (Microsoft.WindowsSoundRecorder) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -258,7 +258,7 @@
   {
     "id": "remove_quick_assist",
     "name": "Quick Assist",
-    "description": "Remote assistance app.",
+    "description": "This entry targets Quick Assist: Remote assistance app. Applying removes the matching installed app package (MicrosoftCorporationII.QuickAssist) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -274,7 +274,7 @@
   {
     "id": "remove_sticky_notes",
     "name": "Sticky Notes",
-    "description": "Desktop sticky notes.",
+    "description": "This entry targets Sticky Notes: Desktop sticky notes. Applying removes the matching installed app package (Microsoft.MicrosoftStickyNotes) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -290,7 +290,7 @@
   {
     "id": "remove_terminal",
     "name": "Windows Terminal",
-    "description": "Modern terminal emulator.",
+    "description": "This entry targets Windows Terminal: Modern terminal emulator. Applying removes the matching installed app package (Microsoft.WindowsTerminal) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -306,7 +306,7 @@
   {
     "id": "remove_clipchamp",
     "name": "Clipchamp",
-    "description": "Video editor.",
+    "description": "This entry targets Clipchamp: Video editor. Applying removes the matching installed app package (Clipchamp.Clipchamp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -322,7 +322,7 @@
   {
     "id": "remove_journal",
     "name": "Microsoft Journal",
-    "description": "Note-taking app for pen devices.",
+    "description": "This entry targets Microsoft Journal: Note-taking app for pen devices. Applying removes the matching installed app package (Microsoft.MicrosoftJournal) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -338,7 +338,7 @@
   {
     "id": "remove_mail",
     "name": "Mail & Calendar",
-    "description": "Email and calendar app.",
+    "description": "This entry targets Mail & Calendar: Email and calendar app. Applying removes the matching installed app package (Microsoft.windowscommunicationsapps) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "low",
     "requires_admin": true,
@@ -354,7 +354,7 @@
   {
     "id": "remove_messaging",
     "name": "Messaging",
-    "description": "Messaging app for SMS.",
+    "description": "This entry targets Messaging: Messaging app for SMS. Applying removes the matching installed app package (Microsoft.Messaging) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "low",
     "requires_admin": true,
@@ -370,7 +370,7 @@
   {
     "id": "remove_skype",
     "name": "Skype UWP",
-    "description": "Skype messaging and calls.",
+    "description": "This entry targets Skype UWP: Skype messaging and calls. Applying removes the matching installed app package (Microsoft.SkypeApp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "low",
     "requires_admin": true,
@@ -386,7 +386,7 @@
   {
     "id": "remove_phone_link",
     "name": "Phone Link",
-    "description": "Link your phone to PC.",
+    "description": "This entry targets Phone Link: Link your phone to PC. Applying removes the matching installed app package (Microsoft.YourPhone) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "low",
     "requires_admin": true,
@@ -402,7 +402,7 @@
   {
     "id": "remove_cortana",
     "name": "Cortana",
-    "description": "Windows voice assistant.",
+    "description": "This entry targets Cortana: Windows voice assistant. Applying removes the matching installed app package (Microsoft.549981C3F5F50) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "medium",
     "requires_admin": true,
@@ -418,7 +418,7 @@
   {
     "id": "remove_office_hub",
     "name": "Office Hub",
-    "description": "Microsoft Office quick launch.",
+    "description": "This entry targets Office Hub: Microsoft Office quick launch. Applying removes the matching installed app package (Microsoft.MicrosoftOfficeHub) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -434,7 +434,7 @@
   {
     "id": "remove_onenote",
     "name": "OneNote",
-    "description": "Note-taking app.",
+    "description": "This entry targets OneNote: Note-taking app. Applying removes the matching installed app package (Microsoft.Office.OneNote) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -450,7 +450,7 @@
   {
     "id": "remove_outlook_win",
     "name": "Outlook for Windows",
-    "description": "New Outlook mail client.",
+    "description": "This entry targets Outlook for Windows: New Outlook mail client. Applying removes the matching installed app package (Microsoft.OutlookForWindows) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -466,7 +466,7 @@
   {
     "id": "remove_365_companions",
     "name": "Microsoft 365 Companions",
-    "description": "Companion apps for Microsoft 365.",
+    "description": "This entry targets Microsoft 365 Companions: Companion apps for Microsoft 365. Applying removes the matching installed app package (Microsoft.M365Companions) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -482,7 +482,7 @@
   {
     "id": "remove_power_automate",
     "name": "Power Automate",
-    "description": "Workflow automation app.",
+    "description": "This entry targets Power Automate: Workflow automation app. Applying removes the matching installed app package (Microsoft.PowerAutomateDesktop) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -498,7 +498,7 @@
   {
     "id": "remove_to_do",
     "name": "Microsoft To Do",
-    "description": "Task management app.",
+    "description": "This entry targets Microsoft To Do: Task management app. Applying removes the matching installed app package (Microsoft.Todos) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -514,7 +514,7 @@
   {
     "id": "remove_sway",
     "name": "Sway",
-    "description": "Digital storytelling app.",
+    "description": "This entry targets Sway: Digital storytelling app. Applying removes the matching installed app package (Microsoft.Office.Sway) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -530,7 +530,7 @@
   {
     "id": "remove_movies_tv",
     "name": "Movies & TV",
-    "description": "Video playback app.",
+    "description": "This entry targets Movies & TV: Video playback app. Applying removes the matching installed app package (Microsoft.ZuneVideo) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -546,7 +546,7 @@
   {
     "id": "remove_zune_music",
     "name": "Media Player",
-    "description": "Music and video playback.",
+    "description": "This entry targets Media Player: Music and video playback. Applying removes the matching installed app package (Microsoft.ZuneMusic) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -562,7 +562,7 @@
   {
     "id": "remove_photos",
     "name": "Photos",
-    "description": "Photo viewer and editor.",
+    "description": "This entry targets Photos: Photo viewer and editor. Applying removes the matching installed app package (Microsoft.Windows.Photos) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -578,7 +578,7 @@
   {
     "id": "remove_3d_builder",
     "name": "3D Builder",
-    "description": "3D modeling app.",
+    "description": "This entry targets 3D Builder: 3D modeling app. Applying removes the matching installed app package (Microsoft.3DBuilder) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -594,7 +594,7 @@
   {
     "id": "remove_3d_viewer",
     "name": "3D Viewer",
-    "description": "3D model viewer.",
+    "description": "This entry targets 3D Viewer: 3D model viewer. Applying removes the matching installed app package (Microsoft.Microsoft3DViewer) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -610,7 +610,7 @@
   {
     "id": "remove_paint_3d",
     "name": "Paint 3D",
-    "description": "3D painting app.",
+    "description": "This entry targets Paint 3D: 3D painting app. Applying removes the matching installed app package (Microsoft.MSPaint) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -626,7 +626,7 @@
   {
     "id": "remove_xbox_app",
     "name": "Xbox App",
-    "description": "Xbox console companion.",
+    "description": "This entry targets Xbox App: Xbox console companion. Applying removes the matching installed app package (Microsoft.XboxApp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -642,7 +642,7 @@
   {
     "id": "remove_xbox_game_overlay",
     "name": "Xbox Game Overlay",
-    "description": "Game overlay for Xbox features.",
+    "description": "This entry targets Xbox Game Overlay: Game overlay for Xbox features. Applying removes the matching installed app package (Microsoft.XboxGameOverlay) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -658,7 +658,7 @@
   {
     "id": "remove_xbox_gaming_app",
     "name": "Xbox Gaming App",
-    "description": "Xbox gaming hub.",
+    "description": "This entry targets Xbox Gaming App: Xbox gaming hub. Applying removes the matching installed app package (Microsoft.GamingApp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -674,7 +674,7 @@
   {
     "id": "remove_xbox_identity",
     "name": "Xbox Identity Provider",
-    "description": "Xbox authentication service.",
+    "description": "This entry targets Xbox Identity Provider: Xbox authentication service. Applying removes the matching installed app package (Microsoft.XboxIdentityProvider) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -690,7 +690,7 @@
   {
     "id": "remove_xbox_speech",
     "name": "Xbox Speech-to-Text",
-    "description": "Voice transcription for Xbox.",
+    "description": "This entry targets Xbox Speech-to-Text: Voice transcription for Xbox. Applying removes the matching installed app package (Microsoft.XboxSpeechToTextOverlay) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -706,7 +706,7 @@
   {
     "id": "remove_xbox_tcui",
     "name": "Xbox TCUI",
-    "description": "Xbox UI framework.",
+    "description": "This entry targets Xbox TCUI: Xbox UI framework. Applying removes the matching installed app package (Microsoft.Xbox.TCUI) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -722,7 +722,7 @@
   {
     "id": "remove_xbox_console",
     "name": "Xbox Console Companion",
-    "description": "Xbox Console Companion app.",
+    "description": "This entry targets Xbox Console Companion: Xbox Console Companion app. Applying removes the matching installed app package (Microsoft.XboxConsoleCompanion) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -738,7 +738,7 @@
   {
     "id": "remove_store",
     "name": "Microsoft Store",
-    "description": "App store for Windows apps.",
+    "description": "This entry targets Microsoft Store: App store for Windows apps. Applying removes the matching installed app package (Microsoft.WindowsStore) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "medium",
     "requires_admin": true,
@@ -754,7 +754,7 @@
   {
     "id": "remove_teams_new",
     "name": "Microsoft Teams (New)",
-    "description": "New Microsoft Teams chat app.",
+    "description": "This entry targets Microsoft Teams (New): New Microsoft Teams chat app. Applying removes the matching installed app package (MSTeams) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "low",
     "requires_admin": true,
@@ -770,7 +770,7 @@
   {
     "id": "remove_teams_old",
     "name": "Microsoft Teams (Old)",
-    "description": "Classic Microsoft Teams app.",
+    "description": "This entry targets Microsoft Teams (Old): Classic Microsoft Teams app. Applying removes the matching installed app package (MicrosoftTeams) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Communications",
     "risk": "low",
     "requires_admin": true,
@@ -786,7 +786,7 @@
   {
     "id": "remove_solitaire",
     "name": "Microsoft Solitaire",
-    "description": "Solitaire card games collection.",
+    "description": "This entry targets Microsoft Solitaire: Solitaire card games collection. Applying removes the matching installed app package (Microsoft.MicrosoftSolitaireCollection) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Gaming",
     "risk": "low",
     "requires_admin": true,
@@ -802,7 +802,7 @@
   {
     "id": "remove_whiteboard",
     "name": "Whiteboard",
-    "description": "Collaborative whiteboard app.",
+    "description": "This entry targets Whiteboard: Collaborative whiteboard app. Applying removes the matching installed app package (Microsoft.Whiteboard) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Office",
     "risk": "low",
     "requires_admin": true,
@@ -818,7 +818,7 @@
   {
     "id": "remove_dev_home",
     "name": "Dev Home",
-    "description": "Windows Developer dashboard.",
+    "description": "This entry targets Dev Home: Windows Developer dashboard. Applying removes the matching installed app package (Microsoft.Windows.DevHome) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -834,7 +834,7 @@
   {
     "id": "remove_family_safety",
     "name": "Family Safety",
-    "description": "Family monitoring and parental controls.",
+    "description": "This entry targets Family Safety: Family monitoring and parental controls. Applying removes the matching installed app package (MicrosoftCorporationII.MicrosoftFamily) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -850,7 +850,7 @@
   {
     "id": "remove_feedback_hub",
     "name": "Feedback Hub",
-    "description": "Windows Feedback app.",
+    "description": "This entry targets Feedback Hub: Windows Feedback app. Applying removes the matching installed app package (Microsoft.WindowsFeedbackHub) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -866,7 +866,7 @@
   {
     "id": "remove_get_help",
     "name": "Get Help",
-    "description": "Windows help and support app.",
+    "description": "This entry targets Get Help: Windows help and support app. Applying removes the matching installed app package (Microsoft.GetHelp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "medium",
     "requires_admin": true,
@@ -882,7 +882,7 @@
   {
     "id": "remove_get_started",
     "name": "Get Started",
-    "description": "Windows onboarding app.",
+    "description": "This entry targets Get Started: Windows onboarding app. Applying removes the matching installed app package (Microsoft.Getstarted) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -898,7 +898,7 @@
   {
     "id": "remove_pc_manager",
     "name": "Microsoft PC Manager",
-    "description": "PC health and maintenance app.",
+    "description": "This entry targets Microsoft PC Manager: PC health and maintenance app. Applying removes the matching installed app package (Microsoft.PCManager) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -914,7 +914,7 @@
   {
     "id": "remove_mixed_reality",
     "name": "Mixed Reality Portal",
-    "description": "Windows Mixed Reality app.",
+    "description": "This entry targets Mixed Reality Portal: Windows Mixed Reality app. Applying removes the matching installed app package (Microsoft.MixedReality.Portal) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -930,7 +930,7 @@
   {
     "id": "remove_remote_desktop",
     "name": "Remote Desktop",
-    "description": "Remote Desktop client.",
+    "description": "This entry targets Remote Desktop: Remote Desktop client. Applying removes the matching installed app package (Microsoft.RemoteDesktop) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -946,7 +946,7 @@
   {
     "id": "remove_widgets",
     "name": "Widgets",
-    "description": "Windows 11 Widgets board.",
+    "description": "This entry targets Widgets: Windows 11 Widgets board. Applying removes the matching installed app package (Microsoft.StartExperiencesApp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -962,7 +962,7 @@
   {
     "id": "remove_network_speed_test",
     "name": "Network Speed Test",
-    "description": "Microsoft network speed test.",
+    "description": "This entry targets Network Speed Test: Microsoft network speed test. Applying removes the matching installed app package (Microsoft.NetworkSpeedTest) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -978,7 +978,7 @@
   {
     "id": "remove_linkedin",
     "name": "LinkedIn",
-    "description": "LinkedIn app.",
+    "description": "This entry targets LinkedIn: LinkedIn app. Applying removes the matching installed app package (LinkedInforWindows) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -994,7 +994,7 @@
   {
     "id": "remove_amazon",
     "name": "Amazon Shopping",
-    "description": "Amazon shopping app.",
+    "description": "This entry targets Amazon Shopping: Amazon shopping app. Applying removes the matching installed app package (Amazon.com.Amazon) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1010,7 +1010,7 @@
   {
     "id": "remove_facebook",
     "name": "Facebook",
-    "description": "Facebook social media app.",
+    "description": "This entry targets Facebook: Facebook social media app. Applying removes the matching installed app package (Facebook) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1026,7 +1026,7 @@
   {
     "id": "remove_instagram",
     "name": "Instagram",
-    "description": "Instagram social media app.",
+    "description": "This entry targets Instagram: Instagram social media app. Applying removes the matching installed app package (Instagram) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1042,7 +1042,7 @@
   {
     "id": "remove_spotify",
     "name": "Spotify Music",
-    "description": "Spotify music streaming app.",
+    "description": "This entry targets Spotify Music: Spotify music streaming app. Applying removes the matching installed app package (Spotify) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1058,7 +1058,7 @@
   {
     "id": "remove_netflix",
     "name": "Netflix",
-    "description": "Netflix video streaming app.",
+    "description": "This entry targets Netflix: Netflix video streaming app. Applying removes the matching installed app package (Netflix) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1074,7 +1074,7 @@
   {
     "id": "remove_disney",
     "name": "Disney+",
-    "description": "Disney+ video streaming app.",
+    "description": "This entry targets Disney+: Disney+ video streaming app. Applying removes the matching installed app package (Disney) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1090,7 +1090,7 @@
   {
     "id": "remove_tiktok",
     "name": "TikTok",
-    "description": "TikTok video app.",
+    "description": "This entry targets TikTok: TikTok video app. Applying removes the matching installed app package (TikTok) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1106,7 +1106,7 @@
   {
     "id": "remove_candy_crush",
     "name": "Candy Crush Saga",
-    "description": "Candy Crush puzzle game.",
+    "description": "This entry targets Candy Crush Saga: Candy Crush puzzle game. Applying removes the matching installed app package (king.com.CandyCrushSaga) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1122,7 +1122,7 @@
   {
     "id": "remove_candy_crush_soda",
     "name": "Candy Crush Soda",
-    "description": "Candy Crush Soda puzzle game.",
+    "description": "This entry targets Candy Crush Soda: Candy Crush Soda puzzle game. Applying removes the matching installed app package (king.com.CandyCrushSodaSaga) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1138,7 +1138,7 @@
   {
     "id": "remove_bubble_witch",
     "name": "Bubble Witch 3",
-    "description": "Bubble Witch 3 puzzle game.",
+    "description": "This entry targets Bubble Witch 3: Bubble Witch 3 puzzle game. Applying removes the matching installed app package (king.com.BubbleWitch3Saga) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1154,7 +1154,7 @@
   {
     "id": "remove_photoshop_express",
     "name": "Adobe Photoshop Express",
-    "description": "Adobe photo editor.",
+    "description": "This entry targets Adobe Photoshop Express: Adobe photo editor. Applying removes the matching installed app package (AdobeSystemsIncorporated.AdobePhotoshopExpress) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1170,7 +1170,7 @@
   {
     "id": "remove_sketchbook",
     "name": "Autodesk SketchBook",
-    "description": "Digital sketching app.",
+    "description": "This entry targets Autodesk SketchBook: Digital sketching app. Applying removes the matching installed app package (AutodeskSketchBook) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1186,7 +1186,7 @@
   {
     "id": "remove_duolingo",
     "name": "Duolingo",
-    "description": "Language learning app.",
+    "description": "This entry targets Duolingo: Language learning app. Applying removes the matching installed app package (Duolingo-LearnLanguagesforFree) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1202,7 +1202,7 @@
   {
     "id": "remove_pandora",
     "name": "Pandora",
-    "description": "Pandora music app.",
+    "description": "This entry targets Pandora: Pandora music app. Applying removes the matching installed app package (PandoraMediaInc) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1218,7 +1218,7 @@
   {
     "id": "remove_plex",
     "name": "Plex",
-    "description": "Plex media server client.",
+    "description": "This entry targets Plex: Plex media server client. Applying removes the matching installed app package (Plex) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1234,7 +1234,7 @@
   {
     "id": "remove_tunein",
     "name": "TuneIn Radio",
-    "description": "TuneIn internet radio.",
+    "description": "This entry targets TuneIn Radio: TuneIn internet radio. Applying removes the matching installed app package (TuneInRadio) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1250,7 +1250,7 @@
   {
     "id": "remove_shazam",
     "name": "Shazam",
-    "description": "Music identification app.",
+    "description": "This entry targets Shazam: Music identification app. Applying removes the matching installed app package (Shazam) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1266,7 +1266,7 @@
   {
     "id": "remove_sling_tv",
     "name": "Sling TV",
-    "description": "Sling TV streaming app.",
+    "description": "This entry targets Sling TV: Sling TV streaming app. Applying removes the matching installed app package (SlingTV) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1282,7 +1282,7 @@
   {
     "id": "remove_twitter",
     "name": "X (Twitter)",
-    "description": "X social media app.",
+    "description": "This entry targets X (Twitter): X social media app. Applying removes the matching installed app package (Twitter) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1298,7 +1298,7 @@
   {
     "id": "remove_viber",
     "name": "Viber",
-    "description": "Viber messaging app.",
+    "description": "This entry targets Viber: Viber messaging app. Applying removes the matching installed app package (Viber) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1314,7 +1314,7 @@
   {
     "id": "remove_winzip",
     "name": "WinZip",
-    "description": "WinZip file compression app.",
+    "description": "This entry targets WinZip: WinZip file compression app. Applying removes the matching installed app package (WinZipUniversal) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1330,7 +1330,7 @@
   {
     "id": "remove_hulu",
     "name": "Hulu",
-    "description": "Hulu streaming app.",
+    "description": "This entry targets Hulu: Hulu streaming app. Applying removes the matching installed app package (HULULLC.HULUPLUS) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1346,7 +1346,7 @@
   {
     "id": "remove_prime_video",
     "name": "Prime Video",
-    "description": "Amazon Prime Video app.",
+    "description": "This entry targets Prime Video: Amazon Prime Video app. Applying removes the matching installed app package (PrimeVideo) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1362,7 +1362,7 @@
   {
     "id": "remove_iheartradio",
     "name": "iHeartRadio",
-    "description": "iHeartRadio music app.",
+    "description": "This entry targets iHeartRadio: IHeartRadio music app. Applying removes the matching installed app package (iHeartRadio) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1378,7 +1378,7 @@
   {
     "id": "remove_polarr",
     "name": "Polarr Photo Editor",
-    "description": "Polarr photo editing app.",
+    "description": "This entry targets Polarr Photo Editor: Polarr photo editing app. Applying removes the matching installed app package (PolarrPhotoEditorAcademicEdition) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1394,7 +1394,7 @@
   {
     "id": "remove_picsart",
     "name": "PicsArt Photo Studio",
-    "description": "PicsArt creative photo app.",
+    "description": "This entry targets PicsArt Photo Studio: PicsArt creative photo app. Applying removes the matching installed app package (PicsArt-PhotoStudio) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1410,7 +1410,7 @@
   {
     "id": "remove_live_wallpaper",
     "name": "Live Wallpaper",
-    "description": "Animated wallpaper app.",
+    "description": "This entry targets Live Wallpaper: Animated wallpaper app. Applying removes the matching installed app package (Sidia.LiveWallpaper) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1426,7 +1426,7 @@
   {
     "id": "remove_acg_media",
     "name": "ACG Media Player",
-    "description": "ACG video player.",
+    "description": "This entry targets ACG Media Player: ACG video player. Applying removes the matching installed app package (ACGMediaPlayer) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1442,7 +1442,7 @@
   {
     "id": "remove_asphalt8",
     "name": "Asphalt 8",
-    "description": "Asphalt 8 racing game.",
+    "description": "This entry targets Asphalt 8: Asphalt 8 racing game. Applying removes the matching installed app package (Asphalt8Airborne) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Third-Party",
     "risk": "low",
     "requires_admin": true,
@@ -1458,7 +1458,7 @@
   {
     "id": "remove_hp_ai",
     "name": "HP AI Experience Center",
-    "description": "HP AI assistant (HP OEM).",
+    "description": "This entry targets HP AI Experience Center: HP AI assistant (HP OEM). Applying removes the matching installed app package (AD2F1837.HPAIExperienceCenter) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1474,7 +1474,7 @@
   {
     "id": "remove_hp_connected_music",
     "name": "HP Connected Music",
-    "description": "HP music app (HP OEM).",
+    "description": "This entry targets HP Connected Music: HP music app (HP OEM). Applying removes the matching installed app package (AD2F1837.HPConnectedMusic) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1490,7 +1490,7 @@
   {
     "id": "remove_hp_connected_photo",
     "name": "HP Connected Photo",
-    "description": "HP photo app (HP OEM).",
+    "description": "This entry targets HP Connected Photo: HP photo app (HP OEM). Applying removes the matching installed app package (AD2F1837.HPConnectedPhotopoweredbySnapfish) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1506,7 +1506,7 @@
   {
     "id": "remove_hp_desktop_support",
     "name": "HP Desktop Support Utilities",
-    "description": "HP support utilities (HP OEM).",
+    "description": "This entry targets HP Desktop Support Utilities: HP support utilities (HP OEM). Applying removes the matching installed app package (AD2F1837.HPDesktopSupportUtilities) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1522,7 +1522,7 @@
   {
     "id": "remove_hp_easy_clean",
     "name": "HP Easy Clean",
-    "description": "HP cleaning utility (HP OEM).",
+    "description": "This entry targets HP Easy Clean: HP cleaning utility (HP OEM). Applying removes the matching installed app package (AD2F1837.HPEasyClean) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1538,7 +1538,7 @@
   {
     "id": "remove_hp_file_viewer",
     "name": "HP File Viewer",
-    "description": "HP file viewer (HP OEM).",
+    "description": "This entry targets HP File Viewer: HP file viewer (HP OEM). Applying removes the matching installed app package (AD2F1837.HPFileViewer) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1554,7 +1554,7 @@
   {
     "id": "remove_hp_jumpstarts",
     "name": "HP JumpStarts",
-    "description": "HP JumpStarts (HP OEM).",
+    "description": "This entry targets HP JumpStarts: HP JumpStarts (HP OEM). Applying removes the matching installed app package (AD2F1837.HPJumpStarts) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1570,7 +1570,7 @@
   {
     "id": "remove_hp_pc_hardware",
     "name": "HP PC Hardware Diagnostics",
-    "description": "HP diagnostics (HP OEM).",
+    "description": "This entry targets HP PC Hardware Diagnostics: HP diagnostics (HP OEM). Applying removes the matching installed app package (AD2F1837.HPPCHardwareDiagnosticsWindows) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1586,7 +1586,7 @@
   {
     "id": "remove_hp_power_manager",
     "name": "HP Power Manager",
-    "description": "HP power management (HP OEM).",
+    "description": "This entry targets HP Power Manager: HP power management (HP OEM). Applying removes the matching installed app package (AD2F1837.HPPowerManager) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1602,7 +1602,7 @@
   {
     "id": "remove_hp_printer_control",
     "name": "HP Printer Control",
-    "description": "HP printer software (HP OEM).",
+    "description": "This entry targets HP Printer Control: HP printer software (HP OEM). Applying removes the matching installed app package (AD2F1837.HPPrinterControl) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1618,7 +1618,7 @@
   {
     "id": "remove_hp_privacy_settings",
     "name": "HP Privacy Settings",
-    "description": "HP privacy settings (HP OEM).",
+    "description": "This entry targets HP Privacy Settings: HP privacy settings (HP OEM). Applying removes the matching installed app package (AD2F1837.HPPrivacySettings) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1634,7 +1634,7 @@
   {
     "id": "remove_hp_quickdrop",
     "name": "HP QuickDrop",
-    "description": "HP QuickDrop file transfer (HP OEM).",
+    "description": "This entry targets HP QuickDrop: HP QuickDrop file transfer (HP OEM). Applying removes the matching installed app package (AD2F1837.HPQuickDrop) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1650,7 +1650,7 @@
   {
     "id": "remove_hp_support",
     "name": "HP Support Assistant",
-    "description": "HP support assistant (HP OEM).",
+    "description": "This entry targets HP Support Assistant: HP support assistant (HP OEM). Applying removes the matching installed app package (AD2F1837.HPSupportAssistant) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1666,7 +1666,7 @@
   {
     "id": "remove_hp_sure_shield",
     "name": "HP Sure Shield AI",
-    "description": "HP security AI (HP OEM).",
+    "description": "This entry targets HP Sure Shield AI: HP security AI (HP OEM). Applying removes the matching installed app package (AD2F1837.HPSureShieldAI) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1682,7 +1682,7 @@
   {
     "id": "remove_hp_system_info",
     "name": "HP System Information",
-    "description": "HP system info (HP OEM).",
+    "description": "This entry targets HP System Information: HP system info (HP OEM). Applying removes the matching installed app package (AD2F1837.HPSystemInformation) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1698,7 +1698,7 @@
   {
     "id": "remove_hp_welcome",
     "name": "HP Welcome",
-    "description": "HP welcome app (HP OEM).",
+    "description": "This entry targets HP Welcome: HP welcome app (HP OEM). Applying removes the matching installed app package (AD2F1837.HPWelcome) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1714,7 +1714,7 @@
   {
     "id": "remove_hp_workwell",
     "name": "HP WorkWell",
-    "description": "HP WorkWell wellness app (HP OEM).",
+    "description": "This entry targets HP WorkWell: HP WorkWell wellness app (HP OEM). Applying removes the matching installed app package (AD2F1837.HPWorkWell) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1730,7 +1730,7 @@
   {
     "id": "remove_hp_myhp",
     "name": "myHP",
-    "description": "HP myHP app (HP OEM).",
+    "description": "This entry targets myHP: HP myHP app (HP OEM). Applying removes the matching installed app package (AD2F1837.myHP) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM HP",
     "risk": "low",
     "requires_admin": true,
@@ -1746,7 +1746,7 @@
   {
     "id": "remove_dell_digital_delivery",
     "name": "Dell Digital Delivery",
-    "description": "Dell software delivery (Dell OEM).",
+    "description": "This entry targets Dell Digital Delivery: Dell software delivery (Dell OEM). Applying removes the matching installed app package (DellInc.DellDigitalDelivery) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM Dell",
     "risk": "low",
     "requires_admin": true,
@@ -1762,7 +1762,7 @@
   {
     "id": "remove_dell_mobile_connect",
     "name": "Dell Mobile Connect",
-    "description": "Dell phone integration (Dell OEM).",
+    "description": "This entry targets Dell Mobile Connect: Dell phone integration (Dell OEM). Applying removes the matching installed app package (DellInc.DellMobileConnect) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM Dell",
     "risk": "low",
     "requires_admin": true,
@@ -1778,7 +1778,7 @@
   {
     "id": "remove_dell_support_assist",
     "name": "Dell SupportAssist",
-    "description": "Dell support and diagnostics (Dell OEM).",
+    "description": "This entry targets Dell SupportAssist: Dell support and diagnostics (Dell OEM). Applying removes the matching installed app package (DellInc.DellSupportAssistforPCs) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM Dell",
     "risk": "low",
     "requires_admin": true,
@@ -1794,7 +1794,7 @@
   {
     "id": "remove_lenovo_vantage",
     "name": "Lenovo Vantage",
-    "description": "Lenovo system utility (Lenovo OEM).",
+    "description": "This entry targets Lenovo Vantage: Lenovo system utility (Lenovo OEM). Applying removes the matching installed app package (E046963F.LenovoCompanion) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM Lenovo",
     "risk": "low",
     "requires_admin": true,
@@ -1810,7 +1810,7 @@
   {
     "id": "remove_lenovo_vantage_service",
     "name": "Lenovo Vantage Service",
-    "description": "Lenovo Vantage background service (Lenovo OEM).",
+    "description": "This entry targets Lenovo Vantage Service: Lenovo Vantage background service (Lenovo OEM). Applying removes the matching installed app package (LenovoCompanyLimited.LenovoVantageService) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "OEM Lenovo",
     "risk": "low",
     "requires_admin": true,
@@ -1826,7 +1826,7 @@
   {
     "id": "remove_copilot",
     "name": "Windows Copilot",
-    "description": "Windows Copilot AI assistant (Windows 11 24H2).",
+    "description": "This entry targets Windows Copilot: Windows Copilot AI assistant (Windows 11 24H2). Applying removes the matching installed app package (Microsoft.Windows.Copilot) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "medium",
     "requires_admin": true,
@@ -1842,7 +1842,7 @@
   {
     "id": "remove_recall",
     "name": "Windows Recall",
-    "description": "Windows Recall snapshot feature (Windows 11 24H2).",
+    "description": "This entry targets Windows Recall: Windows Recall snapshot feature (Windows 11 24H2). Applying removes the matching installed app package (Microsoft.Windows.Recall) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "medium",
     "requires_admin": true,
@@ -1858,7 +1858,7 @@
   {
     "id": "remove_ai_landscape",
     "name": "AI Landscape",
-    "description": "AI Landscape app for Windows 11 24H2.",
+    "description": "This entry targets AI Landscape: AI Landscape app for Windows 11 24H2. Applying removes the matching installed app package (Microsoft.AI.Landscape) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -1874,7 +1874,7 @@
   {
     "id": "remove_studio_design",
     "name": "Studio Design",
-    "description": "Microsoft Studio Design app.",
+    "description": "This entry targets Studio Design: Microsoft Studio Design app. Applying removes the matching installed app package (Microsoft.Windows.StudioDesign) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -1890,7 +1890,7 @@
   {
     "id": "remove_paint_cocreator_appx",
     "name": "Paint AI Cocreator",
-    "description": "Paint app with AI Cocreator feature (Windows 11 24H2).",
+    "description": "This entry targets Paint AI Cocreator: Paint app with AI Cocreator feature (Windows 11 24H2). Applying removes the matching installed app package (Microsoft.Windows.Paint.Cocreator) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -1906,7 +1906,7 @@
   {
     "id": "remove_photos_import",
     "name": "Microsoft Photos Import",
-    "description": "Microsoft Photos Import tool.",
+    "description": "This entry targets Microsoft Photos Import: Microsoft Photos Import tool. Applying removes the matching installed app package (Microsoft.Photos.Import) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -1922,7 +1922,7 @@
   {
     "id": "remove_microsoft_security",
     "name": "Microsoft Security",
-    "description": "Microsoft Security app for Windows 11.",
+    "description": "This entry targets Microsoft Security: Microsoft Security app for Windows 11. Applying removes the matching installed app package (Microsoft.SecHealthUI) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -1938,7 +1938,7 @@
   {
     "id": "remove_podcasts",
     "name": "Podcasts",
-    "description": "Microsoft Podcasts app.",
+    "description": "This entry targets Podcasts: Microsoft Podcasts app. Applying removes the matching installed app package (Microsoft.Windows.Podcasts) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "Media",
     "risk": "low",
     "requires_admin": true,
@@ -1954,7 +1954,7 @@
   {
     "id": "remove_web_experience",
     "name": "Web Experience",
-    "description": "Windows Web Experience pack (widgets, etc).",
+    "description": "This entry targets Web Experience: Windows Web Experience pack (widgets, etc). Applying removes the matching installed app package (Microsoft.Windows.WebExperience) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -1970,7 +1970,7 @@
   {
     "id": "remove_screenshot",
     "name": "Screenshot Utility",
-    "description": "Windows Screenshot Utility.",
+    "description": "This entry targets Screenshot Utility: Windows Screenshot Utility. Applying removes the matching installed app package (Microsoft.ScreenCapture) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -1986,7 +1986,7 @@
   {
     "id": "remove_desk_app",
     "name": "Desk App",
-    "description": "Microsoft Desk app for Windows.",
+    "description": "This entry targets Desk App: Microsoft Desk app for Windows. Applying removes the matching installed app package (Microsoft.Windows.DeskApp) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,
@@ -2002,7 +2002,7 @@
   {
     "id": "remove_windows_wc",
     "name": "Windows Client Web Content",
-    "description": "Windows Client Web Content.",
+    "description": "This entry targets Windows Client Web Content: Windows Client Web Content. Applying removes the matching installed app package (Microsoft.Windows.Wcr) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
     "category": "System Utilities",
     "risk": "low",
     "requires_admin": true,

@@ -4,7 +4,7 @@ from typing import List, Dict, Optional
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTabWidget, QLabel,
     QProgressBar)
-
+from ui.help.network_ui import explain_tabs, item_help
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
@@ -143,8 +143,7 @@ def _fill_table(table: QTableWidget, rows: List[Dict], columns: List[str]):
     table.setRowCount(len(rows))
     for r, row in enumerate(rows):
         for c, col in enumerate(columns):
-            table.setItem(r, c, centered_item(str(row.get(col, ""))))
-
+            table.setItem(r, c, item_help(centered_item(str(row.get(col, ""))), table, c))
 
 class _RefreshTab(QWidget):
     def __init__(self, loader_fn, columns, thread_pool, parent=None):
@@ -233,8 +232,7 @@ class SharesModule(BaseModule):
             "Mapped Drives"
         )
         self._shares_tabs = tabs
-        return tabs
-
+        return explain_tabs(tabs, "shares")
     def on_start(self, app=None):
         self.app = app
     def on_stop(self) -> None:

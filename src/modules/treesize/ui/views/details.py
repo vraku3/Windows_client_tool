@@ -6,6 +6,10 @@ proportional bar), Last Modified, Last Accessed, Owner.
 Shows the children of the selected node, not the whole tree: it is the
 right-hand companion to the directory tree, and the tree is what does depth.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, describe_headers, explain_widget,
+)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -91,6 +95,7 @@ class DetailsView(QTreeWidget):
         super().__init__(parent)
         self.setColumnCount(len(COLUMNS))
         self.setHeaderLabels(list(COLUMNS))
+        describe_headers(self)
         self.setRootIsDecorated(False)
         self.setUniformRowHeights(True)
         self.setSortingEnabled(True)
@@ -109,6 +114,7 @@ class DetailsView(QTreeWidget):
         header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         header.customContextMenuRequested.connect(self._column_menu)
         self.set_visible_columns(DEFAULT_COLUMNS)
+        explain_widget(self)
 
     def set_visible_columns(self, names) -> None:
         wanted = set(names)
@@ -126,15 +132,16 @@ class DetailsView(QTreeWidget):
         from PyQt6.QtWidgets import QMenu
         menu = QMenu(self)
         for index, name in enumerate(COLUMNS):
-            action = menu.addAction(name)
+            action = describe_control(menu.addAction(name))
             action.setCheckable(True)
             action.setChecked(not self.isColumnHidden(index))
             action.setEnabled(index != 0)
             action.toggled.connect(
                 lambda shown, i=index: self.setColumnHidden(i, not shown))
         menu.addSeparator()
-        menu.addAction("Reset columns",
-                       lambda: self.set_visible_columns(DEFAULT_COLUMNS))
+        describe_control(menu.addAction("Reset columns",
+                       lambda: self.set_visible_columns(DEFAULT_COLUMNS)))
+        explain_widget(menu)
         menu.exec(self.header().mapToGlobal(pos))
 
     def set_unit(self, unit: Unit, decimals: int | None = None) -> None:

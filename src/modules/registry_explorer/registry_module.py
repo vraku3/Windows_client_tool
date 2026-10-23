@@ -1,3 +1,7 @@
+
+from modules.registry_explorer.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 # src/modules/registry_explorer/registry_module.py
 import datetime
 import logging
@@ -54,27 +58,32 @@ class RegistryExplorerModule(BaseModule):
         tb.setContentsMargins(4, 4, 4, 4)
 
         self._path_bar = QLineEdit()
+        describe_control(self._path_bar, '_path_bar')
         self._path_bar.setPlaceholderText("Key path (e.g. HKEY_LOCAL_MACHINE\\SOFTWARE)")
         self._path_bar.returnPressed.connect(self._nav_to_path)
         tb.addWidget(self._path_bar, stretch=1)
 
         nav_btn = QPushButton("Go")
+        describe_control(nav_btn, 'nav_btn')
         nav_btn.clicked.connect(self._nav_to_path)
         tb.addWidget(nav_btn)
 
         # Quick-nav dropdown
         quick_btn = QPushButton("Bookmarks ▾")
+        describe_control(quick_btn, 'quick_btn')
         quick_menu = QMenu(quick_btn)
         for label, path in _QUICK_NAV.items():
-            quick_menu.addAction(label, lambda p=path: self._path_bar.setText(p) or self._nav_to_path())
+            describe_control(quick_menu.addAction(label, lambda p=path: self._path_bar.setText(p) or self._nav_to_path()))
         quick_btn.setMenu(quick_menu)
         tb.addWidget(quick_btn)
 
         copy_path_btn = QPushButton("Copy Path")
+        describe_control(copy_path_btn, 'copy_path_btn')
         copy_path_btn.clicked.connect(self._copy_path)
         tb.addWidget(copy_path_btn)
 
         export_btn = QPushButton("Export .reg")
+        describe_control(export_btn, 'export_btn')
         export_btn.clicked.connect(self._export_reg)
         tb.addWidget(export_btn)
 
@@ -84,17 +93,21 @@ class RegistryExplorerModule(BaseModule):
         search_row = QHBoxLayout()
         search_row.setContentsMargins(4, 0, 4, 0)
         self._search_input = QLineEdit()
+        describe_control(self._search_input, '_search_input')
         self._search_input.setPlaceholderText("Search text (under the current key)...")
         self._search_input.returnPressed.connect(self._run_search)
         search_row.addWidget(self._search_input, stretch=1)
         self._search_values = QCheckBox("Value data")
+        describe_control(self._search_values, '_search_values')
         search_row.addWidget(self._search_values)
         search_row.addWidget(QLabel("or changed in"))
         self._recent_combo = QComboBox()
+        describe_control(self._recent_combo, '_recent_combo')
         for label, days in (("(any time)", 0), ("last 1 day", 1), ("last 7 days", 7), ("last 30 days", 30)):
             self._recent_combo.addItem(label, days)
         search_row.addWidget(self._recent_combo)
         search_btn = QPushButton("Search")
+        describe_control(search_btn, 'search_btn')
         search_btn.clicked.connect(self._run_search)
         search_row.addWidget(search_btn)
         self._search_status = QLabel("")
@@ -130,6 +143,7 @@ class RegistryExplorerModule(BaseModule):
         right_layout.addWidget(self._write_access_label)
         self._values_table = QTableWidget(0, 3)
         self._values_table.setHorizontalHeaderLabels(["Name", "Type", "Data"])
+        describe_headers(self._values_table)
         hdr = self._values_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -147,6 +161,7 @@ class RegistryExplorerModule(BaseModule):
         QShortcut(QKeySequence("Ctrl+C"), self._values_table).activated.connect(self._copy_selected_value)
 
         self._widget = root
+        explain_widget(root, introduction=True)
         return root
 
     def _on_key_selected(self, current: QModelIndex, _previous: QModelIndex) -> None:
@@ -166,8 +181,11 @@ class RegistryExplorerModule(BaseModule):
             row = self._values_table.rowCount()
             self._values_table.insertRow(row)
             self._values_table.setItem(row, 0, centered_item(name))
+            describe_cell(self._values_table, 0, self._values_table.item(row, 0))
             self._values_table.setItem(row, 1, centered_item(type_str))
+            describe_cell(self._values_table, 1, self._values_table.item(row, 1))
             self._values_table.setItem(row, 2, centered_item(data))
+            describe_cell(self._values_table, 2, self._values_table.item(row, 2))
 
     def _update_write_access(self, path: str) -> None:
         """Who can write to the selected key, right where regedit itself makes
@@ -306,8 +324,9 @@ class RegistryExplorerModule(BaseModule):
         if not idx.isValid() or self._model is None:
             return
         menu = QMenu(self._tree)
-        menu.addAction("Copy Key Path", self._copy_path)
-        menu.addAction("Export .reg", self._export_reg)
+        describe_control(menu.addAction("Copy Key Path", self._copy_path))
+        describe_control(menu.addAction("Export .reg", self._export_reg))
+        explain_widget(menu)
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def on_activate(self) -> None:

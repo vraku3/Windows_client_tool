@@ -8,11 +8,10 @@ from typing import List
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTabWidget, QLabel,
     QLineEdit, QComboBox, QCheckBox, QPlainTextEdit, QGridLayout)
-
+from ui.help.network_ui import control_help, explain_tabs
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
-
 logger = logging.getLogger(__name__)
 
 CREATE_NO_WINDOW = 0x08000000
@@ -55,16 +54,19 @@ class NetExtrasModule(BaseModule):
         tabs.addTab(self._make_dns_tab(), "DNS Switcher")
         tabs.addTab(self._make_proxy_tab(), "Proxy Settings")
         tabs.addTab(self._make_quick_tab(), "Quick Actions")
-        return tabs
-
+        return explain_tabs(tabs, "Quick Actions")
     def _make_dns_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
         form = QHBoxLayout()
         adapter_combo = QComboBox()
+        control_help(adapter_combo, 'adapter_combo')
         preset_combo = QComboBox()
+        control_help(preset_combo, 'preset_combo')
         primary_edit = QLineEdit()
+        control_help(primary_edit, 'primary_edit')
         secondary_edit = QLineEdit()
+        control_help(secondary_edit, 'secondary_edit')
         apply_btn = QPushButton("Apply DNS")
         dhcp_btn = QPushButton("Restore DHCP")
         status = QLabel("")
@@ -151,8 +153,10 @@ class NetExtrasModule(BaseModule):
 
         enable_cb = QCheckBox("Enable Proxy")
         server_edit = QLineEdit()
+        control_help(server_edit, 'server_edit')
         server_edit.setPlaceholderText("host:port")
         override_edit = QLineEdit()
+        control_help(override_edit, 'override_edit')
         override_edit.setPlaceholderText("e.g. localhost;127.*;*.local")
         load_btn = QPushButton("Load")
         save_btn = QPushButton("Save")

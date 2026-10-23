@@ -1,3 +1,7 @@
+
+from modules.local_users.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import datetime
 import logging
 from typing import List, Optional
@@ -107,9 +111,12 @@ class LocalUsersModule(BaseModule):
 
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
+        describe_control(self._refresh_btn, '_refresh_btn')
         self._copy_btn = QPushButton("Copy details")
+        describe_control(self._copy_btn, '_copy_btn')
         self._copy_btn.clicked.connect(self._copy_details)
         self._search = QLineEdit()
+        describe_control(self._search, '_search')
         self._search.setPlaceholderText("Search name, full name, SID, group, profile...")
         self._search.textChanged.connect(self._render_users)
         self._status_label = QLabel("Loading...")
@@ -127,6 +134,7 @@ class LocalUsersModule(BaseModule):
         chip_row = QHBoxLayout()
         for c in acc.CHIPS:
             b = QPushButton(c)
+            describe_control(b, 'b')
             b.setCheckable(True)
             b.setChecked(c == "All")
             b.clicked.connect(lambda _=False, name=c: self._set_chip(name))
@@ -164,12 +172,14 @@ class LocalUsersModule(BaseModule):
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._lu_tabs = tabs
         self._widget = outer
+        explain_widget(outer, introduction=True)
         return outer
 
     @staticmethod
     def _make_table(cols, stretch, content) -> QTableWidget:
         t = QTableWidget(0, len(cols))
         t.setHorizontalHeaderLabels(cols)
+        describe_headers(t)
         fit_table(t, stretch=stretch, content=content)
         center_header(t)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -256,6 +266,7 @@ class LocalUsersModule(BaseModule):
             ]
             for c, item in enumerate(cells):
                 t.setItem(r, c, item)
+                describe_cell(t, c, t.item(r, c))
         t.setSortingEnabled(True)
         self._status_label.setText(f"{len(rows)} of {len(self._snap.accounts)} account(s), "
                                    f"{len(self._snap.group_members)} group(s)")
@@ -274,6 +285,7 @@ class LocalUsersModule(BaseModule):
             for c, item in enumerate([centered_item(g), count, centered_item(text),
                                       centered_item(snap.group_comments.get(g, ""))]):
                 t.setItem(r, c, item)
+                describe_cell(t, c, t.item(r, c))
         t.setSortingEnabled(True)
 
     def _render_findings(self):
@@ -288,6 +300,7 @@ class LocalUsersModule(BaseModule):
                 if c == 0:
                     item.setForeground(QColor(semantic(colours.get(f.severity, "info"))))
                 t.setItem(r, c, item)
+                describe_cell(t, c, t.item(r, c))
         t.setSortingEnabled(True)
         self._lu_tabs.setTabText(self._findings_tab_index, f"Findings ({len(fs)})")
 

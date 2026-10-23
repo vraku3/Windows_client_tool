@@ -1,3 +1,7 @@
+
+from modules.system_report.help_widgets import (
+    describe_control, explain_widget,
+)
 import datetime
 import html as _html
 import os
@@ -253,8 +257,11 @@ class SystemReportModule(BaseModule):
 
         btn_row = QHBoxLayout()
         self._gen_btn = QPushButton("Generate Report")
+        describe_control(self._gen_btn, '_gen_btn')
         self._save_btn = QPushButton("Save HTML...")
+        describe_control(self._save_btn, '_save_btn')
         self._copy_btn = QPushButton("Copy as Markdown")
+        describe_control(self._copy_btn, '_copy_btn')
         self._copy_btn.setToolTip("Ticket-ready Markdown of the whole report")
         self._save_btn.setEnabled(False)
         self._copy_btn.setEnabled(False)
@@ -281,6 +288,7 @@ class SystemReportModule(BaseModule):
         self._gen_btn.clicked.connect(self._do_generate)
         self._save_btn.clicked.connect(self._save_html)
         self._copy_btn.clicked.connect(self._copy_markdown)
+        explain_widget(outer, introduction=True)
         return outer
 
     def _do_generate(self):

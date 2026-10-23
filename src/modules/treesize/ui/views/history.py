@@ -9,6 +9,10 @@ Also hosts the comparison result, because a diff is a statement about two
 points in this same history and splitting them across two views would mean
 navigating away from the thing you just compared.
 """
+
+from modules.treesize.help_widgets import (
+    describe_headers, explain_widget,
+)
 import time
 
 from PyQt6.QtCore import QPointF, Qt, pyqtSignal
@@ -33,6 +37,7 @@ class Sparkline(QWidget):
         super().__init__(parent)
         self._points: list[tuple[float, int]] = []
         self.setMinimumHeight(120)
+        explain_widget(self)
 
     def set_points(self, points) -> None:
         self._points = sorted(points, key=lambda p: p[0])
@@ -123,6 +128,7 @@ class HistoryView(QWidget):
         self.table.setColumnCount(5)
         self.table.setHeaderLabels(
             ["When", "Target", "Size", "Change", "Nodes"])
+        describe_headers(self.table)
         self.table.setRootIsDecorated(False)
         self.table.setUniformRowHeights(True)
         self.table.setSelectionBehavior(
@@ -134,6 +140,7 @@ class HistoryView(QWidget):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         layout.addWidget(splitter, 1)
+        explain_widget(self)
 
     def set_snapshots(self, snapshots) -> None:
         """Newest first in the table; oldest first in the chart."""

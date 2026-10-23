@@ -32,6 +32,8 @@ from modules.process_explorer.lower_pane.memory_map_view import MemoryMapView
 from modules.process_explorer.lower_pane.activity_view import ActivityView
 from ui.error_banner import ErrorBanner
 from modules.process_explorer.lower_pane.security_view import SecurityView
+from ui.help.dashboard_ui import apply_help
+from ui.help.dashboard_ui import explain_menu
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +177,7 @@ class ProcessExplorerModule(BaseModule):
             self._collector.process_removed.connect(self._on_process_removed)
             self._collector.processes_updated.connect(self._on_processes_updated)
 
+        apply_help(self._widget, self.name)
         return self._widget
 
     def _build_toolbar(self) -> QToolBar:
@@ -510,6 +513,7 @@ class ProcessExplorerModule(BaseModule):
                 action.setToolTip("Read once per process; '—' means Windows refused the read "
                                   "(run as administrator to see more)")
             action.toggled.connect(lambda on, c=col: self._set_column(c, on))
+        explain_menu(menu)
         menu.exec(self._tree_view.header().mapToGlobal(pos))
 
     def _set_column(self, col: int, shown: bool) -> None:
@@ -534,6 +538,7 @@ class ProcessExplorerModule(BaseModule):
         menu.addSeparator()
         menu.addAction("Open File Location", self._action_open_location)
         menu.addAction("Check VirusTotal", self._action_check_vt)
+        explain_menu(menu)
         menu.exec(self._tree_view.mapToGlobal(pos))
 
     def _open_properties(self):

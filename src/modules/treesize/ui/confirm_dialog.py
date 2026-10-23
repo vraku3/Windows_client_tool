@@ -8,6 +8,10 @@ The point is not ceremony. It is that a muscle-memory Enter on a dialog nobody
 read cannot reach an operation that destroys data — which is why Cancel is the
 default button and why a dry run bypasses the typing entirely.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout,
@@ -40,10 +44,12 @@ class TypedConfirmDialog(QDialog):
         self.prompt = QLabel(f"Type {phrase} to confirm:", self)
         layout.addWidget(self.prompt)
         self.entry = QLineEdit(self)
+        describe_control(self.entry, 'entry')
         layout.addWidget(self.entry)
 
         self.dry_run = QCheckBox(
             "Dry run — log what would happen, change nothing", self)
+        describe_control(self.dry_run, 'dry_run')
         layout.addWidget(self.dry_run)
 
         self.buttons = QDialogButtonBox(
@@ -63,6 +69,7 @@ class TypedConfirmDialog(QDialog):
         self.entry.textChanged.connect(self._retest)
         self.dry_run.toggled.connect(self._retest)
         self._retest()
+        explain_widget(self)
 
     def is_satisfied(self) -> bool:
         # Case and stray spaces are forgiven: the gate exists to stop a

@@ -22,7 +22,7 @@
   {
     "id": "hide_3d_objects_from_nav",
     "name": "Hide 3D Objects from Navigation Pane",
-    "description": "Removes the 3D Objects entry from This PC in File Explorer.",
+    "description": "Runs a PowerShell command that deletes the current user's specified 3D Objects navigation registry key and its subkeys. It does not delete the files in the 3D Objects folder; this command has no automatic Revert.",
     "category": "Navigation Pane",
     "risk": "low",
     "requires_admin": false,

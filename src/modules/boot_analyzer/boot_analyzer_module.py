@@ -1,6 +1,5 @@
 """Boot Performance Analyzer — measure and optimize Windows boot time."""
 import subprocess
-import re
 from typing import Optional
 
 from PyQt6.QtCore import Qt
@@ -20,6 +19,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+from modules.diagnose.help_ui import explain
+from modules.boot_analyzer.help_text import INTRO, CONTROLS, HEADERS, TABS
 
 class BootAnalyzerModule(BaseModule):
     name = "Boot Analyzer"
@@ -91,6 +93,7 @@ class BootAnalyzerModule(BaseModule):
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
+        explain(self._widget, INTRO, CONTROLS, HEADERS, TABS)
         return self._widget
 
     def on_start(self, app) -> None:

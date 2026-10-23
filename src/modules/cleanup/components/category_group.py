@@ -31,7 +31,7 @@ import dataclasses
 import logging
 import os
 from html import escape
-from typing import Callable, List, Optional
+from typing import List, Optional
 
 from PyQt6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
@@ -1287,6 +1287,8 @@ class CategoryGroup(QWidget):
         dlg.setWindowTitle(f"{self._group_name} — details")
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         lay = QVBoxLayout(dlg)
+        from ui.module_intro import module_intro
+        lay.addWidget(module_intro("Review the selected cleanup category and its research notes. Opening folders and copying paths do not delete files; exclusion changes future scans and can be removed in Exclusions. Reading these details needs no administrator rights."))
         lay.setContentsMargins(10, 10, 10, 10)
         pane = DetailPane(dlg)
         pane.set_row(self.detail_facts())

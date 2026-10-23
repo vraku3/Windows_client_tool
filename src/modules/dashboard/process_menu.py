@@ -29,8 +29,9 @@ from core.procengine.actions import (PRIORITY_LABELS, create_dump, end_process,
                                  resume_process, run_as, set_affinity,
                                  set_priority, suspend_process)
 from core.procengine.actions import Result, creation_seconds, prepare_restart
-from core.worker import Worker, retire, track
+from core.worker import Worker, track
 from core.procengine.snapshot import descendants_of
+from ui.help.dashboard_ui import explain_menu
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,7 @@ class ProcessMenu(QObject):
         path.setEnabled(not many and bool(_path_of(info)))
         path.triggered.connect(lambda: self._copy_text(_path_of(info)))
 
+        explain_menu(menu)
         menu.exec(position)
 
     # ---- the destructive ones -------------------------------------------

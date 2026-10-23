@@ -41,7 +41,7 @@
   {
     "id": "disable_device_name_telemetry",
     "name": "Disable Device Name in Telemetry",
-    "description": "Prevents sending the computer's name with telemetry data.",
+    "description": "Writes the device-name diagnostic-data policy below to request excluding the computer name from diagnostic submissions. This does not rename the computer or disable all diagnostic data collection.",
     "category": "Telemetry",
     "risk": "low",
     "requires_admin": true,
@@ -58,7 +58,7 @@
   {
     "id": "disable_wersvc",
     "name": "Disable Windows Error Reporting",
-    "description": "Stops Windows from sending crash reports to Microsoft.",
+    "description": "Changes the Windows Error Reporting service start type to disabled. Error-reporting functions that depend on the service may be unavailable; this does not delete existing crash reports.",
     "category": "Telemetry",
     "risk": "low",
     "requires_admin": true,

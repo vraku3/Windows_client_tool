@@ -16,6 +16,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
 from .startup_tab import StartupTab
+from ui.help.dashboard_ui import apply_help
 
 
 class StartupModule(BaseModule):
@@ -37,6 +38,7 @@ class StartupModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = StartupTab()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

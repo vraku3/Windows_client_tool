@@ -1,6 +1,10 @@
 # src/modules/disk_health/disk_health_module.py
 """Disk Health pane: computed findings, a drive table, a detail panel and a
 volume table.  All logic lives in ``disk_reader`` (Qt-free); this only draws."""
+
+from modules.disk_health.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import logging
 from typing import List, Optional
 
@@ -37,6 +41,7 @@ def _alive(widget) -> bool:
 def _new_table(columns: List[str]) -> QTableWidget:
     t = QTableWidget(0, len(columns))
     t.setHorizontalHeaderLabels(columns)
+    describe_headers(t)
     t.verticalHeader().setVisible(False)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -62,6 +67,7 @@ def _fill_drives(table: QTableWidget, disks: List[dr.PhysicalDiskInfo]) -> None:
         paint_severity(cells[8], sev)
         for c, item in enumerate(cells):
             table.setItem(r, c, item)
+            describe_cell(table, c, table.item(r, c))
         cells[0].setData(Qt.ItemDataRole.UserRole, d.device_id)
     table.setSortingEnabled(True)
 
@@ -88,6 +94,7 @@ def _fill_volumes(table: QTableWidget, report: dr.DiskReport) -> None:
             paint_severity(cells[5], "warning")
         for c, item in enumerate(cells):
             table.setItem(r, c, item)
+            describe_cell(table, c, table.item(r, c))
     table.setSortingEnabled(True)
 
 
@@ -126,6 +133,7 @@ class _ResultsView(QWidget):
         self._add_findings(box)
         self._add_drives(box)
         self._add_volumes(box)
+        explain_widget(self)
 
     def _add_findings(self, box: QVBoxLayout) -> None:
         head = QLabel("Needs attention")
@@ -192,6 +200,7 @@ class _DiskHealthWidget(QWidget):
         self._report: Optional[dr.DiskReport] = None
         self._thread_pool = None
         self._setup_ui()
+        explain_widget(self)
 
     def _pool(self):
         if self._thread_pool is None:
@@ -206,9 +215,11 @@ class _DiskHealthWidget(QWidget):
 
         tb = QHBoxLayout()
         self._scan_btn = QPushButton("Scan Drives")
+        describe_control(self._scan_btn, '_scan_btn')
         self._scan_btn.clicked.connect(self._do_scan)
         tb.addWidget(self._scan_btn)
         self._copy_btn = QPushButton("Copy as Markdown")
+        describe_control(self._copy_btn, '_copy_btn')
         self._copy_btn.setToolTip("Copy the drives, volumes and findings as a ticket-ready table")
         self._copy_btn.setEnabled(False)
         self._copy_btn.clicked.connect(self._copy_markdown)
@@ -358,6 +369,7 @@ class DiskHealthModule(BaseModule):
 
     def create_widget(self) -> QWidget:
         self._widget = _DiskHealthWidget()
+        explain_widget(self._widget, introduction=True)
         return self._widget
 
     def on_start(self, app) -> None:

@@ -32,6 +32,7 @@ from .process_menu import ProcessMenu
 from core.procengine.columns import COLUMNS, DEFAULT_KEYS, GROUPS, cell_text
 from core.procengine.snapshot import SnapshotSource
 from ui.error_banner import ErrorBanner
+from ui.help.dashboard_ui import explain_menu
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +332,7 @@ class DetailsTab(QWidget):
         reset = QAction("Reset to defaults", menu)
         reset.triggered.connect(self._reset_columns)
         menu.addAction(reset)
+        explain_menu(menu)
         menu.exec(self.columns_button.mapToGlobal(
             self.columns_button.rect().bottomLeft()))
 

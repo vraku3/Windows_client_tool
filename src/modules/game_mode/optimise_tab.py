@@ -6,6 +6,9 @@ space" (separate confirmation, never journaled) and "Apps you may not use"
 """
 from __future__ import annotations
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 import logging
 
 from PyQt6.QtCore import Qt
@@ -98,6 +101,7 @@ class OptimiseTab(QWidget):
         self._pages.addTab(self._build_space(), "Free up space (one-way)")
         self._pages.addTab(self._build_usage(), "Apps you may not use")
         lay.addWidget(self._pages, 1)
+        explain(self, help_info.CONTROLS, help_info.HEADERS, help_info.PANES, help_info.PANES["Optimise OS"])
 
     # ---- pages ---------------------------------------------------------------------------------
     def _build_bar(self) -> QHBoxLayout:
@@ -282,7 +286,9 @@ class OptimiseTab(QWidget):
                 target = "Not selected"
             item = QTreeWidgetItem([spec.label, optimise.display(row.before), target, status, why])
             item.setData(0, Qt.ItemDataRole.UserRole, row.id)
-            item.setToolTip(4, why)
+            explanation = help_info.setting_help(spec, why)
+            for column in range(5):
+                item.setToolTip(column, explanation)
             if offered:
                 item.setCheckState(0, Qt.CheckState.Checked if row.id in self._selected else Qt.CheckState.Unchecked)
             self._tree.addTopLevelItem(item)

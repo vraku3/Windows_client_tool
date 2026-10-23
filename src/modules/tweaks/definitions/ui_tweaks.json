@@ -19,7 +19,7 @@
   {
     "id": "show_hidden_files",
     "name": "Show Hidden Files and Folders",
-    "description": "Makes Explorer show hidden files and folders.",
+    "description": "Sets Explorer's Hidden value to show files and folders marked hidden. Protected operating-system files have a separate visibility setting; showing an item does not change its contents.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -87,7 +87,7 @@
   {
     "id": "dark_mode",
     "name": "Enable Dark Mode",
-    "description": "Switches Windows and all apps to dark mode.",
+    "description": "Sets the Windows and app theme preference values to request dark mode. Apps with their own theme settings or without dark-mode support may keep their existing appearance.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -111,7 +111,7 @@
   {
     "id": "disable_taskbar_chat",
     "name": "Disable Chat (Teams) Button in Taskbar",
-    "description": "Removes the Microsoft Teams Chat shortcut from the taskbar.",
+    "description": "Sets the taskbar Chat preference below to request hiding its shortcut. The associated app remains installed; this does not disable all chat applications.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -128,7 +128,7 @@
   {
     "id": "disable_copilot_button",
     "name": "Disable Windows Copilot Button",
-    "description": "Removes the Copilot button from the taskbar.",
+    "description": "Sets the taskbar Copilot preference below to request hiding its button. The associated app or feature is not removed by changing this taskbar value.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -145,7 +145,7 @@
   {
     "id": "disable_taskbar_widgets",
     "name": "Disable Taskbar Widgets Button",
-    "description": "Removes the Widgets (news feed) button from the taskbar.",
+    "description": "Sets the taskbar Widgets preference below to request hiding its button. This does not uninstall the Windows Web Experience package.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -196,7 +196,7 @@
   {
     "id": "disable_taskbar_search_box",
     "name": "Hide Taskbar Search Box",
-    "description": "Hides the search box/icon from the taskbar to save space.",
+    "description": "Sets the taskbar search display value below to request hiding the search box or icon. It changes the taskbar presentation rather than uninstalling Windows Search.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -742,7 +742,7 @@
   {
     "id": "hide_taskbar_pinned_apps",
     "name": "Hide Pinned Apps from Taskbar",
-    "description": "Removes the pinned app icons from the Windows 11 taskbar.",
+    "description": "Writes the pinned-app taskbar policy below to request hiding pinned app icons. This changes taskbar configuration rather than uninstalling those programs.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -895,7 +895,7 @@
   {
     "id": "show_seconds_in_clock",
     "name": "Show Seconds in Taskbar Clock",
-    "description": "Displays seconds in the taskbar system clock (HH:MM:SS).",
+    "description": "Sets the taskbar clock preference to request showing seconds as well as hours and minutes. Whether seconds appear depends on support in the installed Windows taskbar.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,
@@ -929,7 +929,7 @@
   {
     "id": "hide_search_from_taskbar",
     "name": "Hide Search Icon from Taskbar",
-    "description": "Removes the search icon from the taskbar completely.",
+    "description": "Sets the taskbar search display value below to request hiding its search icon. Search remains a separate Windows feature; this value does not remove its files.",
     "category": "UI Tweaks",
     "risk": "low",
     "requires_admin": false,

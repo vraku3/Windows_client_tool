@@ -24,6 +24,7 @@ from core.search_provider import SearchProvider
 
 from .details_tab import DetailsTab
 from .process_search import ProcessSearchProvider
+from ui.help.dashboard_ui import apply_help
 
 
 class DetailsModule(BaseModule):
@@ -49,6 +50,7 @@ class DetailsModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = DetailsTab()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

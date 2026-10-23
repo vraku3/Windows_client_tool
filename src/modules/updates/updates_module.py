@@ -1268,6 +1268,9 @@ class UpdatesModule(BaseModule):
         self._tabs.addTab(self._runall_tab, "Run All")
         self._tabs.addTab(self._settings_tab, "Settings")
         self._tabs.currentChanged.connect(self._on_tab_changed)
+        from modules.cleanup.help_ui import explain_panes
+        from .help_text import CONTROLS, HEADERS, FIELDS, PANES
+        explain_panes(self._tabs, CONTROLS, HEADERS, FIELDS, PANES)
         return self._tabs
 
     def _on_app_updates(self, updates: List[AppUpdate]) -> None:

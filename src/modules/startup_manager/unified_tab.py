@@ -5,6 +5,7 @@ COMWorker (scheduled tasks and shortcut resolution use COM).
 """
 import logging
 import os
+from html import escape
 from datetime import datetime
 from typing import List, Optional
 
@@ -294,6 +295,8 @@ class UnifiedStartupTab(QWidget):
         for column, cell in enumerate((name, state, centered_item(item.source), centered_item(item.scope),
                                        centered_item(item.publisher or ""), centered_item(P.trust_text(item)),
                                        impact, centered_item(seen), findings)):
+            if column != 8:
+                cell.setToolTip("<qt>" + escape(detail_text(item)).replace("\n", "<br>") + "</qt>")
             table.setItem(row, column, cell)
 
     def _selected(self) -> Optional[P.Item]:

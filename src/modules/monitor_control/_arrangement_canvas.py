@@ -12,6 +12,10 @@ not.
 """
 from __future__ import annotations
 
+from modules.monitor_control.help_widgets import (
+    explain_widget,
+)
+
 import logging
 from typing import Dict, List, Optional, Tuple
 
@@ -58,6 +62,7 @@ class ArrangementCanvas(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
                            QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
+        explain_widget(self)
 
     # ── data ──
 

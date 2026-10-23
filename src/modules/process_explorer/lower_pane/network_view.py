@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWid
 
 from core.table_ui import centered_item, center_header
 from core.widget_life import widget_is_valid
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class NetworkView(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(self.REFRESH_INTERVAL_MS)
         self._timer.timeout.connect(self._reload)
+        apply_help(self, 'Network')
 
     def cancel(self) -> None:
         self._pid = None

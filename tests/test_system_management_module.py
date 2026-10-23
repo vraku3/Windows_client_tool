@@ -76,7 +76,10 @@ def test_the_hub_builds_a_widget_with_all_three_tabs(qapp):
     mod.on_start(FakeApp())
     widget = mod.create_widget()
     assert widget is not None
-    assert widget.count() == 3
+    # wrap() puts the plain-language introduction above the tabs.
+    from PyQt6.QtWidgets import QTabWidget
+    tabs = widget if isinstance(widget, QTabWidget) else widget.findChild(QTabWidget)
+    assert tabs.count() == 3
 
 
 def test_the_three_children_are_no_longer_registered_on_their_own(registered):

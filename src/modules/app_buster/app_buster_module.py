@@ -12,6 +12,9 @@ The engine (`engine/`) is Qt-free and tested headless; this file is the pane.
 """
 from __future__ import annotations
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 import logging
 import os
 import subprocess
@@ -165,6 +168,7 @@ class AppBusterWidget(QWidget):
             sc = QShortcut(QKeySequence(seq), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             sc.activated.connect(fn)
+        explain(self, help_info.CONTROLS, help_info.HEADERS, intro=help_info.INTRO)
 
     def _build_title_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -246,11 +250,15 @@ class AppBusterWidget(QWidget):
     def _file_menu(self, menu: QMenu) -> None:
         self._add(menu, "Refresh\tF5", self.rescan)
         self._add(menu, "Create restore point…", self._restore_point_now)
+        explain(menu, help_info.CONTROLS)
 
     def _view_menu(self, menu: QMenu) -> None:
         info = menu.addMenu("App information")
         for key, label, _on in views.FIELDS:
             a = QAction(label, info, checkable=True, checked=key in self._model.fields)
+            tip = "Show or hide this field. " + help_info.HEADERS[label]
+            a.setToolTip(tip)
+            a.setStatusTip(tip)
             a.toggled.connect(lambda on, k=key: self._toggle_field(k, on))
             info.addAction(a)
         for label, checked, fn in (
@@ -265,12 +273,18 @@ class AppBusterWidget(QWidget):
         menu.addSeparator()
         self._add(menu, "Cards", lambda: self._set_layout("cards"))
         self._add(menu, "Details", lambda: self._set_layout("details"))
+        explain(menu, help_info.CONTROLS, help_info.HEADERS)
 
     def _select_menu(self, menu: QMenu) -> None:
         for key, label, _fn in views.SELECTIONS:
-            self._add(menu, label, lambda k=key: self._select(k))
+            action = self._add(menu, label, lambda k=key: self._select(k))
+            if not action.statusTip():
+                tip = f"Check displayed apps matching the {label} selection rule for a later operation. This does not remove anything."
+                action.setToolTip(tip)
+                action.setStatusTip(tip)
         menu.addSeparator()
         self._add(menu, "Reset selection", self._reset_selection)
+        explain(menu, help_info.CONTROLS)
 
     def _actions_menu(self, menu: QMenu, recs: Optional[List[m.AppRecord]] = None) -> None:
         recs = recs if recs is not None else self._selected_records()
@@ -285,10 +299,13 @@ class AppBusterWidget(QWidget):
         self._add(menu, "Copy to clipboard", lambda: self._copy(recs), bool(recs))
         self._add(menu, "Browse folder…", lambda: self._browse(one),
                   bool(one and one.install_location and os.path.isdir(one.install_location)))
+        explain(menu, help_info.CONTROLS)
 
     @staticmethod
     def _add(menu: QMenu, label: str, fn, enabled: bool = True) -> QAction:
         a = menu.addAction(label)
+        from ui.help.debloat_widgets import action_help
+        action_help(a, help_info.CONTROLS)
         a.setEnabled(enabled)
         a.triggered.connect(lambda _=False: fn())
         return a
@@ -542,7 +559,7 @@ class AppBusterWidget(QWidget):
 
     def _update_dir_button(self) -> None:
         self._dir_btn.setText("↓" if self._descending else "↑")
-        self._dir_btn.setToolTip("Descending" if self._descending else "Ascending")
+        self._dir_btn.setToolTip(("Descending" if self._descending else "Ascending") + ": click to reverse the display sort order. This changes no installed apps.")
 
     def _header_clicked(self, section: int) -> None:
         sort = views.FIELD_SORT.get(self._model.column_field(section), "name")

@@ -1,4 +1,7 @@
 """AppX/Microsoft Store App Manager — list and uninstall Store apps."""
+
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
 import csv
 import datetime
 import logging
@@ -347,6 +350,7 @@ class StoreAppsModule(BaseModule):
         layout.addWidget(self._tabs)
 
         self._install_shortcuts()
+        explain(self._widget, help_info.CONTROLS, help_info.HEADERS, help_info.PANES, help_info.INTRO)
         return self._widget
 
     def _build_toolbar(self) -> QHBoxLayout:
@@ -1014,6 +1018,7 @@ class StoreAppsModule(BaseModule):
                 "Remove-AppxProvisionedPackage -Online -PackageName '"
                 + ps_quote(provisioned_full_name or "") + "'"))
 
+        explain(menu, help_info.CONTROLS)
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _app_for(self, package_name: str) -> Optional[dict]:

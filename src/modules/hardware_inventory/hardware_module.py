@@ -1,3 +1,7 @@
+
+from modules.hardware_inventory.help_widgets import (
+    describe_control, explain_widget,
+)
 import logging
 import os
 from datetime import datetime
@@ -39,6 +43,7 @@ class _LoadingTab(QWidget):
         self._status = QLabel(LOADING_TEXT)
         set_role(self._status, "muted")
         self._refresh_btn = QPushButton("Refresh")
+        describe_control(self._refresh_btn, '_refresh_btn')
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setFixedHeight(4)
@@ -57,6 +62,7 @@ class _LoadingTab(QWidget):
         layout.addWidget(self._content, 1)
 
         self._refresh_btn.clicked.connect(self._load)
+        explain_widget(self)
 
     def _load(self):
         self._refresh_btn.setEnabled(False)
@@ -134,6 +140,7 @@ class HardwareModule(BaseModule):
         vbox.setContentsMargins(0, 0, 0, 0)
 
         export_btn = QPushButton("Export HTML Report")
+        describe_control(export_btn, 'export_btn')
         export_btn.setFixedWidth(160)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -158,6 +165,7 @@ class HardwareModule(BaseModule):
 
         export_btn.clicked.connect(do_export)
         self._hw_tabs = tabs
+        explain_widget(outer, introduction=True)
         return outer
 
     def _load_current_if_new(self, _index: int = 0) -> None:

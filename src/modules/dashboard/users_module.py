@@ -17,6 +17,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
 from .users_tab import UsersTab
+from ui.help.dashboard_ui import apply_help
 
 
 class UsersModule(BaseModule):
@@ -38,6 +39,7 @@ class UsersModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = UsersTab()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

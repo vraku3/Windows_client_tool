@@ -1,3 +1,7 @@
+
+from modules.env_vars.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 # src/modules/env_vars/env_vars_module.py
 import logging
 import os
@@ -47,6 +51,7 @@ class _EnvPanel(QWidget):
         header.addWidget(self._status)
         header.addStretch()
         self._search = QLineEdit()
+        describe_control(self._search, '_search')
         self._search.setPlaceholderText("Filter name or value...")
         self._search.setMaximumWidth(240)
         self._search.textChanged.connect(self._apply_filter)
@@ -55,6 +60,7 @@ class _EnvPanel(QWidget):
 
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Name", "Type", "Value", "Expanded"])
+        describe_headers(self._table)
         fit_table(self._table, stretch=[2, 3], content=[0, 1])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -65,10 +71,12 @@ class _EnvPanel(QWidget):
         for text, slot in [("Add", self._add), ("Edit", self._edit),
                            ("Delete", self._delete), ("Copy to other scope", self._duplicate)]:
             btn = QPushButton(text)
+            describe_control(btn, 'btn')
             btn.clicked.connect(slot)
             btn_row.addWidget(btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
+        explain_widget(self)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -102,6 +110,7 @@ class _EnvPanel(QWidget):
                 expanded = ""
             for c, txt in enumerate((v.name, kind, v.value, expanded)):
                 self._table.setItem(r, c, centered_item(txt))
+                describe_cell(self._table, c, self._table.item(r, c))
 
     def _selected(self) -> Optional[EnvVar]:
         row = self._table.currentRow()
@@ -180,15 +189,18 @@ class _PathPane(QWidget):
         set_role(self._status, "muted")
         head.addWidget(self._status, 1)
         self._btn = QPushButton("Analyse PATH")
+        describe_control(self._btn, '_btn')
         self._btn.clicked.connect(self.run)
         head.addWidget(self._btn)
         layout.addLayout(head)
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Scope", "Entry", "Finding", "Detail"])
+        describe_headers(self._table)
         fit_table(self._table, stretch=[3], content=[0, 1, 2])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
+        explain_widget(self)
 
     def cancel(self) -> None:
         for w in self._workers:
@@ -232,6 +244,7 @@ class _PathPane(QWidget):
                 if row[2] in ("writable", "missing", "unexpanded"):
                     item.setForeground(QColor(semantic("warning")))
                 self._table.setItem(r, c, item)
+                describe_cell(self._table, c, self._table.item(r, c))
         self._status.setText(f"{len(rows)} finding(s)" if rows else "No findings.")
 
 
@@ -263,27 +276,32 @@ class _EffectivePane(QWidget):
         self._status.setWordWrap(True)
         head.addWidget(self._status, 1)
         self._only_stale = QPushButton("Show only stale")
+        describe_control(self._only_stale, '_only_stale')
         self._only_stale.setCheckable(True)
         self._only_stale.toggled.connect(self._refresh)
         head.addWidget(self._only_stale)
         self._scan_btn = QPushButton("Scan running processes...")
+        describe_control(self._scan_btn, '_scan_btn')
         self._scan_btn.setToolTip(
             "Select a variable row, then check every OTHER running process (not just this "
             "app) for whether it still has the current registry value.")
         self._scan_btn.clicked.connect(self._scan_selected)
         head.addWidget(self._scan_btn)
         refresh_btn = QPushButton("Refresh")
+        describe_control(refresh_btn, 'refresh_btn')
         refresh_btn.clicked.connect(self._refresh)
         head.addWidget(refresh_btn)
         layout.addLayout(head)
         self._table = QTableWidget(0, 5)
         self._table.setHorizontalHeaderLabels(
             ["Name", "System", "User", "This process has", "State"])
+        describe_headers(self._table)
         fit_table(self._table, stretch=[1, 2, 3], content=[0, 4])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
+        explain_widget(self)
 
     def cancel(self) -> None:
         for w in self._workers:
@@ -303,6 +321,7 @@ class _EffectivePane(QWidget):
                 if state == "stale":
                     item.setForeground(QColor(semantic("warning")))
                 self._table.setItem(r, c, item)
+                describe_cell(self._table, c, self._table.item(r, c))
         self._status.setText(
             f"{len(rows)} row(s) shown. Stale rows need a new process to take effect."
             if not self._only_stale.isChecked() else
@@ -355,6 +374,7 @@ class _EffectivePane(QWidget):
         layout.addWidget(header)
         table = QTableWidget(0, 5)
         table.setHorizontalHeaderLabels(["PID", "Process", "User", "Value", "State"])
+        describe_headers(table)
         fit_table(table, stretch=[1, 3], content=[0, 2, 4])
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
@@ -374,6 +394,7 @@ class _EffectivePane(QWidget):
                 elif row.is_stale:
                     item.setForeground(QColor(semantic("warning")))
                 table.setItem(r, c, item)
+                describe_cell(table, c, table.item(r, c))
         layout.addWidget(table, 1)
         absent = summary.total - summary.has_value - summary.refused
         footer = QLabel(
@@ -386,6 +407,7 @@ class _EffectivePane(QWidget):
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         btns.accepted.connect(dlg.accept)
         layout.addWidget(btns)
+        explain_widget(dlg)
         dlg.exec()
 
 
@@ -410,7 +432,9 @@ class EnvVarsModule(BaseModule):
         bar = QHBoxLayout()
         bar.setContentsMargins(8, 4, 8, 0)
         save_btn = QPushButton("Save snapshot...")
+        describe_control(save_btn, 'save_btn')
         cmp_btn = QPushButton("Compare with snapshot...")
+        describe_control(cmp_btn, 'cmp_btn')
         save_btn.clicked.connect(self._save_snapshot)
         cmp_btn.clicked.connect(self._compare_snapshot)
         bar.addWidget(save_btn)
@@ -432,6 +456,7 @@ class EnvVarsModule(BaseModule):
         splitter.setSizes([260, 260, 220, 220])
         layout.addWidget(splitter, 1)
         self._widget = root
+        explain_widget(root, introduction=True)
         return root
 
     def _snapshot_default(self) -> str:

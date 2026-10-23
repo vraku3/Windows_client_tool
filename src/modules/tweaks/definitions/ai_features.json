@@ -19,7 +19,7 @@
   {
     "id": "disable_ai_hub",
     "name": "Disable AI Hub",
-    "description": "Removes the AI Hub entry from the Windows 11 Start menu.",
+    "description": "Writes the DisableAIHub machine policy value to request hiding the AI Hub entry in Start. Whether the entry disappears depends on whether this Windows build recognises that policy.",
     "category": "AI Features",
     "risk": "low",
     "requires_admin": true,
@@ -51,7 +51,7 @@
   {
     "id": "disable_copilot_edge",
     "name": "Disable Copilot in Edge",
-    "description": "Disables Microsoft Copilot sidebar in Microsoft Edge.",
+    "description": "Writes two Microsoft Edge sidebar policy values to zero to request hiding the sidebar. The visible result depends on the Edge version and which policies it supports.",
     "category": "AI Features",
     "risk": "low",
     "requires_admin": false,
@@ -75,7 +75,7 @@
   {
     "id": "disable_paint_cocreator",
     "name": "Disable AI Cocreator in Paint",
-    "description": "Disables the Cocreator AI image generation in Paint.",
+    "description": "Sets the current user's Paint DisableAIFeatures registry value to 1. This requests disabling AI features in Paint; the installed Paint version determines whether it uses this value.",
     "category": "AI Features",
     "risk": "low",
     "requires_admin": false,

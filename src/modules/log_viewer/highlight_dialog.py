@@ -3,6 +3,10 @@
 Order matters and is visible: `matching_rule` takes the FIRST rule that
 matches, so moving a rule up changes what a row looks like.
 """
+
+from modules.log_viewer.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import re
 
 from PyQt6.QtWidgets import (QAbstractItemView, QColorDialog, QDialog,
@@ -25,6 +29,7 @@ class HighlightDialog(QDialog):
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, len(_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(_COLUMNS)
+        describe_headers(self.table)
         center_header(self.table)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
@@ -32,9 +37,11 @@ class HighlightDialog(QDialog):
 
         buttons = QHBoxLayout()
         add = QPushButton("Add", self)
+        describe_control(add, 'add')
         add.clicked.connect(self._add_blank)
         buttons.addWidget(add)
         remove = QPushButton("Remove", self)
+        describe_control(remove, 'remove')
         remove.clicked.connect(self._remove_selected)
         buttons.addWidget(remove)
         buttons.addStretch(1)
@@ -49,11 +56,13 @@ class HighlightDialog(QDialog):
 
         for rule in rules or ():
             self.add_rule(rule)
+        explain_widget(self)
 
     def add_rule(self, rule: HighlightRule) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setItem(row, 0, centered_item(rule.pattern))
+        describe_cell(self.table, 0, self.table.item(row, 0))
         colour = QTableWidgetItem(rule.colour)
         colour.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         colour.setBackground(QColor(rule.colour))
@@ -64,12 +73,14 @@ class HighlightDialog(QDialog):
         # out of a reimplemented Qt virtual when the row is next painted.
         colour.setFlags(colour.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.table.setItem(row, 1, colour)
+        describe_cell(self.table, 1, self.table.item(row, 1))
         for column, value in ((2, rule.regex), (3, rule.enabled)):
             item = QTableWidgetItem()
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if value
                                else Qt.CheckState.Unchecked)
             self.table.setItem(row, column, item)
+            describe_cell(self.table, column, self.table.item(row, column))
 
     def _add_blank(self) -> None:
         colour = QColorDialog.getColor(QColor("#00ff00"), self)

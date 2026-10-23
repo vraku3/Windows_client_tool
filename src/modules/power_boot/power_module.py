@@ -171,6 +171,9 @@ def _safe_set(fn, value, status_lbl):
 
 # ── Module ────────────────────────────────────────────────────────────────────
 
+from modules.diagnose.help_ui import explain
+from modules.power_boot.help_text import INTRO, CONTROLS, HEADERS, TABS
+
 class PowerBootModule(BaseModule):
     name = "Power & Boot"
     icon = "⚡"
@@ -205,6 +208,7 @@ class PowerBootModule(BaseModule):
         self._build_power_tab(tabs)
         self._build_boot_tab(tabs)
 
+        explain(w, INTRO, CONTROLS, HEADERS, TABS)
         return w
 
     def _build_power_tab(self, tabs: QTabWidget) -> None:
@@ -233,6 +237,7 @@ class PowerBootModule(BaseModule):
         sleep_row = QHBoxLayout()
         sleep_row.addWidget(QLabel("Sleep timeout (min, 0=never):"))
         sleep_spin = QSpinBox()
+        sleep_spin.setToolTip("Sleep timeout in minutes; 0 means never sleep automatically. Editing waits for Apply, which sets both plugged-in and battery values without confirmation and needs administrator rights.")
         sleep_spin.setRange(0, 9999)
         apply_sleep_btn = QPushButton("Apply")
         sleep_row.addWidget(sleep_spin)
@@ -341,6 +346,7 @@ class PowerBootModule(BaseModule):
 
         timeout_row = QHBoxLayout()
         timeout_spin = QSpinBox()
+        timeout_spin.setToolTip("Boot-menu waiting time in seconds; 0 skips the selection delay. Editing waits for Set Timeout, which writes the boot configuration without confirmation and needs administrator rights.")
         timeout_spin.setRange(0, 999)
         timeout_spin.setSuffix(" sec")
         set_timeout_btn = QPushButton("Set Timeout")

@@ -1,6 +1,8 @@
 import logging
 import os
 import subprocess
+from html import escape
+from modules.scheduled_tasks.help_text import task_help
 from typing import Callable, List, Optional
 
 from PyQt6 import sip
@@ -33,6 +35,9 @@ _COL_STATE, _COL_RESULT = 2, 4
 def _alive(widget) -> bool:
     return widget is not None and not sip.isdeleted(widget)
 
+
+from modules.diagnose.help_ui import explain
+from modules.scheduled_tasks.help_text import INTRO, CONTROLS, HEADERS, TABS
 
 class TasksModule(BaseModule):
     name = "Scheduled Tasks"
@@ -98,6 +103,7 @@ class TasksModule(BaseModule):
         splitter.setSizes([220, 900])
         lay.addWidget(splitter, 1)
         self._sync_buttons()
+        explain(w, INTRO, CONTROLS, HEADERS, TABS)
         return w
 
     def _build_toolbar(self) -> QHBoxLayout:
@@ -188,8 +194,10 @@ class TasksModule(BaseModule):
         self._detail.setPlaceholderText("Select a task to see what it runs, as whom, and why it failed.")
         self._xml_view = QPlainTextEdit()
         self._xml_view.setReadOnly(True)
-        tabs.addTab(self._detail, "Details")
-        tabs.addTab(self._xml_view, "XML definition")
+        for view, title in ((self._detail, "Details"), (self._xml_view, "XML definition")):
+            page = QWidget()
+            QVBoxLayout(page).addWidget(view)
+            tabs.addTab(page, title)
         return tabs
 
     # ------------------------------------------------------------------
@@ -340,8 +348,13 @@ class TasksModule(BaseModule):
         result = task_view.describe_result(t.last_result_code)
         values = [t.name, folder, t.status, t.last_run, result.split(":")[0],
                   "-" if t.next_run == "Never" else t.next_run, d.run_as, ", ".join(d.triggers) or t.triggers, t.author]
+        explanation = (task_help(t.path) + f"\nRuns as: {d.run_as or 'not reported'}"
+                       + "\nCommands: " + "; ".join(f"{exe} {args}".strip() for exe, args in d.commands)
+                       + f"\nLast result: {result}")
+        tip = "<qt>" + escape(explanation).replace("\n", "<br>") + "</qt>"
         for c, v in enumerate(values):
             item = centered_item(str(v))
+            item.setToolTip(tip)
             item.setData(Qt.ItemDataRole.UserRole, t.path)
             if c == _COL_RESULT:
                 item.setToolTip(result)

@@ -4,6 +4,10 @@
 functional unelevated, and the Home tab's *Start as administrator* button plus
 a status-bar notice offer the fast path when it would help.
 """
+
+from modules.treesize.help_widgets import (
+    explain_widget,
+)
 import ctypes
 import logging
 from typing import Optional
@@ -60,6 +64,7 @@ class TreeSizeModule(BaseModule):
         self._shell.ribbon.set_enabled("tools.admin", not _is_admin())
         self._shell.elevation_banner.set_elevated(_is_admin())
         self._widget = self._shell
+        explain_widget(self._widget, introduction=True)
         return self._widget
 
     def on_start(self, app) -> None:

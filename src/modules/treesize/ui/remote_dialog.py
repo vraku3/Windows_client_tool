@@ -10,6 +10,10 @@ A backend whose package is missing is shown disabled with the reason, rather
 than being absent — "SSH is not listed" sends people hunting, "SSH needs
 paramiko" tells them what to do.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
     QLineEdit, QPushButton, QSpinBox, QVBoxLayout,
@@ -48,6 +52,7 @@ class RemoteTargetDialog(QDialog):
         form = QFormLayout()
 
         self.backend = QComboBox(self)
+        describe_control(self.backend, 'backend')
         self._classes = {}
         for target_class, usable, why in sorted(
                 available_targets(), key=lambda t: t[0].display_name):
@@ -61,19 +66,24 @@ class RemoteTargetDialog(QDialog):
         form.addRow("Type:", self.backend)
 
         self.host = QLineEdit(self)
+        describe_control(self.host, 'host')
         self.host.editingFinished.connect(self.recall_password)
 
         self.port = QSpinBox(self)
+        describe_control(self.port, 'port')
         self.port.setRange(0, 65535)
         self.port.setSpecialValueText("default")
 
         self.username = QLineEdit(self)
+        describe_control(self.username, 'username')
         self.username.editingFinished.connect(self.recall_password)
 
         self.password = QLineEdit(self)
+        describe_control(self.password, 'password')
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
 
         self.root = QLineEdit(self)
+        describe_control(self.root, 'root')
         self.root.setText("/")
 
         # Explicit label widgets rather than the strings QFormLayout would
@@ -88,6 +98,7 @@ class RemoteTargetDialog(QDialog):
         # Spec 6.2. Shown only for the backends that have a device flow;
         # everything else authenticates with what is already in the form.
         self.sign_in_button = QPushButton("Sign in\u2026", self)
+        describe_control(self.sign_in_button, 'sign_in_button')
         self.sign_in_button.setToolTip(
             "Authorise this machine through your app registration, so the "
             "token renews itself instead of expiring in an hour.")
@@ -100,6 +111,7 @@ class RemoteTargetDialog(QDialog):
         # Opt-in: connecting once is not consent to keep the secret.
         self.remember = QCheckBox(
             "Remember this password in Windows Credential Manager", self)
+        describe_control(self.remember, 'remember')
         form.addRow("", self.remember)
         layout.addLayout(form)
 
@@ -122,6 +134,7 @@ class RemoteTargetDialog(QDialog):
         self.backend.currentIndexChanged.connect(self._on_backend_changed)
         self._select_first_usable()
         self._apply_form()
+        explain_widget(self)
 
     # -- backend selection -----------------------------------------------
 

@@ -22,6 +22,8 @@ from core.worker import COMWorker, Worker
 from ui.error_banner import ErrorBanner
 from modules.services_manager import service_audit
 from modules.services_manager import service_view
+from modules.services_manager.help_text import service_help
+from html import escape
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -288,6 +290,9 @@ _AUDIT_FILTERS = (
 # ----------------------------------------------------------------------
 # Module
 # ----------------------------------------------------------------------
+from modules.diagnose.help_ui import explain
+from modules.services_manager.help_text import INTRO, CONTROLS, HEADERS, TABS
+
 class ServicesModule(BaseModule):
     name = "Services"
     icon = "⚙️"
@@ -380,7 +385,18 @@ class ServicesModule(BaseModule):
         self._enable_btn.clicked.connect(lambda: self._do_action("enable"))
         self._disable_btn.clicked.connect(lambda: self._do_action("disable"))
 
+        explain(outer, INTRO, CONTROLS, HEADERS, TABS)
+        self._explain_fields()
         return outer
+
+    def _explain_fields(self):
+        from modules.services_manager.help_text import AUDIT_HELP, DETAIL_HELP
+        for attr, tip in DETAIL_HELP.items():
+            getattr(self, attr).setToolTip(tip)
+        self._audit_combo.setToolTip(self._audit_combo.toolTip() + ". This only filters the inventory; hover each choice for its meaning, and inspect evidence before changing a service.")
+        for index in range(self._audit_combo.count()):
+            self._audit_combo.setItemData(index, AUDIT_HELP[self._audit_combo.itemData(index)], Qt.ItemDataRole.ToolTipRole)
+        self._status_label.setToolTip("Shown and total service counts from the latest read, or the latest action result. A filtered-out service remains installed and may still be running.")
 
     def _setup_list_tab(self):
         """Build the service list table inside the list tab."""
@@ -536,6 +552,7 @@ class ServicesModule(BaseModule):
             ]
             for c, val in enumerate(values):
                 item = centered_item(val)
+                item.setToolTip("<qt>" + escape(service_help(svc)).replace("\n", "<br>") + "</qt>")
                 if c == 2:  # Status
                     color = status_colour(svc["Status"])
                     if color:
@@ -591,6 +608,7 @@ class ServicesModule(BaseModule):
 
         # Basic fields from WMI data
         self._detail_name_label.setText(svc["Display Name"])
+        self._detail_name_label.setToolTip("<qt>" + escape(service_help(svc)).replace("\n", "<br>") + "</qt>")
         self._detail_name_value.setText(svc["Name"])
         self._detail_disp_value.setText(svc["Display Name"])
         self._detail_status_value.setText(svc["Status"])

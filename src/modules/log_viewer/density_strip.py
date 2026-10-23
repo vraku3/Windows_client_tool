@@ -8,6 +8,10 @@ plotting library for that would cost more than it saves. `perfmon_charts.py`
 draws the same way and for the same reason -- and, like it, every coordinate
 handed to QPainter is an `int`, because PyQt6 refuses a float.
 """
+
+from modules.log_viewer.help_widgets import (
+    explain_widget,
+)
 from math import sqrt
 
 from PyQt6.QtCore import QRect, Qt, pyqtSignal
@@ -52,6 +56,7 @@ class DensityStrip(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("Where the records and the errors are. Click to go "
                         "to that moment.")
+        explain_widget(self)
 
     def set_buckets(self, buckets) -> None:
         self._buckets = list(buckets or [])

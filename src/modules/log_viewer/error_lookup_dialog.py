@@ -5,6 +5,10 @@ the tooltip and the detail pane can only explain a code that is already on a
 visible row, and the code you are chasing is often one someone read out to
 you over the phone.
 """
+
+from modules.log_viewer.help_widgets import (
+    describe_control, explain_widget,
+)
 from PyQt6.QtWidgets import (QDialog, QLabel, QLineEdit, QPlainTextEdit,
                              QPushButton, QVBoxLayout)
 
@@ -19,6 +23,7 @@ class ErrorLookupDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Paste a code, or a whole log line:", self))
         self.input = QLineEdit(self)
+        describe_control(self.input, 'input')
         self.input.setPlaceholderText("0x80070005")
         self.input.returnPressed.connect(self._look_up_input)
         layout.addWidget(self.input)
@@ -26,8 +31,10 @@ class ErrorLookupDialog(QDialog):
         self.output.setReadOnly(True)
         layout.addWidget(self.output, 1)
         button = QPushButton("Look up", self)
+        describe_control(button, 'button')
         button.clicked.connect(self._look_up_input)
         layout.addWidget(button)
+        explain_widget(self)
 
     def look_up(self, text: str) -> str:
         codes = find_codes(text)

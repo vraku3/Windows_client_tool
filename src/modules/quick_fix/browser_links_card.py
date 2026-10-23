@@ -50,6 +50,7 @@ class BrowserLinksCard(QFrame):
             self._buttons[name] = button
         root.addLayout(buttons)
         self._undo = QPushButton('Undo Outlook/Teams change')
+        self._undo.setToolTip('Review restoring Outlook/Teams browser-link settings saved by this app, then confirm before applying. This does not undo Windows default-browser associations.')
         self._undo.setEnabled(False)
         self._undo.clicked.connect(self._prepare_undo)
         root.addWidget(self._undo)
@@ -99,7 +100,7 @@ class BrowserLinksCard(QFrame):
     def _render(self, state):
         self._state = state
         for name, button in self._buttons.items():
-            button.setToolTip('' if name in state.browsers else
+            button.setToolTip('Review changing Windows web-link associations to ' + name + ', including using the Windows default browser in Outlook/Teams. Asks before applying; Undo restores only the saved Outlook/Teams change.' if name in state.browsers else
                               'Could not determine installation: ' + '; '.join(state.detection_errors)
                               if state.detection_errors else 'not installed')
         details = state.summary() + '\n' + state.processes

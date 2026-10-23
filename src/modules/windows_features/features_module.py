@@ -157,6 +157,9 @@ def _disable_feature(name: str, output_cb, is_cancelled: Callable[[], bool] = la
     )
 
 
+from modules.diagnose.help_ui import explain
+from modules.windows_features.help_text import INTRO, CONTROLS, HEADERS, TABS
+
 class WindowsFeaturesModule(BaseModule):
     name = "Windows Features"
     icon = "🧩"
@@ -270,6 +273,13 @@ class WindowsFeaturesModule(BaseModule):
         selected_name_ref: list = [None]
 
         def _color_item(item: QTreeWidgetItem, state: str) -> None:
+            from modules.windows_features.help_text import FEATURES
+            from html import escape
+            name = item.text(0)
+            description = FEATURES.get(name, "Windows reports this optional component by its internal name. Select it to read the DISM details before deciding whether to change it.")
+            tip = "<qt>" + escape(f"{name}\n{description}\nWindows-reported state: {state}").replace("\n", "<br>") + "</qt>"
+            for col in range(2):
+                item.setToolTip(col, tip)
             color = QColor(semantic("success") if "Enable" in state else semantic("info"))
             for col in range(2):
                 item.setForeground(col, color)
@@ -427,6 +437,7 @@ class WindowsFeaturesModule(BaseModule):
         enable_btn.clicked.connect(_confirm_enable)
         disable_btn.clicked.connect(_confirm_disable)
 
+        explain(w, INTRO, CONTROLS, HEADERS, TABS)
         return w
 
     def get_refresh_interval(self) -> Optional[int]:

@@ -5,6 +5,10 @@ share the tree's context menu, so anything you can do to a row in the tree you
 can do to a search hit — a clone stops feeling like one product the moment the
 same row offers different actions in two places.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, describe_headers, explain_widget,
+)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -38,19 +42,24 @@ class SearchDialog(QDialog):
         criteria = QGroupBox("Search for", self)
         form = QFormLayout(criteria)
         self.pattern = QLineEdit(criteria)
+        describe_control(self.pattern, 'pattern')
         self.pattern.setPlaceholderText("Part of a name, or a wildcard like *.iso")
         self.pattern.returnPressed.connect(self.run)
         form.addRow("Name:", self.pattern)
 
         self.regex = QCheckBox("Treat as a regular expression", criteria)
+        describe_control(self.regex, 'regex')
         form.addRow(self.regex)
 
         size_row = QHBoxLayout()
         self.min_size = QSpinBox(criteria)
+        describe_control(self.min_size, 'min_size')
         self.min_size.setRange(0, 1_000_000)
         self.max_size = QSpinBox(criteria)
+        describe_control(self.max_size, 'max_size')
         self.max_size.setRange(0, 1_000_000)
         self.size_unit = QComboBox(criteria)
+        describe_control(self.size_unit, 'size_unit')
         for label, _factor in SIZE_UNITS:
             self.size_unit.addItem(label)
         self.size_unit.setCurrentIndex(2)          # MB
@@ -63,8 +72,10 @@ class SearchDialog(QDialog):
 
         age_row = QHBoxLayout()
         self.newer_than = QSpinBox(criteria)
+        describe_control(self.newer_than, 'newer_than')
         self.newer_than.setRange(0, 100_000)
         self.older_than = QSpinBox(criteria)
+        describe_control(self.older_than, 'older_than')
         self.older_than.setRange(0, 100_000)
         age_row.addWidget(QLabel("modified within"))
         age_row.addWidget(self.newer_than)
@@ -74,13 +85,17 @@ class SearchDialog(QDialog):
         form.addRow("Age:", age_row)
 
         self.owner = QLineEdit(criteria)
+        describe_control(self.owner, 'owner')
         form.addRow("Owner:", self.owner)
 
         flags = QHBoxLayout()
         self.include_folders = QCheckBox("Folders", criteria)
+        describe_control(self.include_folders, 'include_folders')
         self.include_files = QCheckBox("Files", criteria)
+        describe_control(self.include_files, 'include_files')
         self.include_files.setChecked(True)
         self.include_hidden = QCheckBox("Hidden", criteria)
+        describe_control(self.include_hidden, 'include_hidden')
         self.include_hidden.setChecked(True)
         for box in (self.include_files, self.include_folders, self.include_hidden):
             flags.addWidget(box)
@@ -90,6 +105,7 @@ class SearchDialog(QDialog):
 
         buttons = QHBoxLayout()
         self.run_button = QPushButton("Search", self)
+        describe_control(self.run_button, 'run_button')
         self.run_button.clicked.connect(self.run)
         buttons.addWidget(self.run_button)
         self.status = QLabel("", self)
@@ -99,6 +115,7 @@ class SearchDialog(QDialog):
         self.results = QTreeWidget(self)
         self.results.setColumnCount(3)
         self.results.setHeaderLabels(["Name", "Size", "Path"])
+        describe_headers(self.results)
         self.results.setRootIsDecorated(False)
         self.results.setUniformRowHeights(True)
         self.results.setSelectionBehavior(
@@ -113,6 +130,7 @@ class SearchDialog(QDialog):
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         close.rejected.connect(self.reject)
         layout.addWidget(close)
+        explain_widget(self)
 
     def _factor(self) -> int:
         return SIZE_UNITS[self.size_unit.currentIndex()][1]
@@ -161,6 +179,7 @@ class SearchDialog(QDialog):
             return
         menu = self._shell.row_actions.menu_for(int(node), self.results)
         if menu is not None:
+            explain_widget(menu)
             menu.exec(self.results.viewport().mapToGlobal(pos))
 
     def _activated(self, item, _column) -> None:
@@ -183,14 +202,17 @@ class DuplicatesDialog(QDialog):
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Ignore files smaller than"))
         self.min_size = QSpinBox(self)
+        describe_control(self.min_size, 'min_size')
         self.min_size.setRange(0, 1_000_000)
         self.min_size.setValue(1)
         controls.addWidget(self.min_size)
         controls.addWidget(QLabel("MB"))
         self.run_button = QPushButton("Find duplicates", self)
+        describe_control(self.run_button, 'run_button')
         self.run_button.clicked.connect(self.run)
         controls.addWidget(self.run_button)
         self.cancel_button = QPushButton("Stop", self)
+        describe_control(self.cancel_button, 'cancel_button')
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._cancel)
         controls.addWidget(self.cancel_button)
@@ -207,6 +229,7 @@ class DuplicatesDialog(QDialog):
         self.results = QTreeWidget(self)
         self.results.setColumnCount(3)
         self.results.setHeaderLabels(["File", "Size", "Recoverable"])
+        describe_headers(self.results)
         self.results.setUniformRowHeights(True)
         self.results.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
@@ -217,6 +240,7 @@ class DuplicatesDialog(QDialog):
         close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         close.rejected.connect(self.reject)
         layout.addWidget(close)
+        explain_widget(self)
 
     def _cancel(self) -> None:
         self._cancelled = True
@@ -279,4 +303,5 @@ class DuplicatesDialog(QDialog):
             return
         menu = self._shell.row_actions.menu_for(node, self.results)
         if menu is not None:
+            explain_widget(menu)
             menu.exec(self.results.viewport().mapToGlobal(pos))

@@ -19,6 +19,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
 from .services_tab import ServicesTab
+from ui.help.dashboard_ui import apply_help
 
 
 class ServicesModule(BaseModule):
@@ -40,6 +41,7 @@ class ServicesModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = ServicesTab()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

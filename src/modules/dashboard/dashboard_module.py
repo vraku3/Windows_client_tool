@@ -11,7 +11,6 @@ Refresh interval: 3 seconds (configurable)
 """
 
 import logging
-import os
 import platform
 import time
 
@@ -21,7 +20,6 @@ from typing import Optional
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -44,6 +42,7 @@ from modules.dashboard.overview_health import (
     QUICK_TOOLS, RESTART_ACTION, History, collect_findings, identity_lines, launch_tool,
     network_summary, self_usage, summary_text)
 from modules.dashboard.overview_widgets import CoreGrid, FindingRow, MetricTile
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -738,6 +737,7 @@ class OverviewModule(BaseModule):
             return lbl
         self._widget = _DashboardWidget()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_start(self, app) -> None:
@@ -790,6 +790,13 @@ class DashboardModule(CompositeModule):
     description = ("System overview, every process, and Process Explorer's "
                    "detail")
     group = ModuleGroup.OVERVIEW
+
+    def wrap(self, tabs):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.addWidget(tabs)
+        apply_help(widget, self.name)
+        return widget
 
     def __init__(self) -> None:
         super().__init__()

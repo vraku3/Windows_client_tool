@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
                              QVBoxLayout, QWidget)
 
 from core.table_ui import centered_item, center_header
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class HandleView(QWidget):
             QTableWidget.SelectionBehavior.SelectRows)
         self._table.hide()
         layout.addWidget(self._table)
+        apply_help(self, 'Handles')
 
     def cancel(self) -> None:
         # The pid is the guard: a result for a pid we are no longer showing

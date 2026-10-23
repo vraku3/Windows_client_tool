@@ -8,6 +8,10 @@ opening a browser, typing a code and clicking approve -- tens of seconds at
 best -- and doing that on the UI thread freezes the whole application behind
 a dialog that looks like it has hung, which is exactly when someone kills it.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, explain_widget,
+)
 import logging
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -77,13 +81,16 @@ class DeviceSignInDialog(QDialog):
         form = QFormLayout()
 
         self.client_id_edit = QLineEdit(self)
+        describe_control(self.client_id_edit, 'client_id_edit')
         self.client_id_edit.setPlaceholderText(
             "the Application (client) ID of your app registration")
         form.addRow("Client ID:", self.client_id_edit)
 
         self.tenant_edit = QLineEdit(self)
+        describe_control(self.tenant_edit, 'tenant_edit')
         self.tenant_edit.setPlaceholderText("common, or your tenant id")
         self.secret_edit = QLineEdit(self)
+        describe_control(self.secret_edit, 'secret_edit')
         self.secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
         # The unused one is HIDDEN, not merely left out of the form. A widget
         # parented to the dialog but never added to a layout still renders --
@@ -108,6 +115,7 @@ class DeviceSignInDialog(QDialog):
         layout.addWidget(self.status)
 
         self.copy_button = QPushButton("Copy code", self)
+        describe_control(self.copy_button, 'copy_button')
         self.copy_button.setEnabled(False)
         self.copy_button.clicked.connect(self._copy_code)
         layout.addWidget(self.copy_button)
@@ -121,6 +129,7 @@ class DeviceSignInDialog(QDialog):
         layout.addWidget(self.buttons)
 
         self._code = None
+        explain_widget(self)
 
     # ---- the flow -------------------------------------------------------
 

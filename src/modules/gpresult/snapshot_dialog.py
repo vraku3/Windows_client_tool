@@ -10,6 +10,10 @@ findings.
 
 from __future__ import annotations
 
+from modules.gpresult.help_widgets import (
+    describe_control, describe_headers, explain_widget,
+)
+
 import logging
 from typing import List, Optional
 
@@ -60,6 +64,7 @@ class SnapshotCompareDialog(QDialog):
         self._list = QListWidget()
         left_layout.addWidget(self._list, 1)
         self._delete_btn = QPushButton("Delete")
+        describe_control(self._delete_btn, '_delete_btn')
         self._delete_btn.setEnabled(False)
         left_layout.addWidget(self._delete_btn)
         splitter.addWidget(left)
@@ -67,6 +72,7 @@ class SnapshotCompareDialog(QDialog):
         self._tree = QTreeWidget()
         self._tree.setColumnCount(3)
         self._tree.setHeaderLabels(["Change", "Was", "Now"])
+        describe_headers(self._tree)
         self._tree.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Interactive)
         self._tree.setColumnWidth(0, 380)
@@ -90,6 +96,7 @@ class SnapshotCompareDialog(QDialog):
         self._list.currentRowChanged.connect(self._on_selected)
         self._delete_btn.clicked.connect(self._delete_selected)
         self.reload()
+        explain_widget(self)
 
     # ------------------------------------------------------------------
 

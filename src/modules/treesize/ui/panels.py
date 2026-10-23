@@ -3,6 +3,10 @@
 All three are individually toggleable from the View tab, as in Pro, so each is
 a self-contained widget that the shell shows or hides.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control, describe_headers, explain_widget,
+)
 import ctypes
 import string
 from ctypes import wintypes
@@ -66,6 +70,7 @@ class DriveList(QTreeWidget):
         super().__init__(parent)
         self.setColumnCount(4)
         self.setHeaderLabels(["Name", "Total Size", "Free", "% Free"])
+        describe_headers(self)
         self.setRootIsDecorated(False)
         self.setUniformRowHeights(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -86,6 +91,7 @@ class DriveList(QTreeWidget):
         # way every other proportional value in the pane reads (spec 5.6).
         self.setItemDelegateForColumn(3, ProportionBarDelegate(self))
         self.itemDoubleClicked.connect(self._on_double_clicked)
+        explain_widget(self)
 
     def refresh(self, drives=None) -> None:
         self.clear()
@@ -141,6 +147,7 @@ class ScanOverview(QWidget):
             layout.addWidget(label)
         layout.addStretch(1)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+        explain_widget(self)
 
     # -- display mode ----------------------------------------------------
 
@@ -163,17 +170,19 @@ class ScanOverview(QWidget):
         menu = QMenu(self)
         for label, mode in (("Wrap", self.WRAP), ("Truncate", self.TRUNCATE)):
             action = QAction(label, menu)
+            describe_control(action, 'action')
             action.setCheckable(True)
             action.setChecked(self._display_mode == mode)
             action.triggered.connect(
                 lambda _checked=False, m=mode: self.set_display_mode(m))
-            menu.addAction(action)
+            describe_control(menu.addAction(action))
         return menu
 
     def contextMenuEvent(self, event) -> None:
         # Handled, so accepted rather than chained: QWidget's default
         # ignores the event, which would let it through to a parent that
         # would show a second menu.
+        explain_widget(self.build_context_menu())
         self.build_context_menu().exec(event.globalPos())
         event.accept()
 
@@ -253,6 +262,7 @@ class TreeSizeStatusBar(QWidget):
         layout.addStretch(1)
         layout.addWidget(self._notice)
         self.clear()
+        explain_widget(self)
 
     def clear(self) -> None:
         self._free.setText("Free Space: —")
@@ -323,11 +333,13 @@ class ElevationBanner(QWidget):
         layout.addStretch(1)
 
         self.button = QPushButton("Start as administrator", self)
+        describe_control(self.button, 'button')
         self.button.setObjectName("elevationBannerButton")
         self.button.clicked.connect(self.elevation_requested)
         layout.addWidget(self.button)
 
         close = QPushButton("\u00d7", self)
+        describe_control(close, 'close')
         close.setObjectName("elevationBannerClose")
         close.setFixedWidth(22)
         close.setToolTip("Dismiss for this session")
@@ -335,6 +347,7 @@ class ElevationBanner(QWidget):
         layout.addWidget(close)
 
         self.hide()
+        explain_widget(self)
 
     def text(self) -> str:
         return self._label.text()

@@ -24,6 +24,7 @@ from modules.perfmon.perfmon_charts import HistoryDashboard, PerfMonDashboard, _
 from modules.perfmon.perfmon_alerts import AlertRule
 from modules.perfmon.perfmon_search_provider import PerfMonSearchProvider
 from core.semantic_colors import semantic
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ class PerfMonModule(BaseModule):
         theme = getattr(getattr(self, "app", None), "theme", None)
         if theme is not None:
             self._sync_chart_theme(theme.current_theme)
+        apply_help(self._widget, self.name)
         return self._widget
 
     _HISTORY_RANGES = [

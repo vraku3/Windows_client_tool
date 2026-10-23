@@ -13,6 +13,10 @@ from PyQt6.QtWidgets import (
     QSpinBox, QTableWidget, QTabWidget, QVBoxLayout, QWidget,
 )
 
+from ui.module_intro import module_intro
+from ui.help.network_text import INTRO
+from ui.help.network_ui import control_help, explain_tabs, item_help
+
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
@@ -60,6 +64,7 @@ class RemoteToolsModule(BaseModule):
     def create_widget(self) -> QWidget:
         root = QWidget()
         layout = QVBoxLayout(root)
+        layout.addWidget(module_intro(INTRO["remote"]))
         layout.setContentsMargins(4, 4, 4, 4)
 
         tabs = QTabWidget()
@@ -69,6 +74,7 @@ class RemoteToolsModule(BaseModule):
         tabs.addTab(self._build_ping_sweep_tab(), "📡 Ping Sweep")
         tabs.addTab(self._build_wol_tab(), "⚡ Wake-on-LAN")
         layout.addWidget(tabs)
+        explain_tabs(tabs, "remote")
 
         self._widget = root
         return root
@@ -136,7 +142,7 @@ class RemoteToolsModule(BaseModule):
                 item.setToolTip(text)
                 if r.severity in ("high", "medium"):
                     item.setForeground(QColor(semantic("error" if r.severity == "high" else "warning")))
-                self._exp_table.setItem(i, c, item)
+                self._exp_table.setItem(i, c, item_help(item, self._exp_table, c))
         n = sum(1 for r in rows if r.status == "On")
         self._exp_status.setText("%d of %d remote-access features are on." % (n, len(rows)))
 
@@ -198,6 +204,7 @@ class RemoteToolsModule(BaseModule):
         top.addWidget(QLabel("Host:"))
         top.addWidget(self._winrs_host, stretch=1)
         self._winrs_cmd = QLineEdit()
+        control_help(self._winrs_cmd, 'self._winrs_cmd')
         self._winrs_cmd.setPlaceholderText("Command to run remotely")
         self._winrs_cmd.returnPressed.connect(self._winrs_run)
         top.addWidget(self._winrs_cmd, stretch=2)
@@ -248,10 +255,12 @@ class RemoteToolsModule(BaseModule):
         top = QHBoxLayout()
         top.addWidget(QLabel("Subnet prefix:"))
         self._sweep_prefix = QLineEdit("192.168.1")
+        control_help(self._sweep_prefix, 'self._sweep_prefix')
         self._sweep_prefix.setMaximumWidth(140)
         top.addWidget(self._sweep_prefix)
         top.addWidget(QLabel(".1 –"))
         self._sweep_end = QSpinBox()
+        control_help(self._sweep_end, 'self._sweep_end')
         self._sweep_end.setRange(2, 254)
         self._sweep_end.setValue(254)
         top.addWidget(self._sweep_end)
@@ -306,9 +315,9 @@ class RemoteToolsModule(BaseModule):
             for ip, alive in results:
                 row = self._sweep_table.rowCount()
                 self._sweep_table.insertRow(row)
-                self._sweep_table.setItem(row, 0, centered_item(ip))
+                self._sweep_table.setItem(row, 0, item_help(centered_item(ip), self._sweep_table, 0))
                 status = "🟢 Online" if alive else "⚫ Offline"
-                self._sweep_table.setItem(row, 1, centered_item(status))
+                self._sweep_table.setItem(row, 1, item_help(centered_item(status), self._sweep_table, 1))
 
         def on_done():
             self._sweep_btn.setEnabled(True)
@@ -331,10 +340,12 @@ class RemoteToolsModule(BaseModule):
 
         form = QFormLayout()
         self._wol_mac = QLineEdit()
+        control_help(self._wol_mac, 'self._wol_mac')
         self._wol_mac.setPlaceholderText("AA:BB:CC:DD:EE:FF")
         form.addRow("MAC Address:", self._wol_mac)
         self._wol_broadcast = QLineEdit("255.255.255.255")
-        self._wol_broadcast.setToolTip("Use directed broadcast (e.g. 192.168.1.255) for cross-VLAN WOL")
+        control_help(self._wol_broadcast, 'self._wol_broadcast')
+        # The input help explains that directed broadcasts also need routing support.
         form.addRow("Broadcast IP:", self._wol_broadcast)
         layout.addLayout(form)
 
@@ -365,6 +376,7 @@ class RemoteToolsModule(BaseModule):
 
     def _host_input(self, tag: str) -> QLineEdit:
         le = QLineEdit()
+        control_help(le, 'le')
         le.setPlaceholderText("hostname or IP")
         completer = QCompleter(self._history, le)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)

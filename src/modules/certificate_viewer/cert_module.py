@@ -1,3 +1,7 @@
+
+from modules.certificate_viewer.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import datetime
 import os
 from typing import List, Optional
@@ -46,6 +50,7 @@ class _CertTab(QWidget):
         self._attempted = False
         self._chip_buttons = {}
         self._setup_ui()
+        explain_widget(self)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -58,20 +63,25 @@ class _CertTab(QWidget):
         tb_layout.setSpacing(4)
 
         self._filter_input = QLineEdit()
+        describe_control(self._filter_input, '_filter_input')
         self._filter_input.setPlaceholderText(
             "Filter by name, issuer, or thumbprint…")
         self._filter_input.textChanged.connect(self._apply_filter)
         tb_layout.addWidget(self._filter_input, 1)
 
         self._refresh_btn = QPushButton("🔄 Refresh")
+        describe_control(self._refresh_btn, '_refresh_btn')
         self._export_btn = QPushButton("Export .cer")
+        describe_control(self._export_btn, '_export_btn')
         self._view_btn = QPushButton("View Detail")
+        describe_control(self._view_btn, '_view_btn')
         self._export_btn.setEnabled(False)
         self._view_btn.setEnabled(False)
         tb_layout.addWidget(self._refresh_btn)
         tb_layout.addWidget(self._export_btn)
         tb_layout.addWidget(self._view_btn)
         self._copy_btn = QPushButton("Copy details")
+        describe_control(self._copy_btn, '_copy_btn')
         self._copy_btn.setEnabled(False)
         self._copy_btn.clicked.connect(self._copy_details)
         tb_layout.addWidget(self._copy_btn)
@@ -80,6 +90,7 @@ class _CertTab(QWidget):
         chip_row = QHBoxLayout()
         for chip in cf.CHIPS:
             b = QPushButton(chip)
+            describe_control(b, 'b')
             b.setCheckable(True)
             b.setChecked(chip == "All")
             b.clicked.connect(lambda _=False, name=chip: self._set_chip(name))
@@ -98,6 +109,7 @@ class _CertTab(QWidget):
         # Certificate table
         self._table = QTableWidget(0, len(COLUMNS))
         self._table.setHorizontalHeaderLabels(COLUMNS)
+        describe_headers(self._table)
         center_header(self._table)
         self._table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch)
@@ -190,6 +202,7 @@ class _CertTab(QWidget):
                 if fg is not None:
                     item.setForeground(fg)
                 self._table.setItem(r, col, item)
+                describe_cell(self._table, col, self._table.item(r, col))
 
         by_store = f"{self._store_name}/{self._store_location}"
         self._status.setText(
@@ -272,6 +285,7 @@ class _CertTab(QWidget):
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         btns.accepted.connect(dlg.accept)
         layout.addWidget(btns)
+        explain_widget(dlg)
         dlg.exec()
 
 
@@ -308,6 +322,7 @@ class CertModule(BaseModule):
 
         self._tabs.currentChanged.connect(lambda _i: self._load_current())
         outer_layout.addWidget(self._tabs)
+        explain_widget(outer, introduction=True)
         return outer
 
     def _load_current(self):

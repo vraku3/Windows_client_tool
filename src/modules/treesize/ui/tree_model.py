@@ -13,6 +13,8 @@ Sorting reorders sibling ranges in place and signals layoutAboutToBeChanged /
 layoutChanged, never a model reset: a reset on a multi-million-node model
 collapses the whole tree and throws away the user's expansion state.
 """
+
+from modules.treesize.help_text import header_help
 from PyQt6.QtCore import QAbstractItemModel, QModelIndex, Qt
 
 from ..store.node_store import DIR, EXCLUDED
@@ -208,6 +210,8 @@ class DirectoryTreeModel(QAbstractItemModel):
         return len(COLUMN_HEADERS)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.ToolTipRole:
+            return header_help(self.headerData(section, orientation, Qt.ItemDataRole.DisplayRole))
         if (orientation is Qt.Orientation.Horizontal
                 and role == Qt.ItemDataRole.DisplayRole
                 and 0 <= section < len(COLUMN_HEADERS)):

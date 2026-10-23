@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QHeaderView,
                              QTableWidget, QVBoxLayout)
 
 from core.table_ui import centered_item, center_header
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class FindHandleDialog(QDialog):
         self._status = QLabel("", self)
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
+        apply_help(self, 'Find Handle or DLL')
 
     # ---- running --------------------------------------------------------
 

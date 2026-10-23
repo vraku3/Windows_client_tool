@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
                              QVBoxLayout, QWidget)
 
 from core.table_ui import centered_item, center_header
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class DllView(QWidget):
         self._table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows)
         layout.addWidget(self._table)
+        apply_help(self, 'DLLs')
 
     def cancel(self) -> None:
         self._pid = -1

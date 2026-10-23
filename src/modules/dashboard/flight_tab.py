@@ -16,6 +16,7 @@ from core.semantic_colors import semantic
 
 from . import flight_recorder as fr
 from .tab_base import DashModule, DashTab, fmt_size, numeric_item
+from ui.help.dashboard_ui import row_help
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,8 @@ class SavedTracesDialog(QDialog):
         row.addWidget(close)
         layout.addLayout(row)
         self.reload()
+        from ui.help.dashboard_ui import apply_help
+        apply_help(self, 'Saved recordings')
 
     def reload(self) -> None:
         # Manual recordings and the rolling history, newest first, in one list.
@@ -189,6 +192,8 @@ class SavedTracesDialog(QDialog):
             when = datetime.fromtimestamp(t.modified).strftime("%Y-%m-%d %H:%M:%S")
             table.setItem(row, _LIB_MODIFIED, numeric_item(t.modified, when))
             table.item(row, _LIB_NAME).setData(Qt.ItemDataRole.UserRole, t.path)
+            row_help(table, row, (("Trace file", t.path), ("Recorded machine", t.machine),
+                     ("Recorded start", t.started), ("Metadata readable", t.readable)))
         table.setSortingEnabled(True)
         self.status.setText(f"{len(traces):,} recording(s) in {self._dir}")
         self._selection_changed()

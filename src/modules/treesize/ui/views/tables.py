@@ -5,6 +5,10 @@ subtree, with a proportional bar in a percent column. They share one base class
 so the columns, sorting and bar behave identically -- four near-identical
 widgets that drift apart is exactly how a clone stops feeling like one product.
 """
+
+from modules.treesize.help_widgets import (
+    describe_headers, explain_widget,
+)
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView, QHeaderView, QTreeWidget, QTreeWidgetItem,
@@ -43,6 +47,7 @@ class AggregateTable(QTreeWidget):
         columns = (first_column,) + self.COLUMNS[1:]
         self.setColumnCount(len(columns))
         self.setHeaderLabels(list(columns))
+        describe_headers(self)
         self.setRootIsDecorated(False)
         self.setUniformRowHeights(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -54,6 +59,7 @@ class AggregateTable(QTreeWidget):
         if self.SORT_BY_SIZE:
             self.setSortingEnabled(True)
             self.sortByColumn(self.SIZE_COLUMN, Qt.SortOrder.DescendingOrder)
+        explain_widget(self)
 
     def set_unit(self, unit: Unit, decimals: int | None = None) -> None:
         self._unit = unit
@@ -155,12 +161,14 @@ class TopFilesView(QTreeWidget):
         self._decimals = 1
         self.setColumnCount(len(self.COLUMNS))
         self.setHeaderLabels(list(self.COLUMNS))
+        describe_headers(self)
         self.setRootIsDecorated(False)
         self.setUniformRowHeights(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setItemDelegateForColumn(3, ProportionBarDelegate(self))
         self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.itemDoubleClicked.connect(self._on_double_clicked)
+        explain_widget(self)
 
     def set_unit(self, unit: Unit, decimals: int | None = None) -> None:
         self._unit = unit

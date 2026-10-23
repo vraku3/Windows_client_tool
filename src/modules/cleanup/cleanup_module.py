@@ -219,6 +219,8 @@ class _CleanupExclusionsDialog(QDialog):
         self.setWindowTitle("Cleanup Exclusions")
         self.resize(480, 380)
         root = QVBoxLayout(self)
+        from ui.module_intro import module_intro
+        root.addWidget(module_intro("Manage paths excluded from Cleanup scans and removal. Adding or removing a rule changes future Cleanup coverage immediately, without deleting files; the opposite action reverses the rule. Administrator rights are not needed for your local exclusion list."))
 
         info = QLabel(
             "Paths listed here (and everything inside them) are never "
@@ -234,10 +236,13 @@ class _CleanupExclusionsDialog(QDialog):
 
         btn_row = QHBoxLayout()
         add_btn = QPushButton("Add Folder…")
+        add_btn.setToolTip("Choose a folder and immediately exclude it and its contents from future Cleanup scans. No files are deleted; Remove Selected reverses this rule.")
         add_btn.clicked.connect(self._add)
         remove_btn = QPushButton("Remove Selected")
+        remove_btn.setToolTip("Remove the selected exclusion rule immediately. Future scans may offer this path again; this does not delete its files and Add Folder can exclude it again.")
         remove_btn.clicked.connect(self._remove_selected)
         close_btn = QPushButton("Close")
+        close_btn.setToolTip("Close the exclusions window; rule changes already made remain saved.")
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(add_btn)
         btn_row.addWidget(remove_btn)
@@ -307,6 +312,9 @@ class CleanupModule(BaseModule):
 
         self._wire_tab_signals()
 
+        from modules.cleanup.help_ui import explain_panes
+        from .help_text import CONTROLS, HEADERS, FIELDS, PANES
+        explain_panes(outer, CONTROLS, HEADERS, FIELDS, PANES)
         return outer
 
     def _configure_overview(self):

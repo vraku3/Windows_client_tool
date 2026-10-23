@@ -21,6 +21,10 @@ from PyQt6.QtWidgets import (
 )
 
 from core.admin_utils import is_admin
+from ui.module_intro import module_intro
+from ui.help.network_text import INTRO
+from ui.help.network_ui import control_help, explain, item_help
+
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
@@ -103,6 +107,7 @@ class HostsEditorModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
+        layout.addWidget(module_intro(INTRO["hosts"]))
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addLayout(self._build_toolbar())
 
@@ -129,7 +134,7 @@ class HostsEditorModule(BaseModule):
         self._status.setWordWrap(True)
         set_role(self._status, "muted")
         layout.addWidget(self._status)
-        return self._widget
+        return explain(self._widget, "hosts", intro=False)
 
     def _build_toolbar(self) -> QHBoxLayout:
         toolbar = QHBoxLayout()
@@ -242,14 +247,15 @@ class HostsEditorModule(BaseModule):
         row = self._table.rowCount()
         self._table.insertRow(row)
         cb = QCheckBox()
+        control_help(cb, "cb")
         cb.setChecked(enabled)
         cb.stateChanged.connect(self._on_edited)
         self._table.setCellWidget(row, 0, cb)
         ip_item = centered_item(ip)
         ip_item.setData(Qt.ItemDataRole.UserRole, origin)
-        self._table.setItem(row, 1, ip_item)
-        self._table.setItem(row, 2, centered_item(hosts))
-        self._table.setItem(row, 3, centered_item(comment))
+        self._table.setItem(row, 1, item_help(ip_item, self._table, 1))
+        self._table.setItem(row, 2, item_help(centered_item(hosts), self._table, 2))
+        self._table.setItem(row, 3, item_help(centered_item(comment), self._table, 3))
 
     def _cell(self, row: int, col: int) -> str:
         item = self._table.item(row, col)

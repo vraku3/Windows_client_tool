@@ -60,6 +60,9 @@ class LogReaderModule(BaseModule):
         self._pane = LogPane(loader=self.load_entries,
                              extra_controls=self.build_controls,
                              **self.pane_options())
+        from modules.diagnose.help_ui import explain
+        from modules.diagnose.help_text import READERS, CONTROLS, HEADERS
+        explain(self._pane, READERS.get(self.name, self.description), CONTROLS, HEADERS)
         self._pane.entries_loaded.connect(self._feed_provider)
         if self._activated_slot is not None:
             self._pane.entry_activated.connect(self._activated_slot)

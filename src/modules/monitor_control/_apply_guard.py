@@ -20,6 +20,10 @@ display; only `CountdownOverlay` needs Qt.
 """
 from __future__ import annotations
 
+from modules.monitor_control.help_widgets import (
+    describe_control,
+)
+
 import enum
 import logging
 from dataclasses import dataclass
@@ -186,7 +190,9 @@ class RevertCountdown:
 
         buttons = QHBoxLayout()
         keep = QPushButton("Keep changes")
+        describe_control(keep, 'keep')
         revert = QPushButton("Revert now")
+        describe_control(revert, 'revert')
         keep.clicked.connect(self.keep)
         revert.clicked.connect(self.revert_now)
         buttons.addWidget(revert)

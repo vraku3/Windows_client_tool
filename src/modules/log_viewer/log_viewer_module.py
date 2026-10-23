@@ -10,6 +10,10 @@ first read at a few megabytes and every later read is only what was appended,
 so the work per tick is small and bounded; a worker thread would buy nothing
 and cost the marshalling.
 """
+
+from modules.log_viewer.help_widgets import (
+    describe_control, explain_widget,
+)
 import logging
 import os
 from datetime import timedelta
@@ -207,6 +211,7 @@ class LogViewerWidget(QWidget):
         self._build_table(layout)
         self._build_status(layout)
         self._wire_signals(layout)
+        explain_widget(self)
 
 
     def _build_toolbar(self, layout) -> None:
@@ -216,6 +221,7 @@ class LogViewerWidget(QWidget):
         # machine actually has. Same idea as TreeSize's scan target -- offer
         # somewhere to go rather than making someone type a path.
         self.open_button = QToolButton(self)
+        describe_control(self.open_button, 'open_button')
         self.open_button.setText("Open log…")
         self.open_button.setPopupMode(
             QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -226,6 +232,7 @@ class LogViewerWidget(QWidget):
         top.addWidget(self.open_button)
 
         self.follow = QCheckBox("Follow", self)
+        describe_control(self.follow, 'follow')
         self.follow.setToolTip("Re-read the file as it grows and stay at the "
                                "bottom, the way CMTrace does.")
         self.follow.toggled.connect(self._on_follow_toggled)
@@ -237,6 +244,7 @@ class LogViewerWidget(QWidget):
         # scroll past is a log you stop reading -- and the parent's
         # "(+N lines)" suffix and the status bar both say what is hidden.
         self.fold = QCheckBox("Fold continuations", self)
+        describe_control(self.fold, 'fold')
         self.fold.setChecked(True)
         self.fold.setToolTip("Tuck wrapped continuation lines under the "
                              "record they belong to.")
@@ -247,6 +255,7 @@ class LogViewerWidget(QWidget):
         # existed everything before that point was simply unreachable: the
         # real CBS archive is 380 MB and the window is 32 MB of it.
         self.load_earlier_button = QPushButton("Load earlier", self)
+        describe_control(self.load_earlier_button, 'load_earlier_button')
         self.load_earlier_button.setToolTip(
             "Read the previous chunk of this file and put it above what is "
             "shown. Scrolling to the top does the same thing.")
@@ -255,6 +264,7 @@ class LogViewerWidget(QWidget):
         top.addWidget(self.load_earlier_button)
 
         self.newest_button = QPushButton("Newest", self)
+        describe_control(self.newest_button, 'newest_button')
         self.newest_button.setToolTip(
             "Go back to the end of the file, where new lines land.")
         self.newest_button.setEnabled(False)
@@ -264,12 +274,14 @@ class LogViewerWidget(QWidget):
         # `grep -C` for errors: the single most common thing anyone does to
         # a log by hand.
         self.context_box = QCheckBox("Errors + context", self)
+        describe_control(self.context_box, 'context_box')
         self.context_box.setToolTip(
             "Show only the errors and the lines either side of them.")
         self.context_box.toggled.connect(self._on_context_toggled)
         top.addWidget(self.context_box)
 
         self.rolled = QCheckBox("Include rolled (.lo_)", self)
+        describe_control(self.rolled, 'rolled')
         self.rolled.setToolTip("ConfigMgr rolls foo.log to foo.lo_ . Read the "
                                "pair as one timeline.")
         self.rolled.toggled.connect(lambda _c: self.reload())
@@ -279,6 +291,7 @@ class LogViewerWidget(QWidget):
         self._level_boxes = {}
         for level in LEVELS:
             box = QCheckBox(level, self)
+            describe_control(box, 'box')
             box.setChecked(True)
             box.toggled.connect(lambda _c: self._apply_filters())
             self._level_boxes[level] = box
@@ -289,6 +302,7 @@ class LogViewerWidget(QWidget):
         # and CBS narrates it, so reading a failure means seeing both, and a
         # combo can only ever say one.
         self.component_button = QToolButton(self)
+        describe_control(self.component_button, 'component_button')
         self.component_button.setText("Component: All")
         self.component_button.setPopupMode(
             QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -303,6 +317,7 @@ class LogViewerWidget(QWidget):
         self.source_label = QLabel("Source:", self)
         top.addWidget(self.source_label)
         self.source = QComboBox(self)
+        describe_control(self.source, 'source')
         self.source.setMinimumWidth(150)
         self.source.addItem("All")
         self.source.currentIndexChanged.connect(lambda _i: self._apply_filters())
@@ -322,6 +337,7 @@ class LogViewerWidget(QWidget):
         find_row = QHBoxLayout()
         find_row.addWidget(QLabel("Find:", self))
         self.find_box = QLineEdit(self)
+        describe_control(self.find_box, 'find_box')
         self.find_box.setPlaceholderText("text to look for")
         self.find_box.returnPressed.connect(self.find_next)
         # Find does not filter, so it does not go through
@@ -331,15 +347,18 @@ class LogViewerWidget(QWidget):
             lambda _t: self._refresh_match_colours())
         find_row.addWidget(self.find_box, 1)
         self.previous_button = QPushButton("Previous", self)
+        describe_control(self.previous_button, 'previous_button')
         self.previous_button.clicked.connect(self.find_previous)
         find_row.addWidget(self.previous_button)
         self.scan_button = QPushButton("Search earlier", self)
+        describe_control(self.scan_button, 'scan_button')
         self.scan_button.setToolTip(
             "Search the part of the file that has not been loaded.")
         self.scan_button.clicked.connect(self.search_unloaded)
         find_row.addWidget(self.scan_button)
 
         self.next_button = QPushButton("Next", self)
+        describe_control(self.next_button, 'next_button')
         self.next_button.clicked.connect(self.find_next)
         find_row.addWidget(self.next_button)
 
@@ -348,11 +367,13 @@ class LogViewerWidget(QWidget):
         # above, the same way CMTrace's own error navigation works.
         find_row.addSpacing(8)
         self.prev_issue_button = QPushButton("◀ Issue", self)
+        describe_control(self.prev_issue_button, 'prev_issue_button')
         self.prev_issue_button.setToolTip(
             "Jump to the previous Error or Warning row (Shift+F4)")
         self.prev_issue_button.clicked.connect(self.find_previous_issue)
         find_row.addWidget(self.prev_issue_button)
         self.next_issue_button = QPushButton("Issue ▶", self)
+        describe_control(self.next_issue_button, 'next_issue_button')
         self.next_issue_button.setToolTip(
             "Jump to the next Error or Warning row (F4)")
         self.next_issue_button.clicked.connect(self.find_next_issue)
@@ -366,6 +387,7 @@ class LogViewerWidget(QWidget):
         find_row.addSpacing(16)
         find_row.addWidget(QLabel("Filter:", self))
         self.filter_box = QLineEdit(self)
+        describe_control(self.filter_box, 'filter_box')
         self.filter_box.setPlaceholderText(
             "show only lines containing… (case insensitive)")
         self.filter_box.setClearButtonEnabled(True)
@@ -387,6 +409,7 @@ class LogViewerWidget(QWidget):
         # dropping the rest with it.
         find_row.addWidget(QLabel("Hide:", self))
         self.exclude_box = QLineEdit(self)
+        describe_control(self.exclude_box, 'exclude_box')
         self.exclude_box.setPlaceholderText("hide lines containing…")
         self.exclude_box.setClearButtonEnabled(True)
         self.exclude_box.textChanged.connect(lambda _t: self._apply_filters())
@@ -401,6 +424,7 @@ class LogViewerWidget(QWidget):
         # distinct thread ids, and an alphabetical list of 329 numbers is not
         # a control anyone can use. Ordered by how common each one is.
         self.thread = QComboBox(self)
+        describe_control(self.thread, 'thread')
         self.thread.setEditable(True)
         self.thread.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.thread.setMinimumWidth(140)
@@ -430,20 +454,24 @@ class LogViewerWidget(QWidget):
         # what happened. It reuses the From box because that is already
         # prefilled with the loaded span.
         self.goto_button = QPushButton("Go to", self)
+        describe_control(self.goto_button, 'goto_button')
         self.goto_button.setToolTip(
             "Scroll to a moment in time without hiding anything.")
         self.goto_button.clicked.connect(self.choose_go_to)
         range_row.addWidget(self.goto_button)
 
         self.clear_range_button = QPushButton("Clear range", self)
+        describe_control(self.clear_range_button, 'clear_range_button')
         self.clear_range_button.clicked.connect(self._reset_range)
         range_row.addWidget(self.clear_range_button)
 
         self.export_button = QPushButton("Export…", self)
+        describe_control(self.export_button, 'export_button')
         self.export_button.clicked.connect(self.choose_export)
         range_row.addWidget(self.export_button)
 
         self.error_lookup_button = QPushButton("Error lookup…", self)
+        describe_control(self.error_lookup_button, 'error_lookup_button')
         self.error_lookup_button.clicked.connect(
             lambda _c=False: self.open_error_lookup())
         range_row.addWidget(self.error_lookup_button)
@@ -452,6 +480,7 @@ class LogViewerWidget(QWidget):
         # not live in one person's head. Every shipped preset was run against
         # the real log it targets before it was added.
         self.preset_button = QToolButton(self)
+        describe_control(self.preset_button, 'preset_button')
         self.preset_button.setText("Presets")
         self.preset_button.setPopupMode(
             QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -462,6 +491,7 @@ class LogViewerWidget(QWidget):
         range_row.addWidget(self.preset_button)
 
         self.summary_button = QPushButton("Summary", self)
+        describe_control(self.summary_button, 'summary_button')
         self.summary_button.setCheckable(True)
         self.summary_button.setToolTip(
             "What is failing most often in what is currently shown.")
@@ -469,10 +499,12 @@ class LogViewerWidget(QWidget):
         range_row.addWidget(self.summary_button)
 
         self.highlight_button = QPushButton("Highlight rules…", self)
+        describe_control(self.highlight_button, 'highlight_button')
         self.highlight_button.clicked.connect(self.edit_highlight_rules)
         range_row.addWidget(self.highlight_button)
 
         self.colour_button = QPushButton("Message colours…", self)
+        describe_control(self.colour_button, 'colour_button')
         self.colour_button.setToolTip(
             "Choose the colours the Filter and Find matches and the failing "
             "error codes are painted in.")
@@ -481,6 +513,7 @@ class LogViewerWidget(QWidget):
 
         range_row.addSpacing(12)
         self.regex_box = QCheckBox("Regex", self)
+        describe_control(self.regex_box, 'regex_box')
         self.regex_box.setToolTip("Treat Find and Filter as regular "
                                   "expressions.")
         self.regex_box.toggled.connect(lambda _c: self._apply_filters())
@@ -684,22 +717,22 @@ class LogViewerWidget(QWidget):
 
         self.open_menu.clear()
         for log in known_logs():
-            self.open_menu.addAction(
-                log.label, lambda _c=False, p=log.path: self.open(p))
+            describe_control(self.open_menu.addAction(
+                log.label, lambda _c=False, p=log.path: self.open(p)))
         archive = newest_cbs_archive()
         if archive:
             self.open_menu.addSeparator()
-            self.open_menu.addAction(
+            describe_control(self.open_menu.addAction(
                 "CBS — newest rolled archive",
-                lambda _c=False, p=archive: self.open(p))
+                lambda _c=False, p=archive: self.open(p)))
         largest = largest_cbs_archive()
         if largest and largest != archive:
             # The newest archive is routinely the smallest -- 15 MB here
             # against the 363 MB one two days older that holds the actual
             # servicing history.
-            self.open_menu.addAction(
+            describe_control(self.open_menu.addAction(
                 "CBS — largest archive on disk",
-                lambda _c=False, p=largest: self.open(p))
+                lambda _c=False, p=largest: self.open(p)))
         recent = [path for path in getattr(self, "_recent", [])
                   if os.path.exists(path)]
         if recent:
@@ -712,14 +745,14 @@ class LogViewerWidget(QWidget):
                 label = os.path.basename(path.rstrip(os.sep + "/")) or path
                 if os.path.isdir(path):
                     label = f"{label}  (folder)"
-                self.open_menu.addAction(
-                    label, lambda _c=False, p=path: self.open_recent(p))
+                describe_control(self.open_menu.addAction(
+                    label, lambda _c=False, p=path: self.open_recent(p)))
         self.open_menu.addSeparator()
-        self.open_menu.addAction("Browse…", self.choose_file)
-        self.open_menu.addAction("Open every log in a folder…",
-                                 self.choose_folder)
-        self.open_menu.addAction("Open a folder and its subfolders…",
-                                 self.choose_folder_tree)
+        describe_control(self.open_menu.addAction("Browse…", self.choose_file))
+        describe_control(self.open_menu.addAction("Open every log in a folder…",
+                                 self.choose_folder))
+        describe_control(self.open_menu.addAction("Open a folder and its subfolders…",
+                                 self.choose_folder_tree))
 
     def choose_file(self) -> None:
         path, _filter = QFileDialog.getOpenFileName(
@@ -1454,6 +1487,7 @@ class LogViewerWidget(QWidget):
         buttons.rejected.connect(dialog.reject)
         buttons.accepted.connect(dialog.accept)
         layout.addWidget(buttons)
+        explain_widget(dialog)
         dialog.exec()
 
     def search_unloaded(self) -> list:
@@ -1524,7 +1558,7 @@ class LogViewerWidget(QWidget):
         for name in COLUMNS:
             if name in self.ALWAYS_SHOWN:
                 continue
-            action = menu.addAction(name)
+            action = describe_control(menu.addAction(name))
             action.setCheckable(True)
             action.setChecked(name not in self._hidden_columns)
             action.toggled.connect(
@@ -1533,6 +1567,7 @@ class LogViewerWidget(QWidget):
 
     def _on_header_menu(self, point) -> None:
         header = self.table.horizontalHeader()
+        explain_widget(self.build_column_menu())
         self.build_column_menu().exec(header.mapToGlobal(point))
 
     # ---- presets ---------------------------------------------------------
@@ -1540,21 +1575,21 @@ class LogViewerWidget(QWidget):
     def _build_preset_menu(self) -> None:
         self.preset_menu.clear()
         for preset in list(BUILT_IN) + list(self._presets):
-            self.preset_menu.addAction(
+            describe_control(self.preset_menu.addAction(
                 preset.name,
-                lambda _c=False, p=preset: self.apply_preset(p))
+                lambda _c=False, p=preset: self.apply_preset(p)))
         self.preset_menu.addSeparator()
-        self.preset_menu.addAction("Save current view as…",
-                                   self.choose_preset_name)
+        describe_control(self.preset_menu.addAction("Save current view as…",
+                                   self.choose_preset_name))
         self.preset_menu.addSeparator()
-        self.preset_menu.addAction("Save investigation to a file…",
-                                   self.choose_save_view)
-        self.preset_menu.addAction("Open an investigation…",
-                                   self.choose_load_view)
-        self.preset_menu.addAction("Save an evidence bundle…",
-                                   self.choose_evidence)
-        self.preset_menu.addAction("Compare against another log…",
-                                   self.choose_compare)
+        describe_control(self.preset_menu.addAction("Save investigation to a file…",
+                                   self.choose_save_view))
+        describe_control(self.preset_menu.addAction("Open an investigation…",
+                                   self.choose_load_view))
+        describe_control(self.preset_menu.addAction("Save an evidence bundle…",
+                                   self.choose_evidence))
+        describe_control(self.preset_menu.addAction("Compare against another log…",
+                                   self.choose_compare))
 
     def apply_preset(self, preset) -> None:
         """Set every axis the preset names, and CLEAR the ones it does not.
@@ -1904,26 +1939,27 @@ class LogViewerWidget(QWidget):
         """Build the context menu for a row."""
         menu = QMenu(self)
         for minutes in self.RANGE_MINUTES:
-            menu.addAction(
+            describe_control(menu.addAction(
                 f"Show ±{minutes} minute{'s' if minutes > 1 else ''} "
                 f"around this row",
-                lambda _c=False, m=minutes: self.anchor_range(row, m))
+                lambda _c=False, m=minutes: self.anchor_range(row, m)))
         menu.addSeparator()
-        menu.addAction("Look up the error codes on this row",
-                       lambda _c=False: self.open_error_lookup(row))
-        menu.addAction("Peek at the lines around this row",
-                       self.peek_around_current)
-        menu.addAction("Bookmark this row  (Ctrl+D)", self.toggle_bookmark)
-        menu.addAction("Pin this row  (Ctrl+P)", self.toggle_pin)
-        menu.addAction("Copy selected rows", self.copy_selection)
-        menu.addAction("Copy selected rows as Markdown",
-                       self.copy_selection_as_markdown)
+        describe_control(menu.addAction("Look up the error codes on this row",
+                       lambda _c=False: self.open_error_lookup(row)))
+        describe_control(menu.addAction("Peek at the lines around this row",
+                       self.peek_around_current))
+        describe_control(menu.addAction("Bookmark this row  (Ctrl+D)", self.toggle_bookmark))
+        describe_control(menu.addAction("Pin this row  (Ctrl+P)", self.toggle_pin))
+        describe_control(menu.addAction("Copy selected rows", self.copy_selection))
+        describe_control(menu.addAction("Copy selected rows as Markdown",
+                       self.copy_selection_as_markdown))
         return menu
 
     def _on_context_menu(self, point) -> None:
         """Handle right-click on the table."""
         index = self.table.indexAt(point)
         if index.isValid():
+            explain_widget(self.build_row_menu(index.row()))
             self.build_row_menu(index.row()).exec(
                 self.table.viewport().mapToGlobal(point))
 
@@ -2154,7 +2190,7 @@ class LogViewerWidget(QWidget):
             self.component_menu.clear()
             self._component_actions = []
             for name in self.model.components():
-                action = self.component_menu.addAction(name)
+                action = describe_control(self.component_menu.addAction(name))
                 action.setCheckable(True)
                 action.setChecked(name in kept)
                 action.toggled.connect(
@@ -2162,8 +2198,8 @@ class LogViewerWidget(QWidget):
                 self._component_actions.append(action)
             if self._component_actions:
                 self.component_menu.addSeparator()
-                self.component_menu.addAction(
-                    "Show all", lambda: self.set_components(set()))
+                describe_control(self.component_menu.addAction(
+                    "Show all", lambda: self.set_components(set())))
         finally:
             self._populating_components = False
         self._on_components_changed()
@@ -2399,6 +2435,7 @@ class LogViewerModule(BaseModule):
             self._widget.apply_layout(load_layout(config))
             self._widget._presets = load_presets(config)
             self._widget._build_preset_menu()
+        explain_widget(self._widget, introduction=True)
         return self._widget
 
     def get_search_provider(self) -> Optional[SearchProvider]:

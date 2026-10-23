@@ -32,6 +32,8 @@ from core.widget_life import widget_is_valid
 from core.worker import Worker
 from modules.driver_manager.driver_diagnostics import crashes_for, suggested_action
 from modules.driver_manager.driver_reader import DriverInfo, driver_store_size
+from modules.diagnose.help_ui import explain
+from modules.driver_manager.help_text import HEADERS
 
 
 def _row(label: str, value: str) -> QWidget:
@@ -46,6 +48,14 @@ def _row(label: str, value: str) -> QWidget:
     val = QLabel(value)
     val.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     val.setWordWrap(True)
+    tip = HEADERS.get(label, {
+        "WHQL Certified": "Windows Hardware Quality Labs certification metadata reported for this package. This is not an independent compatibility test on this PC.",
+        "Error Code": "Device Manager problem code reported by Windows. Read the suggested action as a starting point for investigation, not a confirmed diagnosis.",
+        "INF Name": "Windows driver installation-information filename. A published oem-number INF identifies an installed third-party package; inbox names may not be removable here.",
+        "Suggested action": "Suggested next step for the Windows-reported device error code. This text does not perform the repair or prove its cause.",
+    }.get(label, "Windows-reported metadata for this device; unavailable values are shown as Unknown."))
+    lbl.setToolTip(tip)
+    val.setToolTip(tip)
     h.addWidget(lbl)
     h.addWidget(val, 1)
     return w
@@ -90,6 +100,7 @@ class DriverDetailDialog(QDialog):
         self._size_lbl = QLabel("Calculating…")
         self._size_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._size_lbl.setWordWrap(True)
+        self._size_lbl.setToolTip("Bytes found by walking this package's Driver Store folder, calculated in the background. Unknown means the folder or size could not be read; it is not the amount guaranteed to be reclaimable.")
         size_h.addWidget(size_label)
         size_h.addWidget(self._size_lbl, 1)
         layout.addWidget(size_row)
@@ -134,6 +145,7 @@ class DriverDetailDialog(QDialog):
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
         layout.addWidget(buttons)
+        explain(self, "Read the metadata Windows reports for this device and its driver package. Nothing here changes the driver; folder-size calculation may be unavailable for restricted files, and no administrator rights are normally needed for the other fields.")
 
     def _on_size_computed(self, size: Optional[int]) -> None:
         # The dialog (Close button, Esc, or the window's own X) can be

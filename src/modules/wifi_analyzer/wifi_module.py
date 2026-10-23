@@ -14,6 +14,10 @@ from PyQt6.QtWidgets import (
     QPushButton, QScrollArea, QTabWidget, QTableWidget, QVBoxLayout, QWidget,
 )
 
+from ui.module_intro import module_intro
+from ui.help.network_text import INTRO
+from ui.help.network_ui import explain, explain_tabs, item_help, table_page, interface_property_help
+
 from core.base_module import BaseModule
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
@@ -105,6 +109,7 @@ class WifiAnalyzerModule(BaseModule):
     def create_widget(self) -> QWidget:
         outer = QWidget()
         layout = QVBoxLayout(outer)
+        layout.addWidget(module_intro(INTRO["wifi"]))
         layout.setContentsMargins(8, 8, 8, 8)
         layout.addLayout(self._build_toolbar())
 
@@ -120,7 +125,7 @@ class WifiAnalyzerModule(BaseModule):
         tabs = QTabWidget()
         layout.addWidget(tabs, 1)
         self._net_table = _make_table(_NET_COLS)
-        tabs.addTab(self._net_table, "Networks")
+        tabs.addTab(table_page(self._net_table, "Networks"), "Networks")
         tabs.addTab(self._build_iface_tab(), "Current Connection")
         tabs.addTab(self._build_channel_tab(), "Channel Map")
         tabs.addTab(self._build_history_tab(), "Connection History")
@@ -143,6 +148,8 @@ class WifiAnalyzerModule(BaseModule):
 
         self._scan_btn.clicked.connect(self._do_scan)
         self._widget = outer
+        explain_tabs(tabs, "wifi")
+        explain(outer, "wifi", intro=False)
         return outer
 
     def _build_toolbar(self) -> QHBoxLayout:
@@ -319,7 +326,7 @@ class WifiAnalyzerModule(BaseModule):
                     item.setForeground(color)
                 if col == "Utilization %" and val == "":
                     item.setToolTip("This access point does not advertise BSS Load.")
-                self._net_table.setItem(r, c, item)
+                self._net_table.setItem(r, c, item_help(item, self._net_table, c))
 
         refresh = "ON" if self._auto_refresh_cb.isChecked() else "OFF"
         if scan.problem is not None:
@@ -337,8 +344,10 @@ class WifiAnalyzerModule(BaseModule):
         rows = [(k, v) for iface in scan.interfaces for k, v in iface.items()]
         self._iface_table.setRowCount(len(rows))
         for r, (k, v) in enumerate(rows):
-            self._iface_table.setItem(r, 0, centered_item(k))
-            self._iface_table.setItem(r, 1, centered_item(v))
+            for c, text in enumerate((k, v)):
+                item = centered_item(text)
+                item.setToolTip(interface_property_help(k, str(v)))
+                self._iface_table.setItem(r, c, item)
         note, role = "", "statusWarning"
         if scan.interface_problem is not None:
             note, role = scan.interface_problem.message, "statusError"
@@ -369,6 +378,7 @@ class WifiAnalyzerModule(BaseModule):
             if not band_map:
                 empty = QLabel("Scan unavailable." if scan.problem
                                else "No networks detected in this band.")
+                empty.setToolTip("No channel rows were returned for this band; an unavailable scan is not evidence that no access points exist.")
                 set_role(empty, "muted")
                 box.addWidget(empty)
                 continue
@@ -389,6 +399,7 @@ class WifiAnalyzerModule(BaseModule):
         bar.setFixedHeight(20)
         bar.setTextVisible(True)
         bar.setFormat(_channel_line(ch, count, load))
+        bar.setToolTip("Count of visible access-point radios on this channel, including nearby overlapping channels for 2.4 GHz. Bar length is relative to the busiest channel in this band, not a signal percentage or airtime measurement; overlap assumes a narrow channel because netsh does not report width. Changing channels must be done on your router; this map only reads the scan.")
         bar.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         return bar
 
@@ -425,7 +436,7 @@ class WifiAnalyzerModule(BaseModule):
                     item.setToolTip(text)
                 if c == 0 and g.kind == "Connection failed" and not g.meaning:
                     item.setForeground(QColor(semantic("error")))
-                self._hist_table.setItem(r, c, item)
+                self._hist_table.setItem(r, c, item_help(item, self._hist_table, c))
         row = self._hist_table.currentRow()
         self._show_history_detail(row if 0 <= row < len(groups) else 0)
 
@@ -524,7 +535,7 @@ class WifiAnalyzerModule(BaseModule):
                 item = centered_item(str(val))
                 if row_color is not None:
                     item.setForeground(row_color)
-                self._profile_table.setItem(r, c, item)
+                self._profile_table.setItem(r, c, item_help(item, self._profile_table, c))
 
         risky = wifi_profile_audit.risky_profiles(profiles)
         hidden = wifi_profile_audit.hidden_profiles(profiles)

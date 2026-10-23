@@ -8,6 +8,10 @@ one product the moment the same right-click does different things in two panes.
 Destructive entries route through `actions.file_ops`, which preflights against
 `guardrails` first. Nothing here deletes anything directly.
 """
+
+from modules.treesize.help_widgets import (
+    describe_control,
+)
 import os
 import subprocess
 
@@ -59,27 +63,27 @@ class RowActions:
         is_dir = bool(store.attrs[node] & DIR)
         menu = QMenu(parent if parent is not None else self._shell)
 
-        menu.addAction("Open", lambda: self._open(path))
-        menu.addAction("Open containing folder", lambda: self._reveal(path))
+        describe_control(menu.addAction("Open", lambda: self._open(path)))
+        describe_control(menu.addAction("Open containing folder", lambda: self._reveal(path)))
         menu.addSeparator()
-        menu.addAction("Copy path", lambda: QApplication.clipboard().setText(path))
-        menu.addAction("Copy name", lambda: QApplication.clipboard().setText(
-            store.name(node)))
+        describe_control(menu.addAction("Copy path", lambda: QApplication.clipboard().setText(path)))
+        describe_control(menu.addAction("Copy name", lambda: QApplication.clipboard().setText(
+            store.name(node))))
         menu.addSeparator()
         if is_dir:
-            menu.addAction("Scan this folder",
-                           lambda: self._shell.start_scan(path))
-        menu.addAction("Exclude from scan",
-                       lambda: self._exclude(store.name(node)))
+            describe_control(menu.addAction("Scan this folder",
+                           lambda: self._shell.start_scan(path)))
+        describe_control(menu.addAction("Exclude from scan",
+                       lambda: self._exclude(store.name(node))))
         menu.addSeparator()
 
-        recycle = menu.addAction("Delete to Recycle Bin",
-                                 lambda: self._delete(node, recycle=True))
-        permanent = menu.addAction("Delete permanently…",
-                                   lambda: self._delete(node, recycle=False))
-        move = menu.addAction("Move to…", lambda: self._move(node))
-        erase = menu.addAction("Secure erase…",
-                               lambda: self._secure_erase(node))
+        recycle = describe_control(menu.addAction("Delete to Recycle Bin",
+                                 lambda: self._delete(node, recycle=True)))
+        permanent = describe_control(menu.addAction("Delete permanently…",
+                                   lambda: self._delete(node, recycle=False)))
+        move = describe_control(menu.addAction("Move to…", lambda: self._move(node)))
+        erase = describe_control(menu.addAction("Secure erase…",
+                               lambda: self._secure_erase(node)))
         # A refused path gets a disabled entry with the reason in the tooltip,
         # rather than an entry that looks available and then complains. A move
         # and an erase are exactly as destructive as a delete, so they are
@@ -89,7 +93,7 @@ class RowActions:
                 action.setEnabled(False)
                 action.setToolTip("Protected location")
         menu.addSeparator()
-        menu.addAction("Properties", lambda: self._properties(node))
+        describe_control(menu.addAction("Properties", lambda: self._properties(node)))
         return menu
 
     # ---- handlers ------------------------------------------------------
@@ -144,6 +148,7 @@ class RowActions:
             box.setWindowTitle("Protected location")
             box.setText("\n".join(preflight.refusals))
             override = QCheckBox("I understand — operate here anyway")
+            describe_control(override, 'override')
             box.setCheckBox(override)
             box.setStandardButtons(QMessageBox.StandardButton.Cancel
                                    | QMessageBox.StandardButton.Ok)
@@ -163,6 +168,7 @@ class RowActions:
             confirm.setText(preflight.summary())
             dry_run = QCheckBox(
                 "Dry run — log what would happen, change nothing")
+            describe_control(dry_run, 'dry_run')
             confirm.setCheckBox(dry_run)
             confirm.setStandardButtons(QMessageBox.StandardButton.Cancel
                                        | QMessageBox.StandardButton.Ok)
@@ -224,6 +230,7 @@ class RowActions:
         confirm.setText(preflight.summary())
         confirm.setInformativeText(f"Destination: {destination}")
         dry_run = QCheckBox("Dry run — log what would happen, change nothing")
+        describe_control(dry_run, 'dry_run')
         confirm.setCheckBox(dry_run)
         confirm.setStandardButtons(QMessageBox.StandardButton.Cancel
                                    | QMessageBox.StandardButton.Ok)
@@ -264,6 +271,7 @@ class RowActions:
         box.setWindowTitle("Protected location")
         box.setText("\n".join(preflight.refusals))
         override = QCheckBox("I understand — operate here anyway")
+        describe_control(override, 'override')
         box.setCheckBox(override)
         box.setStandardButtons(QMessageBox.StandardButton.Cancel
                                | QMessageBox.StandardButton.Ok)

@@ -6,6 +6,9 @@ apps", "Review all ›", "Close these programs and remove", "Retry skipped",
 """
 from __future__ import annotations
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 from typing import List, Optional, Sequence
 
 from PyQt6.QtCore import Qt
@@ -72,6 +75,7 @@ class RemovalDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+        explain(self, help_info.CONTROLS, help_info.HEADERS)
 
     def _title(self) -> str:
         return (f"Remove {self.records[0].name}?" if len(self.records) == 1
@@ -131,6 +135,7 @@ class LockedDialog(QDialog):
             btn.clicked.connect(lambda _=False, k=key: self._pick(k))
             row.addWidget(btn)
         lay.addLayout(row)
+        explain(self, help_info.CONTROLS, help_info.HEADERS)
 
     def _pick(self, key: str) -> None:
         self.choice = key
@@ -183,6 +188,7 @@ class ResultDialog(QDialog):
         row.addStretch(1)
         row.addWidget(close)
         lay.addLayout(row)
+        explain(self, help_info.CONTROLS, help_info.HEADERS)
 
     def _retry(self) -> None:
         self.retry = True
@@ -225,6 +231,7 @@ class PropertiesDialog(QDialog):
         row.addStretch(1)
         row.addWidget(close)
         lay.addLayout(row)
+        explain(self, help_info.CONTROLS, help_info.HEADERS)
 
 
 class LogDialog(QDialog):
@@ -242,6 +249,7 @@ class LogDialog(QDialog):
         close = QPushButton("Close", self)
         close.clicked.connect(self.accept)
         lay.addWidget(close, 0, Qt.AlignmentFlag.AlignRight)
+        explain(self, help_info.CONTROLS, help_info.HEADERS)
 
 
 def ask_restore_point(parent, elevated: bool) -> Optional[bool]:

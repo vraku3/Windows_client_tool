@@ -7,6 +7,9 @@ finding the engine produced, never an empty tree.
 """
 from __future__ import annotations
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 import logging
 from typing import List, Optional
 
@@ -70,6 +73,7 @@ class TriageTab(QWidget):
         split.setStretchFactor(0, 3)
         split.setStretchFactor(1, 1)
         lay.addWidget(split, 1)
+        explain(self, help_info.CONTROLS, help_info.HEADERS, intro=help_info.PANES["Incident Triage"])
 
     def _build_bar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -133,6 +137,8 @@ class TriageTab(QWidget):
                                 str(f.count) if f.count else "", last])
         item.setForeground(0, QColor(semantic(_SEVERITY_MEANING.get(f.severity, "info"))))
         item.setData(0, _FINDING_ROLE, f)
+        for column in range(4):
+            item.setToolTip(column, f"{f.title}: {f.detail}\n{f.fix}")
         for line in f.evidence[:_MAX_EVIDENCE_ROWS]:
             child = QTreeWidgetItem(["", line, "", ""])
             child.setToolTip(1, line)

@@ -1,3 +1,7 @@
+
+from modules.about.help_widgets import (
+    explain_widget,
+)
 import platform
 import sys
 
@@ -116,6 +120,7 @@ class AboutModule(BaseModule):
         wl.setContentsMargins(0, 0, 0, 0)
         wl.addWidget(outer)
         wl.addStretch()
+        explain_widget(wrapper, introduction=True)
         return wrapper
 
     def on_start(self, app): self.app = app

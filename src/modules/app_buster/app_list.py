@@ -114,6 +114,11 @@ class AppModel(QAbstractTableModel):
         return "name" if column == 0 else self.fields[column - 1]
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):  # noqa: N802
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.ToolTipRole:
+            from .help_text import HEADERS
+            key = self.column_field(section)
+            label = "Name" if key == "name" else dict((k, label) for k, label, _o in views.FIELDS)[key]
+            return HEADERS[label]
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             key = self.column_field(section)
             return "Name" if key == "name" else dict((k, label) for k, label, _o in views.FIELDS)[key]

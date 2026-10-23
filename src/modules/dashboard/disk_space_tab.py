@@ -1,10 +1,10 @@
 """Disk Space: every volume, and where the space on the chosen one went."""
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
+from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel,
                              QMenu, QProgressBar, QPushButton, QTableWidget,
                              QVBoxLayout)
 
@@ -13,6 +13,7 @@ from core.worker import Worker
 
 from . import folder_sizes as fs
 from .tab_base import DashModule, DashTab, fmt_size, numeric_item
+from ui.help.dashboard_ui import explain_menu
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,7 @@ class DiskSpaceTab(DashTab):
         action = menu.addAction("Open in TreeSize…")
         action.setEnabled(path is not None)
         action.triggered.connect(lambda: self._open_folder_in_treesize(row))
+        explain_menu(menu)
         menu.exec(self._folders.viewport().mapToGlobal(pos))
 
     def cancel_all(self) -> None:

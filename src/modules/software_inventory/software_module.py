@@ -1,6 +1,10 @@
 """Software Inventory pane: chips with live counts, search, computed findings,
 a detail panel, runtime/duplicate/end-of-life flags and exports.  The logic is
 in ``software_analysis`` and ``software_reader`` (Qt-free)."""
+
+from modules.software_inventory.help_widgets import (
+    describe_control, describe_headers, describe_cell, explain_widget,
+)
 import logging
 import re
 import socket
@@ -59,6 +63,7 @@ class _SoftwarePane(QWidget):
         self._chip_buttons = {}
         self.loaded = False
         self._build()
+        explain_widget(self)
 
     # ── construction ────────────────────────────────────────────────────────
 
@@ -79,6 +84,7 @@ class _SoftwarePane(QWidget):
         split = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
+        describe_headers(self.table)
         from ui.app_facts import _controller
         _controller(self.table, 0, True).updated.connect(self._on_selection)
         fit_table(self.table, stretch=[0, 2], content=[1, 3, 4, 5, 6, 7])
@@ -100,6 +106,7 @@ class _SoftwarePane(QWidget):
 
     def _button(self, text: str, slot, tip: str = "") -> QPushButton:
         btn = QPushButton(text)
+        describe_control(btn, 'btn')
         btn.clicked.connect(slot)
         if tip:
             btn.setToolTip(tip)
@@ -122,6 +129,7 @@ class _SoftwarePane(QWidget):
                   self.copy_code_btn, self.export_btn, self.md_btn):
             bar.addWidget(b)
         self.filter_edit = QLineEdit()
+        describe_control(self.filter_edit, 'filter_edit')
         self.filter_edit.setPlaceholderText("Search name, publisher, version, product code, path...")
         self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(lambda _t: self._apply_filter())
@@ -137,6 +145,7 @@ class _SoftwarePane(QWidget):
         group.setExclusive(True)
         for name in sa.CHIPS:
             btn = QPushButton(name)
+            describe_control(btn, 'btn')
             btn.setCheckable(True)
             btn.setChecked(name == self._chip)
             btn.clicked.connect(lambda _c=False, n=name: self._set_chip(n))
@@ -290,6 +299,7 @@ class _SoftwarePane(QWidget):
             paint_severity(cells[8], "info")
         for c, item in enumerate(cells):
             self.table.setItem(r, c, item)
+            describe_cell(self.table, c, self.table.item(r, c))
         bind_row(self.table, r, e)
 
     # ── selection and actions ───────────────────────────────────────────────
@@ -389,6 +399,7 @@ class SoftwareModule(BaseModule):
         self._pane = _SoftwarePane()
         # Kept under its old name: other code calls it to trigger a load.
         self._software_load_fn = self._pane.load
+        explain_widget(self._pane, introduction=True)
         return self._pane
 
     def on_start(self, app=None) -> None:

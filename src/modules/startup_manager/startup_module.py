@@ -8,6 +8,7 @@ from PyQt6.QtCore import QThreadPool, QUrl
 from PyQt6.QtGui import QDesktopServices
 import logging
 import os
+from html import escape
 from typing import Optional
 
 from core.base_module import BaseModule
@@ -66,6 +67,9 @@ def _open_file_location(command: str) -> None:
     QDesktopServices.openUrl(QUrl.fromLocalFile(get_startup_folder_path()))
 
 
+from modules.diagnose.help_ui import explain
+from modules.startup_manager.help_text import INTRO, CONTROLS, HEADERS, TABS
+
 class _AddEntryDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -88,6 +92,9 @@ class _AddEntryDialog(QDialog):
         buttons.accepted.connect(self._validate)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self._name.setToolTip("Name of the new value in your account's Run registry key. OK saves it without another confirmation; use Remove to delete it later.")
+        self._command.setToolTip("Exact program command and arguments Windows should run at future sign-ins. OK writes it to your Run key; check the path and quoting before accepting. No administrator rights are normally needed for your own key.")
+        explain(self, "Add a command that Windows runs when you sign in. OK writes a current-user Run registry value; Remove can delete it later, and no administrator rights are normally needed.", CONTROLS)
 
     def _validate(self):
         if not self._name.text().strip():
@@ -210,6 +217,7 @@ class _StartupTab(QWidget):
         color = "#44BB44" if enabled else "#DD3333"
         text = "Enabled" if enabled else "Disabled"
         lbl = QLabel(f"<span style='color:{color};'>&#x25CF;</span> {text}")
+        lbl.setToolTip("Enabled means this source allows automatic launch; Disabled prevents that launch. Neither state says whether the program is currently running.")
         lbl.setStyleSheet("QLabel { background: transparent; padding: 2px 4px; }")
         return lbl
 
@@ -246,6 +254,9 @@ class _StartupTab(QWidget):
             self._table.setItem(r, 1, centered_item(e.command))
             self._table.setCellWidget(r, 2, self._make_status_dot(e.enabled))
             self._table.setItem(r, 3, centered_item(e.extra))
+            tip = "<qt>" + escape(f"{e.name}\nCommand: {e.command}\nSource details: {e.extra or 'not reported'}").replace("\n", "<br>") + "</qt>"
+            for col in (0, 1, 3):
+                self._table.item(r, col).setToolTip(tip)
         shown = len(visible)
         total = len(self._entries)
         self._status.setText(
@@ -438,6 +449,7 @@ class StartupItemsModule(BaseModule):
         outer.addWidget(tabs, 1)
         outer.addLayout(footer)
 
+        explain(container, INTRO, CONTROLS, HEADERS, TABS)
         return container
 
     def _open_startup_folder(self) -> None:
@@ -502,3 +514,11 @@ class StartupBootModule(CompositeModule):
         from modules.power_boot.power_module import PowerBootModule
 
         self.children = [StartupItemsModule(), BootAnalyzerModule(), PowerBootModule()]
+
+    def wrap(self, tabs):
+        from modules.diagnose.help_ui import hub
+        return hub(tabs, "Startup & Boot explains what starts automatically and how long Windows takes to start. Inventory views are read-only until you choose an action; some changes require administrator rights and removal or a forced restart cannot be undone.", {
+            "Startup Manager": INTRO,
+            "Boot Analyzer": "Read Windows boot timings and slow-start evidence. The timeout action needs administrator rights and asks first; it changes the boot menu delay and has no automatic undo.",
+            "Power & Boot": "Change power plans, sleep, hibernation and boot settings with administrator rights. These controls apply without confirmation; Advanced Startup forces an immediate restart, and previous values are not automatically restored.",
+        })

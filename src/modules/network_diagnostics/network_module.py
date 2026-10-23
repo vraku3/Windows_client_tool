@@ -27,6 +27,10 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 
+from ui.module_intro import module_intro
+from ui.help.network_text import INTRO, CARDS
+from ui.help.network_ui import control_help, explain, explain_tabs, item_help
+
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
 from core.module_groups import ModuleGroup
@@ -101,6 +105,9 @@ class _ToolCard(QFrame):
         layout.addWidget(self._content)
 
         self._set_title(title, expanded)
+        self.setProperty("networkHelpCard", True)
+        self._toggle_btn.setToolTip("Expand or collapse this card; this changes only the view. " + CARDS[title])
+        explain(content, title)
 
     def _set_title(self, title: str, expanded: bool) -> None:
         arrow = "▼" if expanded else "▶"
@@ -130,10 +137,12 @@ def _build_ping_card() -> _ToolCard:
     row = QHBoxLayout()
     row.addWidget(QLabel("Host:"))
     host_edit = QLineEdit("8.8.8.8")
+    control_help(host_edit, 'host_edit')
     host_edit.setPlaceholderText("hostname or IP")
     row.addWidget(host_edit, 1)
     row.addWidget(QLabel("Count:"))
     count_spin = QSpinBox()
+    control_help(count_spin, 'count_spin')
     count_spin.setRange(1, 10)
     count_spin.setValue(4)
     row.addWidget(count_spin)
@@ -181,6 +190,7 @@ def _build_traceroute_card() -> _ToolCard:
     row = QHBoxLayout()
     row.addWidget(QLabel("Host:"))
     host_edit = QLineEdit("8.8.8.8")
+    control_help(host_edit, 'host_edit')
     host_edit.setPlaceholderText("hostname or IP")
     row.addWidget(host_edit, 1)
     trace_btn = QPushButton("Trace")
@@ -219,9 +229,9 @@ def _build_traceroute_card() -> _ToolCard:
             for hop_num, ip, time_str in hops:
                 row_idx = table.rowCount()
                 table.insertRow(row_idx)
-                table.setItem(row_idx, 0, centered_item(str(hop_num)))
-                table.setItem(row_idx, 1, centered_item(ip))
-                table.setItem(row_idx, 2, centered_item(time_str))
+                table.setItem(row_idx, 0, item_help(centered_item(str(hop_num)), table, 0))
+                table.setItem(row_idx, 1, item_help(centered_item(ip), table, 1))
+                table.setItem(row_idx, 2, item_help(centered_item(time_str), table, 2))
             if _widget_valid(status_label):
                 status_label.setText(f"Done — {len(hops)} hops.")
             if _widget_valid(trace_btn):
@@ -246,10 +256,12 @@ def _build_dns_card() -> _ToolCard:
     row = QHBoxLayout()
     row.addWidget(QLabel("Host:"))
     host_edit = QLineEdit("example.com")
+    control_help(host_edit, 'host_edit')
     host_edit.setPlaceholderText("hostname")
     row.addWidget(host_edit, 1)
     row.addWidget(QLabel("Type:"))
     type_combo = QComboBox()
+    control_help(type_combo, 'type_combo')
     type_combo.addItems(["A", "AAAA", "MX", "NS", "PTR", "TXT", "ANY"])
     row.addWidget(type_combo)
     lookup_btn = QPushButton("Lookup")
@@ -294,15 +306,18 @@ def _build_port_scanner_card() -> _ToolCard:
     row1 = QHBoxLayout()
     row1.addWidget(QLabel("Host:"))
     host_edit = QLineEdit("127.0.0.1")
+    control_help(host_edit, 'host_edit')
     host_edit.setPlaceholderText("hostname or IP")
     row1.addWidget(host_edit, 1)
     row1.addWidget(QLabel("Ports:"))
     start_spin = QSpinBox()
+    control_help(start_spin, 'start_spin')
     start_spin.setRange(1, 65535)
     start_spin.setValue(1)
     row1.addWidget(start_spin)
     row1.addWidget(QLabel("–"))
     end_spin = QSpinBox()
+    control_help(end_spin, 'end_spin')
     end_spin.setRange(1, 65535)
     end_spin.setValue(1024)
     row1.addWidget(end_spin)
@@ -423,9 +438,9 @@ def _build_port_scanner_card() -> _ToolCard:
                 service = _WELL_KNOWN_PORTS.get(port, "")
                 r = table.rowCount()
                 table.insertRow(r)
-                table.setItem(r, 0, centered_item(str(port)))
-                table.setItem(r, 1, centered_item(state))
-                table.setItem(r, 2, centered_item(service))
+                table.setItem(r, 0, item_help(centered_item(str(port)), table, 0))
+                table.setItem(r, 1, item_help(centered_item(state), table, 1))
+                table.setItem(r, 2, item_help(centered_item(service), table, 2))
             if _widget_valid(table_stack):
                 table_stack.setCurrentIndex(0 if open_ports else 1)
             cancelled_msg = " (cancelled)" if _cancelled[0] else ""
@@ -498,11 +513,11 @@ def _build_connections_card() -> _ToolCard:
         for c in conns:
             r = table.rowCount()
             table.insertRow(r)
-            table.setItem(r, 0, centered_item(c["local"]))
-            table.setItem(r, 1, centered_item(c["remote"]))
-            table.setItem(r, 2, centered_item(c["status"]))
-            table.setItem(r, 3, centered_item(c["pid"]))
-            table.setItem(r, 4, centered_item(c["process"]))
+            table.setItem(r, 0, item_help(centered_item(c["local"]), table, 0))
+            table.setItem(r, 1, item_help(centered_item(c["remote"]), table, 1))
+            table.setItem(r, 2, item_help(centered_item(c["status"]), table, 2))
+            table.setItem(r, 3, item_help(centered_item(c["pid"]), table, 3))
+            table.setItem(r, 4, item_help(centered_item(c["process"]), table, 4))
         if _widget_valid(conn_count_label):
             conn_count_label.setText(f"{len(conns)} connection(s)")
 
@@ -574,6 +589,7 @@ def _build_wifi_card() -> _ToolCard:
             profile_list.clear()
             for p in profiles:
                 profile_list.addItem(p)
+                profile_list.item(profile_list.count() - 1).setToolTip("Saved Wi-Fi profile reported by netsh. Selecting it runs netsh wlan show profile with key=clear and may display the password; it does not connect or change the profile.")
             if _widget_valid(detail_box):
                 detail_box.setPlainText(f"Loaded {len(profiles)} profile(s). Click one to see details.")
             if _widget_valid(load_btn):
@@ -641,7 +657,7 @@ def _build_adapter_card() -> _ToolCard:
                 r = table.rowCount()
                 table.insertRow(r)
                 for col_idx, key in enumerate(cols):
-                    table.setItem(r, col_idx, centered_item(a.get(key, "")))
+                    table.setItem(r, col_idx, item_help(centered_item(a.get(key, "")), table, col_idx))
             if _widget_valid(refresh_btn):
                 refresh_btn.setEnabled(True)
 
@@ -711,7 +727,7 @@ def _build_network_errors_card() -> _ToolCard:
                 for it in items:
                     it.setForeground(_ERROR_BRUSH)
             for c, it in enumerate(items):
-                table.setItem(r, c, it)
+                table.setItem(r, c, item_help(it, table, c))
 
         if _widget_valid(status_label):
             if nonzero_errors:
@@ -793,7 +809,7 @@ def _build_winsock_card() -> _ToolCard:
                 for it in items:
                     it.setForeground(_ERROR_BRUSH)
             for c, it in enumerate(items):
-                table.setItem(r, c, it)
+                table.setItem(r, c, item_help(it, table, c))
         if broken:
             status_label.setText(f"⚠ {len(broken)} provider(s) point at a missing DLL")
             set_role(status_label, "statusError")
@@ -876,7 +892,7 @@ def _build_live_traffic_card() -> _ToolCard:
                     item = centered_item(str(a[key]))
                     if key in ("Errors In", "Errors Out", "Drops In", "Drops Out") and a[key]:
                         item.setForeground(_ERROR_BRUSH)
-                    table.setItem(r, c, item)
+                    table.setItem(r, c, item_help(item, table, c))
 
         worker.signals.result.connect(_on_result)
         QThreadPool.globalInstance().start(worker)
@@ -914,6 +930,7 @@ def _build_packet_capture_card() -> _ToolCard:
     row = QHBoxLayout()
     row.addWidget(QLabel("Duration (s):"))
     duration_spin = QSpinBox()
+    control_help(duration_spin, 'duration_spin')
     duration_spin.setRange(1, 60)
     duration_spin.setValue(5)
     row.addWidget(duration_spin)
@@ -974,7 +991,7 @@ def _build_packet_capture_card() -> _ToolCard:
                     for it in items:
                         it.setForeground(_ERROR_BRUSH)
                 for c, it in enumerate(items):
-                    table.setItem(r, c, it)
+                    table.setItem(r, c, item_help(it, table, c))
             errors = sum(1 for p in packets if p["is_error"])
             status_label.setText(f"Captured {len(packets)} packet(s), {errors} flagged as errors.")
             capture_btn.setEnabled(True)
@@ -1067,6 +1084,7 @@ class NetworkToolsModule(BaseModule):
         # Outer container
         outer = QWidget()
         outer_layout = QVBoxLayout(outer)
+        outer_layout.addWidget(module_intro(INTRO["tools"]))
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
         # Title
@@ -1127,6 +1145,14 @@ class NetworkDiagnosticsModule(CompositeModule):
     icon = "🌐"
     description = "Connectivity diagnostics, Wi-Fi, HOSTS, DNS, proxy, shares and remote tools"
     group = ModuleGroup.SYSTEM
+
+    def wrap(self, tabs):
+        root = QWidget()
+        layout = QVBoxLayout(root)
+        layout.addWidget(module_intro(INTRO["hub"]))
+        explain_tabs(tabs, "hub")
+        layout.addWidget(tabs)
+        return root
 
     def __init__(self):
         super().__init__()

@@ -16,6 +16,8 @@ from core.procengine import actions
 
 from . import connections as cn
 from .tab_base import DashModule, DashTab, make_chips, numeric_item, set_chip_counts
+from ui.help.dashboard_ui import explain_menu
+from ui.help.dashboard_ui import row_help
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +126,9 @@ class ConnectionsTab(DashTab):
             table.setItem(row, PID, numeric_item(c.pid, str(c.pid)))
             table.setItem(row, PROCESS, numeric_item(c.process.lower(), c.process or "(unknown)"))
             table.item(row, PROTO).setData(Qt.ItemDataRole.UserRole, c)
+            row_help(table, row, (("Protocol", c.proto), ("Local endpoint", c.local),
+                     ("Remote endpoint", c.remote), ("Windows state", c.state),
+                     ("Owning process", c.process), ("PID", c.pid)))
         if keep_key is not None:
             for row in range(table.rowCount()):
                 item = table.item(row, PROTO)
@@ -176,6 +181,7 @@ class ConnectionsTab(DashTab):
             lambda: QApplication.clipboard().setText(
                 f"{conn.proto}  {conn.local}  {conn.remote}  {conn.state}  "
                 f"{conn.pid}  {conn.process}"))
+        explain_menu(menu)
         menu.exec(self._table.viewport().mapToGlobal(pos))
 
     def _end_selected(self) -> None:

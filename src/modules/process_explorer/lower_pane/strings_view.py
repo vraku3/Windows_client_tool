@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTabWidget,
 
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ class StringsView(QWidget):
         self._exe_path: str = ""
         self._thread_pool = None
         self._workers: List[Worker] = []
+        apply_help(self, 'Strings')
 
     def set_thread_pool(self, pool):
         self._thread_pool = pool

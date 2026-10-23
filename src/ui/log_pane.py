@@ -12,6 +12,7 @@ so a caller supplies a parser and nothing else.
 from __future__ import annotations
 
 import logging
+from html import escape
 from typing import Callable, List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -81,14 +82,17 @@ class LogPane(QWidget):
         toolbar.addWidget(self._progress)
 
         self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.setToolTip(
+            "Read this source again, replacing the displayed records. This does not clear "
+            "Windows logs or repair faults; restricted files or channels may need administrator rights.")
         self._refresh_btn.setObjectName("refreshBtn")
         self._refresh_btn.clicked.connect(lambda: self.load(force=True))
         self._copy_btn = QPushButton("Copy row")
-        self._copy_btn.setToolTip("Copy the selected row to the clipboard")
+        self._copy_btn.setToolTip("Copy the selected row to the clipboard, replacing its previous contents. No log or Windows settings change.")
         self._copy_btn.clicked.connect(lambda: self._table.copy_selected_to_clipboard())
         toolbar.addWidget(self._copy_btn)
         self._export_btn = QPushButton("Export CSV...")
-        self._export_btn.setToolTip("Export the rows currently shown")
+        self._export_btn.setToolTip("Choose a CSV file and export the rows currently shown. This writes a report without changing Windows logs; active filters affect which rows are included.")
         self._export_btn.clicked.connect(lambda: self._table.export_csv())
         toolbar.addWidget(self._export_btn)
         toolbar.addWidget(self._refresh_btn)
@@ -96,6 +100,7 @@ class LogPane(QWidget):
 
         # A one-paragraph read of what was loaded (counts, findings, caveats).
         self._note = QLabel()
+        self._note.setToolTip("Summary of the loaded evidence and any read limits. Counts cover this source's loaded records, not necessarily its complete history; correlation does not prove a cause.")
         self._note.setWordWrap(True)
         set_role(self._note, "statusInfo")
         self._note.setVisible(False)
@@ -180,9 +185,24 @@ class LogPane(QWidget):
                 shown = self._source
         self._entries = list(shown)
         self._table.set_entries(self._entries)
+        self._explain_rows()
         # The empty page is for "nothing loaded"; a filter that matches nothing
         # must still show the (empty) table and its count.
         self._stack.setCurrentIndex(_PAGE_TABLE if self._source else _PAGE_EMPTY)
+
+    def _explain_rows(self) -> None:
+        from modules.event_viewer.help_text import event_help
+        model = self._table._model
+        for row in range(model.rowCount()):
+            first = model.item(row, 0)
+            entry = first.data(Qt.ItemDataRole.UserRole)
+            raw = entry.raw or {}
+            tip = event_help(raw.get("provider") or entry.source, raw.get("event_id"))
+            tip = (tip + "\n" if tip else "") + str(entry.message or "")
+            # Windows messages can contain markup-like text: keep them plain.
+            tip = "<qt>" + escape(tip).replace("\n", "<br>") + "</qt>"
+            for col in range(model.columnCount()):
+                model.item(row, col).setToolTip(tip)
 
     def set_view_transform(self, transform: Optional[Callable[[list], list]]) -> None:
         """Filter/group what is shown without touching what was loaded."""

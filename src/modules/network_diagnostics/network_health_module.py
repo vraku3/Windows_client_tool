@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
     QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
-
+from ui.help.network_ui import control_help, explain_tabs, item_help, finding_help
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
@@ -164,10 +164,13 @@ class _HealthPane(QWidget):
         self._table.setRowCount(len(rows))
         for r, f in enumerate(rows):
             sev = QTableWidgetItem(_SEV_LABEL[f.severity])
+            sev.setToolTip(finding_help(f))
             sev.setForeground(QBrush(QColor(semantic(_SEV_COLOUR[f.severity]))))
             sev.setData(Qt.ItemDataRole.UserRole, r)
-            self._table.setItem(r, 0, sev)
-            self._table.setItem(r, 1, QTableWidgetItem(f.title))
+            self._table.setItem(r, 0, item_help(sev, self._table, 0))
+            title = QTableWidgetItem(f.title)
+            title.setToolTip(finding_help(f))
+            self._table.setItem(r, 1, title)
         if rows:
             self._table.selectRow(0)
         else:
@@ -226,8 +229,10 @@ class _DnsPane(QWidget):
         lay = QVBoxLayout(self)
         row = QHBoxLayout()
         self._name = QLineEdit("microsoft.com")
+        control_help(self._name, 'self._name')
         self._name.returnPressed.connect(self._run)
         self._type = QComboBox()
+        control_help(self._type, 'self._type')
         self._type.addItems(["A", "AAAA", "MX", "TXT", "NS", "CNAME"])
         self._go = QPushButton("Query")
         self._go.clicked.connect(self._run)
@@ -237,6 +242,7 @@ class _DnsPane(QWidget):
         row.addWidget(self._go)
         lay.addLayout(row)
         self._extra = QLineEdit()
+        control_help(self._extra, 'self._extra')
         self._extra.setPlaceholderText("Resolvers to ask: system DNS servers are added automatically; add more, comma-separated")
         self._extra.setText(", ".join(PUBLIC_RESOLVERS))
         lay.addWidget(self._extra)
@@ -291,7 +297,7 @@ class _DnsPane(QWidget):
                 item = QTableWidgetItem(txt)
                 if c == 3 and not rep.ok:
                     item.setForeground(QBrush(QColor(semantic("error"))))
-                self._table.setItem(r, c, item)
+                self._table.setItem(r, c, item_help(item, self._table, c))
         self._table.resizeColumnsToContents()
         self._table.horizontalHeader().setStretchLastSection(True)
 
@@ -310,6 +316,7 @@ class _PingPane(QWidget):
         lay = QVBoxLayout(self)
         row = QHBoxLayout()
         self._host = QLineEdit("1.1.1.1")
+        control_help(self._host, 'self._host')
         self._host.setPlaceholderText("Host or IP")
         self._btn = QPushButton("Start")
         self._btn.clicked.connect(self._toggle)
@@ -437,8 +444,7 @@ class _RoutesPane(QWidget):
                 item = QTableWidgetItem(text)
                 if route.is_default:
                     item.setForeground(QColor(semantic("info")))
-                self._routes.setItem(r, c, item)
-
+                self._routes.setItem(r, c, item_help(item, self._routes, c))
     def _fill_neighbors(self, snapshot: route_table.RouteSnapshot) -> None:
         self._neighbors.setRowCount(len(snapshot.neighbors))
         for r, n in enumerate(snapshot.neighbors):
@@ -447,8 +453,7 @@ class _RoutesPane(QWidget):
                 item = QTableWidgetItem(text)
                 if n.is_problem:
                     item.setForeground(QColor(semantic("warning")))
-                self._neighbors.setItem(r, c, item)
-
+                self._neighbors.setItem(r, c, item_help(item, self._neighbors, c))
 
 class _DnsCachePane(QWidget):
     """Every record `ipconfig /displaydns` currently holds -- not the
@@ -466,6 +471,7 @@ class _DnsCachePane(QWidget):
         set_role(self._status, "muted")
         top.addWidget(self._status, 1)
         self._filter = QLineEdit()
+        control_help(self._filter, 'self._filter')
         self._filter.setPlaceholderText("Filter by name...")
         self._filter.textChanged.connect(self._apply_filter)
         top.addWidget(self._filter)
@@ -523,7 +529,7 @@ class _DnsCachePane(QWidget):
         for r, e in enumerate(rows):
             values = (e.name, e.type_name, str(e.ttl) if e.ttl is not None else "—", e.section, e.data)
             for c, text in enumerate(values):
-                self._table.setItem(r, c, QTableWidgetItem(text))
+                self._table.setItem(r, c, item_help(QTableWidgetItem(text), self._table, c))
         self._table.resizeColumnsToContents()
         self._table.horizontalHeader().setStretchLastSection(True)
 
@@ -579,8 +585,7 @@ class NetworkHealthModule(BaseModule):
         tabs.addTab(self._ping, "Ping and jitter")
         tabs.addTab(self._routes, "Routes")
         self._widget = tabs
-        return tabs
-
+        return explain_tabs(tabs, "Health")
     def on_activate(self) -> None:
         h = self._health
         if h is not None and not h._findings:

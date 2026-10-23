@@ -2,6 +2,9 @@
 
 Qt only; every judgement it shows is made in `deployment_failures`.
 """
+
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
 from datetime import datetime
 from typing import Optional
 
@@ -89,6 +92,7 @@ class DeploymentFailuresPanel(QWidget):
                                          "Failures load with the app list."))
         self._stack.setCurrentIndex(1)
         layout.addWidget(self._stack)
+        explain(self, help_info.CONTROLS, help_info.HEADERS, intro=help_info.PANES["Install / update failures"])
 
     @property
     def table(self) -> QTableWidget:

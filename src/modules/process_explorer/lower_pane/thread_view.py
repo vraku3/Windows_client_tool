@@ -10,6 +10,7 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTableWidget, QHeaderView
 
 from core.table_ui import centered_item, center_header
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class ThreadView(QWidget):
         layout.addWidget(self._table)
         self._pid: int = -1
         self._thread: Optional[threading.Thread] = None
+        apply_help(self, 'Threads')
 
     def cancel(self) -> None:
         self._pid = -1

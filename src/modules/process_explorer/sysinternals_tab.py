@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt
 
 from ui.error_banner import ErrorBanner
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +167,7 @@ class SysinternalsTab(QWidget):
         self._layout.addWidget(scroll)
 
         self._rebuild()
+        apply_help(self, 'Sysinternals')
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -237,3 +239,4 @@ class SysinternalsTab(QWidget):
             grid.addWidget(launch_btn, row, 3)
             grid.addWidget(cache_btn,  row, 4)
             row += 1
+        apply_help(self, 'Sysinternals')

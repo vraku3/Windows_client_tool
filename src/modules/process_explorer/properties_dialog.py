@@ -19,6 +19,7 @@ from modules.process_explorer.lower_pane.thread_view import ThreadView
 from modules.process_explorer.lower_pane.network_view import NetworkView
 from modules.process_explorer.lower_pane.strings_view import StringsView
 from modules.process_explorer.lower_pane.security_view import SecurityView
+from ui.help.dashboard_ui import apply_help
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,7 @@ class ProcessPropertiesDialog(QDialog):
         self._build_job_tab()
         self._build_strings_tab()
         self._start_watching()
+        apply_help(self, 'Process properties')
 
     def _row(self, label: str, value: str) -> QWidget:
         w = QWidget()

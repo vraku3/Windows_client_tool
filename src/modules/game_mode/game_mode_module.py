@@ -10,6 +10,9 @@ timer, so it runs whichever tab is on screen.
 """
 from __future__ import annotations
 
+from ui.help.debloat_widgets import explain
+from . import help_text as help_info
+
 import ctypes
 import datetime
 import logging
@@ -169,19 +172,25 @@ class GameModeModule(BaseModule):
         for line in self._pending_log:
             self._log.appendPlainText(line)
         self._pending_log = []
-        self._tabs.addTab(self._log, "Log")
+        log_page = QWidget(w)
+        log_layout = QVBoxLayout(log_page)
+        log_layout.addWidget(self._log)
+        self._tabs.addTab(log_page, "Log")
         from .optimise_tab import OptimiseTab
         self._optimise_tab = OptimiseTab(lambda: self.app.thread_pool, w, host_busy=lambda: self._busy,
                                          busy_changed=self._show_state, navigate=self._navigate_to)
         self._tabs.addTab(self._optimise_tab, "Optimise OS")
         lay.addWidget(self._tabs, 1)
         self._widget = w
+        self._state.setToolTip("ON means this app has an active recorded Game Mode session; OFF means no active session. Unresolved recovery entries keep it ON so OFF can retry.")
+        self._estimate.setToolTip("Estimated handle reduction from the selected running programs and their helpers. This is not a promised frame-rate or memory improvement.")
         self._show_state()
         if self._journal.active:
             age = session.session_age(self._journal)
             if age is None or age <= session.LONG_SESSION_S:
                 self._show_error(f"Game Mode is still {session.age_text(self._journal)} -- this app "
                                  "was closed while it was on. Game Mode OFF restores the changes.")
+        explain(w, help_info.CONTROLS, help_info.HEADERS, help_info.PANES, help_info.INTRO)
         return w
 
     def _build_header(self, parent: QWidget) -> QHBoxLayout:
@@ -236,12 +245,14 @@ class GameModeModule(BaseModule):
         self._rec_btn = QPushButton("Recommended", page)
         self._rec_btn.setToolTip("Updaters, sync, indexing and telemetry stopped; your browsers, "
                                  "chat and editors stay open at a lower priority.")
+        self._rec_btn.setToolTip(self._rec_btn.toolTip() + " This selects choices only; ON previews and asks first. OFF restores only recorded changes.")
         self._rec_btn.clicked.connect(lambda: self._apply_preset(catalog.REC))
         self._max_btn = QPushButton("Maximum", page)
         self._max_btn.setToolTip("Everything Recommended does, plus catalogued browsers, chat and "
                                  "work apps closed, more Windows background services stopped, "
                                  "transparency and animations off. Unknown programs stay unticked; "
                                  "Explorer restarts only if you tick it.")
+        self._max_btn.setToolTip(self._max_btn.toolTip() + " This selects choices only; ON asks first and may end unsaved programs after eight seconds. OFF restores only recorded changes.")
         self._max_btn.clicked.connect(lambda: self._apply_preset(catalog.MAX))
         self._estimate = QLabel(page)
         set_role(self._estimate, "statusInfo")
@@ -267,6 +278,7 @@ class GameModeModule(BaseModule):
                             "tasks": self._tasks_cb, "visuals": self._visuals_cb,
                             "explorer": self._explorer_cb, "lower": self._lower_cb}
         for attr, cb in self._flag_boxes.items():
+            cb.setToolTip(help_info.FLAGS[attr])
             cb.setChecked(getattr(self._choices, attr))
             cb.toggled.connect(lambda on, a=attr: self._flag(a, on))
             lay.addWidget(cb)
@@ -394,6 +406,7 @@ class GameModeModule(BaseModule):
 
     def _sync_flag_boxes(self) -> None:
         for attr, cb in self._flag_boxes.items():
+            cb.setToolTip(help_info.FLAGS[attr])
             cb.blockSignals(True)
             cb.setChecked(getattr(self._choices, attr))
             cb.blockSignals(False)

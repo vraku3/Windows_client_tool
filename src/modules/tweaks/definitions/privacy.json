@@ -2,7 +2,7 @@
   {
     "id": "disable_activity_history",
     "name": "Disable Activity History",
-    "description": "Stops Windows from storing activity history for Timeline.",
+    "description": "Writes the activity-history policy settings specified below to request disabling activity collection. This changes the policy values; it does not delete previously stored activity records.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": true,
@@ -60,7 +60,7 @@
   {
     "id": "disable_app_diagnostics",
     "name": "Disable App Diagnostics",
-    "description": "Prevents apps from accessing diagnostic information.",
+    "description": "Writes the app-diagnostics privacy policy to deny access to diagnostic information. Apps that rely on this access may have less information about other apps.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": true,
@@ -77,7 +77,7 @@
   {
     "id": "disable_cortana_web_search",
     "name": "Disable Cortana Web Search in Start",
-    "description": "Removes web search results from the Start menu search.",
+    "description": "Writes the Windows Search policy values below to request disabling web results in Start search. The visible result depends on whether the installed Windows search experience honours those values.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": true,
@@ -101,7 +101,7 @@
   {
     "id": "disable_bing_start",
     "name": "Disable Bing in Start Menu",
-    "description": "Removes Bing search suggestions from the Start menu.",
+    "description": "Writes the search-suggestion registry value below to request hiding Bing suggestions in Start. This changes search configuration rather than removing the browser or its own search settings.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": false,
@@ -118,7 +118,7 @@
   {
     "id": "disable_app_launch_tracking",
     "name": "Disable App Launch Tracking",
-    "description": "Stops Windows tracking which apps you launch.",
+    "description": "Sets the app-launch tracking registry value below to zero. This requests stopping launch tracking used to personalise Start; it does not uninstall any apps.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": false,
@@ -166,7 +166,7 @@
   {
     "id": "disable_background_apps",
     "name": "Disable Background App Access (Global)",
-    "description": "Prevents all apps from running in the background globally.",
+    "description": "Writes the background-app settings below to request restricting app background activity. Apps subject to these settings may stop updating information while they are not open; this is not a general block on every desktop program.",
     "category": "Privacy",
     "risk": "medium",
     "requires_admin": true,
@@ -183,7 +183,7 @@
   {
     "id": "disable_camera_access",
     "name": "Disable App Camera Access",
-    "description": "Blocks all apps from accessing the camera via policy.",
+    "description": "Writes the camera-access policy below to request denying apps camera access. Camera-dependent features can stop working for apps covered by that policy.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": true,
@@ -200,7 +200,7 @@
   {
     "id": "disable_microphone_access",
     "name": "Disable App Microphone Access",
-    "description": "Blocks all apps from accessing the microphone via policy.",
+    "description": "Writes the microphone-access policy below to request denying apps microphone access. Recording and calling features can stop working for apps covered by that policy.",
     "category": "Privacy",
     "risk": "low",
     "requires_admin": true,

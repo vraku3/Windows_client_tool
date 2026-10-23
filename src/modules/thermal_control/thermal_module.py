@@ -16,7 +16,7 @@ from ui.error_banner import ErrorBanner
 from .curve_editor import CurveEditor
 from .engine import curves as cv
 from .engine import view
-from .engine.model import CONTROL, FAN, TEMPERATURE, Sensor, is_pump
+from .engine.model import FAN, TEMPERATURE, Sensor, is_pump
 from .fan_groups_bar import FanGroupsBar
 from .sensors_panel import SensorsPanel
 from .thermal_service import ThermalService, marker_path_for
@@ -70,6 +70,9 @@ class ThermalWidget(QWidget):
         tabs.addTab(self._build_sensors(), "Sensors")
         tabs.addTab(self._build_curves(), "Fan curves")
         layout.addWidget(tabs, 1)
+        from modules.cleanup.help_ui import explain_panes
+        from .help_text import CONTROLS, HEADERS, FIELDS, PANES
+        explain_panes(self, CONTROLS, HEADERS, FIELDS, PANES)
 
     def _initial_status(self) -> str:
         if self._service.reason:
@@ -288,6 +291,8 @@ class ThermalWidget(QWidget):
             self._form.setRowVisible(w, not is_gpu)      # header-only settings
         self._form.setRowVisible(self._zero, is_gpu)
         self._bios_btn.setText("Back to factory" if is_gpu else "Hand back to BIOS")
+        from .help_text import CONTROLS
+        self._bios_btn.setToolTip(CONTROLS[self._bios_btn.text()])
         if is_gpu:
             self._gpu_picked(self._selected[len(GPU_PREFIX):])
             return

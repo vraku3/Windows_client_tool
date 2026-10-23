@@ -61,6 +61,10 @@ class _FixCard(QFrame):
 
         # Run button
         self._run_btn = QPushButton("Run")
+        from .help_text import ACTIONS
+        prompt = (" Asks for confirmation before running." if self._action.confirm_text
+                  else " Starts immediately without another confirmation.")
+        self._run_btn.setToolTip(ACTIONS.get(self._action.key, self._action.description + " There is no app undo.") + prompt + " Requires administrator rights.")
         self._run_btn.setFixedWidth(80)
         layout.addWidget(self._run_btn)
 
@@ -68,6 +72,7 @@ class _FixCard(QFrame):
         # outcome at rest; overwritten with "Running..." while a worker is
         # in flight (see _run/_on_done/_on_error/cancel).
         self._status = QLabel("")
+        self._status.setToolTip("Recorded outcome or current precondition for this repair. A completed command is not an independent check that the original problem is resolved.")
         self._status.setStyleSheet("color: gray; font-size: 11px;")
         layout.addWidget(self._status)
         self._refresh_status()
@@ -219,6 +224,8 @@ class QuickFixHistoryDialog(QDialog):
         self.setWindowTitle("Quick Fix History")
         self.resize(520, 420)
         root = QVBoxLayout(self)
+        from ui.module_intro import module_intro
+        root.addWidget(module_intro("Read the recent repair outcomes recorded by this app. Nothing here changes Windows or undoes completed repairs; administrator rights are not needed to read local history."))
 
         self._list = QListWidget()
         from modules.quick_fix import quick_fix_history
@@ -232,6 +239,7 @@ class QuickFixHistoryDialog(QDialog):
         root.addWidget(self._list)
 
         close_btn = QPushButton("Close")
+        close_btn.setToolTip("Close this history window; no repair runs and the recorded history is kept.")
         close_btn.clicked.connect(self.accept)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
@@ -276,6 +284,7 @@ class QuickFixModule(BaseModule):
 
         # Search box
         self._search = QLineEdit()
+        self._search.setToolTip('Filter repair cards by title or description; no repair runs and no Windows setting changes.')
         self._search.setPlaceholderText("Search repair actions…")
         self._search.textChanged.connect(self._apply_filter)
         outer_layout.addWidget(self._search)
@@ -336,6 +345,10 @@ class QuickFixModule(BaseModule):
         except Exception:
             logger.warning("Ignored Exception", exc_info=True)
 
+        from modules.cleanup.help_ui import explain, intro
+        from .help_text import CONTROLS, INTRO
+        explain(outer, CONTROLS, {}, {'_search': 'Filter repair cards by title or description; no repair runs and no Windows setting changes.'})
+        intro(outer, INTRO)
         return outer
 
     def on_activate(self) -> None:

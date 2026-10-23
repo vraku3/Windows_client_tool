@@ -1,3 +1,5 @@
+
+from modules.registry_explorer.help_text import header_help
 # src/modules/registry_explorer/registry_model.py
 import datetime
 import logging
@@ -155,6 +157,8 @@ class RegistryTreeModel(QAbstractItemModel):
         return node.has_children()
 
     def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.ToolTipRole:
+            return header_help(self.headerData(section, orientation, Qt.ItemDataRole.DisplayRole))
         if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
             return "Registry Key"
         return None

@@ -8,6 +8,8 @@ Filtering keeps a separate index list rather than copying entries, so turning
 "Errors only" on and off costs a pass over integers and never touches the
 records themselves.
 """
+
+from modules.log_viewer.help_text import header_help
 import re
 from bisect import bisect_left
 from collections import deque
@@ -722,6 +724,8 @@ class LogModel(QAbstractTableModel):
         return len(COLUMNS)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.ToolTipRole:
+            return header_help(self.headerData(section, orientation, Qt.ItemDataRole.DisplayRole))
         if (orientation is Qt.Orientation.Horizontal
                 and role == Qt.ItemDataRole.DisplayRole
                 and 0 <= section < len(COLUMNS)):

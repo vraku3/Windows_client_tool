@@ -17,6 +17,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
 from .app_history_tab import AppHistoryTab
+from ui.help.dashboard_ui import apply_help
 
 
 class AppHistoryModule(BaseModule):
@@ -36,6 +37,7 @@ class AppHistoryModule(BaseModule):
     def create_widget(self) -> QWidget:
         self._widget = AppHistoryTab()
         self._widget.set_app(self.app)
+        apply_help(self._widget, self.name)
         return self._widget
 
     def on_activate(self) -> None:

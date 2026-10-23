@@ -64,7 +64,7 @@ class EventViewerModule(LogReaderModule):
         combo = QComboBox()
         combo.addItems(list(HOURS_MAP))
         combo.setCurrentIndex(3)  # Default: 24 hours
-        combo.setToolTip("How far back to read. Changing it needs a Refresh.")
+        combo.setToolTip("How far back to read. Changing it needs a Refresh; each log is capped at 5,000 events, so a longer range may still be incomplete. This does not change logging or clear records; Security reads require administrator rights.")
         toolbar.addWidget(combo)
         extra["hours_combo"] = combo
         self._hours_text = combo.currentText()
@@ -81,7 +81,7 @@ class EventViewerModule(LogReaderModule):
 
         within = QComboBox()
         within.addItems(list(WITHIN_MAP))
-        within.setToolTip("Narrow what is already loaded to a recent window")
+        within.setToolTip("Narrow what is already loaded to a recent window. This does not read older events or change Windows; choose All loaded to remove this time filter.")
         toolbar.addWidget(within)
         extra["within_combo"] = within
 
@@ -93,7 +93,7 @@ class EventViewerModule(LogReaderModule):
         extra["text_edit"] = text
 
         group = QCheckBox("Group by source + ID")
-        group.setToolTip("One row per distinct event with its count (click the Count header to put the most frequent first)")
+        group.setToolTip("One row per distinct event with its count (click the Count header to put the most frequent first). Grouping combines the same provider and event ID even if message details differ; uncheck to see individual loaded events. No Windows logs change.")
         toolbar.addWidget(group)
         extra["group_check"] = group
 

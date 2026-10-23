@@ -16,6 +16,10 @@ Two things drive the design:
 
 from __future__ import annotations
 
+from modules.gpresult.help_widgets import (
+    describe_control, explain_widget,
+)
+
 import logging
 
 from PyQt6.QtCore import pyqtSignal
@@ -73,17 +77,20 @@ class GpupdateDialog(QDialog):
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Refresh:"))
         self._target = QComboBox()
+        describe_control(self._target, '_target')
         for label, value in _TARGETS:
             self._target.addItem(label, value)
         controls.addWidget(self._target)
 
         self._force = QCheckBox("Reapply every setting (/force)")
+        describe_control(self._force, '_force')
         self._force.setToolTip(
             "Without this, Windows only reapplies policies that changed.")
         controls.addWidget(self._force)
         controls.addStretch()
 
         self._run_btn = QPushButton("Run")
+        describe_control(self._run_btn, '_run_btn')
         self._run_btn.setDefault(True)
         controls.addWidget(self._run_btn)
         layout.addLayout(controls)
@@ -120,6 +127,7 @@ class GpupdateDialog(QDialog):
 
         self.line_arrived.connect(self._append_line)
         self.finished_with.connect(self._on_finished)
+        explain_widget(self)
 
     # ------------------------------------------------------------------
 

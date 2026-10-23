@@ -116,7 +116,7 @@
   {
     "id": "disable_wmpnetwork",
     "name": "Disable Windows Media Player Network Sharing",
-    "description": "Disables the WMP network sharing / DLNA streaming service.",
+    "description": "Changes the Windows Media Player Network Sharing service start type to disabled. Media sharing through that service will not start automatically; Revert restores the recorded start type, not whether the service was running.",
     "category": "Services",
     "risk": "low",
     "requires_admin": true,

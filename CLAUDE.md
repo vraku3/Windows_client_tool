@@ -2519,6 +2519,15 @@ Note: EventViewer, CBS, DISM, WU, Reliability, and CrashDumps are embedded in Di
   run only the test files for what they changed; the full suite runs under the owner's account.
   Never add a Bitdefender exclusion for Python to get around it -- that is the owner's decision.
 
+- **Never walk `root.findChildren(QAction)` to decorate a pane** (2026-10-23). It returns Qt's
+  INTERNAL actions too, and reading their text crashed the process natively (access violation, or
+  `SystemError: Negative size passed to PyUnicode_New`) in 4 of 8 whole-module smoke runs, never
+  alone. Visit `toolbar.actions()` / `menu.actions()` of the QToolBar/QMenu widgets instead
+  (`modules/cleanup/help_ui.py`). Explanations: every pane starts with `ui.module_intro.module_intro`
+  and `tests/test_tooltip_coverage.py` (over `tests/tooltip_baseline.json`, measured by
+  `tools/tooltip_audit.py`) fails if a pane gains an unexplained control; shared help helpers live
+  in `ui/help/`, never in a sibling module (that made 9 import cycles).
+
 - **This application is English-only, deliberately.** There are zero
   `self.tr()` calls in 92,000 lines and that is a decision, not an
   oversight: it is a single-machine Windows utility with one user, and

@@ -13,7 +13,7 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import set_role
 from core.worker import Worker, retire, track
-from .engine import onedrive, shell
+from .engine import shell
 from .engine.model import Health, Kind, values_for
 from .engine.operations import Operations
 from .form import build_form, button
@@ -106,6 +106,7 @@ class NavPane(QWidget):
         if mutation and self._busy:
             return
         if mutation:
+            self._action_message = ""
             self._busy = True
             self._enable()
         worker = Worker(lambda w: function())
@@ -113,8 +114,13 @@ class NavPane(QWidget):
         self._workers.append(worker)
 
         def result(value):
-            if not sip.isdeleted(self) and callback:
-                callback(value)
+            if not sip.isdeleted(self):
+                if mutation:
+                    self.action_result("Operation completed successfully.")
+                if callback:
+                    callback(value)
+                    if mutation:
+                        self._action_message = self.status.text()
 
         def error(message):
             logger.warning("nav pane job failed: %s", message)
@@ -139,6 +145,10 @@ class NavPane(QWidget):
     def message(self, text, role="statusInfo"):
         self.status.setText(text)
         set_role(self.status, role)
+
+    def action_result(self, text, role="statusSuccess"):
+        self._action_message = text
+        self.message(text, role)
 
     def refresh(self):
         if self._busy:
@@ -171,7 +181,7 @@ class NavPane(QWidget):
                 self.common.setItemData(self.common.count() - 1, path, Qt.ItemDataRole.ToolTipRole)
         self.settings_repair.setVisible("settings" in data["transactions"])
         self.message(self._refusal or self._action_message or f"{len(self._entries)} entries read. Changes apply to new Explorer windows.",
-                     "statusError" if self._refusal or self._action_message else "statusInfo")
+                     "statusError" if self._refusal or self._action_message.startswith("Could not complete:") else "statusInfo")
         if selected_row >= 0:
             self.entries.setCurrentRow(selected_row)
         elif selected_guid:
@@ -196,7 +206,8 @@ class NavPane(QWidget):
         self.path.setText(entry.resolved_target or entry.target)
         self.display_name.setText(entry.name)
         self._name_edited = True
-        self.custom.setValue(min(entry.sort_order, self.custom.maximum()))
+        self.custom.setValue(entry.sort_order)
+        self.target_info.setText(f"Target: {entry.target}\nResolved folder: {entry.resolved_target or entry.target}")
         index = self.position.findData(entry.sort_order)
         self.position.setCurrentIndex(index if index >= 0 else 3)
         index = self.icons.findData(entry.icon)
@@ -210,6 +221,7 @@ class NavPane(QWidget):
 
     def new_entry(self):
         self._selected = None
+        self.target_info.clear()
         self.entries.setCurrentRow(-1)
         self._name_edited = False
         self.path.clear()
@@ -256,7 +268,7 @@ class NavPane(QWidget):
 
     def order(self):
         value = self.position.currentData()
-        return self.custom.value() if value is None else value
+        return int(self.custom.value()) if value is None else value
 
     def form_changed(self):
         self._generation += 1
@@ -279,16 +291,15 @@ class NavPane(QWidget):
 
         def check():
             try:
-                cloud = self.engine.validate(path, name, order, icon)
                 record = self.engine.journal.read()["entries"].get(selected_guid, {})
-                old_link = record.get("junction")
-                same_target = onedrive.normal(record.get("resolved_target", "")) == onedrive.normal(path)
-                link = old_link if cloud and old_link and same_target else self.engine.links.choose(self.engine.profile, name) if cloud else ""
+                planned = self.engine._record(selected_guid, path, name, order, icon, record, selected_entry)
+                link = planned["target"] if planned["target"] != path else ""
                 return True, "✓ Folder is available.", link
             except (OSError, ValueError) as error:
                 return False, f"Could not use this folder: {error}", ""
 
         selected_guid = self._selected.guid if self._selected else None
+        selected_entry = self._selected
         self.run(check, partial(self.validated, generation))
 
     def validated(self, generation, result):
@@ -297,7 +308,9 @@ class NavPane(QWidget):
         self._valid, text, link = result
         self.validation.setText(text)
         set_role(self.validation, "statusSuccess" if self._valid else "statusWarning")
-        self.cloud.setText(f"OneDrive folder detected: a hidden link will be created at {link}" if link else "")
+        keep = bool(self._selected and link == self._selected.target)
+        self.cloud.setText((f"Keep existing Target: {link}\nResolved folder: {self.path.text()}" if keep else
+                            f"OneDrive folder detected: a hidden link will be created at {link}") if link else "")
         if link:
             rows = values_for(self._selected.guid if self._selected else "{NEW-GUID}", self.display_name.text(),
                               link, self.order(), self.icons.currentData())
@@ -344,16 +357,19 @@ class NavPane(QWidget):
                 "Only an app-created, target-checked junction is removed. Junctions made outside this app are kept. "
                 "The real folder and its contents are not touched.")
         if self.confirm("Remove navigation shortcut", text):
-            self.run(partial(self.engine.remove_entry, entry.guid), mutation=True)
+            self.run(partial(self.engine.remove_entry, entry.guid),
+                     lambda _: self.action_result(f"Removed navigation shortcut: {entry.name}."), mutation=True)
 
     def open_folder(self):
         if self._selected:
-            self.run(partial(shell_launch_folder, self._selected.resolved_target or self._selected.target), self.message)
+            self._action_message = ""
+            self.run(partial(shell_launch_folder, self._selected.resolved_target or self._selected.target), self.action_result)
 
     def verify(self):
         if self._selected:
+            self._action_message = ""
             self.run(partial(self.engine.verify, self._selected.guid),
-                     lambda result: self.message(result.status.value + ": " + result.detail,
+                     lambda result: self.action_result(result.status.value + ": " + result.detail,
                                                  "statusSuccess" if result.status.value == "VERIFIED" else "statusWarning"))
 
     def restart(self):
@@ -361,18 +377,36 @@ class NavPane(QWidget):
             self.run(shell.restart_explorer, self.message, True)
 
     def repair(self, finish):
-        if self._selected and self.confirm("Repair interrupted change", "Finish the recorded change?" if finish else "Restore the recorded before-state?"):
-            self.run(partial(self.engine.repair, self._selected.guid, finish), mutation=True)
+        if not self._selected:
+            return
+        try:
+            transaction = self.engine.journal.read()["transactions"].get(self._selected.guid, {})
+        except (OSError, ValueError) as error:
+            self.message(f"Could not read recovery details: {error}", "statusError")
+            return
+        entry = transaction.get("entry") or transaction.get("record") or transaction.get("before_record") or {}
+        operation = transaction.get("operation") or ("removal" if transaction.get("record") is None else
+                                                    "edit" if transaction.get("before_record") else "add")
+        text = (f"{'Finish' if finish else 'Roll back'} the recorded {operation}?\n"
+                f"Entry: {entry.get('name', self._selected.name)}\n"
+                f"Target folder: {entry.get('resolved_target') or self._selected.resolved_target or self._selected.target}\n"
+                f"Junction: {entry.get('junction') or self._selected.junction or 'None'}")
+        if self.confirm("Repair interrupted change", text):
+            self.run(partial(self.engine.repair, self._selected.guid, finish),
+                     lambda _: self.action_result("Interrupted change finished." if finish else "Interrupted change rolled back."), mutation=True)
 
     def toggle_show_all(self, checked):
         self.form_changed()
-        self.run(partial(self.engine.set_show_all_folders, checked), mutation=True)
+        self.run(partial(self.engine.set_show_all_folders, checked),
+                 lambda _: self.action_result(f"Show all folders {'enabled' if checked else 'disabled'}."), mutation=True)
 
     def revert_setting(self):
-        self.run(self.engine.revert_show_all_folders, mutation=True)
+        self.run(self.engine.revert_show_all_folders,
+                 lambda _: self.action_result("Original folder view setting restored."), mutation=True)
 
     def repair_setting(self):
-        self.run(partial(self.engine.repair, "settings", False), mutation=True)
+        self.run(partial(self.engine.repair, "settings", False),
+                 lambda _: self.action_result("Interrupted folder view setting rolled back."), mutation=True)
 
     def cancel(self):
         self._validation_timer.stop()

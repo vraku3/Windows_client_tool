@@ -31,7 +31,7 @@ class Operations(Transactions):
         return onedrive.roots(self.registry) if self.root_paths is None else self.root_paths
 
     def list_entries(self):
-        with LOCK:
+        with LOCK, self.journal.lock():
             return inspection.list_entries(self.registry, self.journal.read())
 
     def show_all_folders(self):
@@ -59,9 +59,19 @@ class Operations(Transactions):
             junction.valid_name(name)
         return inside
 
-    def _record(self, guid, path, name, sort_order, icon, old=None):
+    def _record(self, guid, path, name, sort_order, icon, old=None, entry=None):
         inside = self.validate(path, name, sort_order, icon)
         link = None
+        target = path
+        if entry and entry.target and entry.target != (old or {}).get("junction"):
+            try:
+                actual = self.links.target(entry.target)
+            except FileNotFoundError:
+                actual = None
+            if actual and onedrive.normal(actual) == onedrive.normal(path):
+                # This link belongs to the user, not the app's recovery journal.
+                target = entry.target
+                inside = False
         if inside:
             if old and old.get("junction") and onedrive.normal(old["resolved_target"]) == onedrive.normal(path):
                 link = old["junction"]
@@ -70,7 +80,7 @@ class Operations(Transactions):
                     raise OSError("The recorded junction has changed. Refusing to reuse it.")
             else:
                 link = self.links.choose(self.profile, name)
-        return {"owned": (old or {}).get("owned", True), "name": name, "target": link or path,
+        return {"owned": (old or {}).get("owned", True), "name": name, "target": link or target,
                 "resolved_target": os.path.realpath(path), "junction": link,
                 "sort_order": int(sort_order), "icon": icon}
 
@@ -85,7 +95,7 @@ class Operations(Transactions):
         return steps
 
     def add_entry(self, path, name, sort_order=48, icon=DEFAULT_ICON):
-        with LOCK:
+        with LOCK, self.journal.lock():
             self._guard()
             guid = "{" + str(uuid.uuid4()).upper() + "}"
             record = self._record(guid, path, name, sort_order, icon)
@@ -116,20 +126,20 @@ class Operations(Transactions):
         atomic_json(folder / "hidden-value.json", {"key": HIDE, "name": guid, "value": hidden})
 
     def update_entry(self, guid, path, name, sort_order=48, icon=DEFAULT_ICON):
-        with LOCK:
+        with LOCK, self.journal.lock():
             self._guard()
             entry = self._editable(guid)
             guid = entry.guid
             old = self.journal.read()["entries"].get(guid)
-            record = self._record(guid, path, name, sort_order, icon, old)
+            record = self._record(guid, path, name, sort_order, icon, old, entry)
             if entry.kind == Kind.HANDMADE:
                 record["owned"] = False
-            self._transact(guid, self._plan(guid, record, old), record)
+            self._transact(guid, self._plan(guid, record, old), record, operation="edit")
             self.notify()
             return guid
 
     def remove_entry(self, guid):
-        with LOCK:
+        with LOCK, self.journal.lock():
             self._guard()
             entry = self._editable(guid)
             guid = entry.guid
@@ -139,11 +149,13 @@ class Operations(Transactions):
                      self._step("delete_value", key=HIDE, name=guid)]
             if old and old.get("junction"):
                 steps.append(self._step("junction_remove", path=old["junction"], target=old["resolved_target"]))
-            self._transact(guid, steps, None)
+            self._transact(guid, steps, None, operation="removal",
+                           entry={"name": entry.name, "target": entry.target,
+                                  "resolved_target": entry.resolved_target, "junction": entry.junction})
             self.notify()
 
     def set_show_all_folders(self, enabled):
-        with LOCK:
+        with LOCK, self.journal.lock():
             self._guard()
             data = self.journal.read()
             if "settings_before" not in data:
@@ -154,7 +166,7 @@ class Operations(Transactions):
             self.notify()
 
     def revert_show_all_folders(self):
-        with LOCK:
+        with LOCK, self.journal.lock():
             self._guard()
             data = self.journal.read()
             if "settings_before" not in data:

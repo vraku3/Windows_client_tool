@@ -56,13 +56,22 @@ class Transactions:
             step["missing_keys"] = missing
         elif action == "delete_tree":
             step["before"] = snapshot(self.registry, key)
+        elif action == "junction_remove":
+            step["existed"] = self._link_present(fields["path"])
         return canonical(step)
 
-    def _transact(self, guid, steps, record=None):
+    def _link_present(self, path):
+        try:
+            return self.links.target(path) is not None or os.path.lexists(path)
+        except FileNotFoundError:
+            return False
+
+    def _transact(self, guid, steps, record=None, operation="add", entry=None):
         data = self.journal.read()
         if guid in data["transactions"]:
             raise ValueError("Repair the incomplete operation before making another change.")
-        transaction = {"steps": steps, "before_record": data["entries"].get(guid), "record": record}
+        transaction = {"steps": steps, "before_record": data["entries"].get(guid), "record": record,
+                       "operation": operation, "entry": entry or record or data["entries"].get(guid)}
         data["transactions"][guid] = transaction
         if guid != "settings":
             data["entries"][guid] = dict(record or data["entries"].get(guid) or {}, incomplete=True)
@@ -146,7 +155,7 @@ class Transactions:
             raise ValueError(f"Unknown journal action: {action}")
 
     def repair(self, guid, finish=True):
-        with LOCK:
+        with LOCK, self.journal.lock():
             self._guard()
             data = self.journal.read()
             if guid not in data["transactions"]:
@@ -183,10 +192,11 @@ class Transactions:
             after = [step["value"], step["type"]] if action == "set" else None
             if current not in (before, after):
                 raise OSError("Registry value changed since the interrupted operation. Rollback refused.")
-            if before is None:
-                self.registry.delete_value(step["key"], step["name"])
-            else:
-                self.registry.write(step["key"], step["name"], *before)
+            if current != before:
+                if before is None:
+                    self.registry.delete_value(step["key"], step["name"])
+                else:
+                    self.registry.write(step["key"], step["name"], *before)
             for key in step.get("missing_keys", []):
                 allowed = (CLSID + "\\" + guid, NAMESPACE + "\\" + guid)
                 if not any(key == p or key.startswith(p + "\\") for p in allowed) and key not in (HIDE, ADVANCED):
@@ -195,10 +205,23 @@ class Transactions:
                 if tree == {"values": {}, "children": {}}:
                     self.registry.delete_tree(key)
         elif action == "delete_tree":
-            if not tree_subset(canonical(snapshot(self.registry, step["key"])), step["before"]):
+            current = canonical(snapshot(self.registry, step["key"]))
+            if current == step["before"]:
+                return
+            if not tree_subset(current, step["before"]):
                 raise OSError("Registry key changed since the operation. Rollback refused.")
             restore_tree(self.registry, step["key"], step["before"])
         elif action == "junction_create":
-            self.links.remove(step["path"], step["target"])
+            if self._link_present(step["path"]):
+                self._check_link(step)
+                self.links.remove(step["path"], step["target"])
         elif action == "junction_remove":
-            self.links.create(step["path"], step["target"])
+            if self._link_present(step["path"]):
+                self._check_link(step)
+            elif step.get("existed", False):
+                self.links.create(step["path"], step["target"])
+
+    def _check_link(self, step):
+        actual = self.links.target(step["path"])
+        if actual is None or junction.normal(actual) != junction.normal(step["target"]):
+            raise OSError("Junction changed outside this operation. Rollback refused.")

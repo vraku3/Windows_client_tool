@@ -3,9 +3,7 @@ import ctypes
 import json
 import os
 import subprocess
-import tempfile
 import uuid
-from pathlib import Path
 
 from core.shell_launch import desktop_account
 from core.system_paths import powershell_exe
@@ -42,54 +40,57 @@ def refresh_shell():
 
 def verify(entry):
     guid = "{" + str(uuid.UUID(entry.guid.strip("{}"))).upper() + "}"
-    # A script file avoids command-line quoting and console-codepage corruption.
-    script = """param([string]$Guid, [string]$ExpectedName, [string]$ExpectedPath, [string]$ResolvedPath)
+    # User input travels only through the child environment, never executable text.
+    script = """$Guid = $env:WCT_NP_GUID
+$ExpectedName = $env:WCT_NP_NAME
+$ExpectedPath = $env:WCT_NP_PATH
+$ResolvedPath = $env:WCT_NP_RESOLVED
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 try {
  $shell = New-Object -ComObject Shell.Application
- $all = @($shell.Namespace(0).Items())
- $byId = @($all | Where-Object { $_.Path -like ('*' + $Guid + '*') })
- $candidates = @(if ($byId.Count) { $byId } else {
-   $all | Where-Object { $_.Name -eq $ExpectedName -or $_.Path -eq $ExpectedPath -or $_.Path -eq $ResolvedPath }
- })
- if (-not $candidates.Count) { @{listed=$false} | ConvertTo-Json -Compress; exit 0 }
- $item = $candidates | Where-Object { $_.Path -eq $ExpectedPath -or $_.Path -eq $ResolvedPath } | Select-Object -First 1
- if ($null -eq $item) { $item = $candidates | Select-Object -First 1 }
- $folder = $item.GetFolder
- $paths = @($item.Path, $folder.Self.Path, $item.ExtendedProperty('System.Link.TargetParsingPath'))
- $path = $paths | Where-Object { $_ -and [System.IO.Directory]::Exists($_) } | Select-Object -First 1
- @{listed=$true; name=$item.Name; path=$path} | ConvertTo-Json -Compress
+ $own = $shell.Namespace('::' + $Guid)
+ if ($null -eq $own) { @{registered=$false} | ConvertTo-Json -Compress; exit 0 }
+ $name = $own.Self.Name
+ $path = $own.Self.Path
+ $desks = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory')) | Where-Object { $_ }
+ $listed = @($shell.Namespace(0).Items() | Where-Object { $_.Name -eq $name -and $_.Path -eq $path -and ($desks -notcontains [System.IO.Path]::GetDirectoryName($_.Path)) }).Count -gt 0
+ @{registered=$true; listed=$listed; name=$name; path=$path} | ConvertTo-Json -Compress
 } catch { Write-Error $_; exit 1 }
+
 """
-    filename = None
+    environment = dict(os.environ, WCT_NP_GUID=guid, WCT_NP_NAME=entry.name,
+                       WCT_NP_PATH=entry.target, WCT_NP_RESOLVED=entry.resolved_target)
     try:
-        with tempfile.NamedTemporaryFile(suffix=".ps1", mode="w", encoding="utf-8-sig", delete=False) as stream:
-            stream.write(script)
-            filename = stream.name
-        result = subprocess.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", filename, guid,
-                                 entry.name, entry.target, entry.resolved_target],
-                                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
+        result = subprocess.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"],
+                                input=script, env=environment, capture_output=True, encoding="utf-8", errors="replace", timeout=30,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             return VerifyResult(Verification.COULD_NOT_CHECK, result.stderr.strip() or "Shell query failed.")
         return verdict(entry, json.loads(result.stdout.lstrip("\ufeff")))
     except (OSError, ValueError, subprocess.TimeoutExpired) as error:
         return VerifyResult(Verification.COULD_NOT_CHECK, str(error))
-    finally:
-        if filename:
-            Path(filename).unlink(missing_ok=True)
 
 
 def verdict(entry, data):
-    if not data.get("listed"):
-        return VerifyResult(Verification.NOT_LISTED, "Not listed in a fresh shell process. Reopen Explorer; sign-out may be needed.")
+    # Identity comes from opening the object by its CLSID (Shell.Namespace('::{GUID}')).
+    # A Desktop item's Path is the TARGET folder, never the GUID (measured 2026-10-23 on
+    # "Aplicații"), so matching items by GUID can never succeed and matching by name/path
+    # alone can be fooled by an ordinary folder or another entry with the same name.
+    if not data.get("registered"):
+        return VerifyResult(Verification.NOT_LISTED,
+                            f"A fresh shell process has no object {entry.guid}. Reopen Explorer; sign-out may be needed.")
     if data.get("name") != entry.name:
         return VerifyResult(Verification.WRONG_NAME, f"Shell returned name: {data.get('name')!r}")
     path = data.get("path", "")
     if not path or normal(path) != normal(entry.resolved_target or entry.target):
         return VerifyResult(Verification.COULD_NOT_CHECK, f"Name matched, but shell target could not be confirmed: {path}")
-    return VerifyResult(Verification.VERIFIED, "Fresh shell process confirmed the name and folder path.")
+    if not data.get("listed"):
+        return VerifyResult(Verification.NOT_LISTED,
+                            "The shell object is registered with the right name and folder, but the Desktop tree does not "
+                            "show it yet. Reopen Explorer; sign-out may be needed.")
+    return VerifyResult(Verification.VERIFIED,
+                        "Fresh shell process opened the object by its GUID (right name and folder) and the Desktop tree lists it.")
 
 
 def restart_explorer():

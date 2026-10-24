@@ -2,6 +2,11 @@
 import json
 import os
 import tempfile
+import errno
+import msvcrt
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 
@@ -24,6 +29,37 @@ class Journal:
     def __init__(self, directory=None):
         self.directory = Path(directory) if directory else Path(os.environ["APPDATA"]) / "WindowsTweaker" / "nav_pane"
         self.path = self.directory / "journal.json"
+        self._local = threading.local()
+
+    @contextmanager
+    def lock(self, timeout=2):
+        """Hold one per-user OS lock across the entire read/plan/write/repair."""
+        if getattr(self._local, "locked", False):
+            yield
+            return
+        self.directory.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(self.directory / "journal.lock", os.O_CREAT | os.O_RDWR)
+        # Windows byte-range locks may extend past EOF; no shared-file write is needed.
+        with os.fdopen(descriptor, "r+b") as stream:
+            deadline = time.monotonic() + timeout
+            while True:
+                stream.seek(0)
+                try:
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as error:
+                    if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        raise
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("Another WinClientTool window is changing navigation entries; try again shortly.") from error
+                    time.sleep(0.05)
+            self._local.locked = True
+            try:
+                yield
+            finally:
+                self._local.locked = False
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
 
     def read(self):
         try:

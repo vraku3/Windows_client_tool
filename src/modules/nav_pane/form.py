@@ -1,7 +1,7 @@
 """Editor construction separated from worker/controller logic."""
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+                             QLabel, QLineEdit, QPushButton, QDoubleSpinBox, QVBoxLayout, QWidget)
 from core.table_ui import set_role
 from .engine.model import DEFAULT_ICON
 from .widgets import Preview
@@ -33,6 +33,11 @@ def build_form(pane):
     row.addWidget(pane.path, 1)
     button("Browse…", "Choose an existing folder on this computer.", pane.browse, row)
     fields.addRow("Folder", row)
+    pane.target_info = QLabel("")
+    pane.target_info.setTextFormat(Qt.TextFormat.PlainText)
+    pane.target_info.setWordWrap(True)
+    pane.target_info.setToolTip("The registered Target and the folder it resolves to; existing user junctions are kept when renaming.")
+    fields.addRow("Current entry", pane.target_info)
     pane.common = QComboBox()
     pane.common.addItem("Pick a common folder…", "")
     pane.common.setToolTip("Choose a Windows known folder, your user profile, or a detected OneDrive root.")
@@ -50,8 +55,9 @@ def build_form(pane):
         pane.position.addItem(name, value)
     pane.position.setCurrentIndex(1)
     pane.position.setToolTip("Smaller position numbers appear higher. Home is 64, Gallery 65 and OneDrive 66.")
-    pane.custom = QSpinBox()
-    pane.custom.setRange(0, 2147483647)
+    pane.custom = QDoubleSpinBox()
+    pane.custom.setDecimals(0)
+    pane.custom.setRange(0, 0xFFFFFFFF)
     pane.custom.setValue(48)
     pane.custom.setEnabled(False)
     pane.custom.setToolTip("A custom SortOrderIndex. Smaller numbers appear higher in the navigation pane.")

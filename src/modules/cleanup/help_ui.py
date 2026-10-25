@@ -1,7 +1,7 @@
 """Apply the module's curated explanations without replacing existing help."""
 from PyQt6.QtWidgets import (QAbstractButton, QComboBox, QLabel, QLineEdit, QMenu, QTableWidget,
                              QTabWidget, QToolBar, QTreeWidget, QWidget)
-from ui.module_intro import module_intro
+from ui.module_intro import add_module_intro
 
 
 def explain(root, controls, headers, fields=None):
@@ -66,10 +66,7 @@ def explain(root, controls, headers, fields=None):
 
 
 def intro(page, text):
-    """Insert the themed introduction first in an existing vertical pane."""
-    layout = page.layout()
-    if layout is not None and hasattr(layout, 'insertWidget'):
-        layout.insertWidget(0, module_intro(text))
+    add_module_intro(page, text)
 
 
 def explain_panes(root, controls, headers, fields, panes):

@@ -1,15 +1,15 @@
 """File Forensics: streamed metadata search followed by one process/handle snapshot."""
-import csv
 import fnmatch
 import os
 from dataclasses import replace
+from datetime import datetime
 from typing import List, Optional
-from PyQt6.QtCore import QObject, pyqtSignal, Qt
+from PyQt6.QtCore import QObject, pyqtSignal, Qt, QTimer
 from PyQt6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget,
-    QVBoxLayout, QWidget)
+    QVBoxLayout, QWidget, QDialog)
 from core.base_module import BaseModule
-from core.events import NOTIFY_BALLOON, BalloonNotifyData
+from core.events import NOTIFY_BALLOON, BalloonNotifyData, NAV_REQUEST_MODULE, NavRequestData
 from core.module_groups import ModuleGroup
 from core.procengine.actions import end_process
 from core.procengine.signatures import COULD_NOT_VERIFY, INVALID, NOT_SIGNED, VALID
@@ -23,9 +23,12 @@ from . import history_log
 from .engine.analysis import FileAnalysis, analyze
 from .engine.creator_heuristic import find_creator_candidates
 from .engine.bulk_locks import bulk_locks
-from .engine.search import search_batches, RESULT_LIMIT
+from .engine.search import search_batches, RESULT_LIMIT, SearchFilters
 from .engine.selected_details import inspect_selected
 from .engine.folder_watcher import FolderWatcher
+from .engine.process_choices import resolve_choices
+from .engine.export_csv import export_csv
+from .process_chooser import ProcessChooser
 from .results_model import matches_filter, signature_text
 from .search_view import SearchView, FILTERS
 
@@ -35,6 +38,7 @@ _SIGNATURE_LABELS = {VALID: 'Signed', NOT_SIGNED: 'Unsigned', INVALID: 'INVALID'
 class _WatchBridge(QObject):
     detection_ready = pyqtSignal(object, str)
     search_event = pyqtSignal(object, object)
+    events_lost = pyqtSignal(str)
 
 
 class FileForensicsModule(SearchView, BaseModule):
@@ -58,6 +62,8 @@ class FileForensicsModule(SearchView, BaseModule):
         self._search_worker = None
         self._current_results = []
         self._last_batch = None
+        self._search_context = {}
+        self._search_filters = SearchFilters()
         self._detail_cache = {}
         self._detail_busy = set()
         self._watch_patterns = ()
@@ -65,6 +71,7 @@ class FileForensicsModule(SearchView, BaseModule):
         self._watch_bridge = _WatchBridge()
         self._watch_bridge.detection_ready.connect(self._on_watch_detection_ready)
         self._watch_bridge.search_event.connect(self._on_search_event)
+        self._watch_bridge.events_lost.connect(self._on_watch_events_lost)
 
     def on_start(self, app):
         self.app = app
@@ -172,6 +179,12 @@ class FileForensicsModule(SearchView, BaseModule):
         self._detail_busy.clear()
         self._cancelled_details.clear()
         self._search_folder = folder
+        self._search_filters = SearchFilters(self._extensions_edit.text().strip(),
+            self._created_days.value(), self._modified_days.value(), self._min_size.value() * 1024)
+        self._search_context = {'root': folder, 'name filter': name_filter,
+            'filters': self._search_filters.summary(), 'recursion': self._recurse_cb.isChecked(),
+            'start time': datetime.now().astimezone().isoformat(timespec='seconds'),
+            'end time': 'Not finished yet', 'outcome': 'searching'}
         self._last_batch = None
         self._last_skip_count = 0
         self._detail_cache.clear()
@@ -182,7 +195,7 @@ class FileForensicsModule(SearchView, BaseModule):
         self._on_row_selected()
         self._search_btn.setText('Stop')
         self._progress_label.setText('Scanning folders…')
-        worker = Worker(self._run_search, folder, name_filter, self._recurse_cb.isChecked())
+        worker = Worker(self._run_search, folder, name_filter, self._recurse_cb.isChecked(), self._search_filters)
         self._search_worker = worker
         worker.signals.result.connect(lambda result, w=worker: self._search_done(w, result))
         worker.signals.error.connect(lambda error, w=worker: self._search_failed(w, error))
@@ -190,10 +203,10 @@ class FileForensicsModule(SearchView, BaseModule):
         self._workers.append(worker)
         self.thread_pool.start(worker)
 
-    def _analyze_folder(self, folder, name_filter, recurse, worker=None):
+    def _analyze_folder(self, folder, name_filter, recurse, worker=None, filters=None):
         rows = []
         cancelled = (lambda: worker.is_cancelled) if worker else (lambda: False)
-        for batch in search_batches(folder, name_filter, recurse, cancelled=cancelled):
+        for batch in search_batches(folder, name_filter, recurse, cancelled=cancelled, filters=filters):
             rows.extend(batch.rows)
             if worker:
                 self._watch_bridge.search_event.emit(worker, ('batch', batch))
@@ -218,8 +231,8 @@ class FileForensicsModule(SearchView, BaseModule):
                 self._watch_bridge.search_event.emit(worker, ('enriched', tuple(enriched)))
         return rows
 
-    def _run_search(self, worker, folder, name_filter, recurse):
-        return self._analyze_folder(folder, name_filter, recurse, worker=worker)
+    def _run_search(self, worker, folder, name_filter, recurse, filters=None):
+        return self._analyze_folder(folder, name_filter, recurse, worker=worker, filters=filters)
 
     def _on_search_event(self, worker, event):
         if worker is not self._search_worker or not _widget_valid(self._widget):
@@ -231,7 +244,7 @@ class FileForensicsModule(SearchView, BaseModule):
             self._model.append(payload.rows)
             self._current_results = self._model.rows
             self._results_stack.setCurrentIndex(0 if self._current_results else 1)
-            self._progress_label.setText(f'Scanned {payload.folders:,} folders, {payload.files:,} files, {payload.matches:,} matches; {payload.skipped:,} skipped')
+            self._progress_label.setText(f'Scanned {payload.folders:,} folders, {payload.files:,} files, {payload.matches:,} matches; {payload.skipped:,} skipped; {self._search_filters.summary()}')
         elif kind == 'phase':
             self._progress_label.setText(self._progress_label.text() + ' — checking open handles once…')
         elif kind == 'enriched':
@@ -281,6 +294,7 @@ class FileForensicsModule(SearchView, BaseModule):
 
     def _finish_search(self, outcome):
         self._search_worker = None
+        self._search_context.update({'end time': datetime.now().astimezone().isoformat(timespec='seconds'), 'outcome': outcome})
         if not _widget_valid(self._search_btn):
             return
         self._search_btn.setText('Search')
@@ -289,7 +303,7 @@ class FileForensicsModule(SearchView, BaseModule):
         progress = f'{lead} - {len(self._current_results):,} matches so far; {self._last_skip_count:,} skipped'
         if self._last_batch:
             progress += f'; scanned {self._last_batch.folders:,} folders, {self._last_batch.files:,} files'
-        self._progress_label.setText(progress)
+        self._progress_label.setText(progress + '; ' + self._search_filters.summary())
         messages = []
         if outcome == 'truncated':
             self._info_banner.setText(f'Showing the first {RESULT_LIMIT:,} matches -- narrow the folder or add a name filter.')
@@ -303,7 +317,7 @@ class FileForensicsModule(SearchView, BaseModule):
             self._error_banner.set_error(' '.join(messages))
         self._on_row_selected()
         try:
-            history_log.record({'path': self._search_folder, 'outcome': outcome,
+            history_log.record({**self._search_context, 'path': self._search_folder, 'outcome': outcome,
                                 'matches': len(self._current_results), 'skipped': self._last_skip_count})
             self._refresh_history()
         except OSError as error:
@@ -480,45 +494,75 @@ class FileForensicsModule(SearchView, BaseModule):
         analysis = self._selected_analysis()
         if not analysis or not analysis.locking_processes:
             return
-        proc = analysis.locking_processes[0]
-        import psutil
-        try:
-            # A PID alone is not an identity: Windows can hand it to another
-            # program while this dialog is open. Checked again before ending.
-            created = psutil.Process(proc.pid).create_time()
-        except psutil.Error:
-            created = None
+        generation = (self._search_generation, self._detail_generation)
+        worker = Worker(lambda w: resolve_choices(analysis.locking_processes, lambda: w.is_cancelled))
+        worker.signals.result.connect(lambda choices: self._choose_holder(analysis, choices, generation))
+        worker.signals.error.connect(lambda error: self._error_banner.set_error(f'Could not inspect locking processes: {error}')
+                                     if self._details_current(generation) else None)
+        self._workers.append(worker)
+        self.thread_pool.start(worker)
+
+    def _process_explorer(self):
+        registry = getattr(self.app, 'module_registry', None)
+        disabled = registry.disabled_modules if registry else ()
+        return next((m for m in registry.modules if m.name == 'Process Explorer'
+                     and m not in disabled and callable(getattr(m, '_select_pid', None))), None) if registry else None
+
+    def _open_process(self, pid):
+        module = self._process_explorer()
+        if module is None:
+            return
+        self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData('Process Explorer'))
+        self._select_explorer_pid(module, pid, 20)
+
+    def _select_explorer_pid(self, module, pid, remaining):
+        model = getattr(module, '_model', None)
+        snapshot = getattr(model, '_snapshot', {})
+        if snapshot.get(pid) is not None:
+            module._select_pid(pid)
+        elif remaining:
+            QTimer.singleShot(250, lambda: self._select_explorer_pid(module, pid, remaining - 1))
+        else:
+            self._error_banner.set_error(f'Process Explorer could not find PID {pid}; it may have exited.')
+
+    def _choose_holder(self, analysis, choices, generation):
+        if not self._details_current(generation):
+            return
+        dialog = ProcessChooser(self._widget, analysis.metadata.path, choices,
+                                self._open_process if self._process_explorer() else None)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        choice = dialog.selected()
+        if choice is not None and self._details_current(generation):
+            self._confirm_end_holder(choice)
+
+    def _confirm_end_holder(self, choice):
+        if choice.reason or choice.created is None:
+            return
         reply = QMessageBox.question(
             self._widget, "Kill Locking Process",
-            f"Kill '{proc.process}' (PID {proc.pid})?\n\n"
+            f"Kill '{choice.name}' (PID {choice.pid})?\n\n"
             "This ends the process immediately. Unsaved work may be lost. It cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.StandardButton.Yes:
-            # An identity that could not be read is not a match: nothing is
-            # ended unless this is provably the process named in the dialog.
-            try:
-                same = (created is not None
-                        and abs(psutil.Process(proc.pid).create_time() - created) < 0.5)
-            except psutil.Error:
-                same = False
-            if not same:
-                self._pending_banner_message = (f"'{proc.process}' (PID {proc.pid}) has exited or "
-                                                "could not be identified -- nothing was ended.")
-                self._on_search_clicked()
-                return
-            result = end_process(proc.pid)
-            # The refresh now runs on a Worker (search is no longer
-            # synchronous), so there is no "call refresh, then overwrite its
-            # banner" ordering to rely on -- the refresh's own result can
-            # land after this method has already returned. Stash the
-            # failure and let _on_search_result apply it once the refresh
-            # actually completes, instead of a plain clear silently
-            # overwriting it.
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        import psutil
+        try:
+            same = abs(psutil.Process(choice.pid).create_time() - choice.created) < 0.01
+        except psutil.Error as error:
+            import logging
+            logging.getLogger(__name__).warning('Could not recheck holder identity: %s', error)
+            same = False
+        if not same:
+            self._pending_banner_message = (f"'{choice.name}' (PID {choice.pid}) has exited or "
+                                            "could not be identified -- nothing was ended.")
+        else:
+            result = end_process(choice.pid, create_time=choice.created)
             if not result.ok:
                 self._pending_banner_message = result.message
-            self._on_search_clicked()
+        self._on_search_clicked()
 
     def _on_reveal_clicked(self) -> None:
         analysis = self._selected_analysis()
@@ -537,20 +581,15 @@ class FileForensicsModule(SearchView, BaseModule):
             self._widget, "Export Results", "file_forensics_export.csv", "CSV Files (*.csv)")
         if not path:
             return
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Path", "Size", "Created", "Owner", "Locked By",
-                              "Likely Creator", "File Signature", "Modified", "Creator signed", "Lock inspection"])
-            for analysis in self._current_results:
-                meta = analysis.metadata
-                locked = ", ".join(p.process for p in analysis.locking_processes)
-                creator = (analysis.creator_candidates[0].name
-                          if analysis.creator_candidates else "")
-                sig = analysis.own_signature
-                sig_text = _SIGNATURE_LABELS.get(sig.status, "") if sig else ""
-                writer.writerow([meta.path, meta.size, meta.created, meta.owner,
-                                 locked, creator, sig_text, meta.modified, signature_text(analysis.top_creator_signature),
-                                 analysis.locking_summary])
+        try:
+            context = dict(self._search_context)
+            context['matched'] = len(self._current_results)
+            batch = self._last_batch
+            context['skipped links'] = batch.skipped_links if batch else 'Not checked yet'
+            context['skipped unreadable'] = batch.unreadable if batch else 'Not checked yet'
+            export_csv(path, self._current_results, context, self._detail_cache)
+        except OSError as error:
+            self._error_banner.set_error(f'CSV could not be saved: {error}')
 
     def _refresh_history(self) -> None:
         entries = history_log.recent(limit=50)
@@ -587,7 +626,9 @@ class FileForensicsModule(SearchView, BaseModule):
             self._history_table.setItem(row, 0, QTableWidgetItem(entry.get("path", "")))
             self._history_table.setItem(row, 1, QTableWidgetItem(entry.get("creator", "")))
             self._history_table.setItem(row, 2, QTableWidgetItem(entry.get("at", "")))
-            self._history_table.setItem(row, 3, QTableWidgetItem(entry.get("outcome", "Live detection")))
+            outcome = QTableWidgetItem(entry.get("outcome", "Live detection"))
+            outcome.setToolTip(entry.get('filters', 'No search filters recorded'))
+            self._history_table.setItem(row, 3, outcome)
         self._history_table.setSortingEnabled(True)
 
     def _ignore_patterns(self) -> List[str]:
@@ -607,6 +648,7 @@ class FileForensicsModule(SearchView, BaseModule):
             self._watcher = FolderWatcher(
                 folder, on_created=self._on_watched_file_created,
                 recursive=self._recurse_cb.isChecked(),
+                on_lost=self._watch_bridge.events_lost.emit,
             )
             self._watch_worker = Worker(self._watcher.run)
             self._watch_worker.signals.error.connect(self._on_watch_error)
@@ -614,6 +656,12 @@ class FileForensicsModule(SearchView, BaseModule):
             self.thread_pool.start(self._watch_worker)
         else:
             self._stop_watch()
+
+    def _on_watch_events_lost(self, message):
+        if _widget_valid(getattr(self, '_watch_feed', None)):
+            self._watch_feed.insertItem(0, message)
+            if self._watch_feed.count() > RESULT_LIMIT:
+                self._watch_feed.takeItem(self._watch_feed.count() - 1)
 
     def _on_watch_error(self, message: str) -> None:
         """`FolderWatcher.run()` raised -- e.g. `CreateFile` failing on an

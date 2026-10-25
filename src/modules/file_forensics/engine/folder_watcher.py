@@ -9,6 +9,7 @@ touches. `stop()` sets a real Win32 event this class also waits on, the
 same class of fix this session already applied to DISM and winget calls
 that could not be cancelled mid-operation.
 """
+import logging
 import os
 from typing import Callable
 
@@ -19,14 +20,18 @@ import win32file
 
 FILE_LIST_DIRECTORY = 0x0001
 _BUFFER_SIZE = 64 * 1024
+EVENTS_LOST = ('Some file events were lost (the folder changed faster than Windows could report); '
+               'run a Search to catch up')
+logger = logging.getLogger(__name__)
 
 
 class FolderWatcher:
     def __init__(self, path: str, on_created: Callable[[str], None],
-                recursive: bool = False):
+                recursive: bool = False, on_lost: Callable[[str], None] | None = None):
         self._path = path
         self._on_created = on_created
         self._recursive = recursive
+        self._on_lost = on_lost
         self._stop_event = win32event.CreateEvent(None, True, False, None)
 
     def run(self, worker) -> None:
@@ -59,21 +64,35 @@ class FolderWatcher:
         buf = win32file.AllocateReadBuffer(_BUFFER_SIZE)
         try:
             while not worker.is_cancelled:
-                win32file.ReadDirectoryChangesW(
-                    handle, buf, self._recursive,
-                    win32con.FILE_NOTIFY_CHANGE_FILE_NAME,
-                    overlapped,
-                )
-                rc = win32event.WaitForMultipleObjects(
-                    [overlapped.hEvent, self._stop_event], False, win32event.INFINITE)
-                if rc == win32event.WAIT_OBJECT_0 + 1:
-                    break  # stop() was called
-                nbytes = win32file.GetOverlappedResult(handle, overlapped, False)
+                try:
+                    win32file.ReadDirectoryChangesW(
+                        handle, buf, self._recursive,
+                        win32con.FILE_NOTIFY_CHANGE_FILE_NAME,
+                        overlapped,
+                    )
+                    rc = win32event.WaitForMultipleObjects(
+                        [overlapped.hEvent, self._stop_event], False, win32event.INFINITE)
+                    if rc == win32event.WAIT_OBJECT_0 + 1:
+                        break  # stop() was called
+                    nbytes = win32file.GetOverlappedResult(handle, overlapped, False)
+                except pywintypes.error as error:
+                    if error.winerror != 1022:  # ERROR_NOTIFY_ENUM_DIR: recover with a new read
+                        raise
+                    self._report_loss()
+                    continue
+                if not nbytes:
+                    self._report_loss()
+                    continue
                 for action, filename in win32file.FILE_NOTIFY_INFORMATION(buf, nbytes):
-                    if action == 1:  # FILE_ACTION_ADDED
+                    if action in (1, 5):  # FILE_ACTION_ADDED / FILE_ACTION_RENAMED_NEW_NAME
                         self._on_created(os.path.join(self._path, filename))
         finally:
             win32file.CloseHandle(handle)
+
+    def _report_loss(self):
+        logger.warning(EVENTS_LOST)
+        if self._on_lost is not None:
+            self._on_lost(EVENTS_LOST)
 
     def stop(self) -> None:
         """Thread-safe -- call from the UI thread while run() is blocking

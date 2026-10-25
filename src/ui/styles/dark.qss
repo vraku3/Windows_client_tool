@@ -604,3 +604,23 @@ QLabel#emptyState {
     font-size: 13px;
     padding: 24px;
 }
+
+/* Shared glance, intro, filter and state components. */
+QFrame#glanceTile { background: #2b2b2b; border: 1px solid #5a5a5a; border-radius: 8px; }
+QFrame#glanceTile:focus { border: 2px solid #0078d4; }
+QFrame#glanceTile QLabel { background: transparent; }
+QLabel#glanceValue { font-size: 26px; font-weight: bold; color: #e0e0e0; }
+QLabel#glanceCaption { font-size: 11px; color: #949494; }
+QToolButton#introToggle { padding: 3px 8px; border: none; color: #e0e0e0; }
+QToolButton#introToggle:checked { font-weight: bold; }
+QLabel#introDetails { color: #949494; padding: 4px 0; }
+QPushButton#chip, QPushButton#filterChip { background: #2b2b2b; color: #e0e0e0; border: 1px solid #5a5a5a; border-radius: 14px; padding: 5px 12px; }
+QPushButton#chip[zero="true"], QPushButton#filterChip[zero="true"] { color: #949494; }
+QPushButton#chip:checked, QPushButton#filterChip:checked { background: #0078d4; color: #ffffff; border-color: #0078d4; font-weight: bold; }
+QPushButton#chip:focus, QPushButton#filterChip:focus { border: 2px solid #0078d4; }
+QLabel#emptyGlyph { font-size: 34px; }
+QLabel#emptyTitle { font-size: 16px; font-weight: bold; }
+QLabel#emptyHint { color: #949494; }
+QTableView[scanTable="true"] { alternate-background-color: #262626; }
+
+QLabel#introSummary { background: transparent; border: none; padding: 0; }

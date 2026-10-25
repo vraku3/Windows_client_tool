@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QAbstractButton, QAbstractItemView, QAbstractSpinBox, QComboBox, QLabel,
     QLineEdit, QMenu, QTabBar, QTabWidget, QTableWidget, QTreeWidget, QVBoxLayout, QWidget,
 )
-from ui.module_intro import module_intro
+from ui.module_intro import add_module_intro
 
 
 COMMON = {
@@ -72,7 +72,7 @@ def explain(root, intro, controls=None, headers=None, tabs=None):
     """Add a themed introduction and missing descriptions from explicit maps."""
     controls, headers, tabs = controls or {}, headers or {}, tabs or {}
     if intro and root.layout() is not None:
-        root.layout().insertWidget(0, module_intro(intro))
+        add_module_intro(root, intro)
     widgets = [root, *root.findChildren(QWidget)]
     for widget in widgets:
         if isinstance(widget, (QAbstractButton, QComboBox, QAbstractSpinBox, QLineEdit)):
@@ -94,8 +94,7 @@ def _tabs(widget, tabs):
         if tip and not widget.tabToolTip(index):
             widget.setTabToolTip(index, tip)
             page = widget.widget(index)
-            if page.layout() is not None and not page.findChild(QLabel, "moduleIntro"):
-                page.layout().insertWidget(0, module_intro(tip))
+            add_module_intro(page, tip)
 
 
 def explain_menu(menu, controls):

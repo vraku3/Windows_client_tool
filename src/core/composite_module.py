@@ -202,7 +202,11 @@ class CompositeModule(BaseModule):
             self._current = first
             self._tabs.setCurrentIndex(first)
             self._ensure_built(first)
-        return self.wrap(self._tabs)
+        wrapped = self.wrap(self._tabs)
+        from ui.module_intro import add_module_intro
+        if wrapped is not self._tabs:
+            add_module_intro(wrapped, getattr(self, "description", "") or f"Choose a {self.name} tab to inspect its tools.")
+        return wrapped
 
     def wrap(self, tabs: QTabWidget) -> QWidget:
         """Return the widget the shell should show. Override to add chrome.

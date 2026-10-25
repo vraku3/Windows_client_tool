@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ui.module_intro import module_intro
+from ui.module_intro import module_intro, add_module_intro
 from ui.help.network_text import (
     APIPA, BAND, BUTTON_HELP, CARDS, CONTROL_HELP, DNS, FIX_HELP, HEADERS,
     HOSTS, INTRO, MTU, QUICK_HELP, READ_ONLY, RDP, SMB, WIFI, WINRM, CONTEXT_HEADERS,
@@ -50,17 +50,7 @@ def _button_help(button, context):
 
 
 def _page_intro(page, text):
-    if isinstance(page, QScrollArea):
-        page = page.widget()
-    if page is None or page.layout() is None:
-        return
-    layout = page.layout()
-    if isinstance(layout, QVBoxLayout) and not any(
-        isinstance(layout.itemAt(i).widget(), QLabel)
-        and layout.itemAt(i).widget().objectName() == "moduleIntro"
-        for i in range(layout.count())
-    ):
-        layout.insertWidget(0, module_intro(text))
+    add_module_intro(page, text)
 
 
 def _owned_widgets(root, cls):

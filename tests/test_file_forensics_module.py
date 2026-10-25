@@ -28,6 +28,23 @@ def module(qapp, monkeypatch, tmp_path):
     from modules.file_forensics import history_log
     monkeypatch.setattr(history_log, "_history_path", lambda: str(tmp_path / "history.json"))
     from modules.file_forensics.file_forensics_module import FileForensicsModule
+    from modules.file_forensics.process_chooser import ProcessChooser
+    from modules.file_forensics.engine.process_choices import ProcessChoice
+    from PyQt6.QtWidgets import QDialog
+    import psutil
+    def fake_choices(processes, cancelled):
+        choices = []
+        for proc in processes:
+            try:
+                created = psutil.Process(proc.pid).create_time()
+            except psutil.Error:
+                created = None
+            choices.append(ProcessChoice(proc.pid, proc.process, created, 'app.exe', 'user',
+                                         'start', 'Not checked yet', '' if created else 'could not be identified'))
+        return choices
+    monkeypatch.setattr('modules.file_forensics.file_forensics_module.resolve_choices', fake_choices)
+    monkeypatch.setattr(ProcessChooser, 'exec', lambda self: QDialog.DialogCode.Accepted)
+    monkeypatch.setattr(ProcessChooser, 'selected', lambda self: next((c for c in self.choices if not c.reason), None))
     m = FileForensicsModule()
     m.on_start(_FakeApp())
     m.create_widget()
@@ -200,6 +217,8 @@ def test_selecting_a_row_shows_its_detail(module, monkeypatch, qapp):
 
 
 def test_kill_locking_process_asks_for_confirmation(module, monkeypatch, qapp):
+    import psutil
+    monkeypatch.setattr(psutil, 'Process', lambda pid: type('_P', (), {'create_time': lambda self: 1.0})())
     from modules.file_forensics.engine.file_metadata import FileMetadata
     from modules.file_forensics.engine.analysis import FileAnalysis
     from modules.file_forensics.engine.locking_processes import LockingProcess
@@ -231,6 +250,7 @@ def test_kill_locking_process_asks_for_confirmation(module, monkeypatch, qapp):
                         lambda pid: killed.append(pid))
 
     module._on_kill_locking_clicked()
+    _settle(qapp)
     _settle(qapp)
 
     assert asked  # confirmation was shown
@@ -272,10 +292,11 @@ def test_kill_locking_process_reports_a_failed_kill(module, monkeypatch, qapp):
                         lambda *a, **k: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.end_process",
-        lambda pid: Result(False, "Notepad cannot be ended."),
+        lambda pid, **kwargs: Result(False, "Notepad cannot be ended."),
     )
 
     module._on_kill_locking_clicked()
+    _settle(qapp)
     _settle(qapp)
 
     # The refresh (_on_search_clicked, now a Worker) must not silently
@@ -291,7 +312,7 @@ def test_live_watch_toggle_starts_and_stops_a_watcher(module, monkeypatch):
     stopped = []
 
     class _FakeWatcher:
-        def __init__(self, path, on_created, recursive=False):
+        def __init__(self, path, on_created, recursive=False, on_lost=None):
             started.append(path)
             self.on_created = on_created
 
@@ -520,7 +541,7 @@ def test_watch_worker_failure_shows_banner_and_unchecks_box(module, monkeypatch,
     swallowed signals.error -- the checkbox must reflect that watching
     actually stopped, and the banner must say so."""
     class _FailingWatcher:
-        def __init__(self, path, on_created, recursive=False):
+        def __init__(self, path, on_created, recursive=False, on_lost=None):
             pass
 
         def run(self, worker):
@@ -546,7 +567,7 @@ def test_watch_worker_failure_shows_banner_and_unchecks_box(module, monkeypatch,
     started = []
 
     class _FakeWatcher:
-        def __init__(self, path, on_created, recursive=False):
+        def __init__(self, path, on_created, recursive=False, on_lost=None):
             started.append(path)
 
         def run(self, worker):
@@ -570,7 +591,7 @@ def test_deactivate_while_watching_unchecks_the_box(module, monkeypatch, qapp):
     stopped = []
 
     class _FakeWatcher:
-        def __init__(self, path, on_created, recursive=False):
+        def __init__(self, path, on_created, recursive=False, on_lost=None):
             pass
 
         def run(self, worker):
@@ -745,7 +766,7 @@ def test_kill_failure_survives_a_refresh_that_also_fails(module, monkeypatch, qa
                         lambda *a, **k: QMessageBox.StandardButton.Yes)
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.end_process",
-        lambda pid: Result(False, "Notepad cannot be ended."),
+        lambda pid, **kwargs: Result(False, "Notepad cannot be ended."),
     )
 
     # The re-search _on_kill_locking_clicked triggers must ALSO fail, to
@@ -756,6 +777,7 @@ def test_kill_failure_survives_a_refresh_that_also_fails(module, monkeypatch, qa
     monkeypatch.setattr(module, "_analyze_folder", _raise)
 
     module._on_kill_locking_clicked()
+    _settle(qapp)
     _settle(qapp)
 
     text = module._error_banner.text()
@@ -852,9 +874,10 @@ def test_an_unidentifiable_locking_process_is_not_killed(module, monkeypatch, qa
     monkeypatch.setattr(ffm, "end_process", lambda pid: ended.append(pid))
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
     proc = type("_L", (), {"pid": 4242, "process": "x.exe"})()
-    analysis = type("_A", (), {"locking_processes": [proc]})()
+    analysis = type("_A", (), {"locking_processes": [proc], "metadata": type("_M", (), {"path": "file"})()})()
     monkeypatch.setattr(module, "_selected_analysis", lambda: analysis)
     monkeypatch.setattr(module, "_on_search_clicked", lambda: None)
     module._on_kill_locking_clicked()
+    _settle(qapp)
     assert ended == []
-    assert "could not be identified" in module._pending_banner_message
+    assert module._pending_banner_message is None  # unidentifiable holder is disabled in chooser

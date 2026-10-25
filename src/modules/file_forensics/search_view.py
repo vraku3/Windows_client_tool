@@ -1,43 +1,22 @@
 """Compact search chrome and detail layout, using Cleanup's shared path and QSS conventions."""
 import os
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSplitter, QStackedWidget, QTableView, QTextBrowser,
     QVBoxLayout, QWidget, QListWidget, QAbstractItemView, QDialog, QDialogButtonBox,
-    QTableWidget, QTableWidgetItem, QHeaderView)
+    QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox)
 from core.table_ui import set_role
 from ui.empty_state import EmptyState
 from ui.elided_path import ElidedPathLabel
 from modules.cleanup.cleanup_scanner.known_folders import known_folder
 from .results_model import ResultsModel, ResultsFilter
-from modules.cleanup.components.kpi_tiles import KpiTile, KpiStrip
+from ui.glance import GlanceTile, GlanceStrip
 
 FILTERS = (('all', 'All'), ('locked', 'Locked'), ('unsigned', 'Unsigned creator'),
            ('executables', 'Executables'), ('hour', 'Last hour'), ('day', 'Last 24 h'))
 
 
-class _FilterTile(KpiTile):
-    """Cleanup's themed KPI card, activated by mouse or keyboard to filter rows."""
-    clicked = pyqtSignal()
-
-    def __init__(self, caption, tone, tooltip):
-        super().__init__(caption, tone, tooltip)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        for label in (self.caption, self.value, self.sub):
-            label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
-        super().mouseReleaseEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
-            self.clicked.emit()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
+_FilterTile = GlanceTile
 
 
 class SearchView:
@@ -95,8 +74,28 @@ class SearchView:
             bar.addWidget(widget, 0, col)
         for col, widget in enumerate((QLabel('Name'), self._filter_edit, self._recurse_cb, self._search_btn)):
             bar.addWidget(widget, 1, col)
+        self._add_search_filters(bar)
         bar.setColumnStretch(1, 1)
         return bar
+
+    def _add_search_filters(self, bar):
+        self._extensions_edit = QLineEdit()
+        self._extensions_edit.setPlaceholderText('exe,dll,ps1 (blank = all)')
+        self._extensions_edit.setToolTip('Comma-separated extensions, ignoring case. Applied during search before the 5,000 match limit.')
+        self._extensions_edit.returnPressed.connect(self._on_search_clicked)
+        bar.addWidget(QLabel('Extensions'), 2, 0)
+        bar.addWidget(self._extensions_edit, 2, 1, 1, 3)
+        for row, attr, label, maximum, tip in (
+                (3, '_created_days', 'Created within days', 36500, 'Keep files created within this many days; 0 means any creation time.'),
+                (4, '_modified_days', 'Modified within days', 36500, 'Keep files modified within this many days; 0 means any modification time.'),
+                (5, '_min_size', 'Minimum size (KiB)', 2147483647, 'Keep files at least this many KiB (1,024 bytes); 0 means any size. Applied before the match limit.')):
+            control = QSpinBox()
+            control.setRange(0, maximum)
+            control.setSpecialValueText('Any')
+            control.setToolTip(tip)
+            setattr(self, attr, control)
+            bar.addWidget(QLabel(label), row, 0)
+            bar.addWidget(control, row, 1, 1, 3)
 
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(self._widget, 'Choose folder', self._folder_edit.text())
@@ -124,7 +123,7 @@ class SearchView:
             tile.clicked.connect(lambda k=key: self._filter_results('all' if k == 'size' else k))
             self._tiles[key] = (tile, label)
             cards.append(tile)
-        strip = KpiStrip(cards)
+        strip = GlanceStrip(cards)
         strip._place(3)  # Start compact; the strip reflows to the real width on resize.
         return strip
 
@@ -164,6 +163,7 @@ class SearchView:
         self._chips = {}
         for i, (key, label) in enumerate(FILTERS):
             button = QPushButton(f'{label} (0)')
+            button.setObjectName('filterChip')
             button.setCheckable(True)
             button.setChecked(key == 'all')
             button.setToolTip(f'Show {label.lower()} among this search’s results. Counts update while searching; signatures are checked on demand.')
@@ -209,7 +209,7 @@ class SearchView:
                     'Compute the selected file’s SHA-256 and query VirusTotal with the configured API key. No file is uploaded.'),
                    ('_reveal_btn', 'Reveal in Explorer', self._on_reveal_clicked, 'Open Explorer with the selected file highlighted.'),
                    ('_copy_btn', 'Copy path', self._on_copy_path_clicked, 'Copy the selected full path to the clipboard.'),
-                   ('_kill_btn', 'End locking process', self._on_kill_locking_clicked, 'Kill ends the first listed locking process immediately. Unsaved work may be lost. Confirmation and process identity checks are required.'),
+                   ('_kill_btn', 'End locking process', self._on_kill_locking_clicked, 'Choose one locking process to end immediately; protected processes cannot be selected. Unsaved work may be lost. Confirmation and process identity checks are required.'),
                    ('_export_btn', 'Export CSV', self._on_export_clicked, 'Save all search results as CSV, including rows hidden by filters.'))
         grid = QGridLayout()
         for i, (attr, label, handler, tip) in enumerate(buttons):

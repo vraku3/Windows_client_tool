@@ -3,7 +3,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QAbstractButton, QComboBox, QLabel, QLineEdit, QMenu,
                              QScrollArea, QTabBar, QTabWidget, QTableWidget,
                              QTreeWidget, QWidget)
-from ui.module_intro import module_intro
+from ui.module_intro import add_module_intro
 from ui.help import debloat_text as help_text
 
 
@@ -12,12 +12,7 @@ def key(text):
 
 
 def add_intro(root, text):
-    if isinstance(root, QScrollArea):
-        root = root.widget()
-    if root is not None and root.layout() is not None:
-        direct = root.findChildren(QLabel, options=Qt.FindChildOption.FindDirectChildrenOnly)
-        if not any(label.objectName() == 'moduleIntro' for label in direct):
-            root.layout().insertWidget(0, module_intro(text))
+    add_module_intro(root, text)
 
 
 def action_help(action, controls):

@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QWidget, QWidgetAction,
 )
 
-from ui.module_intro import module_intro
+from ui.module_intro import add_module_intro
 from ui.help.dashboard_text import CONTROLS, FILTERS, HEADERS, INTRO, TERMS
 
 
@@ -68,25 +68,8 @@ def explain_menu(menu):
 
 
 def _intro(root, pane):
-    layout = root.layout()
-    if layout is None or pane not in INTRO:
-        return
-    # Only this pane's label counts; a nested tab's introduction is separate.
-    if any(w.objectName() == "moduleIntro" for w in root.findChildren(
-            QLabel, options=Qt.FindChildOption.FindDirectChildrenOnly)):
-        return
-    label = module_intro(INTRO[pane], root)
-    if isinstance(layout, QVBoxLayout):
-        layout.insertWidget(0, label)
-    elif isinstance(layout, QGridLayout):
-        # Keep all existing grid positions and spans, shifting them one row.
-        items = []
-        while layout.count():
-            position = layout.getItemPosition(0)
-            items.append((layout.takeAt(0), position))
-        for item, (row, column, rows, columns) in items:
-            layout.addItem(item, row + 1, column, rows, columns)
-        layout.addWidget(label, 0, 0, 1, max(1, layout.columnCount()))
+    if pane in INTRO:
+        add_module_intro(root, INTRO[pane])
 
 
 def _combo_help(widget, pane):

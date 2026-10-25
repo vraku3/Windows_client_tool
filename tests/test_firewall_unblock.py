@@ -134,43 +134,29 @@ def test_a_sibling_folder_with_a_shared_prefix_is_not_matched():
 
 # ── the netsh command that gets built ───────────────────────────────────────
 
-def test_delete_is_narrowed_by_name_program_and_direction(monkeypatch):
-    """Rule names are not unique in Windows Firewall — deleting by name alone
-    would take same-named rules for other programs with it."""
-    captured = []
-    monkeypatch.setattr(fw, "_run_netsh", lambda args: (captured.append(args), (True, "Ok."))[1])
-
-    fw.netsh_delete_matching_rule(RULES[0])
-
-    assert captured == [[
-        "advfirewall", "firewall", "delete", "rule",
-        "name=Block vlc",
-        r"program=C:\Program Files\VideoLAN\VLC\vlc.exe",
-        "dir=out",
-    ]]
+def test_delete_resolves_one_id_and_verifies(monkeypatch):
+    rule = RULES[0]
+    monkeypatch.setattr(fw.fa, "read_registry_rules", lambda resolve: ([rule], [fw.fa.RuleExtra(rule_id="ID1")]))
+    monkeypatch.setattr(fw, "fetch_firewall_rules", lambda: [rule])
+    calls = []
+    monkeypatch.setattr(fw, "act_on_rule_by_id", lambda rid, key, enable: calls.append((rid, key, enable)) or (True, "", [], None))
+    assert fw.delete_matching_rule(rule) == (True, "")
+    assert calls == [("ID1", fw.fa.rule_key(rule), None)]
 
 
-def test_an_inbound_rule_gets_dir_in(monkeypatch):
-    captured = []
-    monkeypatch.setattr(fw, "_run_netsh", lambda args: (captured.append(args), (True, ""))[1])
-    fw.netsh_delete_matching_rule(RULES[1])
-    assert "dir=in" in captured[0]
+def test_ambiguous_unblock_never_deletes_by_name(monkeypatch):
+    rule = RULES[0]
+    monkeypatch.setattr(fw.fa, "read_registry_rules", lambda resolve: ([rule, rule], [fw.fa.RuleExtra(rule_id="A"), fw.fa.RuleExtra(rule_id="B")]))
+    monkeypatch.setattr(fw, "fetch_firewall_rules", lambda: [rule, rule])
+    monkeypatch.setattr(fw, "act_on_rule_by_id", lambda *a: pytest.fail("ambiguous ID"))
+    assert fw.delete_matching_rule(rule)[0] is False
 
-
-def test_a_program_less_rule_omits_the_program_filter(monkeypatch):
-    captured = []
-    monkeypatch.setattr(fw, "_run_netsh", lambda args: (captured.append(args), (True, ""))[1])
-    fw.netsh_delete_matching_rule(_rule("No program", "Any"))
-    assert not any(a.startswith("program=") for a in captured[0])
-
-
-# ── batch deletion ──────────────────────────────────────────────────────────
 
 def test_duplicate_profile_variants_are_deleted_once(monkeypatch):
     """One rule shown per profile is still one rule to netsh."""
     calls = []
     monkeypatch.setattr(
-        fw, "netsh_delete_matching_rule",
+        fw, "delete_matching_rule",
         lambda r: (calls.append(r.name), (True, ""))[1],
     )
     dupes = [
@@ -185,7 +171,7 @@ def test_one_failing_rule_does_not_abandon_the_rest(monkeypatch):
     def fake(rule):
         return (False, "Access denied") if rule.name == "Block updater" else (True, "")
 
-    monkeypatch.setattr(fw, "netsh_delete_matching_rule", fake)
+    monkeypatch.setattr(fw, "delete_matching_rule", fake)
     deleted, errors = fw.unblock_rules(
         [RULES[0], RULES[3], RULES[4]]
     )

@@ -1,3 +1,4 @@
+from core.system_paths import powershell_exe
 # src/modules/tweaks/app_catalog.py
 import json
 import logging
@@ -197,7 +198,7 @@ class AppCatalog:
         """Return set of installed AppX package family names via PowerShell."""
         try:
             result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
+                [powershell_exe(), "-NoProfile", "-Command",
                  "Get-AppxPackage | Select-Object -ExpandProperty Name"],
                 capture_output=True, text=True, timeout=20, check=False,
                 creationflags=subprocess.CREATE_NO_WINDOW,
@@ -323,7 +324,7 @@ class AppCatalog:
         a success.
         """
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
+            [powershell_exe(), "-NoProfile", "-Command",
              "Get-AppxPackage | Select-Object -ExpandProperty Name"],
             capture_output=True, text=True, check=False,
             creationflags=subprocess.CREATE_NO_WINDOW,
@@ -407,7 +408,7 @@ class AppCatalog:
         )
         try:
             result = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", script],
+                [powershell_exe(), "-NoProfile", "-Command", script],
                 capture_output=True, text=True, timeout=30, check=False,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
@@ -445,7 +446,7 @@ class AppCatalog:
         cmd = f"Get-AppxPackage '{ps_quote(package_name)}' | Remove-AppxPackage"
         started = time.monotonic()
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", cmd],
+            [powershell_exe(), "-NoProfile", "-Command", cmd],
             capture_output=True, text=True, check=False,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=120,

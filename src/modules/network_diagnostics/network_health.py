@@ -14,6 +14,7 @@ Rule: a read or probe that could not run is an ``unknown`` finding carrying the
 reason, never a pass and never a fail.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import concurrent.futures
 import ipaddress
@@ -160,7 +161,7 @@ def collect_snapshot() -> Dict[str, Any]:
     """Read configuration. ``errors`` lists what could not be read and why."""
     snap: Dict[str, Any] = {"errors": [], "taken": datetime.now().isoformat(timespec="seconds")}
     try:
-        r = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_SNAPSHOT], 60)
+        r = _run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", _PS_SNAPSHOT], 60)
         if r.returncode != 0 or not r.stdout.strip():
             raise RuntimeError((r.stderr or "no output").strip()[:200])
         snap.update(parse_snapshot_json(r.stdout))

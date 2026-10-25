@@ -20,6 +20,7 @@ logs and recently resolved DNS names. It never contains passwords, Wi-Fi
 keys, browser data or documents.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import ctypes
 import logging
@@ -80,7 +81,7 @@ class Bundle:
 
 
 def steps() -> List[Step]:
-    ps = ["powershell.exe", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-Command"]
+    ps = [powershell_exe(), "-NoProfile", "-NonInteractive", "-OutputFormat", "Text", "-Command"]
     out = [
         Step("System information", "systeminfo.txt", ["systeminfo"], timeout=180),
         Step("Network configuration", "ipconfig_all.txt", ["ipconfig", "/all"]),

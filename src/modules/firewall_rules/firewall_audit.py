@@ -26,7 +26,7 @@ _POLICY = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPo
 _PROTOCOLS = {"6": "TCP", "17": "UDP", "1": "ICMPv4", "58": "ICMPv6",
               "2": "IGMP", "41": "IPv6", "47": "GRE", "50": "ESP", "51": "AH"}
 ALL_PROFILES = "Domain,Private,Public"
-NO_UNIQUE_ID = "no unique ID -- acts by name"
+NO_UNIQUE_ID = "no unique ID -- changes unavailable"
 LOCAL_STORE = "local rule (registry)"
 
 SEV_HIGH, SEV_MEDIUM, SEV_LOW, SEV_INFO = "high", "medium", "low", "info"

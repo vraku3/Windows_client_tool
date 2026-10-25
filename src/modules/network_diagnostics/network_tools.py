@@ -1,3 +1,4 @@
+from core.system_paths import powershell_exe
 # src/modules/network_diagnostics/network_tools.py
 import socket
 import subprocess
@@ -389,7 +390,7 @@ def get_dns_servers() -> Dict[str, str]:
     in the log -- an unreadable DNS setting must not look like "no DNS"."""
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _DNS_PS],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", _DNS_PS],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             creationflags=CREATE_NO_WINDOW, timeout=15,
         )

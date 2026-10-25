@@ -1,6 +1,7 @@
 """Software Inventory pane: chips with live counts, search, computed findings,
 a detail panel, runtime/duplicate/end-of-life flags and exports.  The logic is
 in ``software_analysis`` and ``software_reader`` (Qt-free)."""
+from core.system_paths import cmd_exe
 
 from modules.software_inventory.help_widgets import (
     describe_control, describe_headers, describe_cell, explain_widget,
@@ -348,7 +349,7 @@ class _SoftwarePane(QWidget):
             return
         # The command comes from the program's own registry entry, not from
         # anything typed here (see CLAUDE.md on shell=True).
-        subprocess.Popen(e.uninstall_string, shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        subprocess.Popen(e.uninstall_string, shell=True, executable=cmd_exe(), creationflags=subprocess.CREATE_NO_WINDOW)
         self.status.setText(f"Uninstall launched for {e.name}. Press Refresh when it finishes; "
                             "the entry disappears if the removal succeeded.")
 

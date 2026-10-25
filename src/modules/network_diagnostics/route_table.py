@@ -5,6 +5,7 @@ its own findings; this is the fuller picture an admin actually wants when
 diagnosing "why is this going out the wrong interface" -- every route, and
 which MAC address the machine believes owns each neighbouring IP.
 """
+from core.system_paths import powershell_exe
 import json
 import logging
 import subprocess
@@ -63,7 +64,7 @@ class Neighbor:
 def _run_ps(script: str, timeout: int = 15) -> Optional[str]:
     try:
         done = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=timeout, creationflags=CREATE_NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as e:
         logger.warning("route/neighbor PowerShell call failed: %s", e)

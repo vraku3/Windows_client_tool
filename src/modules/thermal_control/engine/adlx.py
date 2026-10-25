@@ -24,6 +24,7 @@ discrete GPU's driver version, and only ONE copy is ever loaded per
 process. The curve then lives in the GPU's firmware: it keeps working when
 this app is closed, and the GPU's own thermal protection stays in charge.
 """
+from core.system_paths import powershell_exe
 import ctypes
 import glob
 import logging
@@ -380,7 +381,7 @@ def windows_gpus() -> List[Tuple[str, str, str]]:
            "n=$_.Name; v=$_.DriverVersion; d=$(if ($_.DriverDate) { $_.DriverDate.ToString('yyyy-MM-dd') } else { '' }) } } "
            "| ConvertTo-Json -Compress")
     try:
-        done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
+        done = subprocess.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", cmd],
                               capture_output=True, text=True, timeout=30,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         rows = json.loads(done.stdout or "[]")

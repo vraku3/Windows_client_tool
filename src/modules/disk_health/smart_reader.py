@@ -2,6 +2,7 @@
 
 Moved out of the pane unchanged so the health engine can reuse it.
 """
+from core.system_paths import powershell_exe
 import logging
 import subprocess
 from dataclasses import dataclass, field
@@ -122,7 +123,7 @@ _ATTR_NAMES = {
 def _query_disks() -> List[DiskInfo]:
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive",
+            [powershell_exe(), "-NoProfile", "-NonInteractive",
              "-ExecutionPolicy", "Bypass", "-Command", _PS_SCRIPT],
             capture_output=True, text=True, timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW,

@@ -12,6 +12,7 @@ ScanHealth/RestoreHealth. It belongs here rather than there because it
 answers the exact question this tab's own log is about, and it found real
 damage on this dev machine that nothing else in the app currently surfaces.
 """
+from core.system_paths import powershell_exe
 import logging
 
 import os
@@ -150,7 +151,7 @@ class DISMLogModule(LogReaderModule):
                 "ConvertTo-Json -Compress -Depth 2"
             )
             result = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", ps_script],
                 capture_output=True, text=True, timeout=30,
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )

@@ -4,6 +4,7 @@ Works on the plain dicts `services_module.get_services()` returns, plus a few
 readers of its own (failure events, recovery actions). A read that was refused
 is `None`, never an empty answer.
 """
+from core.system_paths import powershell_exe
 import logging
 import re
 import subprocess
@@ -102,7 +103,7 @@ def read_failure_counts(days: int = 30, timeout: int = 60) -> Optional[Dict[str,
         "@($e|%{[pscustomobject]@{Id=$_.Id;Message=$_.Message}})|ConvertTo-Json -Compress")
     try:
         done = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=timeout, creationflags=_NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("service failure history unreadable: %s", exc)

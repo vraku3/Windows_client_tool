@@ -2,9 +2,13 @@
 
 These run the actual Workers on the real global thread pool and pump the Qt
 event loop, so the queued-signal wiring is exercised rather than mocked out —
-that wiring is where the bugs live. Only netsh itself is faked.
+that wiring is where the bugs live. Windows reads and commands are faked;
+ID resolution and registry read-back run through the production code.
 """
 import pytest
+from contextlib import nullcontext
+from types import SimpleNamespace
+import winreg
 from PyQt6.QtCore import QThreadPool
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
@@ -66,24 +70,38 @@ def _pump(qapp, tries=60):
 
 @pytest.fixture
 def fake_firewall(monkeypatch):
-    """A live rule set that netsh 'deletes' from, so verification is real."""
-    state = {"rules": list(BLOCKED), "deleted": []}
+    """An ID-addressed registry/store, shared by commands and read-back."""
+    state = {"rules": list(BLOCKED), "deleted": [], "keep": False, "refuse": False}
+    ids = {id(rule): "rule-%d" % i for i, rule in enumerate(BLOCKED)}
 
     def fake_fetch():
         return list(state["rules"])
 
-    def fake_delete(rule):
-        state["deleted"].append((rule.name, rule.program, rule.direction))
-        before = len(state["rules"])
-        state["rules"] = [
-            r for r in state["rules"]
-            if not (r.name == rule.name and r.program == rule.program
-                    and r.direction == rule.direction)
-        ]
-        return (True, "Ok.") if len(state["rules"]) < before else (False, "No rules match")
+    def registry_rules(resolve=None):
+        rules = fake_fetch()
+        return rules, [fw.fa.RuleExtra(rule_id=ids[id(r)]) for r in rules]
+
+    def query_value(key, rule_id):
+        if any(ids[id(r)] == rule_id for r in state["rules"]):
+            return "v2.30|Active=TRUE|", winreg.REG_SZ
+        raise FileNotFoundError(rule_id)
+
+    def fake_run(args, **kwargs):
+        rule_id = kwargs["env"]["WCT_FW_RULE_ID"]
+        state["deleted"].append(rule_id)
+        if state["refuse"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="Access is denied.")
+        if not state["keep"]:
+            state["rules"] = [r for r in state["rules"] if ids[id(r)] != rule_id]
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(fw, "fetch_firewall_rules", fake_fetch)
-    monkeypatch.setattr(fw, "netsh_delete_matching_rule", fake_delete)
+    monkeypatch.setattr(fw.fa, "read_registry_rules", registry_rules)
+    monkeypatch.setattr(fw.fa, "take_snapshot", lambda: fw.fa.Snapshot(*registry_rules()))
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a: nullcontext(object()))
+    monkeypatch.setattr(winreg, "QueryValueEx", query_value)
+    monkeypatch.setattr(fw, "export_rule_by_id", lambda rid: "mock.reg")
+    monkeypatch.setattr(fw.subprocess, "run", fake_run)
     return state
 
 
@@ -117,9 +135,7 @@ def test_unblocking_a_program_removes_only_its_block_rules(
     pane._unblock_program()
     _pump(qapp)
 
-    assert sorted(n for n, _p, _d in fake_firewall["deleted"]) == [
-        "Block vlc", "Block vlc"
-    ]
+    assert sorted(fake_firewall["deleted"]) == ["rule-0", "rule-1"]
     remaining = {r.name for r in fake_firewall["rules"]}
     assert remaining == {"Allow vlc", "Block updater", "Block notepad"}
     assert dialogs["info"] and dialogs["info"][0][0] == "Unblocked"
@@ -211,13 +227,13 @@ def test_an_unrelated_folder_reports_nothing_to_unblock(
 def test_a_rule_that_survives_deletion_is_reported(
     pane, qapp, monkeypatch, dialogs, fake_firewall
 ):
-    """netsh can exit 0 and leave the rule in place; the pane re-reads the
+    """PowerShell can exit 0 and leave the rule in place; the pane re-reads the
     rules and must say so rather than claiming success."""
     monkeypatch.setattr(
         QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (VLC, ""))
     )
     monkeypatch.setattr(fw, "confirm_destructive", lambda *a, **k: True)
-    monkeypatch.setattr(fw, "netsh_delete_matching_rule", lambda r: (True, "Ok."))
+    fake_firewall["keep"] = True
 
     pane._unblock_program()
     _pump(qapp)
@@ -227,19 +243,18 @@ def test_a_rule_that_survives_deletion_is_reported(
     assert "2 block rule(s) remain" in pane._status_lbl.text()
 
 
-def test_a_netsh_error_is_surfaced_with_its_message(
+def test_a_powershell_refusal_is_surfaced_with_its_message(
     pane, qapp, monkeypatch, dialogs, fake_firewall
 ):
     monkeypatch.setattr(
         QFileDialog, "getOpenFileName", staticmethod(lambda *a, **k: (VLC, ""))
     )
     monkeypatch.setattr(fw, "confirm_destructive", lambda *a, **k: True)
-    monkeypatch.setattr(
-        fw, "netsh_delete_matching_rule", lambda r: (False, "Access is denied.")
-    )
+    fake_firewall["refuse"] = True
 
     pane._unblock_program()
     _pump(qapp)
 
     assert dialogs["warn"]
+    assert dialogs["info"] == []
     assert "Access is denied." in dialogs["warn"][0][1]

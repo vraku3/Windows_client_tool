@@ -1,3 +1,4 @@
+from core.system_paths import cmd_exe
 # src/core/backup_service.py
 import json
 import logging
@@ -615,7 +616,7 @@ class BackupService:
                 # not a failure — mark as reverted
             elif step_type == "script" and revert_cmd:
                 result = subprocess.run(
-                    revert_cmd, shell=True, check=False, capture_output=True, text=True,
+                    revert_cmd, shell=True, executable=cmd_exe(), check=False, capture_output=True, text=True,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                     # A revert command is the mirror of a tweak's `script`
                     # step, so it gets the same budget: long enough that a

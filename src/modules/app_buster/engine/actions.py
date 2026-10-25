@@ -26,6 +26,7 @@ drive root and outside the Windows directory, or is a package data folder
 named like a real package family.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe, cmd_exe
 
 import ctypes
 import logging
@@ -81,7 +82,7 @@ class Runner:
 
     def powershell(self, script: str, timeout: float = 180) -> Tuple[int, str, str]:
         try:
-            proc = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            proc = subprocess.run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
                                   capture_output=True, text=True, timeout=timeout,
                                   creationflags=subprocess.CREATE_NO_WINDOW)
         except subprocess.TimeoutExpired:
@@ -108,7 +109,7 @@ class Runner:
         # Registry-derived command from an Uninstall entry -- the same trust
         # level as the Software pane's Uninstall button (see CLAUDE.md,
         # shell=True discipline); never user-typed text.
-        proc = subprocess.Popen(command, shell=True)
+        proc = subprocess.Popen(command, shell=True, executable=cmd_exe())
         return wait_tree(proc.pid, lambda: proc.poll() is not None, cancelled, timeout) or (proc.returncode or 0)
 
     def installed_families(self) -> Optional[set]:
@@ -602,7 +603,7 @@ def remove_at_restart(rec: m.AppRecord, scope: str) -> Outcome:
     """Windows apps: a RunOnce entry removes the package when you next sign in
     (before the app can start). Leftover folders: delete at the next boot."""
     if rec.type == m.WINDOWS and rec.full_name:
-        command = ("powershell -NoProfile -WindowStyle Hidden -Command \"Remove-AppxPackage -Package "
+        command = (f"\"{powershell_exe()}\" -NoProfile -WindowStyle Hidden -Command \"Remove-AppxPackage -Package "
                    f"'{ps_quote(rec.full_name)}'\"")
         try:
             with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUNONCE, 0, winreg.KEY_SET_VALUE) as k:

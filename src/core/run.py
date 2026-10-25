@@ -22,6 +22,7 @@ Three rules this module exists to enforce:
   stay where they are; a new one should not be added casually.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import logging
 import subprocess
@@ -133,7 +134,7 @@ def run_ps(script: str, *, timeout: float = PS_DEFAULT_TIMEOUT) -> "subprocess.C
     `core.windows_utils.ps_quote` first.
     """
     return run(
-        ["powershell", "-NoProfile", "-NonInteractive",
+        [powershell_exe(), "-NoProfile", "-NonInteractive",
          "-ExecutionPolicy", "Bypass", "-Command", script],
         timeout=timeout,
     )

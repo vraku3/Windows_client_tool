@@ -1,4 +1,5 @@
 """Boot Performance Analyzer — measure and optimize Windows boot time."""
+from core.system_paths import powershell_exe
 import subprocess
 from typing import Optional
 
@@ -173,7 +174,7 @@ class BootAnalyzerModule(BaseModule):
             # Last boot time
             try:
                 result = subprocess.run(
-                    ["powershell", "-Command",
+                    [powershell_exe(), "-Command",
                      "(Get-CimInstance Win32_OperatingSystem).LastBootUpTime | Get-Date -Format 'yyyy-MM-dd HH:mm'"],
                     capture_output=True, text=True, timeout=10,
                     creationflags=subprocess.CREATE_NO_WINDOW,
@@ -198,7 +199,7 @@ class BootAnalyzerModule(BaseModule):
             # Current uptime
             try:
                 result = subprocess.run(
-                    ["powershell", "-Command",
+                    [powershell_exe(), "-Command",
                      "(Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime | Select-Object -ExpandProperty Days"],
                     capture_output=True, text=True, timeout=10,
                     creationflags=subprocess.CREATE_NO_WINDOW,

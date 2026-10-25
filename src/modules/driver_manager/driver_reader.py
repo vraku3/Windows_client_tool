@@ -1,3 +1,4 @@
+from core.system_paths import powershell_exe
 import datetime
 import json
 import re
@@ -268,7 +269,7 @@ def _fetch_drivers_for_class(cls: Optional[str], old_threshold_days: int) -> Lis
             f"Win32_PnPSignedDriver -Filter \"DeviceClass='{cls}'\" |")
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
             capture_output=True, text=True, errors="replace",
             creationflags=CREATE_NO_WINDOW, timeout=30,
         )
@@ -392,7 +393,7 @@ def fetch_drivers(old_threshold_days: int = 730) -> List[DriverInfo]:
 
     try:
         driverless_proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _PS_CMD_DRIVERLESS],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", _PS_CMD_DRIVERLESS],
             capture_output=True, text=True, errors="replace",
             creationflags=CREATE_NO_WINDOW, timeout=30,
         )
@@ -418,7 +419,7 @@ def list_restore_points() -> Optional[List[dict]]:
     no points exist yet". Never collapse the two."""
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
              _PS_CMD_RESTORE_POINTS],
             capture_output=True, text=True, errors="replace",
             creationflags=CREATE_NO_WINDOW, timeout=30,

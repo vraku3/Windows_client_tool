@@ -1,4 +1,5 @@
 """AppX/Microsoft Store App Manager — list and uninstall Store apps."""
+from core.system_paths import powershell_exe
 
 from ui.help.debloat_widgets import explain
 from . import help_text as help_info
@@ -1119,7 +1120,7 @@ class StoreAppsModule(BaseModule):
                 store_link = f"ms-windows-store://pdp/?PFN={ps_quote(pfn)}" if pfn else ""
                 backup.backup_appx_package(name, rp_id, store_link=store_link)
                 result = subprocess.run([
-                    "powershell", "-Command",
+                    powershell_exe(), "-Command",
                     f"Get-AppxPackage '{ps_quote(name)}' | Remove-AppxPackage -AllUsers"
                 ], capture_output=True, text=True, timeout=120,
                    creationflags=subprocess.CREATE_NO_WINDOW)

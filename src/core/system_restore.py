@@ -5,6 +5,7 @@ SQLite-backed tweak-revert log) — it creates an actual OS-level restore point.
 Synchronous; callers must run this inside a Worker/COMWorker, never on the
 Qt main thread.
 """
+from core.system_paths import powershell_exe
 import logging
 import subprocess
 from datetime import datetime
@@ -22,7 +23,7 @@ def create_restore_point(description: str, timeout: int = 60) -> Tuple[bool, str
     """
     try:
         subprocess.run(
-            ["powershell", "-NoProfile", "-Command", "Enable-ComputerRestore -Drive 'C:\\'"],
+            [powershell_exe(), "-NoProfile", "-Command", "Enable-ComputerRestore -Drive 'C:\\'"],
             capture_output=True, text=True, timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
@@ -94,7 +95,7 @@ def _checkpoint(description: str, timeout: int):
             "else { 'RESTORE-POINT-NOT-CREATED'; exit 2 }"
         )
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-Command", script],
             capture_output=True, text=True, timeout=timeout,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )

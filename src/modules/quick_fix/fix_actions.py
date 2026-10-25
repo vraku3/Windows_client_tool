@@ -1,3 +1,4 @@
+from core.system_paths import cmd_exe, powershell_exe
 import glob as _glob
 import os
 import subprocess
@@ -398,7 +399,7 @@ def check_wu_updates(output_cb: Callable[[str], None]) -> None:
         "} catch { 'Error checking updates: ' + $_.Exception.Message }"
     )
     _run_cmd(
-        ["powershell", "-NoProfile", "-Command", script],
+        [powershell_exe(), "-NoProfile", "-Command", script],
         output_cb
     )
 
@@ -437,7 +438,7 @@ def wu_deep_clean(output_cb: Callable[[str], None]) -> None:
 
 def clear_clipboard(output_cb: Callable[[str], None]) -> None:
     """Ported from Quick Cleanup's _clear_clipboard."""
-    _run_cmd(["cmd", "/c", "echo off | clip"], output_cb)
+    _run_cmd([cmd_exe(), "/c", "echo off | clip"], output_cb)
     output_cb("Clipboard cleared.")
 
 

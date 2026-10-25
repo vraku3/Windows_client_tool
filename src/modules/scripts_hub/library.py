@@ -15,6 +15,7 @@ comment block is their description. They are the user's own code and can do
 anything, so the pane shows the whole file before running it.
 """
 from __future__ import annotations
+from core.system_paths import cmd_exe, powershell_exe
 
 import logging
 import os
@@ -492,7 +493,7 @@ def editor_command(path: str, editor: Optional[str] = None) -> List[str]:
         exe = next((e for label, e in choices if ps1 or label != "PowerShell ISE"), None)
     exe = exe or choices[-1][1]
     if exe.lower().endswith(".cmd"):          # VS Code's launcher is a batch file
-        return ["cmd.exe", "/c", exe, path]
+        return [cmd_exe(), "/c", exe, path]
     return [exe, path]
 
 
@@ -522,9 +523,9 @@ def command_for(script: Script, body_file: str = "") -> List[str]:
     Base64 -- a file on disk is what admin tools normally run."""
     if script.kind == CMD:
         if script.path:
-            return ["cmd.exe", "/d", "/c", script.path]
-        return ["cmd.exe", "/d", "/c", script.body]
-    base = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            return [cmd_exe(), "/d", "/c", script.path]
+        return [cmd_exe(), "/d", "/c", script.body]
+    base = [powershell_exe(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-OutputFormat", "Text"]
     return base + ["-File", script.path or body_file]
 
@@ -552,7 +553,7 @@ def prompt_line(script: Script) -> str:
     """The line ISE would show for running this script: `PS <dir>> <command>`."""
     where = working_dir(script)
     if script.path:
-        command = f"& '{script.path}'" if script.kind == POWERSHELL else f"cmd /c '{script.path}'"
+        command = f"& '{script.path}'" if script.kind == POWERSHELL else f"& '{cmd_exe()}' /c '{script.path}'"
     elif script.kind == CMD:
         command = script.body.strip().splitlines()[0]
     else:

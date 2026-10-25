@@ -1,3 +1,4 @@
+from core.system_paths import powershell_exe
 import base64
 import datetime
 import json
@@ -171,7 +172,7 @@ def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]
     # timeout. Failures RAISE; the pane runs this on a Worker and shows them.
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", ps],
             capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=60,

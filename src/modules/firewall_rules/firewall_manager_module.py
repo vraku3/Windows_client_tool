@@ -1,9 +1,11 @@
 """Firewall Rules Manager — view and manage Windows Firewall rules via netsh."""
+from core.system_paths import powershell_exe
 
 from modules.firewall_rules.help_widgets import (
     describe_control, describe_headers, describe_cell, explain_widget,
 )
 
+import base64
 import logging
 import ntpath
 import os
@@ -233,9 +235,8 @@ def _parse_rules(raw: str) -> List[FirewallRule]:
 # them used to raise CalledProcessError, surfacing as a bare
 # "returned non-zero exit status 1".
 #
-# PowerShell's Get/Set/Remove-NetFirewallRule address them fine by DisplayName,
-# which is exactly the resolved form -- so netsh stays the fast default and
-# PowerShell is the fallback for what it cannot reach (~0.9s, only when needed).
+# Netsh remains the fast listing source. All individual modifications use
+# the unique registry ID through PowerShell, including Store-app rules.
 
 
 def _mrt_lookup(indirect: str) -> str:
@@ -272,26 +273,6 @@ def resolve_display_name(name: str) -> str:
     return _mrt_lookup(name) or name
 
 
-def _powershell_firewall(cmdlet: str, display_name: str, extra: str = "") -> Tuple[bool, str]:
-    """Run a *-NetFirewallRule cmdlet against a rule's DisplayName.
-
-    The name is single-quote escaped rather than interpolated into a shell
-    string -- rule names are Windows-supplied text, not something to trust.
-    """
-    escaped = display_name.replace("'", "''")
-    command = "%s -DisplayName '%s'%s -ErrorAction Stop" % (
-        cmdlet, escaped, (" " + extra) if extra else "")
-    proc = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
-        capture_output=True, text=True, timeout=60,
-        creationflags=subprocess.CREATE_NO_WINDOW,
-    )
-    output = ((proc.stdout or "") + (proc.stderr or "")).strip()
-    if proc.returncode == 0 and "ErrorRecord" not in output:
-        return True, output
-    return False, output or "%s exited with code %d" % (cmdlet, proc.returncode)
-
-
 def _powershell_exact_id(rule_id: str, action: str) -> Tuple[bool, str]:
     """Pipe exactly ONE rule, selected by its ID, into `action`.
 
@@ -307,17 +288,20 @@ def _powershell_exact_id(rule_id: str, action: str) -> Tuple[bool, str]:
     quotes U+2018-U+201B (measured here: `'a’; Write-Output X; ’b'` ran
     the Write-Output), so escaping only the ASCII quote let an ID run code.
     """
-    if "\0" in rule_id:
+    if not rule_id or "\0" in rule_id:
         return False, "This rule ID contains a NUL character and cannot be addressed."
     command = (
+        "$ErrorActionPreference = 'Stop'; "
         "$r = @(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop"
         " | Where-Object { $_.Name -ceq $env:WCT_FW_RULE_ID }); "
         "if ($r.Count -ne 1) { throw ('expected exactly one rule with this ID, found ' + $r.Count) }; "
-        "$r | %s -ErrorAction Stop" % action)
+        "$id = [System.Management.Automation.WildcardPattern]::Escape($env:WCT_FW_RULE_ID); "
+        "%s -Name $id -PolicyStore PersistentStore -ErrorAction Stop" % action)
     env = dict(os.environ, WCT_FW_RULE_ID=rule_id)
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-Command", command],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-EncodedCommand",
+             base64.b64encode(command.encode("utf-16-le")).decode("ascii")],
             capture_output=True, text=True, timeout=90, env=env,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
@@ -436,8 +420,9 @@ def act_on_rule_by_id(rule_id: str, key: tuple, enable: Optional[bool]):
     message = "\n".join(part for part in (message, reason) if part)
     logger.info("firewall: %s id=%r command_ok=%s verified=%s%s", what, rule_id, ok, verified,
                 "" if verified else " -- " + message.replace("\n", " | ")[:500])
-    # A command that failed or timed out may still have acted: the read-back decides.
-    return verified, message, _try_fetch_rules(), fa.take_snapshot()
+    # A refused command must never be reported as successful, even if another
+    # program changed the registry to the requested state at the same time.
+    return ok and verified, message, _try_fetch_rules(), fa.take_snapshot()
 
 
 def _try_fetch_rules() -> Optional[List["FirewallRule"]]:
@@ -448,22 +433,11 @@ def _try_fetch_rules() -> Optional[List["FirewallRule"]]:
         return None
 
 
-def set_rule_enabled(name: str, enable: bool) -> Tuple[bool, str]:
-    """Enable or disable a rule, reporting why rather than raising."""
-    ok, message = _run_netsh(
-        ["advfirewall", "firewall", "set", "rule",
-         "name=%s" % name, "new", "enable=%s" % ("yes" if enable else "no")]
-    )
-    if ok:
-        return True, message
-
-    display = resolve_display_name(name)
-    ok, ps_message = _powershell_firewall(
-        "Set-NetFirewallRule", display,
-        "-Enabled %s" % ("True" if enable else "False"))
-    if ok:
-        return True, ps_message
-    return False, "netsh: %s\nPowerShell: %s" % (message, ps_message)
+def set_rule_enabled(rule_id: str, enable: bool) -> Tuple[bool, str]:
+    """Change one unique rule ID and verify its registry value."""
+    ok, message = set_rule_enabled_by_id(rule_id, enable)
+    verified, reason = fa.verify_rule_by_id(rule_id, enable)
+    return ok and verified, "\n".join(filter(None, (message, reason)))
 
 
 def set_group_enabled(group_name: str, enable: bool) -> Tuple[bool, str]:
@@ -490,7 +464,7 @@ def set_group_enabled(group_name: str, enable: bool) -> Tuple[bool, str]:
     command = "Set-NetFirewallRule -Group '%s' -Enabled %s -ErrorAction Stop" % (
         ps_escaped, "True" if enable else "False")
     proc = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", command],
+        [powershell_exe(), "-NoProfile", "-Command", command],
         capture_output=True, text=True, timeout=60,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
@@ -501,19 +475,11 @@ def set_group_enabled(group_name: str, enable: bool) -> Tuple[bool, str]:
     return False, "netsh: %s\nPowerShell: %s" % (message, ps_message)
 
 
-def delete_rule(name: str) -> Tuple[bool, str]:
-    """Delete every rule with this name, reporting why rather than raising."""
-    ok, message = _run_netsh(
-        ["advfirewall", "firewall", "delete", "rule", "name=%s" % name]
-    )
-    if ok:
-        return True, message
-
-    display = resolve_display_name(name)
-    ok, ps_message = _powershell_firewall("Remove-NetFirewallRule", display)
-    if ok:
-        return True, ps_message
-    return False, "netsh: %s\nPowerShell: %s" % (message, ps_message)
+def delete_rule(rule_id: str) -> Tuple[bool, str]:
+    """Delete one unique rule ID and verify that registry value is absent."""
+    ok, message = delete_rule_by_id(rule_id)
+    verified, reason = fa.verify_rule_by_id(rule_id)
+    return ok and verified, "\n".join(filter(None, (message, reason)))
 
 
 def _netsh_or_raise(args: List[str], what: str) -> str:
@@ -667,37 +633,39 @@ def _run_netsh(args: List[str]) -> Tuple[bool, str]:
     return False, output or "netsh exited with code %d" % proc.returncode
 
 
-def netsh_delete_matching_rule(rule: "FirewallRule") -> Tuple[bool, str]:
-    """Delete one rule, narrowed by name + program + direction.
-
-    Rule names are NOT unique in Windows Firewall — deleting by name alone
-    takes every same-named rule with it, including ones for other programs.
-    """
-    args = ["advfirewall", "firewall", "delete", "rule", "name=%s" % rule.name]
-    if _is_program_scoped(rule):
-        args.append("program=%s" % rule.program)
-    flag = _DIRECTION_FLAGS.get(rule.direction.strip().lower())
-    if flag:
-        args.append("dir=%s" % flag)
-    return _run_netsh(args)
+def delete_matching_rule(rule: "FirewallRule") -> Tuple[bool, str]:
+    """Resolve a fresh unique registry ID before removing one block rule."""
+    try:
+        rules, extras = fa.read_registry_rules(fa.resolve_indirect)
+        listed = fetch_firewall_rules()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        logger.warning("Could not resolve firewall rule ID: %s", exc)
+        return False, "Could not read the rule ID: %s" % exc
+    key = fa.rule_key(rule)
+    rule_id = fa.unique_rule_id(key, fa.rule_ids_index(rules, extras),
+                                fa.listed_key_counts(listed))
+    if not rule_id:
+        return False, "No unique rule ID -- refresh before changing this rule."
+    ok, message, _, _ = act_on_rule_by_id(rule_id, key, None)
+    return ok, message
 
 
 def unblock_rules(rules: List["FirewallRule"]) -> Tuple[int, List[str]]:
     """Delete each of the given rules. Returns (deleted_count, error lines).
 
     Keeps going after a failure so one protected rule does not abandon the
-    rest, and collapses duplicates: a rule present on several profiles shows
-    up once per profile but one netsh delete removes them all.
+    rest, and collapses duplicate listing rows: a rule present on several
+    profiles can appear more than once but its unique ID is deleted once.
     """
     deleted = 0
     errors: List[str] = []
     seen = set()
     for r in rules:
-        key = (r.name, r.program, r.direction)
+        key = fa.rule_key(r)
         if key in seen:
             continue
         seen.add(key)
-        ok, message = netsh_delete_matching_rule(r)
+        ok, message = delete_matching_rule(r)
         if ok:
             deleted += 1
         else:
@@ -1565,12 +1533,12 @@ class FirewallManagerModule(BaseModule):
         row = self._table.selectedItems()[0].row()
         rule_id = self._table.item(row, 0).data(Qt.ItemDataRole.UserRole)
         key = self._row_key(row)
-        sharing = sum(1 for r in self._all_rules if r.name == name)
-        scope = (f"\n\n{self._row_identity(row)}\n\nOnly this rule is deleted." if rule_id else
-                 (f"\n\n{sharing} rules share this name -- ALL {sharing} will be deleted."
-                  if sharing > 1 else ""))
-        recovery = ("A restorable copy must be saved before deletion." if rule_id else
-                    "This cannot be undone.")
+        if not rule_id:
+            QMessageBox.warning(self._outer, "Rule ID Unavailable",
+                                "This row has no unique rule ID. Refresh before changing it.")
+            return
+        scope = f"\n\n{self._row_identity(row)}\n\nOnly this rule is deleted."
+        recovery = "A restorable copy must be saved before deletion."
         reply = QMessageBox.warning(
             self._outer, "Delete Rule",
             f"Delete firewall rule:\n{name}?{scope}\n\n{recovery}",
@@ -1584,12 +1552,7 @@ class FirewallManagerModule(BaseModule):
         self._status_lbl.setText(f"Deleting rule '{name}'...")
 
         def work(_w):
-            if rule_id:
-                return act_on_rule_by_id(rule_id, key, None)
-            ok, message = delete_rule(name)
-            rules = fetch_firewall_rules()
-            gone = not any(r.name == name for r in rules)
-            return ok and gone, message, rules, None
+            return act_on_rule_by_id(rule_id, key, None)
 
         def on_done(result):
             ok, message, rules, snap = result
@@ -1634,6 +1597,10 @@ class FirewallManagerModule(BaseModule):
             return
         name = name_item.text()
         rule_id = name_item.data(Qt.ItemDataRole.UserRole)
+        if not rule_id:
+            QMessageBox.warning(self._outer, "Rule ID Unavailable",
+                                "This row has no unique rule ID. Refresh before changing it.")
+            return
         key = self._row_key(row)
         enabled_item = self._table.item(row, 1)
         current_state = enabled_item.text() if enabled_item else ""
@@ -1641,8 +1608,6 @@ class FirewallManagerModule(BaseModule):
         # Infer desired state: if currently True (enabled), disable; else enable
         new_state = current_state != "Yes"
 
-        wanted = "Yes" if new_state else "No"
-        sharing = sum(1 for r in self._all_rules if r.name == name)
         verb = "enable" if new_state else "disable"
         if rule_id:
             reply = QMessageBox.question(
@@ -1653,27 +1618,12 @@ class FirewallManagerModule(BaseModule):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        elif sharing > 1:
-            reply = QMessageBox.question(
-                self._outer, "Several Rules Share This Name",
-                f"{sharing} firewall rules are named:\n{name}\n\n"
-                f"Windows addresses rules by this name, so all {sharing} will be {verb}d.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
         self._status_lbl.setText(
             f"Setting rule '{name}' to {'enabled' if new_state else 'disabled'}..."
         )
 
         def work(_w):
-            if rule_id:
-                return act_on_rule_by_id(rule_id, key, new_state)
-            ok, message = set_rule_enabled(name, new_state)
-            rules = fetch_firewall_rules()
-            applied = any(r.name == name and r.enabled == wanted for r in rules)
-            return ok and applied, message, rules, None
+            return act_on_rule_by_id(rule_id, key, new_state)
 
         def on_done(result):
             ok, message, rules, snap = result

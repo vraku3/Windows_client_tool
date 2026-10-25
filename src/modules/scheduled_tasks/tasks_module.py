@@ -1,3 +1,4 @@
+from core.system_paths import cmd_exe
 import logging
 import os
 import subprocess
@@ -147,7 +148,7 @@ class TasksModule(BaseModule):
         self._copy_btn.clicked.connect(self._copy_selected)
         self._sig_btn.clicked.connect(self._verify_selected)
         taskschd.clicked.connect(lambda: subprocess.Popen(
-            ["taskschd.msc"], shell=True, creationflags=subprocess.CREATE_NO_WINDOW))
+            ["taskschd.msc"], shell=True, executable=cmd_exe(), creationflags=subprocess.CREATE_NO_WINDOW))
         return bar
 
     def _build_folder_tree(self) -> QTreeWidget:

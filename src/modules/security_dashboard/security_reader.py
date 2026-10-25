@@ -6,6 +6,7 @@ details (list of (key, value) tuples), and optionally enabled (bool).
 Toggle functions return a dict with: success (bool), message (str), and
 optionally before_value and after_value for revert tracking.
 """
+from core.system_paths import powershell_exe
 
 import json
 import logging
@@ -46,7 +47,7 @@ _ELEVATION_ONLY_NAMESPACES = frozenset({
 def _ps(cmd: str, timeout: int = 30) -> Tuple[int, str, str]:
     """Run a PowerShell command and return (returncode, stdout, stderr)."""
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", cmd],
+        [powershell_exe(), "-NoProfile", "-Command", cmd],
         capture_output=True, text=True, timeout=timeout,
         creationflags=CREATION_FLAGS,
     )

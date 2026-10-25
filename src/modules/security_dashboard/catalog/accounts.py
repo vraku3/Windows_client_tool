@@ -12,6 +12,7 @@ setting, so most entries revert exactly. Three conventions:
 * A control that could lock somebody out of their own machine is `Risk.HIGH`,
   and the batch that carries one forces a restore point.
 """
+from core.system_paths import powershell_exe
 from typing import Any, Dict, Tuple
 
 from ..security_reader import _windows_build
@@ -58,7 +59,7 @@ _EXECUTION_POLICIES = {name: name for name in
 
 
 def _execution_policy_step(policy: str) -> Dict[str, Any]:
-    prefix = "powershell -NoProfile -Command Set-ExecutionPolicy "
+    prefix = f'"{powershell_exe()}" -NoProfile -Command Set-ExecutionPolicy '
     return {"type": "script",
             "command": f"{prefix}{policy} -Scope LocalMachine -Force",
             "revert_template": prefix + "${old} -Scope LocalMachine -Force",

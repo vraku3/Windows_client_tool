@@ -8,6 +8,7 @@ filtering, and the newest-version dedup, and caches the result for a short
 TTL so several modules can ask in the same minute without each spawning a
 PowerShell process.
 """
+from core.system_paths import powershell_exe
 import json
 import logging
 import os
@@ -124,7 +125,7 @@ def _run_ps_bounded(cmd: str, timeout: float = _ENUMERATE_TIMEOUT_SECONDS
     seconds, never forever.
     """
     proc = subprocess.Popen(
-        ["powershell", "-NoProfile", "-Command", cmd],
+        [powershell_exe(), "-NoProfile", "-Command", cmd],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         creationflags=subprocess.CREATE_NO_WINDOW,
     )

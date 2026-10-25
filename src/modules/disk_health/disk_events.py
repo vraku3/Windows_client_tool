@@ -8,6 +8,7 @@ another over the past week -- neither visible anywhere else in this app
 before this reader existed.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import json
 import logging
@@ -84,7 +85,7 @@ def read_disk_events(days: int = 14, max_events: int = 200, timeout: int = 30) -
         "|ConvertTo-Json -Compress")
     try:
         done = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=timeout, creationflags=_CREATE_NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("disk event read failed: %s", exc)

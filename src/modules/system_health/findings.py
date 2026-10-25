@@ -2,6 +2,7 @@
 here is safe to call unelevated and safe to call from --unattended
 --stages health.
 """
+from core.system_paths import powershell_exe
 import logging
 import os
 import re
@@ -304,7 +305,7 @@ def check_hardware_errors(days: int = 30) -> List[Finding]:
         "Message=(($_.Message -split \"`n\")[0])}})|ConvertTo-Json -Compress")
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=30,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError) as e:

@@ -18,6 +18,7 @@ from ui.app_facts import bind_row
 
 from core.app_facts import AppFactsIndex
 from core.base_module import BaseModule
+from core.system_paths import cmd_exe
 from core.module_groups import ModuleGroup
 from core.worker import Worker, COMWorker
 from core.windows_utils import is_reboot_pending
@@ -1193,7 +1194,7 @@ class _UpdateSettingsTab(QWidget):
         cmd = [
             "schtasks", "/create", "/f",
             "/tn", LEGACY_TASK_NAME,
-            "/tr", f'cmd /c "{script}"',
+            "/tr", f'"{cmd_exe()}" /c "{script}"',
             "/sc", freq,
             "/st", time_str,
         ]

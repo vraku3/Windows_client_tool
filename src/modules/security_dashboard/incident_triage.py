@@ -33,6 +33,7 @@ A source that cannot be read (Security unelevated: access denied) is an
 UNKNOWN finding with the reason -- never a clean result.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import logging
 import os
@@ -298,7 +299,7 @@ def _read_av(run: Optional[Run]) -> Optional[List[str]]:
     cmd = ("Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntiVirusProduct | "
            "ForEach-Object { $_.displayName + '|' + $_.productState }")
     rc, text, refusal = log_readiness._ask(
-        run or _default_run, ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd])
+        run or _default_run, [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", cmd])
     if refusal or rc:
         logger.info("incident_triage: Security Center not readable: %s", refusal or text[:120])
         return None

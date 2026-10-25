@@ -6,6 +6,7 @@ an empty list: "could not ask" and "there are no restore points" must stay
 different sentences.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import json
 import logging
@@ -423,7 +424,7 @@ def read_restore_points() -> List[dict]:
               "$p | Select-Object SequenceNumber, Description, RestorePointType, CreationTime | "
               "ConvertTo-Json -Compress")
     try:
-        rc, out, err = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], 60)
+        rc, out, err = _run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script], 60)
     except (OSError, subprocess.SubprocessError) as e:
         raise RestoreReadError(f"PowerShell could not be run: {e}") from e
     if rc != 0:

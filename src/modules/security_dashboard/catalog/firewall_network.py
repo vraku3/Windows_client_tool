@@ -15,6 +15,7 @@ Two things recur here and are stated once:
   then read the user's hive and correctly report that nothing changed. WPAD is
   read-only here for exactly that reason.
 """
+from core.system_paths import powershell_exe
 import json
 import re
 
@@ -43,7 +44,7 @@ _LANMAN_SERVER = (r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer"
 _TERMINAL_SERVER = r"HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server"
 _RDP_TCP = _TERMINAL_SERVER + r"\WinStations\RDP-Tcp"
 
-_PS = "powershell -NoProfile -Command "
+_PS = f'"{powershell_exe()}" -NoProfile -Command '
 
 
 def _dword(key: str, value: str, data: int) -> Dict[str, Any]:

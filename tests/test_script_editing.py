@@ -52,7 +52,7 @@ def test_ise_opens_ps1_and_notepad_is_the_last_resort(monkeypatch):
                                                  ("Visual Studio Code", r"C:\code.cmd"),
                                                  ("Notepad", r"C:\notepad.exe")])
     assert lib.editor_command(r"C:\s\a.ps1") == [r"C:\ise.exe", r"C:\s\a.ps1"]
-    assert lib.editor_command(r"C:\s\a.cmd") == ["cmd.exe", "/c", r"C:\code.cmd", r"C:\s\a.cmd"]
+    assert lib.editor_command(r"C:\s\a.cmd") == [lib.cmd_exe(), "/c", r"C:\code.cmd", r"C:\s\a.cmd"]
     assert lib.editor_command(r"C:\s\a.ps1", "Notepad") == [r"C:\notepad.exe", r"C:\s\a.ps1"]
     monkeypatch.setattr(lib, "editors", lambda: [("Notepad", r"C:\notepad.exe")])
     assert lib.editor_command(r"C:\s\a.ps1") == [r"C:\notepad.exe", r"C:\s\a.ps1"]

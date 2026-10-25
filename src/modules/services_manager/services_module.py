@@ -1,3 +1,4 @@
+from core.system_paths import powershell_exe
 import logging
 import subprocess
 from typing import List, Dict, Optional
@@ -206,11 +207,11 @@ def service_action(name: str, action: str, check_dependents: bool = False) -> tu
     elif action == "restart":
         win32serviceutil.RestartService(name)
     elif action == "enable":
-        run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+        run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
              f"Set-Service -Name '{ps_quote(name)}' -StartupType Automatic"],
             timeout=30, check=True)
     elif action == "disable":
-        run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+        run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command",
              f"Set-Service -Name '{ps_quote(name)}' -StartupType Disabled"],
             timeout=30, check=True)
 

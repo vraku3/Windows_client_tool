@@ -23,6 +23,7 @@ source; a PC that gets updates from WSUS fails Add-WindowsCapability with
 and component repair" policy allows Windows Update.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import logging
 import re
@@ -142,7 +143,7 @@ def detect(run: Optional[Run] = None) -> Tuple[Dict[str, bool], bool]:
                        "SilentlyContinue)" for r in REQUIREMENTS.values())
     script = probes + "; 'server=' + [int]((Get-CimInstance Win32_OperatingSystem).ProductType -ne 1)"
     try:
-        rc, out = (run or _default_run)(["powershell.exe", "-NoProfile", "-NonInteractive",
+        rc, out = (run or _default_run)([powershell_exe(), "-NoProfile", "-NonInteractive",
                                          "-Command", script])
     except (OSError, subprocess.TimeoutExpired) as e:
         logger.warning("modules: detection failed: %s", e)
@@ -193,7 +194,7 @@ def elevated_install(command: str) -> Tuple[bool, str]:
                "to see the scripts that can now run.' }")
     params = f'-NoExit -NoProfile -ExecutionPolicy Bypass -Command "{wrapped}"'
     try:
-        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", "powershell.exe", params, None, 1)
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", powershell_exe(), params, None, 1)
     except (AttributeError, OSError) as e:
         return False, f"Could not start PowerShell: {e}"
     if rc <= 32:

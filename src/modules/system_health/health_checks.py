@@ -4,6 +4,7 @@ Every check returns a list of `Finding`s. A read that fails or is refused is
 reported as an "unknown" finding of its own (`id` ends in `:unknown`), never
 as silence -- silence would read as "healthy".
 """
+from core.system_paths import powershell_exe
 import ctypes
 import json
 import logging
@@ -39,7 +40,7 @@ def _run(cmd: List[str], timeout: int = 30) -> Tuple[Optional[int], str]:
 
 def _ps_json(script: str, timeout: int = 60):
     """Run PowerShell that ends in ConvertTo-Json; (data, None) or (None, reason)."""
-    rc, out = _run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], timeout)
+    rc, out = _run([powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script], timeout)
     if rc != 0:
         return None, out[:300] or f"powershell exited {rc}"
     try:

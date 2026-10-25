@@ -27,6 +27,7 @@ Qt-free. What answers unelevated was measured on this machine (2026-10-10):
   every update, so it is only the fallback.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import ctypes
 import glob
@@ -295,7 +296,7 @@ def query_packages(timeout: float = 90) -> List[dict]:
     """Get-AppxPackage for this account. Raises ReadRefused instead of
     returning [] -- an unread list is not an empty machine."""
     try:
-        proc = subprocess.run(["powershell", "-NoProfile", "-Command", _QUERY],
+        proc = subprocess.run([powershell_exe(), "-NoProfile", "-Command", _QUERY],
                               capture_output=True, text=True, timeout=timeout,
                               creationflags=subprocess.CREATE_NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as e:

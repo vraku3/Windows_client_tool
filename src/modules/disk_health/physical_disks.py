@@ -28,6 +28,7 @@ the Storage cmdlets refused, or the subprocess itself failing to run, both
 report `available=False` with the reason, distinct from a clean read that
 legitimately found nothing.
 """
+from core.system_paths import powershell_exe
 import logging
 import subprocess
 from dataclasses import dataclass, field
@@ -91,7 +92,7 @@ def list_physical_disks() -> PhysicalDiskScan:
     about, including Storage Spaces pool members `Win32_DiskDrive` omits."""
     try:
         result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive",
+            [powershell_exe(), "-NoProfile", "-NonInteractive",
              "-ExecutionPolicy", "Bypass", "-Command", _PS_SCRIPT],
             capture_output=True, text=True, timeout=20,
             creationflags=subprocess.CREATE_NO_WINDOW,

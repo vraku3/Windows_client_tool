@@ -77,18 +77,19 @@ def test_id_command_selects_exactly_one_rule(monkeypatch, operation, enabled, ac
         ok, message = fw.delete_rule_by_id(rule_id)
     assert ok, message
     args, kwargs = calls[0]
-    command = args[-1]
-    assert args[:3] == ["powershell", "-NoProfile", "-Command"]
+    command = __import__("base64").b64decode(args[-1]).decode("utf-16-le")
+    assert args[:4] == [fw.powershell_exe(), "-NoProfile", "-NonInteractive", "-EncodedCommand"]
     # Exact, case-sensitive match in the local store -- never -Name, which takes wildcards --
     # and the ID only ever travels in the environment, never in the command text
     # (PowerShell ends a single-quoted string at U+2019 too).
     assert "-PolicyStore PersistentStore" in command
     assert "$_.Name -ceq $env:WCT_FW_RULE_ID" in command
-    assert "-Name" not in command
+    assert "-Name $id -PolicyStore PersistentStore" in command
+    assert "WildcardPattern]::Escape($env:WCT_FW_RULE_ID)" in command
     assert "Bob" not in command and "\u2019" not in command
     assert kwargs["env"]["WCT_FW_RULE_ID"] == rule_id
     assert "$r.Count -ne 1" in command
-    assert command.endswith("$r | %s -ErrorAction Stop" % action)
+    assert command.endswith("%s -Name $id -PolicyStore PersistentStore -ErrorAction Stop" % action)
     assert not kwargs.get("shell", False)
 
 
@@ -173,16 +174,16 @@ def test_id_command_timeout_is_reported_not_raised(monkeypatch):
     assert not ok and "may or may not" in message
 
 
-def test_act_on_rule_by_id_trusts_the_read_back(monkeypatch):
-    """A command that timed out but did act is judged by the read-back; a refused
-    pre-check is reported as not attempted and runs nothing."""
+def test_act_on_rule_by_id_requires_command_success_and_read_back(monkeypatch):
+    """Read-back alone cannot turn a refused/timed-out command into success;
+    a refused pre-check is reported as not attempted and runs nothing."""
     monkeypatch.setattr(fw, "fetch_firewall_rules", lambda: [_rule()])
     monkeypatch.setattr(fw, "confirm_rule_id", lambda rid, key, listed=None: (True, ""))
     monkeypatch.setattr(fw, "delete_rule_by_id", lambda rid: (False, "timed out"))
     monkeypatch.setattr(fa, "verify_rule_by_id", lambda rid, enabled=None: (True, ""))
     monkeypatch.setattr(fa, "take_snapshot", lambda: fa.Snapshot())
     ok, message, rules, snap = fw.act_on_rule_by_id("A", ("shared", "In", ""), None)
-    assert ok and rules and snap is not None
+    assert not ok and rules and snap is not None
 
     ran = []
     monkeypatch.setattr(fw, "confirm_rule_id", lambda rid, key, listed=None: (False, "list changed"))
@@ -283,7 +284,7 @@ def test_rule_details_and_csv_use_the_rows_unique_id(pane, monkeypatch, tmp_path
     import csv
     from PyQt6.QtWidgets import QFileDialog
     for listed, expected in [([_rule()], "ID1"),
-                             ([_rule(), _rule()], "no unique ID -- acts by name")]:
+                             ([_rule(), _rule()], "no unique ID -- changes unavailable")]:
         _load(pane, listed, [_rule()], ["ID1"])
         pane._table.selectRow(0)
         pane._on_selection_changed()

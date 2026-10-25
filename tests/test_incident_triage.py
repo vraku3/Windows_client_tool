@@ -23,7 +23,7 @@ class FakeLogs:
 
     def __call__(self, args):
         self.calls.append(args)
-        if args[0] == "powershell":
+        if args[0] == it.powershell_exe():
             return 0, self.av, ""
         verb, channel = args[1], args[2]
         if channel in self.refused:

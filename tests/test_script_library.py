@@ -49,7 +49,7 @@ def test_user_scripts_run_their_own_file():
     assert lib.command_for(user)[-2:] == ["-File", r"C:\s\x.ps1"]
     assert "-OutputFormat" in lib.command_for(user)
     cmd = lib.Script("user:y.cmd", "y.cmd", "My scripts", "", "", kind=lib.CMD, path=r"C:\s\y.cmd")
-    assert lib.command_for(cmd) == ["cmd.exe", "/d", "/c", r"C:\s\y.cmd"]
+    assert lib.command_for(cmd) == [lib.cmd_exe(), "/d", "/c", r"C:\s\y.cmd"]
 
 
 def test_the_dns_cache_check_refuses_rather_than_report_empty_unelevated():

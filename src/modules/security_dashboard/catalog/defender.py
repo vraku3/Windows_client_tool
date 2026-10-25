@@ -21,6 +21,7 @@ pass reports them as REFUSED rather than as applied (Task 11). The machine this
 was written on has Tamper Protection ON and Defender in Passive Mode, so no
 Defender write here has been verified end-to-end against a live Defender.
 """
+from core.system_paths import powershell_exe
 import re
 
 from typing import Any, Dict, Tuple
@@ -43,7 +44,7 @@ from ..security_reader import (
 )
 from .model import Category, Risk, SecurityControl
 
-_PS = "powershell -NoProfile -Command "
+_PS = f'"{powershell_exe()}" -NoProfile -Command '
 
 
 #: from_value -> the token that puts a `Disable<X>` preference back. The

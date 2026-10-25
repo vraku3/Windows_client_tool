@@ -30,6 +30,7 @@ machine, plus the well-known TCP/IP ephemeral-port-exhaustion events
 documented Windows events worth watching for.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import json
 import logging
@@ -123,7 +124,7 @@ def read_network_events(days: int = 14, max_events: int = 200, timeout: int = 30
         "|ConvertTo-Json -Compress")
     try:
         done = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=timeout, creationflags=_CREATE_NO_WINDOW)
     except (OSError, subprocess.SubprocessError) as exc:
         logger.warning("network event read failed: %s", exc)

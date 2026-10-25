@@ -21,6 +21,7 @@ actionable inconsistency: it announces "this share needs encryption" while
 still accepting a client that cannot do it.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import json
 import logging
@@ -111,7 +112,7 @@ def parse_collected(text: str) -> ShareData:
 def collect(timeout: int = 60) -> ShareData:
     try:
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_SCRIPT],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_SCRIPT],
             capture_output=True, text=True, timeout=timeout,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError) as exc:

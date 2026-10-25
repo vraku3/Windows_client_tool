@@ -1,3 +1,4 @@
+from core.system_paths import powershell_exe, cmd_exe
 # src/modules/tweaks/tweak_engine.py
 import json
 import logging
@@ -414,7 +415,7 @@ class TweakEngine:
     def _apply_command(self, step: Dict) -> StepRecord:
         cmd = step["cmd"]
         proc = subprocess.run(
-            cmd, shell=True, check=False, capture_output=True, text=True,
+            cmd, shell=True, executable=cmd_exe(), check=False, capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
             # A `command` step runs an arbitrary line from a bundled tweak
             # definition, and some of them are genuinely slow (DISM, a
@@ -435,7 +436,7 @@ class TweakEngine:
     def _apply_script(self, step: Dict) -> StepRecord:
         cmd = step.get("command", step.get("cmd", ""))
         proc = subprocess.run(
-            cmd, shell=True, check=False, capture_output=True, text=True,
+            cmd, shell=True, executable=cmd_exe(), check=False, capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
             timeout=300,   # same reasoning as the `command` step above
         )
@@ -463,7 +464,7 @@ class TweakEngine:
         pkg = step["package"]
         self._backup.backup_appx_package(pkg, rp_id)
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
+            [powershell_exe(), "-NoProfile", "-Command",
              f"Get-AppxPackage '{ps_quote(pkg)}' | Remove-AppxPackage"],
             check=False, capture_output=True, text=True,
             creationflags=subprocess.CREATE_NO_WINDOW,
@@ -488,7 +489,7 @@ class TweakEngine:
         """How many of this user's packages match `pkg`; None if unreadable."""
         try:
             proc = subprocess.run(
-                ["powershell", "-NoProfile", "-Command",
+                [powershell_exe(), "-NoProfile", "-Command",
                  f"@(Get-AppxPackage '{ps_quote(pkg)}' -ErrorAction Stop).Count"],
                 check=False, capture_output=True, text=True,
                 creationflags=subprocess.CREATE_NO_WINDOW, timeout=60)
@@ -831,7 +832,7 @@ class TweakEngine:
         script = step.get("script", "")
         expected = str(step.get("applied_when", "True")).strip().lower()
         proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            [powershell_exe(), "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, text=True, timeout=30,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )

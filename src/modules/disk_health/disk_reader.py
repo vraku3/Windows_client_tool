@@ -9,6 +9,7 @@ It is never shown as 0: on this machine's NVMe drives ``PowerOnHours`` comes
 back empty unelevated, and "0 hours" would read as a brand-new disk.
 """
 from __future__ import annotations
+from core.system_paths import powershell_exe
 
 import json
 import logging
@@ -286,7 +287,7 @@ def _run(args: Sequence[str], timeout: int) -> Tuple[int, str, str]:
 
 def read_disk_report(elevated: bool = False, timeout: int = 60) -> DiskReport:
     try:
-        rc, out, err = _run(["powershell", "-NoProfile", "-NonInteractive",
+        rc, out, err = _run([powershell_exe(), "-NoProfile", "-NonInteractive",
                              "-ExecutionPolicy", "Bypass", "-Command", _PS_SCRIPT], timeout)
     except (OSError, subprocess.SubprocessError) as e:
         raise DiskReadError(f"PowerShell could not be run: {e}") from e

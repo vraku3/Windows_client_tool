@@ -48,6 +48,10 @@ class FileForensicsModule(SearchView, BaseModule):
         super().__init__()
         self._widget = None
         self._loaded = False
+        self._active = False
+        self._detail_generation = 0
+        self._cancelled_details = set()
+        self._signature_requested = set()
         self._last_skip_count = 0
         self._pending_banner_message = None
         self._watcher = self._watch_worker = self._watch_cb = None
@@ -66,9 +70,17 @@ class FileForensicsModule(SearchView, BaseModule):
         self.app = app
 
     def on_activate(self):
-        pass
+        self._active = True
+        self._on_row_selected()
+        for row in self._current_results:
+            if row.metadata.path in self._signature_requested and 'signatures' not in self._detail_cache.get(row.metadata.path, {}):
+                self._start_details('signatures', row)
 
     def on_deactivate(self):
+        self._active = False
+        self._detail_generation += 1
+        self._detail_busy.clear()
+        self._cancelled_details.clear()
         self._stop_watch()
         if _widget_valid(self._watch_cb):
             self._watch_cb.setChecked(False)
@@ -134,11 +146,10 @@ class FileForensicsModule(SearchView, BaseModule):
     def _confirm_broad_search(self, folder, name_filter):
         target = os.path.normcase(os.path.abspath(folder))
         profile = os.path.normcase(os.path.expanduser('~'))
-        if name_filter or (os.path.dirname(target) != target and target != profile):
+        if name_filter or not self._recurse_cb.isChecked() or (os.path.dirname(target) != target and target != profile):
             return True
-        drive = os.path.splitdrive(target)[0] or target
         box = QMessageBox(QMessageBox.Icon.Question, 'Large folder search',
-            f'This lists every file on {drive} (potentially over a million). Add a name filter?', parent=self._widget)
+            f'Search folder: {os.path.abspath(folder)}\nIncludes subfolders. Results stop at {RESULT_LIMIT:,} matches. Add a name filter?', parent=self._widget)
         anyway = box.addButton('Search anyway', QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton('Cancel', QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel)
@@ -158,10 +169,13 @@ class FileForensicsModule(SearchView, BaseModule):
         if not self._confirm_broad_search(folder, name_filter):
             return
         self._search_generation += 1
+        self._detail_busy.clear()
+        self._cancelled_details.clear()
         self._search_folder = folder
         self._last_batch = None
         self._last_skip_count = 0
         self._detail_cache.clear()
+        self._signature_requested.clear()
         self._error_banner.clear()
         self._info_banner.hide()
         self._populate_table([])
@@ -187,15 +201,15 @@ class FileForensicsModule(SearchView, BaseModule):
             if worker:
                 self._watch_bridge.search_event.emit(worker, ('phase', None))
             processes = list(system_processes())
-            locks, summaries = bulk_locks([r.metadata.path for r in rows], processes, cancelled)
+            locks, summaries, inspection = bulk_locks([r.metadata.path for r in rows], processes, cancelled)
             cache = {}
             enriched = []
             for row in rows:
                 if cancelled():
                     break
                 enriched.append(replace(row, locking_processes=locks[row.metadata.path],
-                    locking_summary=summaries[row.metadata.path],
-                    creator_candidates=find_creator_candidates(row.metadata.created, processes=processes, details_cache=cache)))
+                    locking_summary=summaries[row.metadata.path], lock_inspection=inspection[row.metadata.path],
+                    creator_ready=True, creator_candidates=find_creator_candidates(row.metadata.created, processes=processes, details_cache=cache)))
                 if len(enriched) == 128:
                     if worker:
                         self._watch_bridge.search_event.emit(worker, ('enriched', tuple(enriched)))
@@ -223,18 +237,29 @@ class FileForensicsModule(SearchView, BaseModule):
         elif kind == 'enriched':
             updated = []
             for row in payload:
-                index = self._model.by_path.get(row.metadata.path)
-                existing = self._model.rows[index] if index is not None else None
-                if existing and row.metadata.path in self._detail_cache:
-                    row = replace(row, own_signature=existing.own_signature,
-                                  top_creator_signature=existing.top_creator_signature, reputation=existing.reputation)
-                updated.append(row)
+                updated.append(self._merge_enriched(row))
             self._model.update_rows(updated)
-            selected = self._selected_analysis()
-            if selected and selected.locking_processes:
-                self._detail_cache.get(selected.metadata.path, {}).pop('metadata', None)
+            for row in updated:
+                if row.metadata.path in self._signature_requested and 'signatures' not in self._detail_cache.get(row.metadata.path, {}):
+                    self._start_details('signatures', row)
             self._on_row_selected()
         self._update_counts()
+
+    def _merge_enriched(self, row):
+        index = self._model.by_path.get(row.metadata.path)
+        if index is None:
+            return row
+        existing = self._model.rows[index]
+        cached = self._detail_cache.get(row.metadata.path, {})
+        candidates_changed = existing.creator_candidates != row.creator_candidates
+        if candidates_changed:
+            cached.pop('signatures', None)
+        resolved = 'metadata' in cached
+        if existing.locking_processes != row.locking_processes:
+            cached.pop('metadata', None)
+        return replace(row, metadata=existing.metadata if resolved else row.metadata,
+                       own_signature=existing.own_signature, reputation=existing.reputation,
+                       top_creator_signature=None if candidates_changed else existing.top_creator_signature)
 
     def _search_done(self, worker, results):
         if worker is not self._search_worker:
@@ -270,7 +295,7 @@ class FileForensicsModule(SearchView, BaseModule):
             self._info_banner.setText(f'Showing the first {RESULT_LIMIT:,} matches -- narrow the folder or add a name filter.')
             self._info_banner.show()
         if self._last_skip_count:
-            messages.append(f'{self._last_skip_count:,} folders/files could not be read or were links and were skipped.')
+            messages.append(self._skip_summary())
         if self._pending_banner_message:
             messages.append(self._pending_banner_message)
             self._pending_banner_message = None
@@ -309,12 +334,13 @@ class FileForensicsModule(SearchView, BaseModule):
         return self._model.rows[index.row()] if index.isValid() else None
 
     def _filter_results(self, kind):
+        if kind == 'skipped':
+            self._show_skipped()
+            return
         self._proxy.set_kind(kind)
         self._update_counts()
         for key, (button, _) in self._chips.items():
             button.setChecked(key == kind)
-        if kind == 'skipped':
-            self._error_banner.set_error(f'{self._last_skip_count:,} skipped folders/files; unreadable items and directory links have no result rows.')
 
     def _update_counts(self):
         counts = {key: sum(matches_filter(r, key) for r in self._current_results) for key, _ in FILTERS}
@@ -322,14 +348,16 @@ class FileForensicsModule(SearchView, BaseModule):
             button.setText(f'{label} ({counts[key]:,})')
         for key, (button, label) in self._tiles.items():
             value = format_size(sum(r.metadata.size for r in self._current_results)) if key == 'size' else self._last_skip_count if key == 'skipped' else counts[key]
-            pending = key == 'locked' and any(r.locking_summary == 'Not checked yet' for r in self._current_results)
+            reasons = list(dict.fromkeys(r.lock_inspection.reason or r.lock_inspection.state
+                for r in self._current_results if r.lock_inspection.state != 'complete'))
+            pending = key == 'locked' and reasons
             if pending:
-                button.set(f'{value} observed', 'Inspection incomplete')
+                button.set(f'{value} observed', 'Inspection incomplete: ' + '; '.join(reasons))
             else:
-                button.set(str(value), 'Checked signatures only' if key == 'unsigned' else 'Click to filter')
+                button.set(str(value), 'Checked signatures only' if key == 'unsigned' else 'Click to inspect skips' if key == 'skipped' else 'Click to filter')
 
     def _on_row_selected(self):
-        if not _widget_valid(getattr(self, '_detail_label', None)):
+        if not self._active or not _widget_valid(getattr(self, '_detail_label', None)):
             return
         row = self._selected_analysis()
         for button in (self._copy_btn, self._reveal_btn, self._signature_btn):
@@ -367,47 +395,82 @@ class FileForensicsModule(SearchView, BaseModule):
     def _check_reputation(self):
         self._start_details('reputation')
 
-    def _start_details(self, mode):
-        row = self._selected_analysis()
-        if not row or (self._search_generation, row.metadata.path, mode) in self._detail_busy:
+    def _details_current(self, generation):
+        return (self._active and generation == (self._search_generation, self._detail_generation)
+                and _widget_valid(self._widget))
+
+    def _start_details(self, mode, row=None):
+        generation = (self._search_generation, self._detail_generation)
+        if not self._details_current(generation):
             return
-        key = (self._search_generation, row.metadata.path, mode)
+        row = row or self._selected_analysis()
+        if not row:
+            return
+        key = (generation, row.metadata.path, mode)
+        if key in self._detail_busy:
+            return
+        if mode == 'signatures':
+            self._signature_requested.add(row.metadata.path)
+        self._cancelled_details.discard(key)
         self._detail_busy.add(key)
         api_key = self._vt_api_key()
         worker = Worker(lambda w: inspect_selected(row, mode, api_key))
-        generation = self._search_generation
-        worker.signals.result.connect(lambda result: self._details_ready(result) if generation == self._search_generation else None)
-        worker.signals.error.connect(lambda error: self._details_failed(row.metadata.path, mode, error, generation))
+        worker.signals.result.connect(lambda result: self._details_ready(result, generation)
+                                      if key not in self._cancelled_details else None)
+        worker.signals.error.connect(lambda error: self._details_failed(row.metadata.path, mode, error, generation, row)
+                                     if key not in self._cancelled_details else None)
+        worker.signals.cancelled.connect(lambda: self._detail_cancelled(key))
         worker.signals.finished.connect(lambda: self._detail_finished(key))
         self._workers.append(worker)
         self.thread_pool.start(worker)
 
-    def _detail_finished(self, key):
-        self._detail_busy.discard(key)
-        generation, path, mode = key
-        if mode == 'metadata' and generation == self._search_generation and _widget_valid(self._widget):
-            self._on_row_selected()
+    def _detail_cancelled(self, key):
+        if self._details_current(key[0]):
+            self._cancelled_details.add(key)
 
-    def _details_failed(self, path, mode, error, generation):
-        if generation == self._search_generation and _widget_valid(self._widget):
+    def _detail_finished(self, key):
+        generation, path, mode = key
+        if not self._details_current(generation):
+            return
+        self._detail_busy.discard(key)
+        if key in self._cancelled_details:
+            return
+        if mode == 'metadata':
+            self._on_row_selected()
+        elif mode == 'signatures' and path in self._signature_requested:
+            row = next((r for r in self._model.rows if r.metadata.path == path), None)
+            if row and 'signatures' not in self._detail_cache.get(path, {}):
+                self._start_details('signatures', row)
+
+    def _details_failed(self, path, mode, error, generation, source=None):
+        if source is not None and mode == 'signatures':
+            current = next((r for r in self._model.rows if r.metadata.path == path), None) if self._details_current(generation) else None
+            if current is None or source.creator_candidates != current.creator_candidates:
+                return
+        if self._details_current(generation):
             self._detail_cache.setdefault(path, {})[mode] = (f'{mode.capitalize()} could not be checked: {error}',)
             self._error_banner.set_error(f'Selected file: {error}')
             self._on_row_selected()
 
-    def _details_ready(self, payload):
-        if not _widget_valid(self._widget):
+    def _details_ready(self, payload, generation=None):
+        generation = generation or (self._search_generation, self._detail_generation)
+        if not self._details_current(generation):
             return
         row, mode, notes = payload
         current = next((r for r in self._model.rows if r.metadata.path == row.metadata.path), None)
         if current is None:
             return
         if mode == 'metadata' and row.locking_processes != current.locking_processes:
-            return  # The shared snapshot arrived during this metadata read; inspect the new lock list.
-        updated = replace(current, metadata=row.metadata)
-        if mode == 'signatures':
-            updated = replace(updated, own_signature=row.own_signature, top_creator_signature=row.top_creator_signature)
-        else:
-            updated = replace(updated, reputation=row.reputation)
+            return  # Retry against the new lock list after this worker finishes.
+        updated = current
+        if mode == 'metadata':
+            updated = replace(current, metadata=row.metadata)
+        elif mode == 'signatures':
+            if row.creator_candidates != current.creator_candidates:
+                return  # Enrichment changed the evidence; finished retries requested signatures.
+            updated = replace(current, own_signature=row.own_signature, top_creator_signature=row.top_creator_signature)
+        elif mode == 'reputation':
+            updated = replace(current, reputation=row.reputation)
         self._detail_cache.setdefault(row.metadata.path, {})[mode] = notes
         self._model.update_row(updated)
         self._update_counts()
@@ -596,7 +659,11 @@ class FileForensicsModule(SearchView, BaseModule):
     def _analyze_watch(self, path):
         from .engine.search import fast_analysis
         result = fast_analysis(path, os.stat(path, follow_symlinks=False))
-        return replace(result, creator_candidates=find_creator_candidates(result.metadata.created))
+        processes = list(system_processes())
+        locks, summaries, inspection = bulk_locks([path], processes)
+        return replace(result, locking_processes=locks[path], locking_summary=summaries[path],
+                       lock_inspection=inspection[path], creator_ready=True,
+                       creator_candidates=find_creator_candidates(result.metadata.created, processes=processes))
 
     def _on_watched_file_created(self, path: str) -> None:
         """Metadata and creator heuristics run on the watch thread; signals deliver rows to Qt."""

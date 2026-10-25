@@ -1,6 +1,7 @@
 """Behavioral regressions for bounded, streamed searches and virtual sorting."""
 import time
 from threading import Event
+from modules.file_forensics.engine.analysis import LockInspection
 from types import SimpleNamespace
 import pytest
 from PyQt6.QtCore import Qt, QThreadPool, QTimer
@@ -16,6 +17,7 @@ def pane(qapp, tmp_path, monkeypatch):
     m = FileForensicsModule()
     m.on_start(SimpleNamespace(config=None))
     m.create_widget()
+    m.on_activate()
     m._folder_edit.setText(str(tmp_path))
     yield m
     m.on_stop()
@@ -48,7 +50,7 @@ def test_streamed_row_is_visible_before_phase_two_and_stop_resets(pane, tmp_path
         entered.set()
         while not cancelled():
             time.sleep(.005)
-        return {p: [] for p in paths}, {p: 'Stopped handle sweep' for p in paths}
+        return {p: [] for p in paths}, {p: 'Stopped handle sweep' for p in paths}, {p: LockInspection('partial', 'Stopped') for p in paths}
     monkeypatch.setattr('modules.file_forensics.file_forensics_module.system_processes', lambda: [])
     monkeypatch.setattr('modules.file_forensics.file_forensics_module.bulk_locks', locks)
     pane._on_search_clicked()
@@ -98,7 +100,7 @@ def test_one_snapshot_and_one_handle_sweep_for_many_files(pane, tmp_path, monkey
     monkeypatch.setattr('modules.file_forensics.file_forensics_module.system_processes', lambda: calls.append('snapshot') or [])
     def locks(paths, processes, cancelled):
         calls.append('handles')
-        return {p: [] for p in paths}, {p: 'No readable locks' for p in paths}
+        return {p: [] for p in paths}, {p: 'No readable locks' for p in paths}, {p: LockInspection() for p in paths}
     monkeypatch.setattr('modules.file_forensics.file_forensics_module.bulk_locks', locks)
     pane._on_search_clicked()
     wait_until(qapp, lambda: pane._search_worker is None)

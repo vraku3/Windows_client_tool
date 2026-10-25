@@ -16,6 +16,13 @@ from .reputation import (
 
 
 @dataclass(frozen=True)
+class LockInspection:
+    """Coverage of the handle sweep, independent of observed matches."""
+    state: str = 'complete'  # complete / partial / could_not_check
+    reason: str = ''
+
+
+@dataclass(frozen=True)
 class FileAnalysis:
     metadata: FileMetadata
     locking_processes: List[LockingProcess]
@@ -35,6 +42,8 @@ class FileAnalysis:
     #: a signable type at all (see `reputation.check_own_signature`), never
     #: collapsed with a real refusal.
     own_signature: Optional[SignatureFacts] = None
+    lock_inspection: LockInspection = LockInspection()
+    creator_ready: bool = True
 
 
 def analyze(path: str, tolerance_seconds: float = 5.0,

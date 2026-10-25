@@ -1,5 +1,6 @@
 """Attribute one handle sweep to many exact files, including their NTFS streams."""
 from core.procengine.findref import find
+from .analysis import LockInspection
 from .device_paths import to_device_path
 from .locking_processes import LockingProcess, is_same_file
 
@@ -31,4 +32,23 @@ def bulk_locks(paths, processes, cancelled=lambda: False):
     summaries = {path: (report.summary() + ('; ' + report.note if report.note else '')
                        if device else 'Path translation refused; locks could not be checked')
                  for path, device in targets.items()}
-    return result, summaries
+    coverage = report_inspection(report)
+    inspection = {path: coverage if device else LockInspection(
+        'could_not_check', 'Path translation refused; locks could not be checked')
+        for path, device in targets.items()}
+    return result, summaries, inspection
+
+
+def report_inspection(report):
+    reasons = []
+    for field, label in (('refused_handles', 'processes refused handle inspection'),
+                         ('blocked_handles', 'processes had blocked handle queries'),
+                         ('unsearched', 'processes were never reached')):
+        count = getattr(report, field, 0)
+        if count:
+            reasons.append(f'{count} {label}')
+    if report.note:
+        reasons.append(report.note)
+    elif getattr(report, 'stopped_early', False):
+        reasons.append('Handle sweep stopped before completion')
+    return LockInspection('partial', '; '.join(reasons)) if reasons else LockInspection()

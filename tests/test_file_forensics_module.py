@@ -1,3 +1,4 @@
+from modules.file_forensics.engine.analysis import LockInspection
 import time
 
 import pytest
@@ -30,7 +31,11 @@ def module(qapp, monkeypatch, tmp_path):
     m = FileForensicsModule()
     m.on_start(_FakeApp())
     m.create_widget()
-    return m
+    m.on_activate()
+    yield m
+    m.on_stop()
+    QThreadPool.globalInstance().waitForDone(10_000)
+    qapp.processEvents()
 
 
 def test_module_declares_itself_correctly(module):
@@ -107,7 +112,8 @@ def test_subdirectory_listing_refusal_is_counted(module, monkeypatch, tmp_path, 
     monkeypatch.setattr(scan.os, "scandir", listing)
     monkeypatch.setattr("modules.file_forensics.file_forensics_module.system_processes", lambda: [])
     monkeypatch.setattr("modules.file_forensics.file_forensics_module.bulk_locks",
-                        lambda paths, *a: ({p: [] for p in paths}, {p: "readable snapshot" for p in paths}))
+                        lambda paths, *a: ({p: [] for p in paths}, {p: "readable snapshot" for p in paths},
+                            {p: LockInspection() for p in paths}))
     module._folder_edit.setText(str(tmp_path))
     module._on_search_clicked()
     _settle(qapp)

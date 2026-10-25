@@ -65,10 +65,10 @@ class ResultsModel(QAbstractTableModel):
             return None
         row = self.rows[index.row()]
         m, col = row.metadata, index.column()
-        pending = row.locking_summary == 'Not checked yet'
+        pending = row.lock_inspection.state == 'could_not_check'
         values = (os.path.basename(m.path), os.path.dirname(m.path), m.size, m.created, m.modified,
                   '...' if pending else ', '.join(p.process for p in row.locking_processes) or 'None observed',
-                  '...' if pending else row.creator_candidates[0].name if row.creator_candidates else 'No candidate',
+                  '...' if not row.creator_ready else row.creator_candidates[0].name if row.creator_candidates else 'No candidate',
                   signature_text(row.top_creator_signature))
         if role == SORT_ROLE:
             value = values[col]

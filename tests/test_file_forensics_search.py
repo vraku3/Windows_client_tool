@@ -55,7 +55,7 @@ def test_bulk_sweep_called_once_and_reuses_snapshot(monkeypatch):
         calls.append(kwargs)
         return SimpleNamespace(matches=[], note='Partial snapshot', summary=lambda: 'Some processes refused')
     monkeypatch.setattr(bulk, 'find', source)
-    locks, summaries = bulk.bulk_locks(['a', 'b', 'c'], snapshot)
+    locks, summaries, inspection = bulk.bulk_locks(['a', 'b', 'c'], snapshot)
     assert len(calls) == 1
     assert calls[0]['process_snapshot'] is snapshot
     assert calls[0]['modules'] is False

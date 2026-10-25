@@ -3,7 +3,8 @@ import os
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSplitter, QStackedWidget, QTableView, QTextBrowser,
-    QVBoxLayout, QWidget, QListWidget, QAbstractItemView)
+    QVBoxLayout, QWidget, QListWidget, QAbstractItemView, QDialog, QDialogButtonBox,
+    QTableWidget, QTableWidgetItem, QHeaderView)
 from core.table_ui import set_role
 from ui.empty_state import EmptyState
 from ui.elided_path import ElidedPathLabel
@@ -115,9 +116,10 @@ class SearchView:
         cards = []
         for key, label, tone in (('all', 'Files matched', 'total'), ('size', 'Total size', 'drive'),
                 ('locked', 'Locked right now', 'review'), ('unsigned', 'Unsigned creator', 'blocked'),
-                ('skipped', 'Skipped (could not read)', 'review')):
+                ('skipped', 'Skipped', 'review')):
             tile = _FilterTile(label, tone,
-                f'{label}: click or press Enter to filter. Unsigned creators count only rows whose signatures have been checked. Skips include unreadable items and directory links.')
+                ('Show unreadable paths and reasons, plus separate counts for unreadable items and skipped links.' if key == 'skipped' else
+                 f'{label}: click or press Enter to filter. Unsigned creators count only rows whose signatures have been checked.'))
             tile.set('0', 'Click to filter')
             tile.clicked.connect(lambda k=key: self._filter_results('all' if k == 'size' else k))
             self._tiles[key] = (tile, label)
@@ -125,6 +127,37 @@ class SearchView:
         strip = KpiStrip(cards)
         strip._place(3)  # Start compact; the strip reflows to the real width on resize.
         return strip
+
+    def _skip_summary(self):
+        batch = self._last_batch
+        if not batch:
+            return f'{self._last_skip_count:,} skipped items.'
+        return f'{batch.unreadable:,} items could not be read; {batch.skipped_links:,} links/reparse points skipped.'
+
+    def _show_skipped(self):
+        dialog = QDialog(self._widget)
+        dialog.setWindowTitle('Skipped search items')
+        dialog.resize(720, 360)
+        layout = QVBoxLayout(dialog)
+        batch = self._last_batch
+        items = batch.unreadable_items if batch else ()
+        label = QLabel(self._skip_summary() + '\nShowing the first 200 unreadable paths at most. Links have no result rows.')
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        table = QTableWidget(len(items), 2)
+        table.setHorizontalHeaderLabels(['Path', 'Reason'])
+        table.setToolTip('Unreadable search items and the error reported by Windows; limited to the first 200.')
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        for index, (path, reason) in enumerate(items):
+            table.setItem(index, 0, QTableWidgetItem(path))
+            table.setItem(index, 1, QTableWidgetItem(reason))
+        layout.addWidget(table)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).setToolTip('Close the skipped-items list and keep the current result filter.')
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _build_chips(self):
         grid = QGridLayout()

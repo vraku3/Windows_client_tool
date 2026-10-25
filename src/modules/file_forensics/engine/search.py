@@ -1,13 +1,37 @@
 """Bounded metadata-only search. No file contents, ACLs, signatures or Qt."""
+import logging
 import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
 
-from .analysis import FileAnalysis
+from .analysis import FileAnalysis, LockInspection
 from .file_metadata import FileMetadata
 
 RESULT_LIMIT = 5000
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _Failures:
+    links: int = 0
+    unreadable: int = 0
+    items: tuple = ()
+
+    def record(self, path, error):
+        self.unreadable += 1
+        if len(self.items) < 200:
+            self.items += ((path, str(error)),)
+        if self.unreadable <= 50:
+            logger.warning('Could not read %s: %s', path, error)
+
+    def batch(self, rows, folders, files, matches, outcome='searching'):
+        return SearchBatch(tuple(rows), folders, files, matches, self.links + self.unreadable,
+                           outcome, self.links, self.unreadable, self.items)
+
+    def finish(self):
+        if self.unreadable > 50:
+            logger.warning('%s additional unreadable items; individual warnings limited to 50', self.unreadable - 50)
 
 
 @dataclass(frozen=True)
@@ -18,13 +42,17 @@ class SearchBatch:
     matches: int
     skipped: int
     outcome: str = 'searching'
+    skipped_links: int = 0
+    unreadable: int = 0
+    unreadable_items: tuple = ()
 
 
 def fast_analysis(path, stat):
     meta = FileMetadata(path, stat.st_size, datetime.fromtimestamp(stat.st_ctime),
                         datetime.fromtimestamp(stat.st_mtime), datetime.fromtimestamp(stat.st_atime),
                         'Not checked yet', bool(getattr(stat, 'st_file_attributes', 0) & 1))
-    return FileAnalysis(meta, [], 'Not checked yet', [], None, None)
+    return FileAnalysis(meta, [], 'Not checked yet', [], None, None,
+                        lock_inspection=LockInspection('could_not_check', 'Not checked yet'), creator_ready=False)
 
 
 def search_batches(folder, name_filter='', recurse=True, *, cancelled=lambda: False,
@@ -39,7 +67,8 @@ def search_batches(folder, name_filter='', recurse=True, *, cancelled=lambda: Fa
     target = os.path.abspath(os.path.expandvars(folder))
     pending = [target]
     rows = []
-    folders = files = matches = skipped = 0
+    folders = files = matches = 0
+    failures = _Failures()
     last = time.monotonic()
     outcome = 'completed'
     while pending:
@@ -58,30 +87,32 @@ def search_batches(folder, name_filter='', recurse=True, *, cancelled=lambda: Fa
                         if entry.is_dir(follow_symlinks=False):
                             if recurse:
                                 if getattr(entry.stat(follow_symlinks=False), 'st_file_attributes', 0) & 0x400:
-                                    skipped += 1
+                                    failures.links += 1
                                 else:
                                     pending.append(entry.path)
                         elif entry.is_symlink():
-                            skipped += 1
+                            failures.links += 1
                         else:
                             files += 1
                             if not name_filter or name_filter.casefold() in entry.name.casefold():
                                 rows.append(fast_analysis(entry.path, entry.stat(follow_symlinks=False)))
                                 matches += 1
-                    except OSError:
-                        skipped += 1
+                    except OSError as error:
+                        failures.record(entry.path, error)
                     if matches >= limit:
                         outcome = 'truncated'
                         break
                     now = time.monotonic()
                     if (matches == 1 and rows) or now - last >= interval or len(rows) >= 128:
-                        yield SearchBatch(tuple(rows), folders, files, matches, skipped)
+                        yield failures.batch(rows, folders, files, matches)
                         rows.clear()
                         last = now
-        except OSError:
+        except OSError as error:
+            failures.record(root, error)
             if root == target:
+                failures.finish()
                 raise
-            skipped += 1
         if outcome != 'completed':
             break
-    yield SearchBatch(tuple(rows), folders, files, matches, skipped, outcome)
+    failures.finish()
+    yield failures.batch(rows, folders, files, matches, outcome)

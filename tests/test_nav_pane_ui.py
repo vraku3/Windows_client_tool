@@ -151,3 +151,117 @@ def test_saving_name_icon_preserves_unsigned_registry_position(qapp, tmp_path, m
     assert pane.engine.list_entries()[0].name == "New"
     pane.cancel()
     pane.close()
+
+
+def test_icon_picker_negative_resource_and_failed_selection(qapp, monkeypatch):
+    from PyQt6.QtGui import QImage
+    from modules.nav_pane.icon_picker import IconPicker
+    seen = []
+    def extract(location):
+        seen.append(location)
+        if location.endswith(",-999"):
+            raise OSError("No icon")
+        return QImage(32, 32, QImage.Format.Format_ARGB32)
+    class Pool:
+        def start(self, worker):
+            worker.run()
+    picker = IconPicker(pool=Pool(), extractor=extract, counter=lambda path: 2)
+    picker.resource.setValue(-3)
+    picker.load_resource()
+    qapp.processEvents()
+    assert seen[-1].endswith(",-3")
+    assert picker.location.endswith(",-3") and picker.ok.isEnabled()
+    picker.resource.setValue(-999)
+    picker.load_resource()
+    qapp.processEvents()
+    assert not picker.ok.isEnabled()
+    picker.accept()
+    assert picker.result() == 0
+    picker.close()
+
+
+def test_extract_icon_passes_negative_id_and_destroys_handles(qapp, monkeypatch):
+    import win32gui
+    from PyQt6.QtGui import QImage
+    from modules.nav_pane.widgets import extract_icon
+    seen = []
+    monkeypatch.setattr(win32gui, "ExtractIconEx", lambda path, index, count: seen.append(index) or ([123], [456]))
+    monkeypatch.setattr(QImage, "fromHICON", lambda handle: QImage(16, 16, QImage.Format.Format_ARGB32))
+    destroyed = []
+    monkeypatch.setattr(win32gui, "DestroyIcon", destroyed.append)
+    assert not extract_icon("test.dll,-3").isNull()
+    assert seen == [-3] and destroyed == [123, 456]
+
+
+def test_entry_actions_include_backups_and_orphan_repair(qapp, tmp_path):
+    from PyQt6.QtWidgets import QPushButton
+    from modules.nav_pane.engine.model import Health
+    pane = make_pane(tmp_path)
+    pane._refusal = ""
+    guid = pane.engine.add_entry(str(tmp_path), "Entry")
+    pane._entries = pane.engine.list_entries()
+    pane.select(0)
+    labels = {b.text() for b in pane.findChildren(QPushButton)}
+    assert {"Export entry...", "Restore from backup...", "Open backup folder", "Choose icon..."} <= labels
+    assert pane.export_button.isEnabled() and pane.restore_button.isEnabled()
+    pane._selected.health = Health.ORPHAN
+    pane._enable()
+    assert not pane.orphan_button.isHidden()
+    assert pane.remove_button.text() == "Remove leftovers"
+    pane.cancel()
+    pane.close()
+
+
+def test_choose_icon_uses_visual_picker(qapp, tmp_path, monkeypatch):
+    from modules.nav_pane import nav_pane_module
+    class Picker:
+        location = "example.dll,-3"
+        def __init__(self, parent, pool):
+            assert parent is pane and pool is pane.pool
+        def exec(self):
+            return True
+    pane = make_pane(tmp_path)
+    monkeypatch.setattr(nav_pane_module, "IconPicker", Picker)
+    pane.choose_icon()
+    assert pane.icons.currentData() == "example.dll,-3"
+    pane.cancel()
+    pane.close()
+
+
+def test_restore_dialog_previews_deletions_and_requires_loaded_plan(qapp, tmp_path):
+    from modules.nav_pane.backup_dialog import BackupDialog
+    from modules.nav_pane.engine.model import CLSID
+    class Pool:
+        def start(self, worker):
+            worker.run()
+    pane = make_pane(tmp_path)
+    guid = pane.engine.add_entry(str(tmp_path), "Before")
+    pane.engine.update_entry(guid, str(tmp_path), "After")
+    pane.engine.registry.write(CLSID + "\\" + guid, "extra", b"\x00\xff", 3)
+    dialog = BackupDialog(pane.engine, guid, Pool(), pane)
+    qapp.processEvents()
+    assert dialog.ok.isEnabled()
+    assert "delete_value" in dialog.preview.toPlainText()
+    assert "__bytes__" in dialog.preview.toPlainText()
+    assert dialog.path == pane.engine.list_backups(guid)[0]
+    dialog.accept()
+    assert dialog.result() == dialog.DialogCode.Accepted
+    pane.cancel()
+    pane.close()
+
+
+def test_unextractable_form_icon_blocks_save(qapp, tmp_path, monkeypatch):
+    from modules.nav_pane import nav_pane_module
+    pane = make_pane(tmp_path)
+    pane._refusal = ""
+    pane.path.setText(str(tmp_path))
+    pane.display_name.setText("Entry")
+    def fail(location):
+        raise OSError("Invalid icon")
+    monkeypatch.setattr(nav_pane_module, "extract_icon", fail)
+    monkeypatch.setattr(pane, "run", lambda function, callback=None, mutation=False: callback(function()))
+    pane.validate_path()
+    assert not pane._valid and not pane.save_button.isEnabled()
+    assert "Invalid icon" in pane.validation.text()
+    pane.cancel()
+    pane.close()

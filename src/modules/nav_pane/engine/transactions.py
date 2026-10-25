@@ -1,20 +1,16 @@
 """Serialized write-ahead steps, resumable in either direction."""
-import json
 import logging
 import os
 import threading
 import uuid
 
 from . import junction
+from .journal import canonical
 from .model import ADVANCED, CLSID, HIDE, NAMESPACE
 from .registry import optional, snapshot
 
 LOCK = threading.RLock()
 logger = logging.getLogger(__name__)
-
-
-def canonical(data):
-    return json.loads(json.dumps(data))
 
 
 def restore_tree(registry, key, tree):
@@ -56,7 +52,9 @@ class Transactions:
             step["missing_keys"] = missing
         elif action == "delete_tree":
             step["before"] = snapshot(self.registry, key)
-        elif action == "junction_remove":
+        elif action == "create_key":
+            step["before"] = snapshot(self.registry, key)
+        elif action in ("junction_create", "junction_remove"):
             step["existed"] = self._link_present(fields["path"])
         return canonical(step)
 
@@ -151,6 +149,15 @@ class Transactions:
             self.links.create(step["path"], step["target"])
         elif action == "junction_remove":
             self.links.remove(step["path"], step["target"])
+        elif action == "create_key":
+            if snapshot(self.registry, step["key"]) not in (None, {"values": {}, "children": {}}):
+                raise OSError("Registry key changed outside this operation.")
+            self.registry.create_key(step["key"])
+            if snapshot(self.registry, step["key"]) != {"values": {}, "children": {}}:
+                raise OSError("Created key read-back mismatch")
+        elif action == "verify_tree":
+            if canonical(snapshot(self.registry, step["key"])) != step["tree"]:
+                raise OSError("Restored key did not match backup")
         else:
             raise ValueError(f"Unknown journal action: {action}")
 
@@ -214,12 +221,18 @@ class Transactions:
         elif action == "junction_create":
             if self._link_present(step["path"]):
                 self._check_link(step)
-                self.links.remove(step["path"], step["target"])
+                if not step.get("existed", False):
+                    self.links.remove(step["path"], step["target"])
         elif action == "junction_remove":
             if self._link_present(step["path"]):
                 self._check_link(step)
             elif step.get("existed", False):
                 self.links.create(step["path"], step["target"])
+        elif action == "create_key" and step["before"] is None:
+            tree = snapshot(self.registry, step["key"])
+            if tree not in (None, {"values": {}, "children": {}}):
+                raise OSError("Created key changed outside this operation; rollback refused.")
+            self.registry.delete_tree(step["key"])
 
     def _check_link(self, step):
         actual = self.links.target(step["path"])

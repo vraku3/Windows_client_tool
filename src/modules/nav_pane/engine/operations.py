@@ -4,13 +4,14 @@ import stat
 import uuid
 
 from . import inspection, junction, onedrive, shell
-from .journal import Journal, atomic_json
+from .journal import Journal
+from .backups import Backups
 from .model import ADVANCED, CLSID, DEFAULT_ICON, HIDE, NAMESPACE, Health, Kind, values_for
 from .registry import Registry, optional, snapshot
 from .transactions import LOCK, Transactions
 
 
-class Operations(Transactions):
+class Operations(Backups, Transactions):
     def __init__(self, registry=None, directory=None, links=None, account_check=None,
                  profile=None, root_paths=None, notify=None):
         self.registry = registry if registry is not None else Registry()
@@ -110,20 +111,21 @@ class Operations(Transactions):
             raise PermissionError("Windows / OneDrive entries are read-only.")
         if entry.health in (Health.UNREADABLE, Health.INCOMPLETE):
             raise PermissionError(entry.detail or "Entry cannot be safely read. Repair it first.")
-        if entry.kind == Kind.HANDMADE:
-            self._backup(guid)
+        self._backup(guid)
         return entry
 
-    def _backup(self, guid):
-        folder = self.journal.directory / "backups" / (guid + "-" + uuid.uuid4().hex)
-        folder.mkdir(parents=True)
-        for index, key in enumerate((CLSID + "\\" + guid, NAMESPACE + "\\" + guid)):
-            self.registry.export(key, folder / f"{index}.reg")
-        # Export the containing key, plus an exact typed snapshot of just our value.
-        hidden = optional(self.registry, HIDE, guid)
-        if snapshot(self.registry, HIDE) is not None:
-            self.registry.export(HIDE, folder / "desktop-icons.reg")
-        atomic_json(folder / "hidden-value.json", {"key": HIDE, "name": guid, "value": hidden})
+    def repair_orphan(self, guid):
+        with LOCK, self.journal.lock():
+            self._guard()
+            entry = self._editable(guid)
+            if entry.health != Health.ORPHAN:
+                raise ValueError("This entry has no missing NameSpace key.")
+            if snapshot(self.registry, CLSID + "\\" + guid) is None:
+                raise ValueError("The CLSID is missing too. Restore a backup or remove leftovers.")
+            step = self._step("set", key=NAMESPACE + "\\" + guid, name="", value=entry.name, type=1)
+            record = self.journal.read()["entries"][guid]
+            self._transact(guid, [step], record, operation="repair NameSpace")
+            self.notify()
 
     def update_entry(self, guid, path, name, sort_order=48, icon=DEFAULT_ICON):
         with LOCK, self.journal.lock():

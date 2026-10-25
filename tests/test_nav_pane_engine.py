@@ -85,24 +85,36 @@ def test_handmade_backup_before_change_and_unsigned_dword(engine, tmp_path):
     engine.registry.write(CLSID + "\\" + guid + r"\ShellFolder", "Attributes", -260046771, 4)
     assert engine.registry.read(CLSID + "\\" + guid + r"\ShellFolder", "Attributes") == (0xF080004D, 4)
     assert engine.list_entries()[0].kind == Kind.HANDMADE
+    before = snapshot(engine.registry, CLSID + "\\" + guid)
     engine.update_entry(guid, path, "Other")
-    assert len(engine.registry.exports) == 3
+    from modules.nav_pane.engine.journal import loads
+    backups = engine.list_backups(guid)
+    assert len(backups) == 1
+    saved = loads(backups[0].read_text(encoding="utf-8"))
+    assert saved["trees"][0]["values"][""] == list(before["values"][""])
+    assert saved["trees"][0]["children"]["shellfolder"]["values"]["attributes"] == [0xF080004D, 4]
     assert list((engine.journal.directory / "backups").rglob("hidden-value.json"))
     assert engine.list_entries()[0].kind == Kind.HANDMADE
     engine.remove_entry(guid)
-    assert len(engine.registry.exports) == 6
+    assert len(engine.list_backups(guid)) == 2
 
 
-def test_failed_backup_means_no_change(engine, tmp_path, monkeypatch):
+@pytest.mark.parametrize("method", ["update_entry", "remove_entry"])
+@pytest.mark.parametrize("stage", ["export_snapshot", "atomic_json"])
+def test_failed_backup_means_no_change(engine, tmp_path, monkeypatch, method, stage):
     path = folder(tmp_path)
     guid = seed_handmade(engine, path)
     before = copy.deepcopy(engine.registry.keys)
     def fail(*args):
         raise PermissionError("Backup refused")
-    monkeypatch.setattr(engine.registry, "export", fail)
+    from modules.nav_pane.engine import backups
+    journal_before = engine.journal.read()
+    monkeypatch.setattr(backups, stage, fail)
     with pytest.raises(PermissionError, match="Backup refused"):
-        engine.remove_entry(guid)
+        getattr(engine, method)(guid, path, "Changed") if method == "update_entry" else engine.remove_entry(guid)
     assert engine.registry.keys == before
+    assert engine.journal.read() == journal_before
+    assert not engine.list_backups(guid)
 
 
 def test_system_entry_is_never_editable(engine, tmp_path):
@@ -596,3 +608,151 @@ def test_verify_powershell_with_fake_namespace(monkeypatch, tmp_path, registered
     monkeypatch.setattr(shell.subprocess, "run", run)
     result = shell.verify(entry)
     assert result.status == expected, result.detail
+
+
+def test_journal_binary_and_multisz_rollback(engine, tmp_path, monkeypatch):
+    guid = seed_handmade(engine, folder(tmp_path))
+    key = CLSID + "\\" + guid
+    engine.registry.write(key, "binary", b"\x00\xff\x80", 3)
+    engine.registry.write(key, "multi", ["one", "two"], 7)
+    before = snapshot(engine.registry, key)
+    original = engine.registry.delete_tree
+    def fail(key):
+        original(key)
+        if key.startswith(CLSID):
+            raise OSError("interrupted")
+    monkeypatch.setattr(engine.registry, "delete_tree", fail)
+    with pytest.raises(OSError, match="interrupted"):
+        engine.remove_entry(guid)
+    monkeypatch.setattr(engine.registry, "delete_tree", original)
+    engine.repair(guid, False)
+    assert snapshot(engine.registry, key) == before
+    assert not engine.journal.read()["transactions"]
+
+
+def test_export_and_restore_are_scoped_and_previewed(engine, tmp_path):
+    guid = engine.add_entry(folder(tmp_path), "Before")
+    other = "{22222222-2222-2222-2222-222222222222}"
+    engine.registry.write(HIDE, other, 99, 4)
+    output = tmp_path / "entry.reg"
+    engine.export_entry(guid, output)
+    text = output.read_text(encoding="utf-16")
+    assert "Windows Registry Editor Version 5.00" in text
+    assert guid in text and other not in text
+    engine.update_entry(guid, str(tmp_path), "After")
+    backups = engine.list_backups(guid)
+    assert len(backups) == 1
+    key = CLSID + "\\" + guid
+    engine.registry.write(key, "extra", b"\x00\xff", 3)
+    preview = engine.preview_restore(guid, backups[0])
+    assert any(s["action"] == "delete_value" and s["name"] == "extra" for s in preview)
+    engine.restore_backup(guid, backups[0], preview)
+    assert engine.list_entries()[0].name == "Before"
+    assert optional(engine.registry, key, "extra") is None
+    assert engine.registry.read(HIDE, other) == (99, 4)
+
+
+def test_restore_refuses_stale_preview(engine, tmp_path):
+    guid = engine.add_entry(folder(tmp_path), "Before")
+    engine.update_entry(guid, str(tmp_path), "After")
+    backup = engine.list_backups(guid)[0]
+    preview = engine.preview_restore(guid, backup)
+    engine.registry.write(CLSID + "\\" + guid, "", "External", 1)
+    with pytest.raises(OSError, match="changed"):
+        engine.restore_backup(guid, backup, preview)
+    assert engine.registry.read(CLSID + "\\" + guid)[0] == "External"
+
+
+def test_owned_orphan_visible_repairable_and_removable(engine, tmp_path):
+    guid = engine.add_entry(folder(tmp_path), "Orphan")
+    engine.registry.delete_tree(NAMESPACE + "\\" + guid)
+    entry = engine.list_entries()[0]
+    assert entry.health.value == "Partially removed by another program"
+    engine.repair_orphan(guid)
+    assert engine.list_entries()[0].health == Health.OK
+    engine.registry.delete_tree(NAMESPACE + "\\" + guid)
+    engine.remove_entry(guid)
+    assert engine.list_entries() == []
+
+
+def test_backup_saved_before_first_handmade_write(engine, tmp_path, monkeypatch):
+    from modules.nav_pane.engine.journal import loads
+    path = folder(tmp_path)
+    guid = seed_handmade(engine, path)
+    before = snapshot(engine.registry, CLSID + "\\" + guid)
+    write = engine.registry.write
+    def checked_write(*args):
+        backups = engine.list_backups(guid)
+        assert len(backups) == 1
+        state = loads(backups[0].read_text(encoding="utf-8"))
+        from modules.nav_pane.engine.journal import canonical
+        assert state["trees"][0] == canonical(before)
+        return write(*args)
+    monkeypatch.setattr(engine.registry, "write", checked_write)
+    engine.update_entry(guid, path, "After")
+
+
+def test_binary_multisz_backup_restore_and_interrupted_edit(engine, tmp_path, monkeypatch):
+    path = folder(tmp_path)
+    guid = seed_handmade(engine, path)
+    key = CLSID + "\\" + guid
+    engine.registry.write(key, "binary", b"\x00\xff", 3)
+    engine.registry.write(key, "multi", ["one", "two"], 7)
+    write = engine.registry.write
+    def fail(*args):
+        write(*args)
+        raise OSError("interrupted edit")
+    monkeypatch.setattr(engine.registry, "write", fail)
+    with pytest.raises(OSError, match="interrupted edit"):
+        engine.update_entry(guid, path, "After")
+    monkeypatch.setattr(engine.registry, "write", write)
+    engine.repair(guid, False)
+    backup = engine.list_backups(guid)[0]
+    engine.registry.write(key, "binary", b"changed", 3)
+    engine.registry.write(key, "multi", ["changed"], 7)
+    plan = engine.preview_restore(guid, backup)
+    engine.restore_backup(guid, backup, plan)
+    assert engine.registry.read(key, "binary") == (b"\x00\xff", 3)
+    assert engine.registry.read(key, "multi") == (["one", "two"], 7)
+
+
+def test_orphan_with_only_junction_remains_visible(engine, tmp_path):
+    cloud = folder(tmp_path)
+    engine.root_paths = [cloud]
+    guid = engine.add_entry(cloud, "Cloud")
+    link = engine.journal.read()["entries"][guid]["junction"]
+    engine.registry.delete_tree(NAMESPACE + "\\" + guid)
+    engine.registry.delete_tree(CLSID + "\\" + guid)
+    assert engine.list_entries()[0].health == Health.ORPHAN
+    engine.remove_entry(guid)
+    assert link not in engine.links.paths
+    assert engine.list_entries() == []
+
+
+def test_failed_restore_rollback_keeps_preexisting_junction(engine, tmp_path, monkeypatch):
+    cloud = folder(tmp_path)
+    engine.root_paths = [cloud]
+    guid = engine.add_entry(cloud, "Before")
+    engine.update_entry(guid, cloud, "After")
+    backup = engine.list_backups(guid)[0]
+    link = engine.journal.read()["entries"][guid]["junction"]
+    preview = engine.preview_restore(guid, backup)
+    write = engine.registry.write
+    def fail(*args):
+        write(*args)
+        raise OSError("interrupted restore")
+    monkeypatch.setattr(engine.registry, "write", fail)
+    with pytest.raises(OSError, match="interrupted restore"):
+        engine.restore_backup(guid, backup, preview)
+    monkeypatch.setattr(engine.registry, "write", write)
+    engine.repair(guid, False)
+    assert engine.links.target(link) == cloud
+    assert engine.list_entries()[0].name == "After"
+
+
+def test_binary_codec_keeps_registry_names_that_match_marker(engine, tmp_path):
+    from modules.nav_pane.engine.journal import canonical
+    guid = seed_handmade(engine, folder(tmp_path))
+    key = CLSID + "\\" + guid + "\\__bytes__"
+    engine.registry.write(key, "__bytes__", b"\x00\xff", 3)
+    assert canonical(snapshot(engine.registry, key))["values"]["__bytes__"] == [b"\x00\xff", 3]

@@ -36,6 +36,13 @@ def inspect_entry(registry, guid, record=None):
                 entry.name = record.get("name", entry.name)
             entry.health = Health.INCOMPLETE
             entry.detail = "A change was interrupted. Choose Finish or Roll back."
+        elif record and record.get("owned") and optional_namespace_missing(registry, guid):
+            entry.name = record.get("name", entry.name)
+            entry.target = entry.target or record.get("target", "")
+            entry.resolved_target = entry.resolved_target or record.get("resolved_target", "")
+            entry.junction = record.get("junction")
+            entry.health = Health.ORPHAN
+            entry.detail = "The app's journal owns this entry, but its NameSpace key is missing. Repair or remove leftovers."
     except (OSError, ValueError, TypeError) as error:
         entry.health = Health.UNREADABLE
         entry.detail = str(error)
@@ -75,9 +82,14 @@ def list_entries(registry, data):
     # Fake and real backends need the same GUID casing.
     guids = {g.upper() for g in guids}
     records = data["entries"]
-    guids.update(g for g, r in records.items() if r.get("incomplete"))
+    guids.update(g for g, r in records.items() if r.get("incomplete") or r.get("owned"))
     entries = []
     for guid in guids:
         entry = inspect_entry(registry, guid, records.get(guid))
         entries.append(entry)
     return sorted(entries, key=lambda e: (e.sort_order, e.name.casefold()))
+
+
+def optional_namespace_missing(registry, guid):
+    from .registry import snapshot
+    return snapshot(registry, NAMESPACE + "\\" + guid) is None

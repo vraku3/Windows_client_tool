@@ -16,6 +16,7 @@ class Health(StrEnum):
     HIDDEN_ON_DESKTOP = "Desktop icon hiding missing"
     UNREADABLE = "Could not read"
     INCOMPLETE = "Incomplete operation"
+    ORPHAN = "Partially removed by another program"
 
 
 class Verification(StrEnum):

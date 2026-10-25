@@ -5,7 +5,7 @@ from functools import partial
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QThreadPool, QTimer
-from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QInputDialog, QLabel, QListWidget,
+from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QListWidget,
                              QListWidgetItem, QMessageBox, QFileDialog, QSplitter,
                              QVBoxLayout, QWidget, QScrollArea)
 
@@ -13,6 +13,8 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import set_role
 from core.worker import Worker, retire, track
+from .backup_dialog import BackupDialog
+from .icon_picker import IconPicker
 from .engine import shell
 from .engine.model import Health, Kind, values_for
 from .engine.operations import Operations
@@ -240,15 +242,41 @@ class NavPane(QWidget):
             self.path.setText(self.common.itemData(index))
 
     def choose_icon(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Choose icon source", "", "Icons (*.ico *.dll *.exe)")
-        if not path:
+        picker = IconPicker(self, pool=self.pool)
+        if picker.exec() and picker.location:
+            index = self.icons.findData(picker.location)
+            if index < 0:
+                self.icons.addItem(picker.location, picker.location)
+                index = self.icons.count() - 1
+            self.icons.setCurrentIndex(index)
+
+    def export_entry(self):
+        if self._selected:
+            path, _ = QFileDialog.getSaveFileName(self, "Export navigation entry", "entry.reg", "Registry files (*.reg)")
+            if path:
+                self.run(partial(self.engine.export_entry, self._selected.guid, path),
+                         lambda _: self.action_result("Entry exported successfully."))
+
+    def restore_entry(self):
+        if not self._selected or self._busy or self._refusal:
             return
-        index, ok = QInputDialog.getInt(self, "Icon index", "Index (negative means resource ID)", 0, -100000, 100000)
-        if ok:
-            location = f"{path},{index}"
-            self.icons.addItem(os.path.basename(path) + f" ({index})", location)
-            self.icons.setCurrentIndex(self.icons.count() - 1)
-            self.run(partial(extract_icon, location), partial(self.set_icon, self.icons.count() - 1))
+        guid = self._selected.guid
+        dialog = BackupDialog(self.engine, guid, self.pool, self)
+        if dialog.exec():
+            self.run(partial(self.engine.restore_backup, guid, dialog.path, dialog.plan),
+                     lambda _: self.action_result("Backup restored and read back successfully."), mutation=True)
+
+    def open_backups(self):
+        folder = self.engine.journal.directory / "backups"
+        def open_folder():
+            folder.mkdir(parents=True, exist_ok=True)
+            return shell_launch_folder(str(folder))
+        self.run(open_folder, self.action_result)
+
+    def repair_orphan(self):
+        if self._selected and self.confirm("Repair navigation shortcut", "Re-add the missing NameSpace key for " + self._selected.name + "?"):
+            self.run(partial(self.engine.repair_orphan, self._selected.guid),
+                     lambda _: self.action_result("Missing NameSpace key restored."), mutation=True)
 
     def name_edited(self):
         self._name_edited = True
@@ -291,11 +319,12 @@ class NavPane(QWidget):
 
         def check():
             try:
+                extract_icon(icon)  # Reject a missing or unextractable icon before Save is enabled.
                 record = self.engine.journal.read()["entries"].get(selected_guid, {})
                 planned = self.engine._record(selected_guid, path, name, order, icon, record, selected_entry)
                 link = planned["target"] if planned["target"] != path else ""
                 return True, "✓ Folder is available.", link
-            except (OSError, ValueError) as error:
+            except (OSError, ValueError, RuntimeError) as error:
                 return False, f"Could not use this folder: {error}", ""
 
         selected_guid = self._selected.guid if self._selected else None
@@ -332,6 +361,12 @@ class NavPane(QWidget):
         self.finish_button.setEnabled(writable)
         self.rollback_button.setEnabled(writable)
         self.show_all.setEnabled(writable)
+        orphan = bool(entry and entry.health == Health.ORPHAN)
+        self.orphan_button.setVisible(orphan)
+        self.orphan_button.setEnabled(writable)
+        self.remove_button.setText("Remove leftovers" if orphan else "Remove")
+        self.export_button.setEnabled(not self._busy and entry is not None and entry.health != Health.UNREADABLE)
+        self.restore_button.setEnabled(writable and entry is not None and entry.kind != Kind.SYSTEM and not incomplete)
 
     def save(self):
         if not self._valid or self._refusal or self._busy:

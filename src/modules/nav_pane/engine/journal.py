@@ -1,5 +1,6 @@
 """Atomic, durable write-ahead records. Corruption is an error, never an empty journal."""
 import json
+import base64
 import os
 import tempfile
 import errno
@@ -10,13 +11,33 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def encode_value(value):
+    if isinstance(value, bytes):
+        return {"__bytes__": base64.b64encode(value).decode("ascii")}
+    raise TypeError(f"Unsupported journal value: {type(value).__name__}")
+
+
+def decode_value(value):
+    if set(value) == {"__bytes__"} and isinstance(value["__bytes__"], str):
+        return base64.b64decode(value["__bytes__"], validate=True)
+    return value
+
+
+def loads(text):
+    return json.loads(text, object_hook=decode_value)
+
+
+def canonical(value):
+    return loads(json.dumps(value, default=encode_value))
+
+
 def atomic_json(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix=path.name, suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(data, stream, ensure_ascii=False, indent=2)
+            json.dump(data, stream, ensure_ascii=False, indent=2, default=encode_value)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -63,7 +84,7 @@ class Journal:
 
     def read(self):
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {"version": 1, "entries": {}, "transactions": {}}
         if (not isinstance(data, dict) or data.get("version") != 1

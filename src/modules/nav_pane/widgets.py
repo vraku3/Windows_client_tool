@@ -91,7 +91,10 @@ def extract_icon(location):
     try:
         if not handles:
             raise OSError(f"No icon found in {location}")
-        return QImage.fromHICON(handles[0]).copy()
+        image = QImage.fromHICON(handles[0]).copy()
+        if image.isNull():
+            raise OSError(f"Icon conversion failed: {location}")
+        return image
     finally:
         for handle in handles:
             win32gui.DestroyIcon(handle)

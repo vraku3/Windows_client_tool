@@ -255,7 +255,7 @@ class _DashboardWidget(QWidget):
         col.setContentsMargins(14, 12, 14, 12)
         col.setSpacing(12)
         col.addLayout(self._build_header())
-        col.addLayout(self._build_tiles())
+        col.addWidget(self._build_tiles())
         col.addLayout(self._build_middle())
         col.addLayout(self._build_bottom())
         col.addWidget(self._build_network_card())
@@ -312,17 +312,14 @@ class _DashboardWidget(QWidget):
             row.addWidget(w)
         return holder
 
-    def _build_tiles(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setSpacing(12)
+    def _build_tiles(self) -> QWidget:
+        from ui.glance import GlanceStrip
         self._tiles = {
             "cpu": MetricTile("CPU"), "mem": MetricTile("Memory"),
             "disk": MetricTile("Disk activity", ceiling=50.0),
             "net": MetricTile("Network", ceiling=1.0),
         }
-        for tile in self._tiles.values():
-            row.addWidget(tile, 1)
-        return row
+        return GlanceStrip(self._tiles.values(), self)
 
     def _build_middle(self) -> QHBoxLayout:
         row = QHBoxLayout()

@@ -28,12 +28,14 @@ from PyQt6.QtWidgets import (
     QHeaderView, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton,
     QCompleter, QListWidget, QListWidgetItem, QSplitter, QTableView,
     QToolButton,
-    QVBoxLayout, QWidget,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
 
 from modules.log_viewer import cmtrace_parser
 from modules.log_viewer.cmtrace_parser import UNKNOWN_TIME
@@ -570,6 +572,7 @@ class LogViewerWidget(QWidget):
         self.table.setShowGrid(False)
         self.table.setFont(QFont("Consolas", 9))
         self.table.setWordWrap(False)
+        apply_table_style(self.table, numeric_columns=(THREAD,), date_columns=(TIME,), row_height=24)
         # Message takes whatever is left; without this every column sits at
         # its default width and the text is crammed into the left third of
         # the window with two thirds empty beside it.
@@ -612,7 +615,36 @@ class LogViewerWidget(QWidget):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         self.splitter.setSizes([600, 160])
-        layout.addWidget(self.splitter, 1)
+        self._build_empty_state(layout)
+
+    def _build_empty_state(self, layout) -> None:
+        self._content_stack = QStackedWidget(self)
+        self._content_stack.addWidget(self.splitter)
+        self._empty = EmptyState("\u2261", "Open a log to start investigating",
+                                 "Open a log, reopen a recent file, or drop a file or folder here. CMTrace, plain text, CAB and ZIP bundles are supported.",
+                                 "Open log...")
+        self._empty.action_triggered.connect(self.choose_file)
+        self._empty.hint_label.setMinimumWidth(420)
+        self._empty.hint_label.setMinimumHeight(self._empty.hint_label.fontMetrics().height() * 5)
+        self._empty_recent = QListWidget(self._empty)
+        self._empty_recent.setMaximumHeight(120)
+        self._empty_recent.setMaximumWidth(620)
+        self._empty_recent.setToolTip("Recent files and folders. Double-click or press Enter to reopen the selected path.")
+        self._empty_recent.itemActivated.connect(lambda item: self.open_recent(item.data(Qt.ItemDataRole.UserRole)))
+        self._empty.layout().addWidget(self._empty_recent, alignment=Qt.AlignmentFlag.AlignCenter)
+        self._content_stack.addWidget(self._empty)
+        self._content_stack.setCurrentWidget(self._empty)
+        layout.addWidget(self._content_stack, 1)
+        self._refresh_empty_recent()
+
+    def _refresh_empty_recent(self) -> None:
+        self._empty_recent.clear()
+        for path in self._recent[:5]:
+            item = QListWidgetItem(os.path.basename(path) or path)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setToolTip(f"Reopen {path}")
+            self._empty_recent.addItem(item)
+        self._empty_recent.setVisible(bool(self._recent))
 
     def _build_status(self, layout) -> None:
         """The failure-summary panel and the status line."""
@@ -808,6 +840,8 @@ class LogViewerWidget(QWidget):
             save_recent(self._config, self._recent)
             self._build_open_menu()
         self._path = self._paths[0] if self._paths else ""
+        self._refresh_empty_recent()
+        self._content_stack.setCurrentWidget(self.splitter if self._paths else self._empty)
         self.reload()
 
     def open_folder(self, folder: str) -> None:
@@ -822,6 +856,8 @@ class LogViewerWidget(QWidget):
             self._path = ""
             self.status.setText(
                 f"No logs (*.log, *.lo_) directly in {folder}")
+            self._content_stack.setCurrentWidget(self._empty)
+            self._empty.set_variant("empty", reason=self.status.text())
             return
         self.open_paths(found, remember_as=folder)
 
@@ -2431,6 +2467,7 @@ class LogViewerModule(BaseModule):
             self._widget._history_model.setStringList(
                 self._widget._filter_history)
             self._widget._recent = load_recent(config)
+            self._widget._refresh_empty_recent()
             self._widget._build_open_menu()
             self._widget.apply_layout(load_layout(config))
             self._widget._presets = load_presets(config)

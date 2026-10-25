@@ -283,6 +283,10 @@ def _fetch_drivers_for_class(cls: Optional[str], old_threshold_days: int) -> Lis
             cls if cls is not None else "(unfiltered)")
         return []
     raw = proc.stdout.strip()
+    stderr = (getattr(proc, "stderr", "") or "").strip()
+    if proc.returncode != 0 or stderr:
+        reason = stderr or raw or f"exit code {proc.returncode}"
+        raise DriverReadError(f"Driver inventory could not be read: {reason[:500]}")
     if not raw:
         return []
     try:

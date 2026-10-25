@@ -3,6 +3,7 @@ import logging
 import subprocess
 import winreg
 import psutil
+from PyQt6 import sip
 from typing import List
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
@@ -12,6 +13,7 @@ from ui.help.network_ui import control_help, explain_tabs
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
+from ui.help.network_overview import add_glance, feature_card, unreadable
 logger = logging.getLogger(__name__)
 
 CREATE_NO_WINDOW = 0x08000000
@@ -22,6 +24,32 @@ DNS_PRESETS = {
     "OpenDNS": ("208.67.222.222", "208.67.220.220"),
     "Custom": ("", ""),
 }
+
+
+def _read_overview():
+    """Cheap read-only adapter and current-user proxy facts, independent of edits."""
+    out = {'adapters': None, 'up': None, 'proxy': None, 'server': None}
+    try:
+        stats = psutil.net_if_stats()
+        out.update(adapters=len(stats), up=sum(s.isup for s in stats.values()))
+    except Exception as exc:
+        out['adapter_error'] = str(exc)
+        logger.warning('Could not read adapter summary: %s', exc)
+    try:
+        key = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
+            def read(name, default):
+                try:
+                    return winreg.QueryValueEx(handle, name)[0]
+                except FileNotFoundError:
+                    return default
+            out.update(proxy=bool(read('ProxyEnable', 0)), server=str(read('ProxyServer', '')))
+    except FileNotFoundError:
+        out.update(proxy=False, server='')
+    except OSError as exc:
+        out['proxy_error'] = str(exc)
+        logger.warning('Could not read proxy summary: %s', exc)
+    return out
 
 
 def run_cmd_stream(cmd: List[str], output_cb) -> int:
@@ -48,16 +76,45 @@ class NetExtrasModule(BaseModule):
     def __init__(self):
         super().__init__()
         self._workers: list = []
+        self._widget = None
+        self._loaded = False
 
     def create_widget(self) -> QWidget:
+        root = QWidget()
+        layout = QVBoxLayout(root)
+        self._glance = add_glance(layout, [
+            ('adapters', 'Adapters up', 'info', 'Active adapters out of all adapters reported by Windows, including virtual adapters.'),
+            ('proxy', 'User proxy', 'info', 'Current-user manual proxy enable setting. This does not describe WinHTTP or automatic proxy scripts.'),
+            ('server', 'Proxy route', 'info', 'Saved manual proxy server when enabled; Direct means the manual proxy is off. Automatic configuration may still apply.'),
+        ])
         tabs = QTabWidget()
         tabs.addTab(self._make_dns_tab(), "DNS Switcher")
         tabs.addTab(self._make_proxy_tab(), "Proxy Settings")
         tabs.addTab(self._make_quick_tab(), "Quick Actions")
-        return explain_tabs(tabs, "Quick Actions")
+        layout.addWidget(explain_tabs(tabs, "Quick Actions"), 1)
+        self._widget = root
+        return root
+
+    def _show_overview(self, data):
+        if self._widget is None or sip.isdeleted(self._widget):
+            return
+        adapters = data.get('adapters')
+        self._glance['adapters'].set(f"{data['up']} / {adapters}" if adapters is not None else None,
+                                      'Includes virtual adapters', reason=data.get('adapter_error', 'Could not read adapters'))
+        enabled = data.get('proxy')
+        self._glance['proxy'].set(('On' if enabled else 'Off') if enabled is not None else None,
+                                  'Manual proxy setting', reason=data.get('proxy_error', 'Could not read proxy'))
+        route = (data.get('server') or None) if enabled else 'Direct' if enabled is False else None
+        self._glance['server'].set(route, 'Current-user manual proxy',
+                                   reason=data.get('proxy_error', 'Proxy server not reported'))
     def _make_dns_tab(self) -> QWidget:
         w = QWidget()
-        layout = QVBoxLayout(w)
+        outer = QVBoxLayout(w)
+        card = feature_card('DNS for an adapter',
+                            'Choose an active adapter and a resolver preset. Restore DHCP returns DNS selection to the network.')
+        outer.addWidget(card)
+        outer.addStretch()
+        layout = card.layout()
         form = QHBoxLayout()
         adapter_combo = QComboBox()
         control_help(adapter_combo, 'adapter_combo')
@@ -148,7 +205,12 @@ class NetExtrasModule(BaseModule):
 
     def _make_proxy_tab(self) -> QWidget:
         w = QWidget()
-        layout = QVBoxLayout(w)
+        outer = QVBoxLayout(w)
+        card = feature_card('Current-user proxy',
+                            'Load the saved proxy settings before editing. These settings apply to this Windows user.')
+        outer.addWidget(card)
+        outer.addStretch()
+        layout = card.layout()
         PROXY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
 
         enable_cb = QCheckBox("Enable Proxy")
@@ -228,7 +290,14 @@ class NetExtrasModule(BaseModule):
             btn = QPushButton(label)
             btn_cmd = cmd[:]  # capture
             btn.clicked.connect(lambda _, c=btn_cmd: _run_action(c))
-            grid.addWidget(btn, i // 3, i % 3)
+            hints = {'Flush DNS': 'Clear cached DNS answers so the next lookup asks again.',
+                     'Reset Winsock': 'Reset the Winsock catalog. A restart is needed afterwards.',
+                     'IP Release': 'Release DHCP leases. Network access may disconnect.',
+                     'IP Renew': 'Ask DHCP for fresh IP configuration.',
+                     'Reset TCP/IP': 'Reset TCP/IP configuration. A restart may be needed.'}
+            card = feature_card(label, hints[label])
+            card.layout().addWidget(btn)
+            grid.addWidget(card, i // 3, i % 3)
 
         def _run_action(cmd):
             log.appendPlainText(f"\n> {' '.join(cmd)}")
@@ -251,6 +320,24 @@ class NetExtrasModule(BaseModule):
         self.app = app
     def on_stop(self) -> None:
         self.cancel_all_workers()
-    def on_activate(self): pass
+    def on_activate(self):
+        if self._widget is None or self._loaded:
+            return
+        self._loaded = True
+        worker = Worker(lambda _: _read_overview())
+        worker.signals.result.connect(self._show_overview)
+        worker.signals.error.connect(self._overview_failed)
+        worker.signals.cancelled.connect(self._overview_cancelled)
+        self._workers.append(worker)
+        self.thread_pool.start(worker)
+
+    def _overview_failed(self, message):
+        if self._widget is not None and not sip.isdeleted(self._widget):
+            unreadable(self._glance, str(message))
+        self._loaded = False
+        logger.warning('Network Extras summary failed: %s', message)
+
+    def _overview_cancelled(self):
+        self._loaded = False
     def on_deactivate(self) -> None:
         self.cancel_all_workers()

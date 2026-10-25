@@ -24,6 +24,9 @@ from ui.app_facts import bind_row, selected_facts, FACTS_ROLE, KEY_ROLE
 
 from core.app_facts import AppKey, AppFactsIndex
 from core.base_module import BaseModule
+from ui.glance import GlanceStrip, GlanceTile
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, fit_table, set_role
@@ -77,13 +80,21 @@ class _SoftwarePane(QWidget):
         self._progress.setFixedHeight(4)
         self._progress.hide()
         layout.addWidget(self._progress)
-        layout.addLayout(self._build_chips())
+        self._glance = {}
+        for key, role in [('Apps', 'info'), ('End of life', 'danger'), ('Duplicates', 'warning'), ('Updates available', 'warning')]:
+            tile = GlanceTile(key, role, tooltip=f"{key} in this scan. Select to filter the results.")
+            tile.set_unreadable("Not read yet")
+            tile.clicked.connect(lambda k=key: self._select_glance(k))
+            self._glance[key] = tile
+        layout.addWidget(GlanceStrip(self._glance.values()))
+        layout.addWidget(self._build_chips())
 
         self._findings_box = QVBoxLayout()
         layout.addLayout(self._findings_box)
 
         split = QSplitter(Qt.Orientation.Vertical)
         self.table = QTableWidget(0, len(COLUMNS))
+        apply_table_style(self.table, numeric_columns=(4,), size_columns=(5,), date_columns=(3,))
         self.table.setHorizontalHeaderLabels(COLUMNS)
         describe_headers(self.table)
         from ui.app_facts import _controller
@@ -141,20 +152,15 @@ class _SoftwarePane(QWidget):
         return bar
 
     def _build_chips(self) -> QHBoxLayout:
-        row = QHBoxLayout()
-        group = QButtonGroup(self)
-        group.setExclusive(True)
-        for name in sa.CHIPS:
-            btn = QPushButton(name)
-            describe_control(btn, 'btn')
-            btn.setCheckable(True)
-            btn.setChecked(name == self._chip)
-            btn.clicked.connect(lambda _c=False, n=name: self._set_chip(n))
-            group.addButton(btn)
-            self._chip_buttons[name] = btn
-            row.addWidget(btn)
-        row.addStretch(1)
-        return row
+        self._chip_bar = ChipBar((c, c, 0) for c in sa.CHIPS)
+        self._chip_buttons = self._chip_bar.chips
+        self._chip_buttons[self._chip].setChecked(True)
+        self._chip_bar.selection_changed.connect(lambda keys: self._set_chip(keys[0]) if keys else None)
+        return self._chip_bar
+
+    def _select_glance(self, key):
+        self._chip_buttons[key].setChecked(True)
+        self._set_chip(key)
 
     # ── loading ─────────────────────────────────────────────────────────────
 
@@ -186,6 +192,8 @@ class _SoftwarePane(QWidget):
         self.refresh_btn.setEnabled(True)
         self._progress.hide()
         self.status.setText(f"Error: {err}")
+        for tile in self._glance.values():
+            tile.set_unreadable(str(err))
         logger.warning("Software inventory load failed: %s", err)
 
     def set_entries(self, entries: List[SoftwareEntry]) -> None:
@@ -196,7 +204,13 @@ class _SoftwarePane(QWidget):
         self._rows = sa.analyze(self._entries, winget=self._winget)
         counts = sa.chip_counts(self._rows)
         for name, btn in self._chip_buttons.items():
-            btn.setText(f"{name} ({counts.get(name, 0)})")
+            btn.set_count(counts.get(name, 0))
+            btn.setText(f"{name} ({counts[name]})")
+        for key, tile in self._glance.items():
+            if key == "Updates available" and (self._winget is None or self._winget_error):
+                tile.set_unreadable(self._winget_error or "Run Check winget updates to measure this")
+            else:
+                tile.set(counts[key], "Installed inventory")
         self._render_findings()
         self._apply_filter()
 
@@ -262,6 +276,7 @@ class _SoftwarePane(QWidget):
         return None if row is None else (row.entry.name, row.entry.version, row.entry.type_)
 
     def _apply_filter(self) -> None:
+        apply_table_style(self.table, numeric_columns=(4,), size_columns=(5,), date_columns=(3,))
         keep = self._identity(self.selected_row())        # the 2-minute refresh must not deselect
         rows = self._visible_rows()
         self.table.setSortingEnabled(False)          # a sorted fill scatters each row's cells

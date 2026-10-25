@@ -16,6 +16,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.base_module import BaseModule
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header, set_role
 from core.worker import Worker
@@ -47,6 +49,7 @@ class RegistryExplorerModule(BaseModule):
         self._widget: QWidget | None = None
         self._model: RegistryTreeModel | None = None
         self._workers: list = []
+        self._recent_keys = []
 
     def create_widget(self) -> QWidget:
         root = QWidget()
@@ -76,6 +79,12 @@ class RegistryExplorerModule(BaseModule):
             describe_control(quick_menu.addAction(label, lambda p=path: self._path_bar.setText(p) or self._nav_to_path()))
         quick_btn.setMenu(quick_menu)
         tb.addWidget(quick_btn)
+        self._recent_button = QPushButton("Recent keys")
+        self._recent_button.setToolTip("Reopen one of the last six keys visited in this session.")
+        self._recent_menu = QMenu(self._recent_button)
+        self._recent_button.setMenu(self._recent_menu)
+        self._recent_button.setEnabled(False)
+        tb.addWidget(self._recent_button)
 
         copy_path_btn = QPushButton("Copy Path")
         describe_control(copy_path_btn, 'copy_path_btn')
@@ -89,35 +98,7 @@ class RegistryExplorerModule(BaseModule):
 
         layout.addLayout(tb)
 
-        # Search bar
-        search_row = QHBoxLayout()
-        search_row.setContentsMargins(4, 0, 4, 0)
-        self._search_input = QLineEdit()
-        describe_control(self._search_input, '_search_input')
-        self._search_input.setPlaceholderText("Search text (under the current key)...")
-        self._search_input.returnPressed.connect(self._run_search)
-        search_row.addWidget(self._search_input, stretch=1)
-        self._search_values = QCheckBox("Value data")
-        describe_control(self._search_values, '_search_values')
-        search_row.addWidget(self._search_values)
-        search_row.addWidget(QLabel("or changed in"))
-        self._recent_combo = QComboBox()
-        describe_control(self._recent_combo, '_recent_combo')
-        for label, days in (("(any time)", 0), ("last 1 day", 1), ("last 7 days", 7), ("last 30 days", 30)):
-            self._recent_combo.addItem(label, days)
-        search_row.addWidget(self._recent_combo)
-        search_btn = QPushButton("Search")
-        describe_control(search_btn, 'search_btn')
-        search_btn.clicked.connect(self._run_search)
-        search_row.addWidget(search_btn)
-        self._search_status = QLabel("")
-        search_row.addWidget(self._search_status)
-        layout.addLayout(search_row)
-        self._results = QListWidget()
-        self._results.setMaximumHeight(150)
-        self._results.hide()
-        self._results.itemActivated.connect(self._open_result)
-        layout.addWidget(self._results)
+        self._build_search_bar(layout)
 
         # Main splitter: tree (left) + values (right)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -152,6 +133,8 @@ class RegistryExplorerModule(BaseModule):
         self._values_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._values_table.verticalHeader().setVisible(False)
         right_layout.addWidget(self._values_table)
+        self._build_navigation_start(right_layout)
+        self._values_table.hide()
         splitter.addWidget(right)
         splitter.setSizes([380, 620])
 
@@ -164,10 +147,83 @@ class RegistryExplorerModule(BaseModule):
         explain_widget(root, introduction=True)
         return root
 
+    def _build_search_bar(self, layout):
+        # Search bar
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(4, 0, 4, 0)
+        self._search_input = QLineEdit()
+        describe_control(self._search_input, '_search_input')
+        self._search_input.setPlaceholderText("Search text (under the current key)...")
+        self._search_input.returnPressed.connect(self._run_search)
+        search_row.addWidget(self._search_input, stretch=1)
+        self._search_values = QCheckBox("Value data")
+        describe_control(self._search_values, '_search_values')
+        search_row.addWidget(self._search_values)
+        search_row.addWidget(QLabel("or changed in"))
+        self._recent_combo = QComboBox()
+        describe_control(self._recent_combo, '_recent_combo')
+        for label, days in (("(any time)", 0), ("last 1 day", 1), ("last 7 days", 7), ("last 30 days", 30)):
+            self._recent_combo.addItem(label, days)
+        search_row.addWidget(self._recent_combo)
+        search_btn = QPushButton("Search")
+        describe_control(search_btn, 'search_btn')
+        search_btn.clicked.connect(self._run_search)
+        search_row.addWidget(search_btn)
+        self._search_status = QLabel("")
+        search_row.addWidget(self._search_status)
+        layout.addLayout(search_row)
+        self._results = QListWidget()
+        self._results.setMaximumHeight(150)
+        self._results.hide()
+        self._results.itemActivated.connect(self._open_result)
+        layout.addWidget(self._results)
+
+
+    def _build_navigation_start(self, layout):
+        self._navigation_start = QWidget()
+        start = QVBoxLayout(self._navigation_start)
+        empty = EmptyState("\u2318", "Choose a registry key", "Browse the tree, paste a path above, or open a bookmark below. This browser is read-only.", "Open bookmark")
+        empty.action_triggered.connect(self._open_bookmark)
+        start.addWidget(empty)
+        self._bookmarks = QListWidget()
+        self._bookmarks.setToolTip("Saved registry locations. Select a bookmark and choose Open bookmark, or double-click it to browse.")
+        for label, path in _QUICK_NAV.items():
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setToolTip(f"Browse {path}; no registry values are changed.")
+            self._bookmarks.addItem(item)
+        self._bookmarks.setCurrentRow(0)
+        self._bookmarks.itemActivated.connect(lambda _item: self._open_bookmark())
+        start.addWidget(self._bookmarks, 1)
+        self._recent_keys_label = QLabel("Recent keys will appear here as you browse.")
+        self._recent_keys_label.setWordWrap(True)
+        set_role(self._recent_keys_label, "muted")
+        start.addWidget(self._recent_keys_label)
+        layout.addWidget(self._navigation_start, 1)
+
+    def _open_bookmark(self):
+        item = self._bookmarks.currentItem()
+        if item is not None:
+            self._open_key_path(item.data(Qt.ItemDataRole.UserRole))
+
+    def _open_key_path(self, path):
+        self._path_bar.setText(path)
+        self._nav_to_path()
+
     def _on_key_selected(self, current: QModelIndex, _previous: QModelIndex) -> None:
         if not current.isValid() or self._model is None:
             return
+        self._navigation_start.hide()
+        self._values_table.show()
+        apply_table_style(self._values_table)
         path = self._model.key_path(current)
+        self._recent_keys = [path] + [p for p in self._recent_keys if p != path][:5]
+        self._recent_keys_label.setText("Recent keys:\n" + "\n".join(self._recent_keys))
+        self._recent_menu.clear()
+        for recent in self._recent_keys:
+            action = self._recent_menu.addAction(recent, lambda p=recent: self._open_key_path(p))
+            action.setToolTip(f"Browse {recent}; no registry values are changed.")
+        self._recent_button.setEnabled(True)
         self._path_bar.setText(path)
         when, why = self._model.last_write_for(current)
         if when is not None:

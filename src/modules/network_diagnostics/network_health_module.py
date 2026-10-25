@@ -18,8 +18,11 @@ from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
-from core.table_ui import center_header, set_role
+from core.table_ui import set_role
 from core.worker import Worker
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
+from ui.help.network_overview import add_glance, unreadable
 from modules.network_diagnostics import dns_cache, dns_client, network_fixes, network_health, route_table
 from modules.network_diagnostics.ping_stats import PingStats
 from modules.perfmon.perfmon_charts import _QtLineChart
@@ -40,7 +43,8 @@ def _alive(w: Any) -> bool:
 def _read_only_table(cols: List[str]) -> QTableWidget:
     t = QTableWidget(0, len(cols))
     t.setHorizontalHeaderLabels(cols)
-    center_header(t)
+    numeric = [i for i, c in enumerate(cols) if c in ("Time (ms)", "Metric", "TTL")]
+    apply_table_style(t, numeric_columns=numeric)
     t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
@@ -61,8 +65,23 @@ class _HealthPane(QWidget):
 
     def _build(self) -> None:
         lay = QVBoxLayout(self)
+        self._glance = add_glance(lay, [
+            ('errors', 'Errors', 'danger', 'Failed health checks. Select to show errors.'),
+            ('warnings', 'Warnings', 'warning', 'Health warnings. Select to show warnings.'),
+            ('gateway', 'Gateway latency', 'info', 'Fastest measured reply from a default IPv4 gateway. ICMP may be blocked.'),
+            ('dns', 'DNS resolving', 'ok', 'Configured resolvers that returned an address, out of all completed DNS probes.'),
+        ])
+        self._chips = ChipBar([(k, label, 0) for k, label in
+                               [('all', 'All'), ('errors', 'Errors'), ('warnings', 'Warnings'), ('unknown', 'Unknown')]])
+        self._chips.selection_changed.connect(lambda _: self._fill())
+        for key in ('errors', 'warnings'):
+            self._glance[key].setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self._glance[key].setCursor(Qt.CursorShape.PointingHandCursor)
+            self._glance[key].clicked.connect(lambda k=key: self._chips.chips[k].setChecked(True))
+        lay.addWidget(self._chips)
         bar = QHBoxLayout()
         self._run_btn = QPushButton("Run checks")
+        self._run_btn.setObjectName("accentButton")
         self._run_btn.clicked.connect(self.run_checks)
         self._copy_btn = QPushButton("Copy report")
         self._copy_btn.setToolTip("Copy a plain-text report (findings, adapters, routes, DNS timings) for a ticket")
@@ -112,6 +131,7 @@ class _HealthPane(QWidget):
         self._running = True
         self._run_btn.setEnabled(False)
         self._summary.setText("Checking...")
+        unreadable(self._glance, "Checks are running")
 
         def work(worker):
             snap = network_health.collect_snapshot()
@@ -131,6 +151,7 @@ class _HealthPane(QWidget):
         self._running = False
         self._run_btn.setEnabled(True)
         self._summary.setText("Cancelled")
+        unreadable(self._glance, "Checks were cancelled; run checks again")
 
     def _failed(self, msg: str) -> None:
         self._running = False
@@ -138,6 +159,7 @@ class _HealthPane(QWidget):
         self._summary.setText("Checks failed: " + msg)
         set_role(self._summary, "statusError")
         logger.warning("network health run failed: %s", msg)
+        unreadable(self._glance, str(msg))
 
     def _done(self, result) -> None:
         self._running = False
@@ -152,11 +174,35 @@ class _HealthPane(QWidget):
         warn = any(f.severity in (network_health.WARNING, network_health.UNKNOWN) for f in self._findings)
         set_role(self._summary, "statusError" if bad else "statusWarning" if warn else "statusSuccess")
         self._copy_btn.setEnabled(True)
+        self._update_glance()
         self._fill()
+
+    def _update_glance(self) -> None:
+        counts = {key: sum(f.severity == severity for f in self._findings)
+                  for key, severity in [('errors', network_health.ERROR),
+                                        ('warnings', network_health.WARNING), ('unknown', network_health.UNKNOWN)]}
+        self._chips.set_counts({'all': len(self._findings), **counts})
+        for key in ('errors', 'warnings'):
+            self._glance[key].set(counts[key], 'checks need attention' if counts[key] else 'No findings',
+                                  severity=('danger' if key == 'errors' else 'warning') if counts[key] else 'ok')
+        gateways = [p for k, p in self._probes.items() if k.startswith('gw:')]
+        times = [p['rtt_ms'] for p in gateways if p.get('ok') and p.get('rtt_ms') is not None]
+        self._glance['gateway'].set(f'{min(times):.1f} ms' if times else None,
+                                   'Fastest gateway reply', reason='No gateway replied or the probe was unavailable')
+        replies = [p for k, p in self._probes.items() if k.startswith('dns:')]
+        good = sum(p.ok and p.resolved for p in replies)
+        self._glance['dns'].set(f'{good} / {len(replies)}' if replies else None,
+                               'Resolvers answered' if good else 'No resolver answered',
+                               reason='No DNS probe result was available',
+                               severity='ok' if good == len(replies) else 'warning' if good else 'danger')
 
     def _visible(self) -> List[network_health.Finding]:
         hide = self._hide_ok.isChecked()
-        return [f for f in self._findings if not (hide and f.severity == network_health.OK)]
+        selected = self._chips.selected()
+        severity = {'errors': network_health.ERROR, 'warnings': network_health.WARNING,
+                    'unknown': network_health.UNKNOWN}.get(selected[0] if selected else 'all')
+        return [f for f in self._findings if not (hide and f.severity == network_health.OK)
+                and (severity is None or f.severity == severity)]
 
     def _fill(self) -> None:
         rows = self._visible()

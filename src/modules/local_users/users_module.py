@@ -14,6 +14,9 @@ from PyQt6.QtWidgets import (
 )
 
 from core.base_module import BaseModule
+from ui.glance import GlanceStrip, GlanceTile
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import center_header, centered_item, fit_table, set_role
@@ -131,17 +134,17 @@ class LocalUsersModule(BaseModule):
         set_role(self._policy_label, "muted")
         layout.addWidget(self._policy_label)
 
-        chip_row = QHBoxLayout()
-        for c in acc.CHIPS:
-            b = QPushButton(c)
-            describe_control(b, 'b')
-            b.setCheckable(True)
-            b.setChecked(c == "All")
-            b.clicked.connect(lambda _=False, name=c: self._set_chip(name))
-            self._chips[c] = b
-            chip_row.addWidget(b)
-        chip_row.addStretch()
-        layout.addLayout(chip_row)
+        self._glance = {}
+        for key, role in [('All', 'info'), ('Administrators', 'warning'), ('Password never expires', 'warning'), ('Locked out', 'danger')]:
+            tile = GlanceTile(key, role, tooltip=f"{key} in this scan. Select to filter the results.")
+            tile.set_unreadable("Not read yet")
+            tile.clicked.connect(lambda k=key: self._set_chip(k))
+            self._glance[key] = tile
+        layout.addWidget(GlanceStrip(self._glance.values()))
+        self._chip_bar = ChipBar((c, c, 0) for c in acc.CHIPS)
+        self._chips = self._chip_bar.chips
+        self._chip_bar.selection_changed.connect(lambda keys: self._set_chip(keys[0]) if keys else None)
+        layout.addWidget(self._chip_bar)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
@@ -181,7 +184,7 @@ class LocalUsersModule(BaseModule):
         t.setHorizontalHeaderLabels(cols)
         describe_headers(t)
         fit_table(t, stretch=stretch, content=content)
-        center_header(t)
+        apply_table_style(t)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         t.setAlternatingRowColors(True)
@@ -212,7 +215,13 @@ class LocalUsersModule(BaseModule):
         self._progress.hide()
         counts = acc.chip_counts(snap.accounts)
         for c, b in self._chips.items():
+            b.set_count(counts[c])
             b.setText(f"{c} ({counts[c]})")
+        for key, tile in self._glance.items():
+            if key == "Administrators" and any(a.groups_error for a in snap.accounts):
+                tile.set_unreadable("Group membership could not be read for every account")
+            else:
+                tile.set(counts[key], "Local accounts")
         self._render_users()
         self._render_groups()
         self._render_findings()
@@ -233,6 +242,8 @@ class LocalUsersModule(BaseModule):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._status_label.setText(f"Could not read accounts: {err}")
+        for tile in self._glance.values():
+            tile.set_unreadable(err)
 
     # ── rendering ────────────────────────────────────────────────────────
 

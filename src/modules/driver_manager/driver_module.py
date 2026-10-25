@@ -48,6 +48,8 @@ from modules.driver_manager.vendor_updates.rollback import (
 from modules.driver_manager.vendor_updates.pipeline import InstallResult  # noqa: F401 -- tests build these via dmod.InstallResult(...)
 from modules.driver_manager.vendor_updates import update_history
 from ui.empty_state import EmptyState
+from ui.glance import GlanceStrip, GlanceTile
+from ui.table_style import apply_table_style
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +235,8 @@ class DriverModule(BaseModule):
         #: C07 follow-up: has `_populate()` already run its one-time
         #: resizeColumnsToContents() fit this session? See `_populate()`.
         self._columns_fitted_this_session = False
+        self._inventory_loading = False
+        self._inventory_loaded = False
 
     def create_widget(self) -> QWidget:
         self._widget = QWidget()
@@ -242,6 +246,7 @@ class DriverModule(BaseModule):
         self._error_banner = ErrorBanner()
         self._error_banner.hide()
         layout.addWidget(self._error_banner)
+        self._build_glance(layout)
 
         toolbar = self._build_toolbar()
         layout.addLayout(toolbar)
@@ -264,6 +269,7 @@ class DriverModule(BaseModule):
         for i in range(1, len(COLUMNS)):
             self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
         center_header(self._table)
+        apply_table_style(self._table, date_columns=(3,))
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSortingEnabled(True)
@@ -276,7 +282,7 @@ class DriverModule(BaseModule):
         self._table_stack = QStackedWidget()
         self._table_stack.addWidget(self._table)
         self._empty = EmptyState(
-            "🖨️", "No drivers loaded", "Click Refresh to scan.", "Refresh")
+            "↻", "Driver inventory", "Driver inventory loads automatically when this pane opens.", "Refresh")
         self._empty.action_triggered.connect(self._do_refresh)
         self._table_stack.addWidget(self._empty)
         layout.addWidget(self._table_stack, 1)
@@ -422,7 +428,7 @@ class DriverModule(BaseModule):
         self.app = app
 
     def on_activate(self) -> None:
-        if not self._drivers_ref[0]:
+        if not self._inventory_loaded:
             self._do_refresh()
 
     def get_refresh_interval(self) -> Optional[int]:
@@ -609,6 +615,12 @@ class DriverModule(BaseModule):
                                  | QItemSelectionModel.SelectionFlag.Rows)
 
     def _do_refresh(self) -> None:
+        if self._inventory_loading:
+            return
+        self._inventory_loading = True
+        if self._table_stack is not None:
+            self._empty.set_variant("loading", progress_text="Reading installed drivers and problem devices.")
+            self._table_stack.setCurrentIndex(1)
         if self._refresh_btn:
             self._refresh_btn.setEnabled(False)
         if self._status_lbl:
@@ -629,6 +641,9 @@ class DriverModule(BaseModule):
             if not widget_is_valid(self._widget):
                 return
             self._drivers_ref[0] = data
+            self._inventory_loading = False
+            self._inventory_loaded = True
+            self._update_glance(data)
             if self._refresh_btn:
                 self._refresh_btn.setEnabled(True)
             if self._progress:
@@ -636,6 +651,7 @@ class DriverModule(BaseModule):
             filter_text = self._filter_edit.text() if self._filter_edit else ""
             self._populate(data, filter_text)
             if self._table_stack is not None:
+                self._empty.set_variant("empty", reason="Windows returned no installed driver records. Refresh to check again.")
                 self._table_stack.setCurrentIndex(0 if data else 1)
             if self._status_lbl:
                 self._status_lbl.setText(self._status_summary(data))
@@ -643,6 +659,10 @@ class DriverModule(BaseModule):
         def on_error(err_str: str) -> None:
             if not widget_is_valid(self._widget):
                 return
+            self._inventory_loading = False
+            self._update_glance(None, err_str)
+            self._empty.set_variant("error", reason=err_str)
+            self._table_stack.setCurrentIndex(1)
             if self._refresh_btn:
                 self._refresh_btn.setEnabled(True)
             if self._progress:
@@ -652,12 +672,45 @@ class DriverModule(BaseModule):
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
+        worker.signals.cancelled.connect(lambda: on_error("Driver inventory read was cancelled"))
         self._workers.append(worker)
 
         if self.app and getattr(self.app, "thread_pool", None) is not None:
             self.app.thread_pool.start(worker)
         else:
             QThreadPool.globalInstance().start(worker)
+
+    def _build_glance(self, layout):
+        specs = [("Problem devices", "Has error", "Windows-reported device error codes."),
+                 ("Old OEM drivers", "Old", "OEM driver packages flagged as over two years old; age alone is not a fault."),
+                 ("Unsigned", "Unsigned only", "Devices whose signature metadata reports unsigned."),
+                 ("Held AMD", None, HELD_REASON)]
+        tiles = []
+        for caption, flag, tip in specs:
+            tile = GlanceTile(caption, tooltip=tip)
+            tile.set(None, reason="Driver inventory has not been read")
+            if flag:
+                tile.clicked.connect(lambda f=flag: self._pick_glance_filter(f))
+            tiles.append(tile)
+        self._glance = GlanceStrip(tiles)
+        layout.addWidget(self._glance)
+
+    def _pick_glance_filter(self, flag):
+        self._hide_pseudo_cb.setChecked(False)
+        self._filter_edit.clear()
+        self._flag_filter_combo.setCurrentText(flag)
+
+    def _update_glance(self, drivers, reason=""):
+        values = None if drivers is None else (
+            sum(d.error_code != 0 for d in drivers),
+            sum("Old" in d.flags and bool(published_name_for(d.inf_name)) for d in drivers),
+            sum(not d.signed for d in drivers), sum(is_held_driver(d) for d in drivers))
+        for index, tile in enumerate(self._glance.tiles):
+            value = None if values is None else values[index]
+            tile.set(value, sub="Inventory devices", reason=reason,
+                     severity="warning" if value and index < 3 else "info")
+            if value is None:
+                tile.sub.setText("Inventory unavailable")
 
     def _do_export(self) -> None:
         if self._widget is None:

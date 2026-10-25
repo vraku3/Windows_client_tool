@@ -14,7 +14,9 @@ from core.semantic_colors import semantic
 
 from . import power, topology
 from .overview_health import History
-from .overview_widgets import Sparkline
+from .overview_widgets import Sparkline, ClockGrid
+from .glance_support import summary
+from ui.table_style import apply_table_style
 from .tab_base import DashModule, DashTab, numeric_item
 
 logger = logging.getLogger(__name__)
@@ -34,6 +36,16 @@ class PowerTab(DashTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
 
+        self._glance = summary(self, layout, [
+            ("plan", "Active plan", "The power plan currently selected by Windows."),
+            ("clock", "Effective clock", "Average measured effective frequency across logical processors."),
+            ("limited", "Limited cores", "Logical processors whose Windows clock limit is below nominal.")])
+        self._heat = ClockGrid(self)
+        layout.addWidget(self._heat)
+        self._heat_note = QLabel("Per-core effective clock / nominal: 100% = nominal; above 100% = boost.", self)
+        self._heat_note.setToolTip("Each square is a logical processor. Missing readings stay absent; the table retains exact frequencies.")
+        set_role(self._heat_note, "muted")
+        layout.addWidget(self._heat_note)
         self._source_lbl = QLabel("—")
         self._topo_lbl = QLabel("—")
         self._freq_lbl = QLabel("—")
@@ -61,6 +73,7 @@ class PowerTab(DashTab):
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        apply_table_style(self._table, numeric_columns=(0, 1, 3, 4, 5, 6))
         layout.addWidget(self._table, 1)
 
         self._note = QLabel(
@@ -102,6 +115,9 @@ class PowerTab(DashTab):
             self._topo = topology.read_topology()
         nominal = power.read_frequencies()
         if nominal is None:
+            self._glance["clock"].set_unreadable("Windows would not report processor frequencies")
+            self._glance["limited"].set_unreadable("Windows would not report processor frequencies")
+            self._heat.set_loads([])
             self._freq_lbl.setText("Windows would not report processor frequencies.")
             return
         effective = self._eff.read([f.max_mhz for f in nominal]) if self._eff else None
@@ -121,6 +137,12 @@ class PowerTab(DashTab):
 
     def _show(self, nominal, effective) -> None:
         topo = self._topo
+        self._glance["limited"].set(sum(f.throttled for f in nominal), "logical processors",
+                                    severity="warning" if any(f.throttled for f in nominal) else "ok")
+        self._glance["clock"].set(f"{sum(effective) / len(effective):,.0f} MHz" if effective else None,
+                                  reason="Waiting for two effective-frequency counter samples")
+        self._heat.set_loads([effective[r] * 100 / f.max_mhz if effective and r < len(effective)
+                              and f.max_mhz else None for r, f in enumerate(nominal)])
         self._topo_lbl.setText("Topology: " + (topo.summary() if topo else "could not be read"))
         table = self._table
         table.setRowCount(len(nominal))
@@ -165,11 +187,14 @@ class PowerTab(DashTab):
 
     def _plans_loaded(self, plans) -> None:
         if plans is None:
+            self._glance["plan"].set_unreadable("Windows refused the power plan list")
             self._plan_box.clear()
             self._plan_box.addItem("(could not read power plans)")
             self._apply_btn.setEnabled(False)
             return
         self._plans = plans
+        active = next((p.name for p in plans if p.active), None)
+        self._glance["plan"].set(active, "Windows power policy", reason="No active plan reported")
         self._plan_box.blockSignals(True)
         self._plan_box.clear()
         for p in plans:

@@ -18,9 +18,12 @@ from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
                              QTableWidgetItem, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout, QWidget)
 
+from .glance_support import summary, unreadable
+from ui.glance import GlanceTile
+from PyQt6.QtWidgets import QHBoxLayout
 from core.table_ui import set_role
 from core.semantic_colors import semantic
-from core.worker import Worker
+from core.worker import Worker, retire
 
 from core.procengine.columns import fmt_bytes, fmt_percent, fmt_rate
 from core.procengine.snapshot import SnapshotSource
@@ -60,6 +63,12 @@ class UsersTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self._glance = summary(self, layout, [
+            ("active", "Active sessions", "Logged-on sessions whose Windows state is Active."),
+            ("disconnected", "Disconnected", "Sessions that keep processes running after disconnection."),
+            ("memory", "Top memory account", "Account using the most private working-set memory; unreadable accounts excluded.")])
+        self._session_cards = QHBoxLayout()
+        layout.addLayout(self._session_cards)
         heading = QLabel("Logged-on sessions", self)
         set_role(heading, "sectionTitle")
         layout.addWidget(heading)
@@ -110,9 +119,8 @@ class UsersTab(QWidget):
         self.cancel_all()
 
     def cancel_all(self) -> None:
-        for worker in self._workers:
-            worker.cancel()
-        self._workers.clear()
+        retire(self._workers)
+        self._busy = False
 
     # ---- reading --------------------------------------------------------
 
@@ -127,6 +135,8 @@ class UsersTab(QWidget):
         worker = Worker(lambda _worker: self._read())
         worker.signals.result.connect(self._apply)
         worker.signals.error.connect(self._failed)
+        worker.signals.cancelled.connect(self._on_cancelled)
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         self._workers.append(worker)
         pool.start(worker)
 
@@ -139,6 +149,10 @@ class UsersTab(QWidget):
         snapshot, groups, *rest = result
         self._snapshot = snapshot
         self._groups = groups
+        known = [g for g in groups if not g.is_unknown and g.rows]
+        top = max(known, key=lambda g: g.totals()["memory"], default=None)
+        self._glance["memory"].set(top.name if top else None,
+            fmt_bytes(top.totals()["memory"]) if top else "", reason="No readable process accounts")
         if rest:
             self._show_sessions(rest[0])
         self._rebuild()
@@ -146,12 +160,24 @@ class UsersTab(QWidget):
 
     def _show_sessions(self, sessions) -> None:
         """A failed read says so; it is never shown as an empty table."""
+        while self._session_cards.count():
+            self._session_cards.takeAt(0).widget().deleteLater()
+        for sess in (sessions or [])[:6]:
+            card = GlanceTile(sess.account, tooltip=f"Session {sess.id}: {sess.state}. "
+                             + (f"Remote client: {sess.client}" if sess.is_remote else "Console session."))
+            card.set(sess.state, f"Session {sess.id} | {'Remote' if sess.is_remote else 'Console'}",
+                     severity="ok" if sess.state == "Active" else "warning" if sess.state == "Disconnected" else "info")
+            self._session_cards.addWidget(card)
         table = self.sessions_table
         if sessions is None:
+            for key in ("active", "disconnected"):
+                self._glance[key].set_unreadable("Terminal Services API refused the session list")
             table.setRowCount(0)
             self.sessions_note.setText(
                 "Could not ask Windows who is logged on (Terminal Services API refused).")
             return
+        for key, state in (("active", "Active"), ("disconnected", "Disconnected")):
+            self._glance[key].set(sum(s.state == state for s in sessions), "sessions")
         table.setRowCount(len(sessions))
         for row, sess in enumerate(sessions):
             values = (str(sess.id), sess.account, sess.state,
@@ -164,8 +190,12 @@ class UsersTab(QWidget):
             f"{len(sessions)} session(s)" + (f", {remote} remote" if remote else "")
             + ". A Disconnected session keeps its processes running.")
 
+    def _on_cancelled(self):
+        self._busy = False
+
     def _failed(self, message) -> None:
         self._busy = False
+        unreadable(self._glance, str(message))
         logger.error("Users refresh failed: %s", message)
         self.status.setText(f"Could not read the process list: {message}")
 

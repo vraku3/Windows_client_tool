@@ -21,9 +21,11 @@ from ui.help.network_ui import explain, explain_tabs, item_help, table_page, int
 from core.base_module import BaseModule
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header, describe_table, set_role
+from core.table_ui import centered_item, describe_table, set_role
 from core.widget_life import widget_is_valid
-from core.worker import Worker
+from core.worker import Worker, retire
+from ui.table_style import apply_table_style
+from ui.help.network_overview import add_glance, unreadable
 from modules.wifi_analyzer import wifi_profile_audit, wifi_scan, wlan_events
 from ui.error_banner import ErrorBanner
 import logging
@@ -46,7 +48,9 @@ def _scan_all(_worker) -> Dict:
 def _make_table(cols: List[str], stretch: int = 0) -> QTableWidget:
     t = QTableWidget(0, len(cols))
     t.setHorizontalHeaderLabels(cols)
-    center_header(t)
+    apply_table_style(t, numeric_columns=[i for i, c in enumerate(cols)
+                                         if c in ('Signal %', 'Channel', 'Utilization %', 'Count')],
+                      date_columns=[i for i, c in enumerate(cols) if c == 'Last seen'])
     for i in range(len(cols)):
         t.horizontalHeader().setSectionResizeMode(
             i, QHeaderView.ResizeMode.Stretch if i == stretch
@@ -111,6 +115,7 @@ class WifiAnalyzerModule(BaseModule):
         layout = QVBoxLayout(outer)
         layout.addWidget(module_intro(INTRO["wifi"]))
         layout.setContentsMargins(8, 8, 8, 8)
+        self._build_connection_card(layout)
         layout.addLayout(self._build_toolbar())
 
         self._progress = QProgressBar()
@@ -151,6 +156,65 @@ class WifiAnalyzerModule(BaseModule):
         explain_tabs(tabs, "wifi")
         explain(outer, "wifi", intro=False)
         return outer
+
+    def _build_connection_card(self, layout):
+        self._glance = add_glance(layout, [
+            ('ssid', 'Current connection', 'info', 'SSID on the first connected Wi-Fi interface. Ethernet connections are not shown here.'),
+            ('signal', 'Signal', 'info', 'Current Wi-Fi signal quality reported by Windows, not a throughput measurement.'),
+            ('band', 'Band and channel', 'info', 'Band and channel of the connected access point, as reported by Windows.'),
+            ('congestion', 'Competing radios', 'warning', 'Other visible BSSIDs on this channel; 2.4 GHz includes overlapping channels assuming 20 MHz. This is not measured airtime utilization.'),
+        ])
+        self._signal_bar = QProgressBar()
+        self._signal_bar.setRange(0, 100)
+        self._signal_bar.setFixedHeight(18)
+        self._signal_bar.setFormat('Current connection signal: %p%')
+        self._signal_bar.setToolTip('Signal quality from the connected interface. Hidden when Windows cannot report the signal.')
+        self._signal_bar.hide()
+        layout.addWidget(self._signal_bar)
+
+    def _show_connection(self, scan):
+        self._signal_bar.hide()
+        if scan.interface_problem is not None:
+            unreadable(self._glance, scan.interface_problem.message)
+            return
+        connected = [i for i in scan.interfaces if i.get('State', '').lower() == 'connected']
+        if not connected:
+            unreadable(self._glance, 'No connected Wi-Fi interface')
+            self._glance['ssid'].set('Disconnected', f'{len(scan.interfaces)} Wi-Fi interface(s)', severity='muted')
+            return
+        iface = connected[0]
+        self._glance['ssid'].set(iface.get('SSID') or None, iface.get('Name', 'Connected'),
+                                 reason='Windows did not report the connected SSID')
+        signal = str(iface.get('Signal', '')).strip().rstrip('%').strip()
+        quality = int(signal) if signal.isdigit() and 0 <= int(signal) <= 100 else None
+        self._glance['signal'].set(f'{quality}%' if quality is not None else None,
+                                   'Strong' if quality is not None and quality >= 70 else 'Fair' if quality is not None and quality >= 40 else 'Weak',
+                                   reason='Windows did not report signal quality',
+                                   severity='ok' if quality is not None and quality >= 70 else 'warning')
+        if quality is not None:
+            self._signal_bar.setValue(quality)
+            self._signal_bar.show()
+        own = next((n for n in scan.networks if str(n.get('BSSID', '')).lower() == iface.get('BSSID', '').lower()
+                    and iface.get('BSSID')), {})
+        channel = str(iface.get('Channel') or own.get('Channel') or '')
+        band = iface.get('Band') or own.get('Band') or wifi_scan.channel_to_band(channel)
+        self._glance['band'].set(band or None, 'Channel ' + channel if channel else 'Channel not reported',
+                                 reason='Windows did not report the band')
+        self._show_congestion(scan, iface, band, channel)
+
+    def _show_congestion(self, scan, iface, band, channel):
+        if scan.problem is not None or not band or not channel.isdigit() or not iface.get('BSSID'):
+            reason = scan.problem.message if scan.problem else 'Channel, band or connected BSSID unavailable'
+            self._glance['congestion'].set_unreadable(reason)
+            return
+        own = iface['BSSID'].lower()
+        distance = 4 if band == '2.4 GHz' else 0
+        radios = {str(n['BSSID']).lower() for n in scan.networks
+                  if n.get('BSSID') and str(n['BSSID']).lower() != own and n.get('Band') == band
+                  and str(n.get('Channel', '')).isdigit()
+                  and abs(int(n['Channel']) - int(channel)) <= distance}
+        self._glance['congestion'].set(len(radios), 'Overlapping BSSIDs' if distance else 'Same-channel BSSIDs',
+                                       severity='warning' if radios else 'ok')
 
     def _build_toolbar(self) -> QHBoxLayout:
         toolbar = QHBoxLayout()
@@ -273,15 +337,22 @@ class WifiAnalyzerModule(BaseModule):
         self._status_lbl.setText("Scanning…")
         self._progress.show()
 
-        self._scan_worker = Worker(_scan_all)
-        self._scan_worker.signals.result.connect(self._on_result)
-        self._scan_worker.signals.error.connect(self._on_error)
-        self._scan_worker.signals.finished.connect(self._on_finished)
-        self.app.thread_pool.start(self._scan_worker)
+        worker = Worker(_scan_all)
+        self._scan_worker = worker
+        current = lambda: self._scan_worker is worker and widget_is_valid(self._widget)
+        worker.signals.result.connect(lambda data: self._on_result(data) if current() else None)
+        worker.signals.error.connect(lambda err: self._on_error(err) if current() else None)
+        worker.signals.finished.connect(lambda: self._on_finished() if current() else None)
+        self._track_read(worker)
+
+    def _track_read(self, worker):
+        self._workers.append(worker)
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
+        self.app.thread_pool.start(worker)
 
     def _stop_scan(self):
         if self._scan_worker is not None:
-            self._scan_worker.cancel()
+            retire([self._scan_worker])
             self._scan_worker = None
         # on_stop() reaches here on shutdown, and as a tab of Network
         # Diagnostics this module's widget is built lazily — so there may be
@@ -302,6 +373,7 @@ class WifiAnalyzerModule(BaseModule):
         if not widget_is_valid(self._net_table):
             return
         scan: wifi_scan.ScanResult = data["scan"]
+        self._show_connection(scan)
         self._show_networks(scan)
         self._show_interfaces(scan)
         self._show_channel_map(scan)
@@ -460,6 +532,8 @@ class WifiAnalyzerModule(BaseModule):
         self._progress.hide()
         self._banner.set_error(f"Scan failed: {err}")
         self._status_lbl.setText("Scan failed")
+        unreadable(self._glance, str(err))
+        self._signal_bar.hide()
         set_role(self._status_lbl, "statusError")
 
     def _on_auto_refresh_changed(self, state: int):
@@ -486,14 +560,16 @@ class WifiAnalyzerModule(BaseModule):
         if widget_is_valid(self._profile_status_lbl):
             self._profile_status_lbl.setText("Reading saved Wi-Fi profiles…")
 
-        self._profile_worker = Worker(lambda _w: wifi_profile_audit.audit_profiles())
-        self._profile_worker.signals.result.connect(self._on_profiles_result)
-        self._profile_worker.signals.error.connect(self._on_profiles_error)
-        self.app.thread_pool.start(self._profile_worker)
+        worker = Worker(lambda _w: wifi_profile_audit.audit_profiles())
+        self._profile_worker = worker
+        current = lambda: self._profile_worker is worker and widget_is_valid(self._widget)
+        worker.signals.result.connect(lambda data: self._on_profiles_result(data) if current() else None)
+        worker.signals.error.connect(lambda err: self._on_profiles_error(err) if current() else None)
+        self._track_read(worker)
 
     def _stop_profile_load(self):
         if self._profile_worker is not None:
-            self._profile_worker.cancel()
+            retire([self._profile_worker])
             self._profile_worker = None
         if widget_is_valid(self._profile_refresh_btn):
             self._profile_refresh_btn.setEnabled(True)

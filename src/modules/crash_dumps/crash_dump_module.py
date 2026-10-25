@@ -31,6 +31,8 @@ class CrashDumpModule(LogReaderModule):
             "detail_enricher": detail_html,
             "summarizer": lambda entries: summary_text(entries, self._notes),
             "empty_text": "No crash dumps or bugcheck events found",
+            "healthy_empty": True,
+            "read_problems": lambda: self._notes,
         }
 
     def load_entries(self, worker):

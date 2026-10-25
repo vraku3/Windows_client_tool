@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.base_module import BaseModule
+from ui.glance import GlanceStrip, GlanceTile
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.worker import Worker
@@ -124,6 +125,7 @@ class GPResultModule(BaseModule):
         layout.setContentsMargins(8, 8, 8, 8)
         self._outer = outer
 
+        self._build_glance(layout)
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
         describe_control(self._refresh_btn, '_refresh_btn')
@@ -239,6 +241,31 @@ class GPResultModule(BaseModule):
     # Loading
     # ------------------------------------------------------------------
 
+    def _build_glance(self, layout):
+        self._glance = {}
+        for key, label, role in (("computer", "Computer GPOs", "info"),
+                                 ("user", "User GPOs", "info"),
+                                 ("drift", "Policy drift", "warning")):
+            tile = GlanceTile(label, role, tooltip=f"{label} from the most recent policy report.")
+            tile.set_unreadable("Not read yet")
+            self._glance[key] = tile
+        layout.addWidget(GlanceStrip(self._glance.values()))
+
+    def _update_glance(self, result, drift):
+        for key in ("computer", "user"):
+            scope = getattr(result, key)
+            if result.error or not scope.available:
+                self._glance[key].set_unreadable(result.error or f"{key.title()} scope was not returned; try running elevated")
+            else:
+                self._glance[key].set(len(scope.applied_gpos), "Applied GPOs")
+        errors = [f.error for f in getattr(drift, "files", []) if f.error]
+        if drift is None or errors:
+            self._glance["drift"].set_unreadable("; ".join(errors) or "Drift was not checked")
+        elif any(row.state == "unreadable" for row in drift.results):
+            self._glance["drift"].set_unreadable("Some policy values could not be read; inspect the drift report")
+        else:
+            self._glance["drift"].set(sum(row.is_drift for row in drift.results), "Values differ from policy")
+
     def _do_refresh(self) -> None:
         if self._busy:
             self._status_lbl.setText("Already running — please wait.")
@@ -287,6 +314,7 @@ class GPResultModule(BaseModule):
         self._loaded_once = True
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
+        self._update_glance(result, drift)
         self._result = result
         self._local_policy = local_policy or []
         self._drift = drift
@@ -301,6 +329,8 @@ class GPResultModule(BaseModule):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._status_lbl.setText("Error: %s" % err)
+        for tile in self._glance.values():
+            tile.set_unreadable(err)
         self._show_banner("Could not read Group Policy results: %s" % err)
 
     # ------------------------------------------------------------------

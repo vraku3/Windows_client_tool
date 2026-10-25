@@ -11,6 +11,10 @@ from PyQt6.QtGui import QColor, QFont
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker
+from PyQt6 import sip
+from core.table_ui import set_role
+from ui.glance import GlanceStrip, GlanceTile
+from ui.empty_state import EmptyState
 from core.semantic_colors import semantic
 from modules.dashboard.overview_health import pending_reboot_reasons
 import logging
@@ -170,17 +174,40 @@ class WindowsFeaturesModule(BaseModule):
     def __init__(self):
         super().__init__()
         self._workers: list = []
+        self._loaded = False
+        self._reading = False
 
-    def create_widget(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout(w)
-        layout.setContentsMargins(8, 8, 8, 8)
+    def _build_summary(self, layout):
+        self._glance = GlanceStrip([GlanceTile(name, tooltip=tip) for name, tip in (
+            ("Enabled", "Optional features whose DISM state is Enabled."),
+            ("Disabled", "Disabled features, including those with payload removed."),
+            ("Pending restart", "Features whose enable or disable operation is pending a restart."))])
+        layout.addWidget(self._glance)
+        self._update_glance(None, "Features have not been read")
+        self._empty = EmptyState("↻", "Windows features", "Reading optional feature states with DISM may take a moment.",
+                                 "Refresh")
+        self._empty.action_triggered.connect(lambda: self._load_features())
+        layout.addWidget(self._empty)
 
-        # Reboot banner
+    def _update_glance(self, features, reason=""):
+        values = None if features is None else (
+            sum(s == "Enabled" for _, s in features),
+            sum(s.startswith("Disabled") for _, s in features),
+            sum("pending" in s.lower() for _, s in features))
+        for index, tile in enumerate(self._glance.tiles):
+            value = None if values is None else values[index]
+            tile.set(value, reason=reason, severity="warning" if index == 2 and value else "info")
+            if value is None:
+                tile.sub.setText("Feature states unavailable")
+
+    def _features_finished(self, reason=""):
+        self._reading = False
+        if not sip.isdeleted(self._empty):
+            self._empty.set_variant("error" if reason else "empty", reason=reason)
+
+    def _build_reboot_banner(self):
         reboot_banner = QLabel("⚠ A system reboot is pending.")
-        reboot_banner.setStyleSheet(
-            "background:#FF8800;color:white;padding:4px;font-weight:bold;"
-        )
+        set_role(reboot_banner, "statusWarning")
 
         def _refresh_reboot_banner() -> None:
             """Named reasons (CBS servicing, Windows Update, queued file
@@ -207,6 +234,16 @@ class WindowsFeaturesModule(BaseModule):
                 reboot_banner.hide()
 
         _refresh_reboot_banner()
+        return reboot_banner, _refresh_reboot_banner
+
+
+    def create_widget(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 8, 8, 8)
+        self._build_summary(layout)
+
+        reboot_banner, _refresh_reboot_banner = self._build_reboot_banner()
         layout.addWidget(reboot_banner)
 
         # Toolbar
@@ -216,7 +253,10 @@ class WindowsFeaturesModule(BaseModule):
         filter_edit.setPlaceholderText("Filter features...")
         status_lbl = QLabel("Click Refresh to load features.")
         state_combo = QComboBox()
-        state_combo.addItems(["All states", "Enabled", "Disabled"])
+        state_combo.addItems(["All states", "Enabled", "Disabled", "Pending restart"])
+        state_combo.setToolTip("Filter optional features by their Windows-reported state, including changes pending a restart.")
+        for tile, state in zip(self._glance.tiles, ("Enabled", "Disabled", "Pending restart")):
+            tile.clicked.connect(lambda target=state: state_combo.setCurrentText(target))
         toolbar.addWidget(refresh_btn)
         toolbar.addWidget(QLabel("Filter:"))
         toolbar.addWidget(filter_edit, 1)
@@ -293,7 +333,9 @@ class WindowsFeaturesModule(BaseModule):
             for feat_name, state in features:
                 if ft and ft not in feat_name.lower():
                     continue
-                if want != "All states" and not state.startswith(want):
+                if want == "Pending restart" and "pending" not in state.lower():
+                    continue
+                if want not in ("All states", "Pending restart") and not state.startswith(want):
                     continue
                 if feat_name in PINNED_FEATURES:
                     pinned.append((feat_name, state))
@@ -313,6 +355,12 @@ class WindowsFeaturesModule(BaseModule):
                 _color_item(item, state)
 
         def load_features() -> None:
+            if self._reading:
+                return
+            self._reading = True
+            self._empty.set_variant("loading")
+            self._empty.show()
+            splitter.hide()
             refresh_btn.setEnabled(False)
             progress.show()
             status_lbl.setText("Running DISM...")
@@ -321,6 +369,13 @@ class WindowsFeaturesModule(BaseModule):
             worker = Worker(lambda _w: _fetch_all_features())
 
             def on_result(features: List[Tuple[str, str]]) -> None:
+                if sip.isdeleted(w):
+                    return
+                self._features_finished()
+                self._loaded = True
+                self._update_glance(features)
+                self._empty.setVisible(not features)
+                splitter.setVisible(bool(features))
                 features_ref[0] = features
                 refresh_btn.setEnabled(True)
                 progress.hide()
@@ -330,6 +385,10 @@ class WindowsFeaturesModule(BaseModule):
                 _refresh_reboot_banner()
 
             def on_error(err: str) -> None:
+                if sip.isdeleted(w):
+                    return
+                self._features_finished(err)
+                self._update_glance(None, err)
                 refresh_btn.setEnabled(True)
                 progress.hide()
                 # "Requires administrator" is the whole answer; prefixing it
@@ -339,6 +398,7 @@ class WindowsFeaturesModule(BaseModule):
 
             worker.signals.result.connect(on_result)
             worker.signals.error.connect(on_error)
+            worker.signals.cancelled.connect(lambda: on_error("Feature read was cancelled. Refresh to retry."))
             self._workers.append(worker)
             self.thread_pool.start(worker)
 
@@ -437,6 +497,7 @@ class WindowsFeaturesModule(BaseModule):
         enable_btn.clicked.connect(_confirm_enable)
         disable_btn.clicked.connect(_confirm_disable)
 
+        self._load_features = load_features
         explain(w, INTRO, CONTROLS, HEADERS, TABS)
         return w
 
@@ -450,7 +511,8 @@ class WindowsFeaturesModule(BaseModule):
         return None
 
     def on_activate(self) -> None:
-        pass
+        if not self._loaded and hasattr(self, "_load_features"):
+            self._load_features()
 
     def on_deactivate(self) -> None:
         self.cancel_all_workers()

@@ -32,6 +32,8 @@ from modules.restore_manager import restore_analysis as ra
 restore_point_type_name = ra._point_kind
 from ui.error_banner import ErrorBanner
 from ui.table_items import fit_table_height, numeric_item, paint_severity
+from ui.glance import GlanceStrip, GlanceTile
+from ui.table_style import apply_table_style
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +136,14 @@ class RestoreManagerModule(BaseModule):
         self._error_banner = ErrorBanner()
         self._error_banner.hide()
         layout.addWidget(self._error_banner)
+        self._glance = GlanceStrip([
+            GlanceTile("Protection on C:", tooltip="System Protection state read for C:."),
+            GlanceTile("Restore points", tooltip="Number of restore points Windows listed."),
+            GlanceTile("Newest point", tooltip="Age of the newest restore point; its absolute date is in the tooltip."),
+            GlanceTile("C: shadow storage", tooltip="Used shadow storage and its configured maximum on C:."),
+        ])
+        layout.addWidget(self._glance)
+        self._update_glance()
         layout.addLayout(self._build_toolbar())
 
         self._status_label = QLabel("Reading restore points...")
@@ -152,6 +162,7 @@ class RestoreManagerModule(BaseModule):
         fit_table(self._drive_table, stretch=[0], content=[1, 2, 3, 4, 5])
         self._drive_table.verticalHeader().setVisible(False)
         self._drive_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        apply_table_style(self._drive_table, size_columns=(2, 3, 4), numeric_columns=(5,))
         layout.addWidget(self._drive_table)
 
         head2 = QLabel("Restore points")
@@ -166,6 +177,7 @@ class RestoreManagerModule(BaseModule):
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        apply_table_style(self._table, numeric_columns=(3, 4), date_columns=(1,))
         self._table.itemSelectionChanged.connect(self._update_delete_buttons)
         layout.addWidget(self._table, 1)
 
@@ -345,6 +357,7 @@ class RestoreManagerModule(BaseModule):
 
     def _render_context(self) -> None:
         snap = self._snapshot
+        self._update_glance()
         findings = ra.restore_findings(
             self._infos, snap.protection, snap.storage, snap.storage_error,
             snap.policy_disabled, snap.frequency, vss_disabled=snap.vss_disabled,
@@ -358,6 +371,33 @@ class RestoreManagerModule(BaseModule):
                 f"{len(self._infos)} restore point(s)"
                 + (f", newest {newest:%Y-%m-%d %H:%M}" if newest else "")
                 + f" -- {counts['error']} error(s), {counts['warning']} warning(s)")
+
+    def _update_glance(self) -> None:
+        snap = self._snapshot
+        protection, count, newest, space = self._glance.tiles
+        if snap.protection is None:
+            protection.set(None, reason=snap.protection_error or "Protection has not been read")
+        else:
+            enabled = "C:" in [m.rstrip("\\").upper() for m in snap.protection.mounts]
+            protection.set("On" if enabled else "Off", severity="ok" if enabled else "warning")
+        count.set(None if snap.points is None else len(snap.points),
+                  reason=snap.points_error or "Restore points have not been read")
+        infos = ra.analyze_points(snap.points) if snap.points is not None else []
+        dated = [p for p in infos if p.created is not None]
+        if dated:
+            point = max(dated, key=lambda p: p.created)
+            newest.set(f"{point.age_days:.1f} d" if point.age_days is not None else None,
+                       tooltip=f"{point.description}\n{point.created:%Y-%m-%d %H:%M}",
+                       severity="warning" if (point.age_days or 0) > 7 else "info")
+        else:
+            newest.set(None, reason=snap.points_error or "No dated restore point available")
+        storage = next((s for s in snap.storage or [] if s.volume.rstrip("\\").upper() == "C:"), None)
+        if storage is None or storage.used is None or (storage.maximum is None and not storage.unbounded):
+            space.set(None, reason=snap.storage_error or "No complete C: shadow-storage measurement")
+        else:
+            maximum = "unbounded" if storage.unbounded else ra.format_bytes(storage.maximum)
+            space.set(f"{ra.format_bytes(storage.used)} / {maximum}",
+                      severity="warning" if (storage.used_of_max_percent or 0) >= 90 else "info")
 
     def _render_findings(self, findings: List[ra.Finding]) -> None:
         while self._findings_box.count():

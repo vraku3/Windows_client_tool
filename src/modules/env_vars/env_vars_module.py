@@ -8,7 +8,7 @@ import os
 import winreg
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.base_module import BaseModule
+from ui.glance import GlanceStrip, GlanceTile
+from ui.table_style import apply_table_style
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
@@ -30,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 class _EnvPanel(QWidget):
     """Single-scope (System or User) env-var panel."""
+
+    read_finished = pyqtSignal(object, str)
 
     def __init__(self, hive, reg_path: str, label: str, requires_admin: bool = False):
         super().__init__()
@@ -94,14 +98,17 @@ class _EnvPanel(QWidget):
         rows, why = env_ops.read_env(self._hive, self._reg_path)
         if rows is None:
             self._status.setText(f"Could not read: {why}")
+            self.read_finished.emit(None, why)
             return
         self._status.setText(f"{len(rows)} variable(s)")
         self._all_rows = rows
+        self.read_finished.emit(rows, "")
         self._apply_filter(self._search.text())
 
     def _apply_filter(self, text: str) -> None:
         q = text.lower()
         rows = [v for v in self._all_rows if not q or q in v.name.lower() or q in v.value.lower()]
+        apply_table_style(self._table)
         self._table.setRowCount(len(rows))
         for r, v in enumerate(rows):
             kind = "Expandable" if v.kind == winreg.REG_EXPAND_SZ else "String"
@@ -442,9 +449,18 @@ class EnvVarsModule(BaseModule):
         bar.addStretch()
         layout.addLayout(bar)
 
+        self._scope_rows = {"System": None, "User": None}
+        self._scope_errors = {"System": "Not read yet", "User": "Not read yet"}
+        self._glance = {key: GlanceTile(key, tooltip=f"{key} from the current registry environment read.")
+                        for key in ("System", "User", "User overrides")}
+        for tile in self._glance.values():
+            tile.set_unreadable("Not read yet")
+        layout.addWidget(GlanceStrip(self._glance.values()))
         splitter = QSplitter(Qt.Orientation.Vertical)
         self._sys_panel = _EnvPanel(winreg.HKEY_LOCAL_MACHINE, _SYS_PATH, "System", requires_admin=True)
         self._usr_panel = _EnvPanel(winreg.HKEY_CURRENT_USER, _USR_PATH, "User", requires_admin=False)
+        self._sys_panel.read_finished.connect(lambda rows, why: self._update_glance("System", rows, why))
+        self._usr_panel.read_finished.connect(lambda rows, why: self._update_glance("User", rows, why))
         self._sys_panel.set_duplicate_target(self._usr_panel)
         self._usr_panel.set_duplicate_target(self._sys_panel)
         self._path_pane = _PathPane(self.thread_pool)
@@ -458,6 +474,17 @@ class EnvVarsModule(BaseModule):
         self._widget = root
         explain_widget(root, introduction=True)
         return root
+
+    def _update_glance(self, scope, rows, why):
+        self._scope_rows[scope], self._scope_errors[scope] = rows, why
+        self._glance[scope].set(None if rows is None else len(rows), "Variables", reason=why)
+        if any(value is None for value in self._scope_rows.values()):
+            self._glance["User overrides"].set_unreadable("; ".join(v for v in self._scope_errors.values() if v))
+        else:
+            system = {row.name.casefold() for row in self._scope_rows["System"]}
+            count = sum(row.name.casefold() in system and row.name.casefold() != "path"
+                        for row in self._scope_rows["User"])
+            self._glance["User overrides"].set(count, "Shared names; PATH is merged", severity="info")
 
     def _snapshot_default(self) -> str:
         base = getattr(getattr(self, "app", None), "app_data_dir", "") or os.getcwd()

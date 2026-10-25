@@ -17,7 +17,8 @@ from PyQt6.QtWidgets import (
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.table_ui import set_role
-from core.worker import COMWorker
+from core.worker import COMWorker, retire
+from ui.empty_state import EmptyState
 from modules.hardware_inventory import hardware_reader as hr
 from modules.hardware_inventory import hardware_tabs as ht
 
@@ -30,6 +31,19 @@ def _alive(widget) -> bool:
     return widget is not None and not sip.isdeleted(widget)
 
 
+def _clear_layout(layout):
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget() is not None:
+            item.widget().deleteLater()
+        elif item.layout() is not None:
+            # The taken item IS the layout, and takeAt() handed it to Python:
+            # it is freed with its wrapper. deleteLater() freed it a second
+            # time -- a double free that aborted whole-suite runs natively
+            # (0xC0000409) whenever the garbage collector ran (2026-10-26).
+            _clear_layout(item.layout())
+
+
 class _LoadingTab(QWidget):
     """Shows loading state, loads data in a COMWorker, hands it to a setup fn."""
 
@@ -38,6 +52,7 @@ class _LoadingTab(QWidget):
         self._loader = loader_fn
         self._setup_fn = setup_table_fn
         self._workers: list = []
+        self._current_worker = None
 
         layout = QVBoxLayout(self)
         self._status = QLabel(LOADING_TEXT)
@@ -56,6 +71,11 @@ class _LoadingTab(QWidget):
         layout.addLayout(btn_row)
         layout.addWidget(self._progress)
 
+        self._empty = EmptyState("↻", "Hardware inventory", "Reading this tab's hardware information.",
+                                 "Refresh", variant="empty")
+        self._empty.action_triggered.connect(self._load)
+        layout.addWidget(self._empty)
+
         self._content = QWidget()
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
@@ -65,26 +85,39 @@ class _LoadingTab(QWidget):
         explain_widget(self)
 
     def _load(self):
+        if not self._refresh_btn.isEnabled():
+            return
         self._refresh_btn.setEnabled(False)
         self._status.setText("Loading...")
         self._progress.show()
+        self._empty.set_variant("loading")
+        self._empty.show()
+        self._content.hide()
         # COMWorker initialises COM STA on the thread, which WMI needs.
         worker = COMWorker(self._loader)
-        worker.signals.result.connect(self._on_result)
-        worker.signals.error.connect(self._on_error)
+        self._current_worker = worker
+        worker.signals.result.connect(lambda data: self._deliver(worker, self._on_result, data))
+        worker.signals.error.connect(lambda err: self._deliver(worker, self._on_error, err))
+        worker.signals.cancelled.connect(lambda: self._deliver(worker, self._on_cancelled))
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         self._workers.append(worker)
         QThreadPool.globalInstance().start(worker)
+
+    def _deliver(self, worker, callback, *args):
+        if not _alive(self) or self._current_worker is not worker:
+            return
+        self._current_worker = None
+        callback(*args)
 
     def _on_result(self, data):
         if not _alive(self):
             return
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
+        self._empty.hide()
+        self._content.show()
         self._status.setText(f"Loaded at {datetime.now().strftime('%H:%M:%S')}.")
-        for i in reversed(range(self._content_layout.count())):
-            item = self._content_layout.itemAt(i)
-            if item and item.widget():
-                item.widget().deleteLater()
+        _clear_layout(self._content_layout)
         self._setup_fn(self._content_layout, data)
 
     def _on_error(self, err):
@@ -93,11 +126,22 @@ class _LoadingTab(QWidget):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._status.setText(f"Error: {err}")
+        self._empty.set_variant("error", reason=str(err))
+        self._empty.show()
+
+    def _on_cancelled(self):
+        if not _alive(self):
+            return
+        self._refresh_btn.setEnabled(True)
+        self._progress.hide()
+        self._status.setText(LOADING_TEXT)
+        self._empty.set_variant("empty", reason="The read was cancelled. Refresh to try again.")
 
     def cancel(self) -> None:
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
+        retire(self._workers)
+        self._current_worker = None
+        if _alive(self) and not self._refresh_btn.isEnabled():
+            self._on_cancelled()
 
     @property
     def is_unloaded(self) -> bool:
@@ -114,7 +158,7 @@ def _tab_specs(app_data_dir=None):
     function, same as every other entry here.
     """
     return [
-        ("Overview", hr.get_overview, ht.setup_kv),
+        ("Overview", ht.load_overview, ht.setup_overview),
         ("CPU", hr.get_cpu_info, ht.setup_kv),
         ("Memory", ht.load_memory, ht.setup_memory),
         ("Storage", ht.load_storage, ht.setup_storage),

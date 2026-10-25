@@ -15,6 +15,8 @@ from core.table_ui import set_role
 from core.semantic_colors import semantic
 
 from . import flight_recorder as fr
+from .glance_support import summary
+from ui.empty_state import EmptyState
 from .tab_base import DashModule, DashTab, fmt_size, numeric_item
 from ui.help.dashboard_ui import row_help
 
@@ -382,7 +384,16 @@ class FlightTab(DashTab):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
+        self._glance = summary(self, layout, [
+            ("state", "Recording state", "Manual recording status. A recording continues while you visit another tab."),
+            ("samples", "Samples", "Number of samples in the currently open trace."),
+            ("duration", "Recorded duration", "Elapsed time between the first and last trace samples.")])
+        self._empty = EmptyState("REC", "Capture the moment a slowdown happens",
+            "Record CPU, memory, disk and GPU activity, then scrub the timeline to see which processes were busy. Or open a saved trace.",
+            "Start recording", parent=self)
+        self._empty.action_triggered.connect(lambda: self._rec_btn.setChecked(True))
         layout.addLayout(self._build_toolbar())
+        layout.addWidget(self._empty)
         grid = QGridLayout()
         self._charts = {}
         for i, (key, title, unit) in enumerate(fr.PANELS):
@@ -406,6 +417,7 @@ class FlightTab(DashTab):
         self.status = QLabel("", self)
         set_role(self.status, "muted")
         layout.addWidget(self.status)
+        self._redraw()
 
     def _build_toolbar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -520,6 +532,7 @@ class FlightTab(DashTab):
         self._open_btn.setEnabled(False)
         self._timer.start(int(interval * 1000))
         self.status.setText("Recording, written to disk as it goes. You can switch tabs; it keeps going.")
+        self._redraw()
         self.refresh()
 
     def _take_sample(self):
@@ -605,6 +618,20 @@ class FlightTab(DashTab):
 
     def _redraw(self) -> None:
         n = len(self._trace.samples)
+        recording = self._recorder is not None
+        self._glance["state"].set("Recording" if recording else "Loaded" if n else "Ready",
+                                  "manual capture", severity="warning" if recording else "info")
+        self._glance["samples"].set(n, "captured samples")
+        duration = (self._trace.samples[-1]["t"] - self._trace.samples[0]["t"]) if n else None
+        self._glance["duration"].set(f"{duration:,.1f} s" if duration is not None else None,
+                                    reason="No samples captured or opened yet")
+        self._empty.setVisible(not n)
+        self._empty.set_variant("loading" if recording else "empty",
+                                progress_text="Waiting for the first recorded sample" if recording else "")
+        for chart in self._charts.values():
+            chart.setVisible(bool(n))
+        self._moment.setVisible(bool(n))
+        self._slider.setVisible(bool(n))
         self._slider.blockSignals(True)
         self._slider.setRange(0, max(0, n - 1))
         self._slider.setValue(min(self._cursor, max(0, n - 1)))

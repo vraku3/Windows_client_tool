@@ -7,13 +7,14 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QTabWidget, QListWidget, QCheckBox, QSpinBox,
-    QTableWidget, QListWidgetItem,
+    QTableWidget, QListWidgetItem, QFrame,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, fit_table
+from core.table_ui import centered_item, fit_table, set_role
+from ui.table_style import apply_table_style
 from core.widget_life import widget_is_valid as _widget_valid
 from core.worker import Worker
 from core.windows_utils import is_reboot_pending
@@ -21,6 +22,25 @@ import logging
 logger = logging.getLogger(__name__)
 
 CREATE_NO_WINDOW = 0x08000000
+
+
+def _power_plan_card(guid, name, active):
+    card = QFrame()
+    card.setObjectName("card")
+    card.setToolTip(f"{name}\n{guid}\nSelect this card, then use Set Active Plan to apply it.")
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(12, 8, 12, 8)
+    layout.setSpacing(3)
+    title = QLabel(name)
+    title.setTextFormat(Qt.TextFormat.PlainText)
+    set_role(title, "heading")
+    state = QLabel("Active plan" if active else "Available plan")
+    set_role(state, "statusSuccess" if active else "muted")
+    state.setToolTip(f"Windows reports this plan as {'active' if active else 'available but inactive'}.")
+    layout.addWidget(title)
+    layout.addWidget(state)
+    card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    return card
 
 
 def _run(cmd, timeout=15):
@@ -192,9 +212,7 @@ class PowerBootModule(BaseModule):
 
         # Reboot pending banner
         reboot_banner = QLabel("⚠ A system reboot is pending.")
-        reboot_banner.setStyleSheet(
-            "background:#FF8800;color:white;padding:4px;font-weight:bold;"
-        )
+        set_role(reboot_banner, "statusWarning")
         try:
             reboot_banner.setVisible(is_reboot_pending())
         except Exception:
@@ -211,22 +229,36 @@ class PowerBootModule(BaseModule):
         explain(w, INTRO, CONTROLS, HEADERS, TABS)
         return w
 
+    def _fill_plan_cards(self, plan_list, plans):
+        for guid, name, active in plans:
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, guid)
+            item.setToolTip(f"{name}\n{guid}")
+            item.setSizeHint(QSize(260, 74))
+            plan_list.addItem(item)
+            plan_list.setItemWidget(item, _power_plan_card(guid, name, active))
+            if active:
+                plan_list.setCurrentItem(item)
+
     def _build_power_tab(self, tabs: QTabWidget) -> None:
         power_w = QWidget()
         pw_layout = QVBoxLayout(power_w)
 
         plan_lbl = QLabel("Power Plans")
-        plan_lbl.setStyleSheet("font-weight:bold;")
+        set_role(plan_lbl, "heading")
         pw_layout.addWidget(plan_lbl)
 
         plan_list = QListWidget()
-        plan_list.setMaximumHeight(120)
+        plan_list.setMinimumHeight(230)
+        plan_list.setMaximumHeight(300)
+        plan_list.setSpacing(6)
+        plan_list.setToolTip("Select a measured Windows power plan, then choose Set Active Plan.")
         set_plan_btn = QPushButton("Set Active Plan")
         pw_layout.addWidget(plan_list)
         pw_layout.addWidget(set_plan_btn)
 
         toggle_lbl = QLabel("Power Toggles")
-        toggle_lbl.setStyleSheet("font-weight:bold;margin-top:8px;")
+        set_role(toggle_lbl, "heading")
         pw_layout.addWidget(toggle_lbl)
 
         fast_startup_cb = QCheckBox("Fast Startup")
@@ -268,10 +300,7 @@ class PowerBootModule(BaseModule):
                 plans, hs, fs, sl = data
                 plans_ref[0] = plans
                 plan_list.clear()
-                for guid, name, active in plans:
-                    item = QListWidgetItem(f"{'★ ' if active else ''}{name}")
-                    item.setData(Qt.ItemDataRole.UserRole, guid)
-                    plan_list.addItem(item)
+                self._fill_plan_cards(plan_list, plans)
                 # Block signals to avoid triggering toggled callbacks while setting
                 if _widget_valid(fast_startup_cb) and _widget_valid(hibernate_cb):
                     fast_startup_cb.blockSignals(True)

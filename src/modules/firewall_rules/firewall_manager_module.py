@@ -34,6 +34,9 @@ from core.worker import Worker
 from ui.error_banner import ErrorBanner
 from core.table_ui import set_role
 from modules.firewall_rules import firewall_audit as fa
+from ui.glance import GlanceStrip, GlanceTile
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
 
 logger = logging.getLogger(__name__)
 
@@ -1118,28 +1121,28 @@ class FirewallManagerModule(BaseModule):
         self._groups_btn.clicked.connect(self._open_groups_dialog)
         toolbar.insertWidget(toolbar.count() - 5, self._groups_btn)
 
-        chip_row = QHBoxLayout()
-        self._chip_buttons = {}
-        for key, label in fa.CHIPS:
-            b = QPushButton(label)
-            describe_control(b, 'b')
-            b.setCheckable(True)
-            b.setAutoExclusive(True)
-            b.setChecked(key == "all")
-            b.clicked.connect(lambda _c=False, k=key: self._set_chip(k))
-            self._chip_buttons[key] = b
-            chip_row.addWidget(b)
-        chip_row.addStretch()
-        layout.insertLayout(2, chip_row)
+        self._glance = {}
+        labels = dict(fa.CHIPS)
+        for key in ("all", "any_any", "prog_missing", "public"):
+            tile = GlanceTile(labels[key], "info" if key == "all" else "warning",
+                              tooltip=f"{labels[key]} in the current firewall snapshot. Select to filter rules.")
+            tile.set_unreadable("Not read yet")
+            tile.clicked.connect(lambda k=key: self._chip_buttons[k].click())
+            self._glance[key] = tile
+        layout.insertWidget(2, GlanceStrip(self._glance.values()))
+        self._chip_bar = ChipBar((key, label, 0) for key, label in fa.CHIPS)
+        self._chip_buttons = self._chip_bar.chips
+        self._chip_bar.selection_changed.connect(lambda keys: self._set_chip(keys[0]) if keys else None)
+        layout.insertWidget(3, self._chip_bar)
 
         self._profile_lbl = QLabel("")
         set_role(self._profile_lbl, "muted")
-        layout.insertWidget(3, self._profile_lbl)
+        layout.insertWidget(4, self._profile_lbl)
         self._findings = QListWidget()
         self._findings.setMaximumHeight(120)
         self._findings.setToolTip("Computed exposure findings; select one to show its rules")
         self._findings.itemSelectionChanged.connect(self._on_finding_selected)
-        layout.insertWidget(4, self._findings)
+        layout.insertWidget(5, self._findings)
 
         self._detail_lbl = QLabel("Select a rule to see its details.")
         self._detail_lbl.setWordWrap(True)
@@ -1176,7 +1179,12 @@ class FirewallManagerModule(BaseModule):
         counts = fa.chip_counts(self._all_rules,
                                 [self._extra_for(r) for r in self._all_rules])
         for key, label in fa.CHIPS:
-            self._chip_buttons[key].setText("%s (%d)" % (label, counts[key]))
+            self._chip_buttons[key].set_count(counts[key])
+        for key, tile in self._glance.items():
+            if snap.error:
+                tile.set_unreadable(snap.error)
+            else:
+                tile.set(counts[key], "Current firewall rules")
         if snap.error:
             self._profile_lbl.setText(snap.error + " -- findings unavailable, not 'none'.")
         else:
@@ -1291,6 +1299,8 @@ class FirewallManagerModule(BaseModule):
         self._status_lbl.setText(f"{len(rules)} firewall rule(s) loaded.")
 
     def _on_error(self, err: str) -> None:
+        for tile in self._glance.values():
+            tile.set_unreadable(err)
         self._progress.hide()
         self._set_buttons_enabled(True)
         self._status_lbl.setText(f"Error: {err}")
@@ -1772,6 +1782,8 @@ class FirewallManagerModule(BaseModule):
         return visible
 
     def _apply_filter(self) -> None:
+        apply_table_style(self._table)
+        self._table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         visible = self._visible_rules()
         listed_keys = fa.listed_key_counts(self._all_rules)
         self._table.setSortingEnabled(False)

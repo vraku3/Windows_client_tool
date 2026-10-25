@@ -510,7 +510,9 @@ def test_each_screen_invalidates_before_requesting_fresh_facts(monkeypatch, scre
     def invalidate(cls):
         raise ReachedInvalidation
     monkeypatch.setattr(AppFactsIndex, 'invalidate', classmethod(invalidate))
-    owner = SimpleNamespace(_busy=False, _widget=object())
+    from unittest.mock import MagicMock
+    # _empty_state: the redesigned Updates tab shows "Checking for updates" first.
+    owner = SimpleNamespace(_busy=False, _widget=object(), _empty_state=MagicMock())
     callbacks = {
         'buster': lambda: AppBusterWidget.rescan(owner),
         'dashboard': lambda: InstalledAppsTab.refresh(owner),
@@ -519,7 +521,7 @@ def test_each_screen_invalidates_before_requesting_fresh_facts(monkeypatch, scre
         'store': lambda: StoreAppsModule._load_apps(owner),
         'tweaks-appx': lambda: AppManagerTab.populate_installed(owner, set()),
         'tweaks-desktop': lambda: AppManagerTab.populate_installed_desktop(owner, []),
-        'updates': lambda: _AppUpdatesTab._do_refresh(owner),
+        'updates': lambda: _AppUpdatesTab._do_refresh(MagicMock(_busy=False, _widget=object())),
         'optimise': lambda: OptimiseTab.refresh(owner),
     }
     with pytest.raises(ReachedInvalidation):

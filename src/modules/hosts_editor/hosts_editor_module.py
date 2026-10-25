@@ -17,7 +17,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QMessageBox, QPushButton, QTableWidget, QVBoxLayout, QWidget,
+    QListWidgetItem, QMessageBox, QPushButton, QStackedWidget, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.admin_utils import is_admin
@@ -32,6 +32,9 @@ from core.semantic_colors import semantic
 from core.table_ui import centered_item, fit_table, set_role
 from core.windows_utils import system32
 from core.worker import Worker
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
+from ui.help.network_overview import add_glance, unreadable
 from modules.hosts_editor import hosts_analysis as ha
 from modules.hosts_editor import hosts_dns_check as dc
 from modules.hosts_editor import hosts_file as hf
@@ -109,6 +112,11 @@ class HostsEditorModule(BaseModule):
         layout = QVBoxLayout(self._widget)
         layout.addWidget(module_intro(INTRO["hosts"]))
         layout.setContentsMargins(8, 8, 8, 8)
+        self._glance = add_glance(layout, [
+            ('entries', 'Entries', 'info', 'Override entries in the editor, including disabled entries and unsaved edits.'),
+            ('active', 'Active', 'info', 'Enabled override entries in the editor. Save applies edits to Windows.'),
+            ('blocked', 'Blocked names', 'warning', 'Unique enabled names mapped to 0.0.0.0, loopback or the IPv6 sink; localhost is excluded.'),
+        ])
         layout.addLayout(self._build_toolbar())
 
         self._banner = QLabel("")
@@ -122,8 +130,15 @@ class HostsEditorModule(BaseModule):
         self._table.setHorizontalHeaderLabels(["Enabled", "IP Address", "Hostname(s)", "Comment"])
         fit_table(self._table, stretch=[2, 3], content=[0, 1])
         self._table.setAlternatingRowColors(True)
+        apply_table_style(self._table)
         self._table.itemChanged.connect(self._on_item_changed)
-        layout.addWidget(self._table, 1)
+        self._content = QStackedWidget()
+        self._content.addWidget(self._table)
+        self._empty = EmptyState('🌐', 'No overrides',
+                                 'Windows will resolve names normally. Add an entry to prepare a local override.', 'Add Entry')
+        self._empty.action_triggered.connect(self._add_entry)
+        self._content.addWidget(self._empty)
+        layout.addWidget(self._content, 1)
 
         self._findings = QListWidget()
         self._findings.setMaximumHeight(150)
@@ -198,6 +213,24 @@ class HostsEditorModule(BaseModule):
         self._apply_read_only()
         self._status.setText(self._describe_file())
         self._update_findings()
+
+    def _update_glance(self) -> None:
+        if self._read.error:
+            unreadable(self._glance, self._read.error)
+            self._empty.set_variant('error', reason=self._read.error)
+            self._empty.action_button.setEnabled(False)
+            self._content.setCurrentWidget(self._empty)
+            return
+        rows = self._rows()
+        active = [r for r in rows if r['enabled']]
+        blocked = {h.lower() for r in active if r['ip'] in ('0.0.0.0', '127.0.0.1', '::', '::1')
+                   for h in r['hosts'] if h.lower() != 'localhost'}
+        for key, value in [('entries', len(rows)), ('active', len(active)), ('blocked', len(blocked))]:
+            self._glance[key].set(value, 'Unsaved edits' if self._modified else 'Current hosts file')
+        self._empty.set_variant('empty')
+        self._empty.action_button.setEnabled(not self._read_only_reason())
+        self._empty.action_button.setToolTip(self._read_only_reason() or 'Prepare a new override; Save writes it to the hosts file.')
+        self._content.setCurrentWidget(self._table if self._table.rowCount() else self._empty)
 
     def _describe_file(self) -> str:
         if self._read.error:
@@ -290,6 +323,7 @@ class HostsEditorModule(BaseModule):
         self._update_findings()
 
     def _update_findings(self) -> None:
+        self._update_glance()
         lines = self._row_lines()
         loc = self._location
         self._current_findings = (

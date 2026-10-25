@@ -141,6 +141,9 @@ class DiagnoseModule(CompositeModule):
             if callable(connect):
                 connect(self._open_event_dialog)
 
+        # Each reader owns its intro; permanent host pages only need tab tooltips.
+        for index in range(tabs.count()):
+            tabs.setTabToolTip(index, READERS.get(tabs.tabText(index), "Read diagnostic evidence."))
         explain(self._widget, INTRO, CONTROLS, HEADERS, READERS)
         self._search_input.setToolTip(
             "Search entries already loaded by the diagnostic tabs. Type to search or press Enter; "

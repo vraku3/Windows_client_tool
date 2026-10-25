@@ -18,6 +18,9 @@ from ui.app_facts import bind_row
 
 from core.app_facts import AppFactsIndex
 from core.base_module import BaseModule
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
+from .overview import UpdatesOverview
 from core.system_paths import cmd_exe
 from core.module_groups import ModuleGroup
 from core.worker import Worker, COMWorker
@@ -142,6 +145,10 @@ class _AppUpdatesTab(QWidget):
         # log -- a user watching a long winget run had no way to see more
         # than a few lines of it, or to give the log space back to the table
         # once it was done.
+        self._empty_state = EmptyState("\u2713", "All up to date", "No offers were returned by the latest successful scan.", "Check again")
+        self._empty_state.action_triggered.connect(self._do_refresh)
+        self._empty_state.hide()
+        layout.addWidget(self._empty_state, 1)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._table)
         splitter.addWidget(self._log)
@@ -175,6 +182,13 @@ class _AppUpdatesTab(QWidget):
     # ------------------------------------------------------------------
 
     def _do_refresh(self):
+        self._empty_state.title_label.setText("Checking for updates")
+        self._empty_state.set_variant("loading", progress_text="Reading available updates; no installation is started.")
+        self._empty_state.show()
+        self._table.hide()
+        overview = getattr(self, "_overview", None)
+        if overview is not None:
+            overview.scan_failed("apps", "Scan in progress")
         AppFactsIndex.invalidate()
         self._loaded = True
         self._refresh_btn.setEnabled(False)
@@ -210,6 +224,7 @@ class _AppUpdatesTab(QWidget):
             self._updates_listener(updates)
 
     def _render_table(self, results: Optional[dict] = None) -> None:
+        apply_table_style(self._table)
         self._table.setRowCount(len(self._updates))
         for row, u in enumerate(self._updates):
             self._table.setItem(row, 0, centered_item(u.name))
@@ -226,6 +241,13 @@ class _AppUpdatesTab(QWidget):
             self._table.setItem(row, 5, result_item)
             bind_row(self._table, row, u, safety=False)
         self._apply_filter(self._filter_edit.text())
+        self._empty_state.title_label.setText("All up to date")
+        self._empty_state.set_variant("empty")
+        self._empty_state.setVisible(not self._updates)
+        self._table.setVisible(bool(self._updates))
+        overview = getattr(self, "_overview", None)
+        if overview is not None:
+            overview.set_apps(self._updates)
 
     def _apply_filter(self, text: str) -> None:
         text = (text or "").strip().lower()
@@ -242,6 +264,13 @@ class _AppUpdatesTab(QWidget):
             self._table.setRowHidden(row, not match)
 
     def _on_error(self, err_str: str):
+        self._empty_state.title_label.setText("Could not check updates")
+        self._empty_state.set_variant("error", reason=err_str)
+        self._empty_state.show()
+        self._table.hide()
+        overview = getattr(self, "_overview", None)
+        if overview is not None:
+            overview.scan_failed("apps", err_str)
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._status_lbl.setText(f"Error: {err_str}")
@@ -472,6 +501,10 @@ class _WinUpdatesTab(QWidget):
         self._log.setReadOnly(True)
         self._log.setFont(QFont("Consolas", 8))
 
+        self._empty_state = EmptyState("\u2713", "All up to date", "No offers were returned by the latest successful scan.", "Check again")
+        self._empty_state.action_triggered.connect(self._do_refresh)
+        self._empty_state.hide()
+        layout.addWidget(self._empty_state, 1)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._table)
         splitter.addWidget(self._log)
@@ -508,6 +541,13 @@ class _WinUpdatesTab(QWidget):
         return self.app.config.get("updates.blocklist_patterns", []) if self.app else []
 
     def _do_refresh(self):
+        self._empty_state.title_label.setText("Checking for updates")
+        self._empty_state.set_variant("loading", progress_text="Reading available updates; no installation is started.")
+        self._empty_state.show()
+        self._table.hide()
+        overview = getattr(self, "_overview", None)
+        if overview is not None:
+            overview.scan_failed("windows", "Scan in progress")
         self._loaded = True
         self._refresh_btn.setEnabled(False)
         self._install_btn.setEnabled(False)
@@ -551,6 +591,7 @@ class _WinUpdatesTab(QWidget):
             logger.warning("Ignored Exception", exc_info=True)
 
     def _render_table(self, results: Optional[dict] = None) -> None:
+        apply_table_style(self._table, size_columns=(4,), date_columns=(6,))
         self._table.setRowCount(len(self._updates))
         for row, u in enumerate(self._updates):
             self._table.setItem(row, 0, centered_item(u.kb))
@@ -573,6 +614,13 @@ class _WinUpdatesTab(QWidget):
                 for col in range(self._table.columnCount()):
                     self._table.item(row, col).setFlags(Qt.ItemFlag.ItemIsEnabled)
         self._render_held_rows()
+        self._empty_state.title_label.setText("All up to date")
+        self._empty_state.set_variant("empty")
+        self._empty_state.setVisible(not self._updates and not self._held)
+        self._table.setVisible(bool(self._updates or self._held))
+        overview = getattr(self, "_overview", None)
+        if overview is not None:
+            overview.set_windows(self._updates, self._held)
 
     def _render_held_rows(self) -> None:
         """Held AMD display drivers go below the installable rows, greyed and
@@ -594,6 +642,13 @@ class _WinUpdatesTab(QWidget):
                 self._table.setItem(row, col, item)
 
     def _on_error(self, err_str: str):
+        self._empty_state.title_label.setText("Could not check updates")
+        self._empty_state.set_variant("error", reason=err_str)
+        self._empty_state.show()
+        self._table.hide()
+        overview = getattr(self, "_overview", None)
+        if overview is not None:
+            overview.scan_failed("windows", err_str)
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._status_lbl.setText(f"Error: {err_str}")
@@ -1246,7 +1301,12 @@ class UpdatesModule(BaseModule):
         self._tabs: Optional[QTabWidget] = None
 
     def create_widget(self) -> QWidget:
+        root = QWidget()
+        layout = QVBoxLayout(root)
+        self._overview = UpdatesOverview()
+        layout.addWidget(self._overview)
         self._tabs = QTabWidget()
+        layout.addWidget(self._tabs, 1)
 
         self._app_tab = _AppUpdatesTab()
         self._app_tab.set_app(self.app)
@@ -1254,6 +1314,8 @@ class UpdatesModule(BaseModule):
 
         self._win_tab = _WinUpdatesTab()
         self._win_tab.set_app(self.app)
+        self._app_tab._overview = self._overview
+        self._win_tab._overview = self._overview
 
         self._store_tab = _StoreUpdatesTab()
 
@@ -1269,16 +1331,33 @@ class UpdatesModule(BaseModule):
         self._tabs.addTab(self._runall_tab, "Run All")
         self._tabs.addTab(self._settings_tab, "Settings")
         self._tabs.currentChanged.connect(self._on_tab_changed)
+        for key, index in (("apps", 0), ("windows", 1), ("held", 1), ("restart", 1), ("last", 4), ("task", 4)):
+            self._overview.tiles_by_key[key].clicked.connect(lambda i=index: self._tabs.setCurrentIndex(i))
         from modules.cleanup.help_ui import explain_panes
         from .help_text import CONTROLS, HEADERS, FIELDS, PANES
         explain_panes(self._tabs, CONTROLS, HEADERS, FIELDS, PANES)
-        return self._tabs
+        return root
+
+    def _refresh_overview_health(self):
+        from .task_health import check_task_health
+        health = check_task_health(UNATTENDED_TASK_NAME)
+        reason = ""
+        try:
+            from core.pending_reboot import check
+            pending = check()
+            restart = pending.needed if pending.needed or not pending.unreadable else None
+            reason = "; ".join(pending.unreadable)
+        except Exception as exc:
+            logger.warning("Could not read pending restart: %s", exc)
+            restart, reason = None, str(exc)
+        self._overview.set_health(health, restart, reason)
 
     def _on_app_updates(self, updates: List[AppUpdate]) -> None:
         if self._store_tab is not None:
             self._store_tab.set_updates(updates)
 
     def on_activate(self) -> None:
+        self._refresh_overview_health()
         self._on_tab_changed(self._tabs.currentIndex() if self._tabs else 0)
 
     def _on_tab_changed(self, index: int) -> None:

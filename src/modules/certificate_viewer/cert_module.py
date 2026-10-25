@@ -14,6 +14,10 @@ from PyQt6.QtWidgets import (
 )
 
 from core.base_module import BaseModule
+from ui.empty_state import EmptyState
+from ui.glance import GlanceStrip, GlanceTile
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
 from core.worker import Worker
@@ -87,17 +91,17 @@ class _CertTab(QWidget):
         tb_layout.addWidget(self._copy_btn)
         layout.addWidget(tb)
 
-        chip_row = QHBoxLayout()
-        for chip in cf.CHIPS:
-            b = QPushButton(chip)
-            describe_control(b, 'b')
-            b.setCheckable(True)
-            b.setChecked(chip == "All")
-            b.clicked.connect(lambda _=False, name=chip: self._set_chip(name))
-            self._chip_buttons[chip] = b
-            chip_row.addWidget(b)
-        chip_row.addStretch()
-        layout.addLayout(chip_row)
+        self._glance = {}
+        for key, role in [('All', 'info'), ('Expired', 'danger'), ('Expires <30 days', 'warning'), ('Weak algorithm', 'warning'), ('Self-signed (not root)', 'warning')]:
+            tile = GlanceTile(key, role, tooltip=f"{key} in this scan. Select to filter the results.")
+            tile.set_unreadable("Not read yet")
+            tile.clicked.connect(lambda k=key: self._set_chip(k))
+            self._glance[key] = tile
+        layout.addWidget(GlanceStrip(self._glance.values()))
+        self._chip_bar = ChipBar((c, c, 0) for c in cf.CHIPS)
+        self._chip_buttons = self._chip_bar.chips
+        self._chip_bar.selection_changed.connect(lambda keys: self._set_chip(keys[0]) if keys else None)
+        layout.addWidget(self._chip_bar)
 
         # Progress bar
         self._progress = QProgressBar()
@@ -106,6 +110,10 @@ class _CertTab(QWidget):
         self._progress.hide()
         layout.addWidget(self._progress)
 
+        self._empty_state = EmptyState("\u25cb", "No certificates to display", "This store is empty or no certificates match the current filter.", "Refresh store")
+        self._empty_state.action_triggered.connect(self._load)
+        self._empty_state.hide()
+        layout.addWidget(self._empty_state, 1)
         # Certificate table
         self._table = QTableWidget(0, len(COLUMNS))
         self._table.setHorizontalHeaderLabels(COLUMNS)
@@ -148,6 +156,9 @@ class _CertTab(QWidget):
         self._refresh_btn.setEnabled(False)
         self._status.setText("Loading certificates…")
         self._progress.show()
+        self._empty_state.set_variant("loading", progress_text="Reading this certificate store...")
+        self._empty_state.show()
+        self._table.hide()
         self._table.setRowCount(0)
 
         self._worker = Worker(
@@ -173,11 +184,25 @@ class _CertTab(QWidget):
         self._all_certs = certs
         counts = cf.chip_counts(certs)
         for chip, b in self._chip_buttons.items():
+            b.set_count(counts[chip])
             b.setText(f"{chip} ({counts[chip]})")
+        for key, tile in self._glance.items():
+            unread_expiry = key in ("Expired", "Expires <30 days") and any(c.expiry == datetime.datetime.min for c in certs)
+            unread_key = key == "Weak algorithm" and any(
+                not c.sig_algorithm or not c.key_algorithm or (c.key_algorithm.upper().startswith("RSA") and not c.key_size)
+                for c in certs)
+            if unread_expiry or unread_key:
+                tile.set_unreadable("Some certificates did not return expiry or key metadata; inspect the rows")
+            else:
+                tile.set(counts[key], "In this store")
         self._apply_filter(self._filter_input.text())
 
     def _populate_table(self, certs: List[CertInfo]):
+        self._empty_state.set_variant("empty")
+        self._empty_state.setVisible(not certs)
+        self._table.setVisible(bool(certs))
         self._table.setRowCount(len(certs))
+        apply_table_style(self._table, numeric_columns=(3,), date_columns=(2,))
         for r, c in enumerate(certs):
             expiry_str = (
                 c.expiry.strftime("%Y-%m-%d")
@@ -227,6 +252,11 @@ class _CertTab(QWidget):
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._status.setText(f"Error: {err_str}")
+        for tile in self._glance.values():
+            tile.set_unreadable(err_str)
+        self._empty_state.set_variant("error", reason=err_str)
+        self._empty_state.show()
+        self._table.hide()
         self._worker = None
 
     def _on_selection_changed(self):

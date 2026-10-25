@@ -18,6 +18,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QThreadPool
 
 from core.base_module import BaseModule
+from ui.empty_state import EmptyState
+from PyQt6.QtWidgets import QFrame, QGridLayout
 from core.module_groups import ModuleGroup
 from core.table_ui import set_role
 from core.worker import COMWorker
@@ -245,18 +247,9 @@ class SystemReportModule(BaseModule):
         layout = QVBoxLayout(outer)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        info_label = QLabel(
-            "Collects CPU, memory, crash and unexpected-shutdown history, Windows patch level, the System Health checks, "
-            "disks and volumes (health, TRIM, BitLocker), restore points and "
-            "shadow storage, memory slots, monitors, firmware and security state, installed software "
-            "(runtimes, duplicates, end-of-life) and top processes, with a computed \"needs attention\" list. "
-            "Each section is read independently; one that cannot be read says so."
-        )
-        info_label.setWordWrap(True)
-        layout.addWidget(info_label)
-
         btn_row = QHBoxLayout()
         self._gen_btn = QPushButton("Generate Report")
+        self._gen_btn.setObjectName("accentButton")
         describe_control(self._gen_btn, '_gen_btn')
         self._save_btn = QPushButton("Save HTML...")
         describe_control(self._save_btn, '_save_btn')
@@ -278,10 +271,12 @@ class SystemReportModule(BaseModule):
         self._progress.hide()
         layout.addWidget(self._progress)
 
+        self._build_report_start(layout)
         self._preview = QTextEdit()
         self._preview.setReadOnly(True)
         self._preview.setPlaceholderText("Press Generate Report; the report appears here.")
         layout.addWidget(self._preview, 1)
+        self._preview.hide()
 
         self._outer = outer
         self._data: Optional[dict] = None
@@ -291,8 +286,39 @@ class SystemReportModule(BaseModule):
         explain_widget(outer, introduction=True)
         return outer
 
+    def _build_report_start(self, layout):
+        self._report_start = QWidget()
+        cards = QVBoxLayout(self._report_start)
+        cards.setSpacing(12)
+        grid = QGridLayout()
+        grid.setSpacing(12)
+        for index, (title, detail) in enumerate((
+            ("Hardware & firmware", "CPU, memory slots, monitors and firmware details."),
+            ("Storage & recovery", "Disk health, volumes, TRIM, BitLocker, restore points and shadow storage."),
+            ("Windows & security", "Patch level, crashes, unexpected shutdowns and system health checks."),
+            ("Software & processes", "Installed apps, runtimes, duplicates, end-of-life software and top processes."),
+        )):
+            card = QFrame()
+            card.setObjectName("glanceTile")
+            content = QVBoxLayout(card)
+            heading = QLabel(title)
+            set_role(heading, "heading")
+            content.addWidget(heading)
+            text = QLabel(detail)
+            text.setWordWrap(True)
+            set_role(text, "muted")
+            content.addWidget(text)
+            grid.addWidget(card, index // 2, index % 2)
+        cards.addLayout(grid)
+        self._report_empty = EmptyState("\u25a4", "Build a system report", "Collection takes about ten seconds. Each section reports its own read failures.", "Generate report")
+        self._report_empty.action_triggered.connect(self._do_generate)
+        cards.addWidget(self._report_empty)
+        layout.addWidget(self._report_start, 1)
+
     def _do_generate(self):
         self._gen_btn.setEnabled(False)
+        self._report_empty.set_variant("loading", progress_text="Collecting system sections...")
+        self._report_empty.action_button.setEnabled(False)
         self._status_label.setText("Collecting data (about ten seconds)...")
         self._progress.show()
         worker = COMWorker(_collect_report_data)
@@ -304,6 +330,8 @@ class SystemReportModule(BaseModule):
     def _on_data(self, data: dict):
         if sip.isdeleted(self._outer):
             return
+        self._report_start.hide()
+        self._preview.show()
         self._data = data
         self._preview.setHtml(_render_html(data))
         self._gen_btn.setEnabled(True)
@@ -342,6 +370,8 @@ class SystemReportModule(BaseModule):
             return
         self._gen_btn.setEnabled(True)
         self._progress.hide()
+        self._report_empty.set_variant("error", reason=err)
+        self._report_empty.action_button.setEnabled(True)
         self._status_label.setText(f"Error: {err}")
 
     def on_start(self, app): self.app = app

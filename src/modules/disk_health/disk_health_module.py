@@ -23,6 +23,8 @@ from core.worker import Worker
 from modules.disk_health import disk_reader as dr
 from modules.disk_health.smart_reader import DiskInfo, SmartAttribute, _query_disks  # noqa: F401
 from ui.empty_state import EmptyState
+from ui.glance import GlanceStrip, GlanceTile
+from ui.table_style import apply_table_style
 from ui.table_items import fit_table_height, numeric_item, paint_severity
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,8 @@ def _new_table(columns: List[str]) -> QTableWidget:
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     t.setAlternatingRowColors(True)
+    apply_table_style(t, numeric_columns=tuple(i for i, col in enumerate(columns)
+                      if col in ("Size", "Temp", "Life used", "Power-on", "Free", "Free %")))
     return t
 
 
@@ -130,10 +134,28 @@ class _ResultsView(QWidget):
         box = QVBoxLayout(self)
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(8)
+        self._add_glance(box)
         self._add_findings(box)
         self._add_drives(box)
         self._add_volumes(box)
         explain_widget(self)
+
+    def _add_glance(self, box):
+        report = self.report
+        tiles = [GlanceTile(name, tooltip=tip) for name, tip in (
+            ("Physical drives", "Drives returned by the physical disk inventory."),
+            ("Needs attention", "Error and warning findings from the current read; missing sources remain listed below."),
+            ("Hottest drive", "Highest reported temperature among nonvirtual drives; missing sensors are excluded."))]
+        reason = "; ".join(report.errors.values())
+        tiles[0].set(len(report.disks) if report.disks or not report.errors else None, reason=reason)
+        findings = [f for f in dr.all_findings(report) if f.severity in ("warning", "error")]
+        tiles[1].set(len(findings), sub="Review findings below", severity="warning" if findings else "ok")
+        measured = [d for d in report.disks if not d.is_virtual and d.temperature is not None]
+        hottest = max(measured, key=lambda d: d.temperature) if measured else None
+        tiles[2].set(f"{hottest.temperature} C" if hottest else None,
+                     sub=hottest.name if hottest else "", reason=reason or "No drive temperature was reported")
+        self._glance = GlanceStrip(tiles)
+        box.addWidget(self._glance)
 
     def _add_findings(self, box: QVBoxLayout) -> None:
         head = QLabel("Needs attention")

@@ -287,16 +287,34 @@ def read_tasks(inv: Inventory) -> None:
     unreadable = [0]
 
     def walk(folder) -> None:
-        for task in folder.GetTasks(1):
+        try:
+            tasks = folder.GetTasks(1)
+        except Exception as error:
+            logger.warning("Task folder could not be read: %s", error)
+            inv.problems.append(f"Scheduled task folder could not be read: {error}")
+            tasks = []
+        for task in tasks:
             try:
                 _add_task(inv, folder.Path, task)
             except Exception as error:  # noqa: BLE001
                 unreadable[0] += 1
                 logger.debug("Task %s unreadable: %s", getattr(task, "Name", "?"), error)
-        for sub in folder.GetFolders(0):
+        try:
+            subfolders = folder.GetFolders(0)
+        except Exception as error:
+            logger.warning("Task subfolders could not be read: %s", error)
+            inv.problems.append(f"Scheduled task subfolders could not be read: {error}")
+            return
+        for sub in subfolders:
             walk(sub)
 
-    walk(service.GetFolder("\\"))
+    try:
+        root = service.GetFolder("\\")
+    except Exception as error:
+        logger.warning("Task Scheduler root unavailable: %s", error)
+        inv.problems.append(f"Scheduled tasks could not be read: {error}")
+        return
+    walk(root)
     if unreadable[0]:
         inv.problems.append(f"{unreadable[0]} scheduled task(s) could not be read (protected definitions)")
 

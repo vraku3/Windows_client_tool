@@ -20,7 +20,8 @@ from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
 from core.table_ui import center_header, centered_item, set_role
 from core.worker import COMWorker, Worker
-from modules.dashboard.tab_base import make_chips, set_chip_counts
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
 from modules.scheduled_tasks import task_actions, task_history, task_view
 from modules.scheduled_tasks.tasks_reader import (
     ALL_FOLDERS, TaskFolder, TaskInfo, get_folder_tree, get_tasks_in_folder,
@@ -162,8 +163,10 @@ class TasksModule(BaseModule):
         right = QWidget()
         lay = QVBoxLayout(right)
         lay.setContentsMargins(0, 0, 0, 0)
-        chip_row, self._chips = make_chips(right, task_view.FILTERS, self._pick_filter)
-        lay.addLayout(chip_row)
+        self._chip_bar = ChipBar([(key, key, 0) for key in task_view.FILTERS])
+        self._chips = self._chip_bar.chips
+        self._chip_bar.selection_changed.connect(lambda keys: self._pick_filter(keys[0]) if keys else None)
+        lay.addWidget(self._chip_bar)
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search name, folder, author, program, arguments, account...")
         self._search.setClearButtonEnabled(True)
@@ -176,6 +179,7 @@ class TasksModule(BaseModule):
             self._table.setColumnWidth(col, width)
         self._table.horizontalHeader().setStretchLastSection(True)
         center_header(self._table)
+        apply_table_style(self._table, date_columns=(3, 5))
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
@@ -314,7 +318,7 @@ class TasksModule(BaseModule):
             return
         self._progress.hide()
         self._tasks = tasks
-        set_chip_counts(self._chips, task_view.filter_counts(tasks))
+        self._chip_bar.set_counts(task_view.filter_counts(tasks))
         self._render()
 
     # ------------------------------------------------------------------

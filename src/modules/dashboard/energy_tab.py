@@ -6,8 +6,11 @@ from typing import List, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget, QVBoxLayout,
-                             QHBoxLayout)
+                             QHBoxLayout, QWidget)
 
+from .glance_support import summary, unreadable
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
 from core.table_ui import set_role
 from core.semantic_colors import semantic
 
@@ -32,12 +35,20 @@ class EnergyTab(DashTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
+        self._glance = summary(self, layout, [
+            ("package", "Package power", "Measured package power from the CPU energy meter; never inferred from core power."),
+            ("cores", "Core power", "Sum of measured per-core power readings."),
+            ("energy", "Energy this session", "Energy accumulated while the meter is open, in watt-hours.")])
+        self._empty = EmptyState("W", "Waiting for the energy meter",
+            "Open this pane to collect two energy-counter samples. Unsupported hardware cannot provide power readings.",
+            parent=self, variant="loading")
+        layout.addWidget(self._empty)
         self._headline = QLabel("—")
         font = self._headline.font()
         font.setPointSize(font.pointSize() + 12)
         font.setBold(True)
         self._headline.setFont(font)
-        layout.addWidget(self._headline)
+        self._headline.hide()
         self._detail = QLabel("", self)
         set_role(self._detail, "muted")
         self._detail.setWordWrap(True)
@@ -46,7 +57,8 @@ class EnergyTab(DashTab):
         self._spark.setMinimumHeight(70)
         layout.addWidget(self._spark)
 
-        split = QHBoxLayout()
+        self._power_content = QWidget(self)
+        split = QHBoxLayout(self._power_content)
         left = QVBoxLayout()
         left.addWidget(self._heading("Cores (measured)"))
         self._cores = QTableWidget(0, 2, self)
@@ -65,7 +77,11 @@ class EnergyTab(DashTab):
         right.addWidget(self._procs, 1)
         split.addLayout(left, 2)
         split.addLayout(right, 3)
-        layout.addLayout(split, 1)
+        apply_table_style(self._cores, numeric_columns=(1,))
+        apply_table_style(self._procs, numeric_columns=(1, 2, 3))
+        layout.addWidget(self._power_content, 1)
+        self._power_content.hide()
+        self._spark.hide()
         self._note = QLabel(
             "Power is measured by the CPU's own energy meter (RAPL) and reported by Windows. "
             "Windows has no per-process power reading: the process figures apply each "
@@ -101,6 +117,13 @@ class EnergyTab(DashTab):
 
     def refresh(self) -> None:
         if self._unavailable:
+            unreadable(self._glance, self._unavailable)
+            self._empty.set_variant("empty", reason=self._unavailable + ". CPU energy counters require compatible hardware and Windows support.")
+            self._empty.show()
+            self._power_content.hide()
+            self._cores.hide()
+            self._procs.hide()
+            self._spark.hide()
             self._headline.setText("No energy meter")
             self._detail.setText(
                 f"{self._unavailable.capitalize()}. Windows publishes energy data only when "
@@ -111,6 +134,9 @@ class EnergyTab(DashTab):
             return
         reading = self._meter.read()
         if reading is None:
+            unreadable(self._glance, "Waiting for two valid energy-counter samples")
+            self._empty.show()
+            self._empty.set_variant("loading")
             self._headline.setText("Measuring…")
             return
         self._show(reading)
@@ -126,14 +152,27 @@ class EnergyTab(DashTab):
         return [(i.name, i.pid, i.rates.cpu_percent or 0.0) for i in snap.by_pid.values() if i.pid != 0]
 
     def _show(self, reading: energy.EnergyReading) -> None:
+        self._empty.hide()
+        self._power_content.show()
+        self._cores.show()
+        self._procs.show()
+        self._spark.show()
+        self._glance["package"].set(f"{reading.package_w:,.1f} W" if reading.package_w is not None else None,
+                                    reason="No package counter; core power is shown separately")
+        self._glance["cores"].set(f"{reading.cores_total_w:,.1f} W" if reading.cores_w else None,
+                                  "measured core total", reason="No per-core power counters reported")
+        self._glance["energy"].set(f"{self._meter.watt_hours:,.3f} Wh", "meter session")
         watts = reading.package_w if reading.package_w is not None else reading.cores_total_w
         self._last_package = watts
         self._history.add(watts)
-        self._headline.setText(f"{watts:,.1f} W  package")
-        self._detail.setText(
-            f"Cores {reading.cores_total_w:,.1f} W   ·   everything else on the package "
-            f"{max(0.0, watts - reading.cores_total_w):,.1f} W (cache, memory controller, I/O)   ·   "
-            f"{self._meter.watt_hours:,.3f} Wh since this tab opened")
+        self._headline.setText(f"{watts:,.1f} W  " + ("package" if reading.package_w is not None else "cores only"))
+        parts = []
+        if reading.cores_w:
+            parts.append(f"Cores {reading.cores_total_w:,.1f} W")
+        if reading.package_w is not None and reading.cores_w:
+            parts.append(f"Other package components {max(0.0, watts - reading.cores_total_w):,.1f} W")
+        parts.append(f"{self._meter.watt_hours:,.3f} Wh since this tab opened")
+        self._detail.setText(" | ".join(parts))
         self._spark._ceiling = max(self._history.values() + [1.0])
         self._spark.set_values(self._history.values(), QColor(semantic("warning")))
         table = self._cores

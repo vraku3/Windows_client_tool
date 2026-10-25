@@ -11,6 +11,9 @@ from PyQt6.QtWidgets import (QApplication, QHBoxLayout, QHeaderView, QLabel,
                              QLineEdit, QMenu, QPushButton, QTableWidget,
                              QVBoxLayout)
 
+from .glance_support import summary, unreadable
+from ui.table_style import apply_table_style
+
 from core.confirm import confirm_destructive
 from core.procengine import actions
 
@@ -37,6 +40,13 @@ class ConnectionsTab(DashTab):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self._glance = summary(self, layout, [
+            ("listening", "Listening", "TCP listeners and unconnected UDP endpoints; select to filter."),
+            ("established", "Established", "Established TCP connections; select to filter."),
+            ("external", "Internet", "Established connections to public internet addresses; select to filter."),
+            ("top", "Top processes", "The three processes owning the most endpoints, including their PID.")])
+        for key in ("listening", "established", "external"):
+            self._glance[key].clicked.connect(lambda k=key: self._chips[k][0].click())
         top = QHBoxLayout()
         self._search = QLineEdit(self)
         self._search.setPlaceholderText("Filter by process, address, port, PID or state…")
@@ -70,6 +80,7 @@ class ConnectionsTab(DashTab):
         self._sort = (PROCESS, Qt.SortOrder.AscendingOrder)
         header.setSortIndicatorShown(True)
         header.sectionClicked.connect(self._sort_by)
+        apply_table_style(self._table, numeric_columns=(PID,))
         layout.addWidget(self._table, 1)
         self.status = QLabel("", self)
         layout.addWidget(self.status)
@@ -85,14 +96,22 @@ class ConnectionsTab(DashTab):
     def _apply(self, conns) -> None:
         self._busy = False
         if conns is None:
+            unreadable(self._glance, "Windows refused the connection table")
             self.status.setText("Windows refused the connection table (try running as administrator).")
             return
         self._conns = list(conns)
+        counts = cn.filter_counts(self._conns)
+        for key in ("listening", "established", "external"):
+            self._glance[key].set(counts[key], "endpoints")
+        top = cn.by_process(self._conns)[:3]
+        self._glance["top"].set(top[0][0] or f"PID {top[0][1]}" if top else "None",
+                               " | ".join(f"{n or 'Unknown'} ({p}): {c}" for n, p, c in top))
         set_chip_counts(self._chips, cn.filter_counts(self._conns))
         self._repopulate()
 
     def _default_error(self, message) -> None:
         super()._default_error(message)
+        unreadable(self._glance, str(message))
         self.status.setText(f"Could not read connections: {message}")
 
     # ---- table --------------------------------------------------------------------

@@ -10,6 +10,8 @@ from PyQt6.QtCore import QThreadPool, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from core.base_module import BaseModule
+from ui.empty_state import EmptyState
+from ui.glance import GlanceStrip, GlanceTile
 from core.module_groups import ModuleGroup
 from core.worker import Worker
 from core.windows_utils import is_reboot_pending
@@ -289,6 +291,10 @@ class QuickFixModule(BaseModule):
         self._search.textChanged.connect(self._apply_filter)
         outer_layout.addWidget(self._search)
 
+        self._filter_empty = EmptyState("Search", "No matching repair actions", "Clear the search to see the available repair tools.", "Clear search")
+        self._filter_empty.action_triggered.connect(self._search.clear)
+        self._filter_empty.hide()
+        outer_layout.addWidget(self._filter_empty)
         # Scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -334,6 +340,7 @@ class QuickFixModule(BaseModule):
                 grid.addWidget(card, i // 2, i % 2)
             content_layout.addLayout(grid)
 
+        self._build_glance(outer_layout, categories)
         content_layout.addStretch()
         scroll.setWidget(content)
         outer_layout.addWidget(scroll)
@@ -350,6 +357,17 @@ class QuickFixModule(BaseModule):
         explain(outer, CONTROLS, {}, {'_search': 'Filter repair cards by title or description; no repair runs and no Windows setting changes.'})
         intro(outer, INTRO)
         return outer
+
+    def _build_glance(self, layout, categories):
+        self._glance = {}
+        values = (("Repair actions", len(self._cards), "Available tools"),
+                  ("Categories", len(categories), "Choose a repair by purpose"),
+                  ("Require confirmation", sum(bool(card._action.confirm_text) for card in self._cards), "Review the prompt before running"))
+        for caption, count, detail in values:
+            tile = GlanceTile(caption, tooltip=f"{caption} in the repair catalog. Opening this pane does not run any repair.")
+            tile.set(count, detail)
+            self._glance[caption] = tile
+        layout.insertWidget(0, GlanceStrip(self._glance.values()))
 
     def on_activate(self) -> None:
         for card in self._cards:
@@ -370,6 +388,7 @@ class QuickFixModule(BaseModule):
             card.setVisible(matches)
             if matches:
                 visible_by_category[card._category] = True
+        self._filter_empty.setVisible(not any(visible_by_category.values()))
         for cat_name, hdr in self._category_headers.items():
             hdr.setVisible(visible_by_category[cat_name])
 

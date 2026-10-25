@@ -25,7 +25,8 @@ from PyQt6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView,
                              QLabel, QLineEdit, QMenu, QPushButton,
                              QTableView, QVBoxLayout, QWidget)
 
-from core.worker import Worker
+from core.worker import Worker, retire
+from .glance_support import summary, unreadable, make_chips, set_chip_counts, process_matches
 
 from .details_model import DetailsModel, DetailsProxy
 from .process_menu import ProcessMenu
@@ -79,6 +80,11 @@ class DetailsTab(QWidget):
         self.error_banner.hide()
         layout.addWidget(self.error_banner)
 
+        self._glance = summary(self, layout, [
+            ("all", "Processes", "Processes in the current snapshot; select to show all."),
+            ("elevated", "Elevated", "Processes whose token is elevated. Unreadable tokens are excluded."),
+            ("unsigned", "Unsigned", "Signature verification is not part of the live process snapshot."),
+            ("high", "High CPU", "Processes using at least 10% CPU; select to filter.")])
         top = QHBoxLayout()
         self.filter_box = QLineEdit(self)
         self.filter_box.setPlaceholderText(
@@ -105,6 +111,11 @@ class DetailsTab(QWidget):
         self.proxy.setSourceModel(self.model)
         self.filter_box.textChanged.connect(self.proxy.set_needle)
 
+        chips, self._chips = make_chips(self, [(k, label, None) for k, label in
+            (("all", "All"), ("elevated", "Elevated"), ("high", "High CPU"))], self.proxy.set_category)
+        layout.addLayout(chips)
+        for key in ("all", "elevated", "high"):
+            self._glance[key].clicked.connect(lambda k=key: self._chips[k][0].click())
         self.table = QTableView(self)
         self.table.setModel(self.proxy)
         self.table.setSortingEnabled(True)
@@ -221,9 +232,8 @@ class DetailsTab(QWidget):
         self.cancel_all()
 
     def cancel_all(self) -> None:
-        for worker in self._workers:
-            worker.cancel()
-        self._workers.clear()
+        retire(self._workers)
+        self._busy = False
 
     # ---- refreshing -----------------------------------------------------
 
@@ -246,6 +256,8 @@ class DetailsTab(QWidget):
         worker = Worker(lambda _worker: self._source.read())
         worker.signals.result.connect(self._apply)
         worker.signals.error.connect(self._failed)
+        worker.signals.cancelled.connect(self._on_cancelled)
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         self._workers.append(worker)
         pool.start(worker)
 
@@ -253,11 +265,29 @@ class DetailsTab(QWidget):
         self.menu.set_snapshot(snapshot)
         self._busy = False
         self.model.set_snapshot(snapshot)
+        self._show_summary(snapshot)
         self._update_status(snapshot)
         self.snapshot_taken.emit(snapshot)
 
+    def _show_summary(self, snapshot):
+        rows = list(snapshot.by_pid.values())
+        counts = {key: sum(process_matches(i, key) for i in rows)
+                  for key in ("all", "elevated", "high")}
+        set_chip_counts(self._chips, counts)
+        self._glance["all"].set(len(rows), "processes")
+        for key in ("elevated", "high"):
+            known = sum((i.details.elevated if key == "elevated" else i.rates.cpu_percent)
+                        is not None for i in rows)
+            self._glance[key].set(counts[key] if known or not rows else None,
+                                  f"{known} of {len(rows)} readable", reason="No readable values")
+        self._glance["unsigned"].set_unreadable("Signatures are not checked by the live snapshot")
+
+    def _on_cancelled(self):
+        self._busy = False
+
     def _failed(self, message) -> None:
         self._busy = False
+        unreadable(self._glance, str(message))
         logger.error("Details refresh failed: %s", message)
         self.status.setText(f"Could not read the process list: {message}")
 

@@ -168,6 +168,11 @@ class DetailsProxy(QSortFilterProxyModel):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._needle = ""
+        self._category = "all"
+
+    def set_category(self, key):
+        self._category = key
+        self.invalidateFilter()
 
     def set_needle(self, text: str) -> None:
         self._needle = (text or "").strip().lower()
@@ -183,11 +188,12 @@ class DetailsProxy(QSortFilterProxyModel):
         return sort_key(column, left_info) < sort_key(column, right_info)
 
     def filterAcceptsRow(self, row, parent) -> bool:
-        if not self._needle:
-            return True
         model = self.sourceModel()
         info = model.info(row)
         if info is None:
+            return False
+        from .glance_support import process_matches
+        if not process_matches(info, self._category):
             return False
         # The fields someone actually searches by. Matching every column
         # would let a memory figure match a typed digit.

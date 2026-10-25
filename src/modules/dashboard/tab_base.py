@@ -14,8 +14,9 @@ from PyQt6.QtWidgets import QWidget
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.worker import COMWorker, Worker
-from ui.chips import make_chips, set_chip_counts  # noqa: F401  (moved there; re-exported)
+from core.worker import COMWorker, Worker, retire
+from PyQt6 import sip
+from .glance_support import make_chips, set_chip_counts  # noqa: F401  (moved there; re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,7 @@ class DashTab(QWidget):
         self.cancel_all()
 
     def cancel_all(self) -> None:
-        for worker in self._workers:
-            worker.cancel()
-        self._workers.clear()
+        retire(self._workers)
         self._busy = False
 
     def _pool(self):
@@ -71,10 +70,23 @@ class DashTab(QWidget):
                 (on_error or self._default_error)(str(e))
             return
         worker = (COMWorker if com else Worker)(fn)
-        worker.signals.result.connect(on_result)
-        worker.signals.error.connect(on_error or self._default_error)
+        def received(result):
+            if not sip.isdeleted(self):
+                on_result(result)
+
+        def failed(message):
+            if not sip.isdeleted(self):
+                (on_error or self._default_error)(message)
+
+        worker.signals.result.connect(received)
+        worker.signals.error.connect(failed)
+        worker.signals.cancelled.connect(self._read_cancelled)
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         self._workers.append(worker)
         pool.start(worker)
+
+    def _read_cancelled(self):
+        self._busy = False
 
     def _default_error(self, message) -> None:
         self._busy = False

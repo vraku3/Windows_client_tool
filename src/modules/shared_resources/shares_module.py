@@ -1,14 +1,18 @@
 import winreg
+from PyQt6 import sip
 from typing import List, Dict, Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTabWidget, QLabel,
-    QProgressBar)
+    QProgressBar, QStackedWidget, QScrollArea)
 from ui.help.network_ui import explain_tabs, item_help
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.worker import Worker
+from core.worker import Worker, retire
 from core.table_ui import centered_item, fit_last
+from ui.table_style import apply_table_style
+from ui.empty_state import EmptyState
+from ui.help.network_overview import add_glance, feature_card, unreadable
 import logging
 logger = logging.getLogger(__name__)
 
@@ -52,7 +56,8 @@ def get_exposure() -> List[Dict]:
     """Findings first (most severe first); the settings behind them last."""
     from modules.shared_resources import share_audit as sa
     data = sa.collect_cached(max_age=3.0)
-    rows = [{"Severity": f.severity.upper(), "Finding": f.title, "Detail": f.detail}
+    rows = [{"Severity": 'UNKNOWN' if f.key.startswith('unreadable') else f.severity.upper(),
+             "Finding": f.title, "Detail": f.detail}
             for f in sa.audit(data)]
     if not data.fatal and not rows:
         rows.append({"Severity": "OK", "Finding": "No SMB exposure findings", "Detail": ""})
@@ -136,6 +141,8 @@ def _make_table(columns) -> QTableWidget:
     fit_last(t)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    apply_table_style(t, numeric_columns=[i for i, c in enumerate(columns)
+                                         if c in ('Users', 'Opens', 'Connected (sec)', 'Idle (sec)')])
     return t
 
 
@@ -153,7 +160,10 @@ class _RefreshTab(QWidget):
         self._thread_pool = thread_pool
         self._worker: Optional[Worker] = None
         self._scanning = False
+        self._loaded = False
+        self._workers = []
         layout = QVBoxLayout(self)
+        self._glance = add_glance(layout, self._summary_specs())
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
         self._status = QLabel("Click Refresh to load.")
@@ -167,8 +177,34 @@ class _RefreshTab(QWidget):
         layout.addLayout(toolbar)
         layout.addWidget(self._progress)
         self._table = _make_table(columns)
-        layout.addWidget(self._table, 1)
+        self._content = QStackedWidget()
+        self._content.addWidget(self._table)
+        self._empty = EmptyState('📂', 'No resources to show',
+                                 'Refresh reads this section from Windows without changing it.', 'Refresh')
+        self._empty.action_triggered.connect(self.refresh)
+        self._content.addWidget(self._empty)
+        self._cards = QScrollArea()
+        self._cards.setWidgetResizable(True)
+        self._cards.setToolTip('Resource cards. Every field comes from the current Windows read.')
+        self._content.addWidget(self._cards)
+        self._content.setCurrentWidget(self._empty)
+        layout.addWidget(self._content, 1)
         self._refresh_btn.clicked.connect(self._load)
+
+    def _summary_specs(self):
+        if 'Severity' in self._columns:
+            extras = [('attention', 'Need attention'), ('unknown', 'Could not read')]
+        elif 'Encrypted' in self._columns:
+            extras = [('encrypted', 'Encrypted shares'), ('users', 'Share connections')]
+        elif 'Client' in self._columns:
+            extras = [('clients', 'Clients'), ('users', 'Users')]
+        else:
+            extras = [('persistent', 'Persistent mappings'), ('network', 'Network mappings')]
+        caption = ('Findings and settings' if 'Severity' in self._columns else 'Shares' if 'Name' in self._columns
+                   else 'Sessions' if 'Opens' in self._columns else 'Open files' if 'Client' in self._columns else 'Mapped drives')
+        return [('items', caption, 'info', 'Number of rows returned by the current section read.')] + [
+            (key, label, 'warning' if key in ('attention', 'unknown') else 'info',
+             label + ' reported by this read. An unavailable section is unknown, never zero.') for key, label in extras]
 
     def refresh(self) -> None:
         """Trigger a background refresh. Idempotent."""
@@ -182,28 +218,90 @@ class _RefreshTab(QWidget):
         self._scanning = True
         self._refresh_btn.setEnabled(False)
         self._status.setText("Loading...")
+        unreadable(self._glance, 'Reading this section from Windows')
+        self._empty.set_variant('loading')
+        self._empty.action_button.setEnabled(False)
+        self._content.setCurrentWidget(self._empty)
         self._progress.show()
         loader = self._loader
-        self._worker = Worker(lambda _w: loader())
+        worker = Worker(lambda _w: loader())
+        self._worker = worker
         def on_result(rows):
-            self._scanning = False
-            self._refresh_btn.setEnabled(True)
-            self._progress.hide()
-            _fill_table(self._table, rows, self._columns)
-            self._status.setText(f"{len(rows)} item(s).")
+            if not sip.isdeleted(self) and self._worker is worker:
+                self._show_rows(rows)
         def on_error(err):
-            self._scanning = False
-            self._refresh_btn.setEnabled(True)
-            self._progress.hide()
-            self._status.setText(f"Error: {err}")
-        self._worker.signals.result.connect(on_result)
-        self._worker.signals.error.connect(on_error)
-        self._thread_pool.start(self._worker)
+            if not sip.isdeleted(self) and self._worker is worker:
+                self._show_error(str(err))
+        worker.signals.result.connect(on_result)
+        worker.signals.error.connect(on_error)
+        worker.signals.cancelled.connect(lambda: self.cancel_all() if not sip.isdeleted(self) and self._worker is worker else None)
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
+        self._workers.append(worker)
+        self._thread_pool.start(worker)
+
+    def _finish_read(self):
+        self._scanning = False
+        self._refresh_btn.setEnabled(True)
+        self._progress.hide()
+        self._empty.action_button.setEnabled(True)
+
+    def _show_rows(self, rows):
+        self._finish_read()
+        self._loaded = True
+        _fill_table(self._table, rows, self._columns)
+        self._status.setText(f'{len(rows)} item(s).')
+        values = {'items': len(rows), 'clients': len({r.get('Client') for r in rows if r.get('Client')}),
+                  'users': len({r.get('User') for r in rows if r.get('User')}),
+                  'attention': sum(r.get('Severity', '').lower() in ('high', 'medium', 'error', 'warning') for r in rows),
+                  'unknown': sum(r.get('Severity', '').lower() == 'unknown' for r in rows),
+                  'encrypted': sum(str(r.get('Encrypted', '')).lower() in ('yes', 'true', 'on') for r in rows),
+                  'persistent': sum(r.get('Type') == 'Persistent' for r in rows),
+                  'network': sum(r.get('Type') == 'Network' for r in rows)}
+        if 'Users' in self._columns:
+            counts = [str(r.get('Users', '')) for r in rows]
+            values['users'] = sum(int(v) for v in counts) if all(v.isdigit() for v in counts) else None
+        for key, tile in self._glance.items():
+            tile.set(values[key], 'Current section', reason='Windows did not report a numeric user count')
+        self._empty.set_variant('empty')
+        self._content.setCurrentWidget(self._table if rows else self._empty)
+        if 0 < len(rows) <= 6:
+            self._show_cards(rows)
+
+    def _show_cards(self, rows):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        for row in rows:
+            exposure = 'Severity' in self._columns
+            title = str(row.get('Finding' if exposure else self._columns[0], 'Resource'))
+            detail = (str(row.get('Detail', '')) if exposure else
+                      '\n'.join(f'{column}: {row.get(column, "")}' for column in self._columns[1:]))
+            severity = str(row.get('Severity', '')).lower()
+            role = 'statusError' if severity in ('high', 'error') else 'statusWarning' if severity in ('unknown', 'medium', 'warning') else 'statusInfo'
+            layout.addWidget(feature_card(title, detail, status=str(row.get('Severity', '')), role=role))
+        layout.addStretch()
+        old = self._cards.takeWidget()
+        if old is not None:
+            old.deleteLater()
+        self._cards.setWidget(page)
+        self._content.setCurrentWidget(self._cards)
+
+    def _show_error(self, err):
+        self._finish_read()
+        self._status.setText(f'Could not read: {err}')
+        unreadable(self._glance, str(err))
+        self._empty.set_variant('error', reason=str(err))
+        self._content.setCurrentWidget(self._empty)
+        logger.warning('Shared resources read failed: %s', err)
 
     def cancel_all(self) -> None:
-        if self._worker is not None:
-            self._worker.cancel()
-            self._worker = None
+        was_scanning = self._scanning
+        self._worker = None
+        retire(self._workers)
+        self._finish_read()
+        if was_scanning or self._empty.variant == 'loading':
+            self._loaded = False
+            self._empty.set_variant('empty', reason='Read cancelled. Refresh to read this section again.')
+            unreadable(self._glance, 'Read cancelled')
 
 
 class SharesModule(BaseModule):
@@ -232,22 +330,22 @@ class SharesModule(BaseModule):
             "Mapped Drives"
         )
         self._shares_tabs = tabs
+        tabs.currentChanged.connect(lambda _: self.on_activate())
         return explain_tabs(tabs, "shares")
     def on_start(self, app=None):
         self.app = app
     def on_stop(self) -> None:
-        self.cancel_all_workers()
+        self.on_deactivate()
     def on_activate(self):
         if hasattr(self, "_shares_tabs"):
             tab = self._shares_tabs.currentWidget()
-            if hasattr(tab, "_load") and hasattr(tab, "_status") and tab._status.text() == "Click Refresh to load.":
+            if hasattr(tab, "_load") and not tab._loaded:
                 tab._load()
     def on_deactivate(self) -> None:
         self.cancel_all_workers()
         if hasattr(self, "_shares_tabs"):
-            tab = self._shares_tabs.currentWidget()
-            if hasattr(tab, "cancel_all"):
-                tab.cancel_all()
+            for index in range(self._shares_tabs.count()):
+                self._shares_tabs.widget(index).cancel_all()
 
     def refresh_data(self) -> None:
         if hasattr(self, "_shares_tabs"):

@@ -8,6 +8,7 @@ from PyQt6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QPushButton,
                              QSizePolicy, QVBoxLayout, QWidget)
 
+from ui.glance import GlanceTile
 from core.table_ui import set_role
 from core.semantic_colors import semantic
 from modules.dashboard.overview_health import Finding, heat_level
@@ -64,36 +65,19 @@ class Sparkline(QWidget):
         painter.drawPath(line)
 
 
-class MetricTile(QFrame):
-    """Title, one big number, a caption and a sparkline."""
+class MetricTile(GlanceTile):
+    """Overview reading using the shared tile and its built-in trend."""
 
     def __init__(self, title: str, ceiling: float = 100.0, parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("overviewTile")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(14, 10, 14, 10)
-        lay.setSpacing(2)
-        self._title = QLabel(title)
-        set_role(self._title, "mutedTitle")
-        self._value = QLabel("—")
-        font = self._value.font()
-        font.setPointSize(font.pointSize() + 9)
-        font.setBold(True)
-        self._value.setFont(font)
-        self._caption = QLabel("")
-        set_role(self._caption, "muted")
-        self._caption.setWordWrap(True)
-        self.spark = Sparkline(ceiling)
-        for w in (self._title, self._value, self._caption, self.spark):
-            lay.addWidget(w)
+        super().__init__(title, tooltip=f"Live {title.lower()} reading and recent trend.", parent=parent)
+        self._value = self.value
+        self._caption = self.sub
+        self.set(None, reason="Loading live measurements...")
 
     def show_reading(self, text: str, caption: str, pct: float, history: List[float]) -> None:
-        colour = level_colour(pct)
-        self._value.setText(text)
-        self._value.setStyleSheet(f"color: {colour.name()};")
-        self._caption.setText(caption)
-        self.spark.set_values(history, colour)
+        role = {"ok": "ok", "warn": "warning", "hot": "danger"}[heat_level(pct)]
+        self.set(text, caption, severity=role)
+        self.set_history(history)
 
 
 class CoreGrid(QWidget):
@@ -125,7 +109,7 @@ class CoreGrid(QWidget):
 
     def _refresh_tip(self) -> None:
         self.setToolTip("\n".join(
-            f"Core {i}: {v:.0f}%" + self._kind_note(i) for i, v in enumerate(self._loads)))
+            (f"Core {i}: {v:.0f}%" if v is not None else f"Core {i}: not measured") + self._kind_note(i) for i, v in enumerate(self._loads)))
 
     def _kind_note(self, index: int) -> str:
         kind = self._kinds[index] if index < len(self._kinds) else ""
@@ -145,6 +129,9 @@ class CoreGrid(QWidget):
         from PyQt6.QtCore import QSize
         return QSize(300, self.heightForWidth(300))
 
+    def _cell_colour(self, value):
+        return level_colour(value) if value is not None else self.palette().placeholderText().color()
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -152,8 +139,8 @@ class CoreGrid(QWidget):
         for i, load in enumerate(self._loads):
             x = (i % cols) * (self.CELL + self.GAP)
             y = (i // cols) * (self.CELL + self.GAP)
-            base = level_colour(load)
-            base.setAlpha(int(45 + 2.1 * min(load, 100)))
+            base = self._cell_colour(load)
+            base.setAlpha(int(45 + 2.1 * min(load or 0, 100)))
             rect = QRectF(x, y, self.CELL, self.CELL)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(base)
@@ -162,9 +149,23 @@ class CoreGrid(QWidget):
                 painter.setPen(QPen(self.palette().text().color(), 1.2))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 4, 4)
-            if load >= 1:       # a wall of zeros is noise; idle cores stay blank
+            if load is not None and load >= 1:       # a wall of zeros is noise; idle cores stay blank
                 painter.setPen(self.palette().text().color())
                 painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(int(load)))
+
+
+class ClockGrid(CoreGrid):
+    """Clock ratios use informational colour; nominal frequency is not an alert."""
+
+    def _cell_colour(self, value):
+        if value is None:
+            return self.palette().placeholderText().color()
+        return QColor(semantic("success" if value > 102 else "info"))
+
+    def _refresh_tip(self):
+        self.setToolTip("\n".join(
+            f"CPU {i}: {v:.0f}% of nominal" if v is not None else f"CPU {i}: not measured"
+            for i, v in enumerate(self._loads)))
 
 
 class FindingRow(QFrame):
@@ -178,13 +179,13 @@ class FindingRow(QFrame):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(10, 6, 10, 6)
         role = _SEVERITY_ROLE.get(finding.severity)
-        colour = semantic(role) if role else self.palette().placeholderText().color().name()
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {colour};")
+        set_role(dot, {"error": "statusError", "warning": "statusWarning", "info": "statusInfo"}.get(role, "muted"))
+        dot.setToolTip(f"{finding.severity}: {finding.title}")
         lay.addWidget(dot)
         text = QVBoxLayout()
         text.setSpacing(0)
-        title = QLabel(finding.title)
+        title = QLabel(f"{finding.severity.title()}: {finding.title}")
         set_role(title, "sectionTitle")
         text.addWidget(title)
         if finding.detail:
@@ -195,6 +196,7 @@ class FindingRow(QFrame):
         lay.addLayout(text, 1)
         if finding.action_module:
             button = QPushButton(finding.action_label or "Open")
+            button.setToolTip(f"{finding.action_label or 'Open'}: {finding.detail or finding.title}")
             button.clicked.connect(
                 lambda _=False, m=finding.action_module: self.action_requested.emit(m))
             lay.addWidget(button)

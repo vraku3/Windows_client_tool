@@ -21,6 +21,8 @@ from core.windows_utils import ps_quote
 from core.table_ui import centered_item, center_header
 from core.worker import COMWorker, Worker
 from ui.error_banner import ErrorBanner
+from ui.table_style import apply_table_style
+from ui.empty_state import EmptyState
 from modules.services_manager import service_audit
 from modules.services_manager import service_view
 from modules.services_manager.help_text import service_help
@@ -414,13 +416,12 @@ class ServicesModule(BaseModule):
             self._table.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.ResizeToContents)
         center_header(self._table)
+        apply_table_style(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
         self._table_stack.addWidget(self._table)
-        empty_lbl = QLabel("No services match filter")
-        empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        empty_lbl.setStyleSheet("color: #888; font-size: 13px;")
+        empty_lbl = EmptyState("○", "No services match", "Clear the inventory filters to see all services.")
         self._table_stack.addWidget(empty_lbl)
         layout.addWidget(self._table_stack)
 

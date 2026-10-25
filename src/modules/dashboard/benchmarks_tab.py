@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QHBoxLayout,
 from core.table_ui import set_role
 from core.semantic_colors import semantic
 from core.worker import Worker
+from ui.table_style import apply_table_style
 
 from . import benchmarks as bm
 from .tab_base import DashModule, DashTab
@@ -65,6 +66,7 @@ class BenchmarksTab(DashTab):
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         for column, width in enumerate((230, 150, 110)):
             header.resizeSection(column, width)
+        apply_table_style(self._table, numeric_columns=(1, 2))
         layout.addWidget(self._table, 1)
 
         self.status = QLabel(
@@ -203,6 +205,7 @@ class BenchmarksTab(DashTab):
 
     def _render(self, results, change, status: str) -> None:
         table = self._table
+        table.clearContents()
         table.setRowCount(len(results))
         for r, res in enumerate(results):
             failed = res.value == 0 and "could not run" in res.detail
@@ -214,12 +217,33 @@ class BenchmarksTab(DashTab):
                 if c in (1, 2):
                     item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
                 table.setItem(r, c, item)
+            self._result_bar(r, res, change.get(res.name), failed)
             delta = change.get(res.name)
             if delta is not None and abs(delta) >= 5:
                 table.item(r, 2).setForeground(QColor(semantic("success" if delta > 0 else "error")))
             if failed:
                 table.item(r, 1).setForeground(QColor(semantic("error")))
         self.status.setText(status)
+
+    def _result_bar(self, row, result, delta, failed):
+        if failed:
+            return
+        bar = QProgressBar(self._table)
+        # Each test keeps its own units: bar length compares only to its own last run.
+        previous = result.value / (1 + delta / 100) if delta is not None and delta > -100 else None
+        ceiling = max(result.value, previous or 0, 1)
+        bar.setRange(0, 1000)
+        bar.setValue(round(result.value / ceiling * 1000))
+        bar.setFormat(result.text())
+        bar.setToolTip(f"{result.text()}. " + (f"Previous run: {previous:,.1f} {result.unit}."
+                       if previous is not None else "No previous result available for comparison."))
+        self._table.setCellWidget(row, 1, bar)
+        if delta is not None:
+            badge = QLabel(f"{delta:+.1f}%", self._table)
+            set_role(badge, "statusSuccess" if delta > 0 else "statusError" if delta < 0 else "muted")
+            badge.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            badge.setToolTip("Change versus the last comparable run. Higher throughput is better.")
+            self._table.setCellWidget(row, 2, badge)
 
     def _copy(self) -> None:
         lines = [f"{r.name}: {r.text()}  ({r.detail})" for r in self._results]

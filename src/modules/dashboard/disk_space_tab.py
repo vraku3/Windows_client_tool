@@ -10,6 +10,9 @@ from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel,
 
 from core.events import NAV_REQUEST_MODULE, NavRequestData
 from core.worker import Worker
+from ui.glance import GlanceTile
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
 
 from . import folder_sizes as fs
 from .tab_base import DashModule, DashTab, fmt_size, numeric_item
@@ -30,6 +33,8 @@ class DiskSpaceTab(DashTab):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        self._drive_cards = QHBoxLayout()
+        layout.addLayout(self._drive_cards)
         self._vol = QTableWidget(0, len(VOLUME_HEADERS), self)
         self._vol.setHorizontalHeaderLabels(list(VOLUME_HEADERS))
         self._vol.verticalHeader().setVisible(False)
@@ -72,6 +77,15 @@ class DiskSpaceTab(DashTab):
         self._folders.cellDoubleClicked.connect(self._open_folder_in_treesize)
         self._folders.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._folders.customContextMenuRequested.connect(self._show_folder_menu)
+        apply_table_style(self._vol, numeric_columns=(2, 3, 4, 5))
+        apply_table_style(self._folders, numeric_columns=(1, 2))
+        self._empty = EmptyState("Disk", "Find what fills a drive",
+            "Drive usage loads automatically. Select a drive, then start a read-only folder scan; large drives can take time.",
+            "Find biggest folders", parent=self)
+        self._empty.action_triggered.connect(self._scan)
+        self._empty.action_button.setEnabled(False)
+        layout.addWidget(self._empty)
+        self._folders.hide()
         layout.addWidget(self._folders, 1)
         self.status = QLabel("Select a drive, then find its biggest folders.", self)
         layout.addWidget(self.status)
@@ -82,6 +96,7 @@ class DiskSpaceTab(DashTab):
         self.run(lambda _w: fs.volumes(), self._apply_volumes)
 
     def _apply_volumes(self, rows) -> None:
+        self._show_drive_cards(rows)
         keep = self._selected_mount()
         table = self._vol
         table.blockSignals(True)
@@ -99,25 +114,46 @@ class DiskSpaceTab(DashTab):
         table.blockSignals(False)
         self._selection_changed()
 
+    def _show_drive_cards(self, rows):
+        while self._drive_cards.count():
+            item = self._drive_cards.takeAt(0)
+            item.widget().deleteLater()
+        for row, volume in enumerate(rows):
+            pct = volume["percent"]
+            tile = GlanceTile(volume["mount"], tooltip="Select this drive for a folder scan.")
+            tile.set(f"{pct:.0f}% used", f"{fmt_size(volume['free'])} free of {fmt_size(volume['total'])}",
+                     severity="danger" if pct >= 95 else "warning" if pct >= 85 else "ok")
+            usage = QProgressBar(tile)
+            usage.setRange(0, 100)
+            usage.setValue(round(pct))
+            usage.setToolTip(f"{volume['mount']}: {pct:.1f}% of capacity used")
+            tile.layout().addWidget(usage)
+            tile.clicked.connect(lambda r=row: self._vol.selectRow(r))
+            self._drive_cards.addWidget(tile)
+
     def _selected_mount(self):
         rows = self._vol.selectionModel().selectedRows() if self._vol.selectionModel() else []
         item = self._vol.item(rows[0].row(), 0) if rows else None
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     def _selection_changed(self) -> None:
-        self._scan_btn.setEnabled(self._selected_mount() is not None and self._scan_worker is None)
+        allowed = self._selected_mount() is not None and self._scan_worker is None
+        self._scan_btn.setEnabled(allowed)
+        self._empty.action_button.setEnabled(allowed)
 
     # ---- folder scan -------------------------------------------------------------
 
     def _scan(self) -> None:
         mount = self._selected_mount()
         pool = self._pool()
-        if mount is None:
+        if mount is None or self._scan_worker is not None:
             return
         self._scan_btn.setEnabled(False)
+        self._empty.action_button.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._progress.setValue(0)
         self._progress.show()
+        self._empty.set_variant("loading", progress_text="Reading folder sizes; you can cancel this scan.")
         self.status.setText(f"Scanning {mount} …")
 
         def work(worker):
@@ -132,6 +168,7 @@ class DiskSpaceTab(DashTab):
         worker.signals.progress.connect(self._progress.setValue)
         worker.signals.result.connect(self._scan_done)
         worker.signals.error.connect(self._scan_failed)
+        worker.signals.cancelled.connect(self._scan_cancelled)
         self._scan_worker = worker
         self._workers.append(worker)
         pool.start(worker)
@@ -146,14 +183,23 @@ class DiskSpaceTab(DashTab):
         self._cancel_btn.setEnabled(False)
         self._selection_changed()
 
+    def _scan_cancelled(self):
+        self._scan_finished_ui()
+        self._empty.set_variant("empty", reason="Scan cancelled. Start another scan to read folder sizes.")
+        self.status.setText("Folder scan cancelled.")
+
     def _scan_failed(self, message) -> None:
         self._scan_finished_ui()
+        self._empty.set_variant("error", reason=str(message))
         logger.error("folder scan failed: %s", message)
         self.status.setText(f"The scan failed: {message}")
 
     def _scan_done(self, scan) -> None:
         self._scan_finished_ui()
         self._last_scan = scan
+        self._empty.setVisible(not scan.entries)
+        self._empty.set_variant("empty", reason="No readable folders were returned. Try another drive or run as administrator.")
+        self._folders.setVisible(bool(scan.entries))
         table = self._folders
         volume_total = next((v for v in fs.volumes() if v["mount"] == scan.root), None)
         capacity = volume_total["used"] if volume_total else scan.total

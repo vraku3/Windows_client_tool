@@ -23,6 +23,8 @@ from modules.hardware_inventory import asset_reader as ar
 from modules.hardware_inventory import device_reader as dvr
 from modules.hardware_inventory import hardware_reader as hr
 from ui.table_items import fit_table_height, numeric_item, paint_severity
+from ui.glance import GlanceTile
+from ui.table_style import apply_table_style
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,7 @@ def make_kv_table() -> QTableWidget:
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    apply_table_style(t)
     return t
 
 
@@ -63,6 +66,8 @@ def make_dict_table(columns) -> QTableWidget:
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    apply_table_style(t, size_columns=tuple(i for i, c in enumerate(columns)
+                      if c in ("Size", "Total", "Used", "Free", "Use%", "RAM", "Speed")))
     return t
 
 
@@ -88,6 +93,52 @@ def add_findings(layout: QVBoxLayout, findings: List[ap.Finding], all_clear: str
 
 
 # -- simple tabs -----------------------------------------------------------
+
+def load_overview(worker=None):
+    """Read-only card data; absent properties stay absent rather than becoming zero."""
+    overview = dict(hr.get_overview(worker))
+    cpu = dict(hr.get_cpu_info(worker))
+    memory, _ = hr.get_memory_info(worker)
+    gpus = hr.get_gpu_info(worker)
+    bios = hr.get_bios_info(worker)
+    monitors, error = ar.read_monitors()
+    network = hr.get_network_info(worker)
+    return {
+        "CPU": [("Model", overview.get("CPU") or cpu.get("Model", "")),
+                ("Cores", cpu.get("Physical Cores", "")),
+                ("Threads", cpu.get("Logical Cores", ""))],
+        "Memory": [("Total", overview.get("RAM Total", "")), *memory],
+        "GPU": [(g.get("Name", "GPU"), g.get("RAM", "")) for g in gpus],
+        "Board / BIOS": [("Model", overview.get("Model", "")), *bios],
+        "Disks": [("Total", overview.get("Disk Total", "")),
+                  ("Free", overview.get("Disk Free", ""))],
+        "Monitors": [(m.name or m.make, "Connected" if m.active else "Remembered")
+                     for m in monitors if m.active is not None] if not error else [],
+        "Network": [(n["Name"], n["IP"] or n["Speed"]) for n in network if n["Up"] == "Yes"],
+    }
+
+
+def setup_overview(layout, data):
+    from PyQt6.QtWidgets import QGridLayout
+    grid = QGridLayout()
+    grid.setSpacing(12)
+    for index, name in enumerate(("CPU", "Memory", "GPU", "Board / BIOS", "Disks", "Monitors", "Network")):
+        rows = [(str(k), str(v)) for k, v in data.get(name, [])
+                if v and str(v) not in ("N/A", "None", "Unknown")]
+        tile = GlanceTile(name, tooltip=f"{name}: measured inventory. Open its tab for the full details.")
+        tile.value.setWordWrap(True)
+        tile.sub.setWordWrap(True)
+        primary = rows[0][1] if rows else None
+        if rows and rows[0][0] == "Cores":
+            primary += " cores"
+        tile.set(primary,
+                 "\n".join(f"{k}: {v}" for k, v in rows[1:5]),
+                 reason="Not reported by the inventory reader")
+        tile.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tile.setCursor(Qt.CursorShape.ArrowCursor)
+        grid.addWidget(tile, index // 2, index % 2)
+    layout.addLayout(grid)
+    layout.addStretch(1)
 
 def setup_kv(layout, data) -> None:
     t = make_kv_table()

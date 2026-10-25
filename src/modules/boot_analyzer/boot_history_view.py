@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import (
 from core.semantic_colors import semantic
 from core.table_ui import center_header, centered_item, set_role
 from modules.boot_analyzer import boot_history as bh
+from ui.glance import GlanceStrip, GlanceTile
+from ui.table_style import apply_table_style
 
 BOOT_COLUMNS = ["Boot logged", "Type", "Boot time", "Main path", "Post-boot", "Startup apps", "Degraded"]
 SLOW_COLUMNS = ["Kind", "Name", "Publisher", "Events", "Worst", "Average", "Last seen", "Path"]
@@ -32,6 +34,9 @@ def _table(columns, height: int) -> QTableWidget:
     header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
     header.setStretchLastSection(True)
     center_header(table)
+    apply_table_style(table, numeric_columns=tuple(i for i, c in enumerate(columns)
+                      if c in ("Boot time", "Main path", "Post-boot", "Startup apps", "Events", "Worst", "Average")),
+                      date_columns=tuple(i for i, c in enumerate(columns) if c in ("Boot logged", "Last seen")))
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setSortingEnabled(True)
@@ -46,6 +51,11 @@ class BootHistoryPanel(QWidget):
         self._facts = bh.BootFacts()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self._duration = GlanceTile("Last measured boot", tooltip="Duration from Windows' detailed boot trace; the trend runs oldest to newest.")
+        self._recorded = GlanceTile("Recorded boots", tooltip="Number of detailed boot traces retained in the current read.")
+        self._degraded = GlanceTile("Degraded boots", tooltip="Boots Windows explicitly marked as degraded in the current read.")
+        self._glance = GlanceStrip([self._duration, self._recorded, self._degraded])
+        layout.addWidget(self._glance)
         title = QLabel("Recent boots (from Windows' own boot traces)")
         set_role(title, "heading")
         layout.addWidget(title)
@@ -89,11 +99,27 @@ class BootHistoryPanel(QWidget):
 
     def set_facts(self, facts: bh.BootFacts) -> None:
         self._facts = facts
+        self._update_glance(facts)
         self._summary.setText(bh.trend_note(facts.boots) + "\n" + bh.uptime_note(facts))
         self._fill_boots(facts)
         self._fill_slow(facts)
         self._fill_fallback(facts)
         self._problems.setText("Not read: " + "; ".join(facts.problems) if facts.problems else "")
+
+    def _update_glance(self, facts):
+        boots = sorted(facts.boots, key=lambda b: b.when)
+        reason = "; ".join(facts.problems) or "No detailed boot trace was returned"
+        self._duration.set(f"{boots[-1].boot_ms / 1000:.1f} s" if boots else None,
+                           sub=f"{boots[-1].when:%Y-%m-%d %H:%M}" if boots else "", reason=reason)
+        self._duration.set_history([b.boot_ms / 1000 for b in boots])
+        readable = bool(boots) or not facts.problems
+        self._recorded.set(len(boots) if readable else None, reason=reason)
+        degraded = sum(b.degraded for b in boots)
+        self._degraded.set(degraded if readable else None, reason=reason,
+                           severity="warning" if degraded else "ok")
+        for tile in self._glance.tiles:
+            if tile.value.text() == "—":
+                tile.sub.setText("Detailed trace unavailable")
 
     def _fill_boots(self, facts: bh.BootFacts) -> None:
         table = self._boots

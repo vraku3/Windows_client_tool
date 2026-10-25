@@ -12,7 +12,7 @@ from typing import List, Optional
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices, QFont, QGuiApplication
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QButtonGroup, QDialog, QHBoxLayout, QHeaderView, QLabel,
+    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget, QFileDialog, QMessageBox,
 )
@@ -21,7 +21,10 @@ from PyQt6 import sip
 from core.confirm import confirm_destructive
 from core.semantic_colors import semantic
 from core.table_ui import center_header, centered_item, set_role
-from core.worker import COMWorker
+from core.worker import COMWorker, retire
+from ui.chip_bar import ChipBar
+from ui.table_style import apply_table_style
+from ui.glance import GlanceStrip, GlanceTile
 from modules.startup_manager import persistence as P
 
 logger = logging.getLogger(__name__)
@@ -106,31 +109,23 @@ class UnifiedStartupTab(QWidget):
 
     def _build(self) -> None:
         layout = QVBoxLayout(self)
+        self._build_glance(layout)
         layout.addLayout(self._toolbar())
         self._search = QLineEdit()
         self._search.setPlaceholderText("Search name, command, path, publisher, source...")
         self._search.setClearButtonEnabled(True)
         self._search.textChanged.connect(self._render)
         layout.addWidget(self._search)
-        self._chip_row = QHBoxLayout()
-        self._chip_group = QButtonGroup(self)
-        self._chips = {}
-        for chip in P.CHIPS:
-            button = QPushButton(chip)
-            button.setCheckable(True)
-            button.setChecked(chip == "All")
-            self._chip_group.addButton(button)
-            self._chip_row.addWidget(button)
-            self._chips[chip] = button
-            button.clicked.connect(lambda _c=False, c=chip: self._set_chip(c))
-        self._chip_row.addStretch()
-        layout.addLayout(self._chip_row)
+        self._chip_bar = ChipBar([(chip, chip, 0) for chip in P.CHIPS])
+        self._chips = self._chip_bar.chips
+        self._chip_bar.selection_changed.connect(lambda keys: self._set_chip(keys[0]) if keys else None)
+        layout.addWidget(self._chip_bar)
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setFixedHeight(4)
         self._progress.hide()
         layout.addWidget(self._progress)
-        split = QSplitter(Qt.Orientation.Vertical)
+        split = QSplitter(Qt.Orientation.Horizontal)
         split.addWidget(self._make_table())
         self._detail = QPlainTextEdit()
         self._detail.setReadOnly(True)
@@ -145,6 +140,28 @@ class UnifiedStartupTab(QWidget):
         self._problems.setWordWrap(True)
         set_role(self._problems, "muted")
         layout.addWidget(self._problems)
+
+    def _build_glance(self, layout):
+        specs = [("Read entries", "All"), ("Flagged entries", "Flagged"),
+                 ("Not signed", "Not signed"), ("Slowed boot", "Slowed boot")]
+        tiles = []
+        for caption, chip in specs:
+            tile = GlanceTile(caption, tooltip=f"Count among entries successfully read. Select to show {chip.lower()} entries.")
+            tile.clicked.connect(lambda c=chip: self._chips[c].click())
+            tile.set(None, reason="Startup inventory has not been read")
+            tiles.append(tile)
+        self._glance = GlanceStrip(tiles)
+        layout.addWidget(self._glance)
+
+    def _update_glance(self):
+        inv = self._inventory
+        counts = P.chip_counts(inv.items)
+        for tile, chip in zip(self._glance.tiles, ("All", "Flagged", "Not signed", "Slowed boot")):
+            readable = bool(inv.items) or (self._loaded and not inv.problems)
+            tile.set(counts[chip] if readable else None,
+                     sub="Read entries only; some sources unavailable" if inv.problems else "Current inventory",
+                     reason="; ".join(inv.problems) or "Startup inventory has not been read",
+                     severity="warning" if chip != "All" and counts[chip] else "info")
 
     def _toolbar(self) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -183,6 +200,7 @@ class UnifiedStartupTab(QWidget):
         table.setColumnWidth(0, 220)
         header.setSectionResizeMode(len(COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)
         center_header(table)
+        apply_table_style(table, numeric_columns=(6,), date_columns=(7,))
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -218,6 +236,7 @@ class UnifiedStartupTab(QWidget):
         worker = COMWorker(scan)
         worker.signals.result.connect(lambda inv: self._on_result(inv, worker))
         worker.signals.error.connect(lambda err: self._on_error(err, worker))
+        worker.signals.cancelled.connect(lambda: self._on_error("Scan cancelled. Refresh to retry.", worker))
         self._worker = worker
         from PyQt6.QtCore import QThreadPool
         QThreadPool.globalInstance().start(worker)
@@ -241,11 +260,14 @@ class UnifiedStartupTab(QWidget):
         if not self._finish(worker):
             return
         logger.warning("Startup scan failed: %s", err)
+        self._loaded = False
+        for tile in self._glance.tiles:
+            tile.set(None, reason=err)
         self._status.setText(f"Scan failed: {err}")
 
     def _cancel_all(self) -> None:
         if self._worker is not None:
-            self._worker.cancel()
+            retire([self._worker])
             self._worker = None
             # A cancelled worker emits neither result nor error, so put the
             # controls back here or Refresh stays disabled for good.
@@ -261,9 +283,9 @@ class UnifiedStartupTab(QWidget):
 
     def _render(self, *_args) -> None:
         items = self._inventory.items
+        self._update_glance()
         counts = P.chip_counts(items)
-        for chip, button in self._chips.items():
-            button.setText(f"{chip} ({counts[chip]})" if items else chip)
+        self._chip_bar.set_counts(counts)
         text = self._search.text().strip()
         self._visible = sorted(
             (i for i in items if P.matches_chip(i, self._chip) and P.matches_search(i, text)),

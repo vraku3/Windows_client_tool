@@ -13,6 +13,9 @@ from typing import Optional
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QHeaderView, QLabel, QTableWidget, QVBoxLayout
 
+from .glance_support import summary, unreadable
+from ui.empty_state import EmptyState
+from ui.table_style import apply_table_style
 from core.table_ui import set_role
 from modules.thermal_control.engine.model import TEMPERATURE
 from core.semantic_colors import semantic
@@ -38,6 +41,15 @@ class ThermalTab(DashTab):
         self._history = History(120)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
+        self._glance = summary(self, layout, [
+            ("hot", "Hottest sensor", "Highest measured temperature among the key hardware sensors."),
+            ("gpu", "GPU temperature", "Highest measured GPU temperature among key sensors."),
+            ("alerts", "Thermal alerts", "Sensors exceeding their own warning or critical limits.")])
+        self._empty = EmptyState("C", "Waiting for hardware sensors",
+            "Readings load automatically. Run elevated for CPU and motherboard sensors; GPU readings need no elevation.",
+            "Refresh sensors", parent=self, variant="loading")
+        self._empty.action_triggered.connect(self.refresh)
+        layout.addWidget(self._empty)
         self._headline = QLabel("—")
         font = self._headline.font()
         font.setPointSize(font.pointSize() + 8)
@@ -70,6 +82,8 @@ class ThermalTab(DashTab):
         self._spark_note = QLabel("Effective clock as a fraction of nominal, last few minutes.", self)
         set_role(self._spark_note, "muted")
         layout.addWidget(self._spark_note)
+        apply_table_style(self._readings, numeric_columns=(2,))
+        apply_table_style(self._zones, numeric_columns=(1,))
         layout.addStretch(1)
 
     def _label(self, text: str) -> QLabel:
@@ -128,7 +142,18 @@ class ThermalTab(DashTab):
             if label in alerts:
                 table.item(r, 2).setForeground(QColor(semantic("error" if alerts[label] == "critical"
                                                                else "warning")))
+        self._empty.setVisible(not readings)
+        self._readings.setVisible(bool(readings))
+        self._empty.set_variant("empty", reason=reason or "No sensors were returned. Run elevated for CPU and board sensors, then refresh.")
+        self._glance["alerts"].set(len(found) if readings else None, "warning or critical",
+                                   reason=reason or "No sensor readings", severity="warning" if found else "ok")
         temps = [(label, s) for label, s in readings if s.kind == TEMPERATURE and s.value is not None]
+        for key, candidates in (("hot", temps), ("gpu", [(label, s) for label, s in temps
+                                                    if "gpu" in (label + " " + s.hardware).lower()])):
+            peak = max(candidates, key=lambda pair: pair[1].value, default=None)
+            self._glance[key].set(f"{peak[1].value:.0f} C" if peak else None,
+                                  peak[0] if peak else "", reason=reason or "No temperature sensor reported",
+                                  severity="warning" if peak and peak[1].value >= HOT_C else "info")
         if temps:
             label, hottest = max(temps, key=lambda ls: ls[1].value)
             self._headline.setText(f"{hottest.value:.0f} °C  {label}")
@@ -136,6 +161,9 @@ class ThermalTab(DashTab):
 
     def _readings_failed(self, message) -> None:
         self._busy = False
+        unreadable(self._glance, str(message))
+        self._empty.set_variant("error", reason=str(message))
+        self._empty.show()
         self._explain.setText(f"Temperatures could not be read: {message}")
 
     def _show_zones(self) -> None:

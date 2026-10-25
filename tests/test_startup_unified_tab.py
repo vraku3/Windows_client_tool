@@ -65,7 +65,7 @@ def test_chip_and_search_filter(qapp):
         tab._set_chip("All")
         tab._search.setText("acme")
         assert _names(tab) == ["Alpha"]
-        assert "(3)" in tab._chips["All"].text() and "(1)" in tab._chips["Missing file"].text()
+        assert tab._chips["All"].count == 3 and tab._chips["Missing file"].count == 1
     finally:
         tab.deleteLater()
 

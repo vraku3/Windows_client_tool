@@ -135,7 +135,10 @@ def test_network_extras_no_longer_carries_its_own_hosts_editor(qapp):
     from modules.network_extras.net_extras_module import NetExtrasModule
 
     widget = NetExtrasModule().create_widget()
-    labels = [widget.tabText(i) for i in range(widget.count())]
+    # The 2026-10-26 redesign puts a glance strip above the tabs.
+    from PyQt6.QtWidgets import QTabWidget
+    tabs = widget if isinstance(widget, QTabWidget) else widget.findChild(QTabWidget)
+    labels = [tabs.tabText(i) for i in range(tabs.count())]
 
     assert labels == ["DNS Switcher", "Proxy Settings", "Quick Actions"]
 

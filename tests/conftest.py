@@ -95,6 +95,25 @@ def _catalog_readers_restored():
 
 
 @pytest.fixture(autouse=True)
+def _global_pool_has_no_instance_overrides():
+    """Clear any instance-level start/tryStart left on Qt's GLOBAL thread pool.
+
+    `monkeypatch.setattr(pool_instance, "start", ...)` restores by setting the
+    old BOUND method on the instance, which then shadows every later
+    class-level patch of QThreadPool.start. That let test_tooltip_coverage's
+    forbidden runnable really run and abort the whole process (0xC0000409,
+    whole-suite chunk, 2026-10-25). Runs after every test, costs nothing.
+    """
+    yield
+    from PyQt6.QtCore import QThreadPool
+    pool = QThreadPool.globalInstance()
+    shadow = getattr(pool, "__dict__", None)
+    if shadow:
+        for name in ("start", "tryStart"):
+            shadow.pop(name, None)
+
+
+@pytest.fixture(autouse=True)
 def _app_facts_no_machine_scan(monkeypatch):
     """Populating a fake app list must never start a real registry/usage scan."""
     from core.app_facts import AppFactsIndex

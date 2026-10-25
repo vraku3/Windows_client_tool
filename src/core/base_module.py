@@ -224,10 +224,16 @@ class BaseModule(ABC):
 
         Calls cancel() on each tracked worker to prevent blocking or
         unauthorized background operations after shutdown.
+
+        Through core.worker.retire(), never `cancel(); clear()`: dropping the
+        last reference to a worker that is still running frees its
+        WorkerSignals while its queued cancelled/finished are still in the
+        event loop, and delivering them crashes the process natively (see
+        CLAUDE.md, "Never drop the last reference to a worker that is still
+        running"). Every module inherited the unsafe form until 2026-10-25.
         """
-        for worker in self._workers:
-            worker.cancel()
-        self._workers.clear()
+        from core.worker import retire
+        retire(self._workers)
 
     def get_refresh_interval(self) -> Optional[int]:
         """Return auto-refresh interval in milliseconds, or None to disable.

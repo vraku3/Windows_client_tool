@@ -330,7 +330,13 @@ def test_breakdown_callbacks_ignore_rows_deleted_by_a_rescan(qapp, monkeypatch):
     fn = _scanner("scan_wp4_stale", [ScanItem(r"C:\bulky", 2 * 1024**3, True)])
     tab = st._ScanTab({fn: ("Bulky", "safe")})
     _feed(tab, tab._scanners)
-    monkeypatch.setattr(tab._thread_pool, "start", captured.append)
+    # A fake pool on this throwaway tab -- never setattr on the GLOBAL pool's
+    # instance: monkeypatch's undo re-sets the bound method as an instance
+    # attribute, which shadowed every later class-level patch of
+    # QThreadPool.start and let a test's runnable run and abort the process
+    # (0xC0000409 in test_tooltip_coverage, whole-suite runs, 2026-10-25).
+    from types import SimpleNamespace
+    monkeypatch.setattr(tab, "_thread_pool", SimpleNamespace(start=captured.append))
     row = _rows(tab)[r"C:\bulky"]
     tab._fill_breakdown(row)
     tab._tree.clear()

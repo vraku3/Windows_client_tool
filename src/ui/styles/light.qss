@@ -533,10 +533,10 @@ QLabel#metric        { font-size: 18px; font-weight: bold; }
 QLabel#link          { color: #00639c; }
 
 /* Plain-language introduction at the top of a pane (ui/module_intro.py).
-   Palette references, not literals, so both themes and the phosphor
-   recolouring carry it unchanged. */
+   Use the card surface for this theme; the OS alternate-base palette can
+   belong to the opposite theme. The phosphor recolouring also covers it. */
 QLabel#moduleIntro {
-    background-color: palette(alternate-base);
+    background-color: #ffffff;
     border-left: 3px solid palette(highlight);
     border-radius: 3px;
     padding: 6px 10px;

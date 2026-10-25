@@ -123,6 +123,8 @@ class ScriptLibraryModule(BaseModule):
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(8, 8, 8, 8)
+        from ui.module_intro import module_intro
+        lay.addWidget(module_intro("Browse built-in admin checks and your own scripts. Read the description and View script before running: scripts can change this PC. Stop ends a run but does not undo changes. Support bundles collect diagnostics for you to review and share."))
         lay.addLayout(self._build_toolbar(w))
         lay.addLayout(self._build_folder_row(w))
         self._banner = ErrorBanner("", w)
@@ -134,6 +136,7 @@ class ScriptLibraryModule(BaseModule):
         split = QSplitter(Qt.Orientation.Horizontal, w)
         self._tree = QTreeWidget(w)
         self._tree.setHeaderHidden(True)
+        self._tree.headerItem().setToolTip(0, "Scripts grouped by purpose; select to read the description, double-click to run after any required confirmation.")
         self._tree.setMinimumWidth(360)
         self._tree.currentItemChanged.connect(lambda *_: self._select())
         self._tree.itemDoubleClicked.connect(lambda *_: self._run())
@@ -143,6 +146,8 @@ class ScriptLibraryModule(BaseModule):
         split.setStretchFactor(1, 3)
         lay.addWidget(split, 1)
         self._widget = w
+        from ui.help.scripts_ui import explain_scripts
+        explain_scripts(w, library=True)
         return w
 
     def _build_folder_row(self, parent: QWidget) -> QHBoxLayout:

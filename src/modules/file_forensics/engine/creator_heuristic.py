@@ -50,7 +50,8 @@ def _filetime_to_datetime(value: int) -> Optional[datetime]:
 
 
 def find_creator_candidates(created_at: datetime,
-                            tolerance_seconds: float = 5.0
+                            tolerance_seconds: float = 5.0,
+                            processes=None, details_cache=None
                             ) -> List[CreatorCandidate]:
     """Find processes whose start time is close to `created_at`.
 
@@ -60,14 +61,19 @@ def find_creator_candidates(created_at: datetime,
     `datetime.fromtimestamp(st.st_ctime)` -- already uses).
     """
     candidates = []
-    for proc in system_processes():
+    for proc in (system_processes() if processes is None else processes):
         started = _filetime_to_datetime(proc.create_time)
         if started is None:
             continue
         delta = (started - created_at).total_seconds()
         if abs(delta) > tolerance_seconds:
             continue
-        details = resolve(proc.pid)
+        if details_cache is None:
+            details = resolve(proc.pid)
+        else:
+            if proc.pid not in details_cache:
+                details_cache[proc.pid] = resolve(proc.pid)
+            details = details_cache[proc.pid]
         candidates.append(CreatorCandidate(
             pid=proc.pid, name=proc.name, path=details.path,
             user=details.user, started_at=started, delta_seconds=delta,

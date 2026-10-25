@@ -23,7 +23,7 @@ def test_a_missing_file_raises_file_not_found(tmp_path):
         read_metadata(str(tmp_path / "does_not_exist.txt"))
 
 
-def test_owner_lookup_failure_is_an_empty_string_not_an_exception(tmp_path, monkeypatch):
+def test_owner_lookup_failure_is_disclosed_not_an_exception(tmp_path, monkeypatch):
     f = tmp_path / "probe2.txt"
     f.write_text("x")
     import modules.file_forensics.engine.file_metadata as fm
@@ -34,4 +34,4 @@ def test_owner_lookup_failure_is_an_empty_string_not_an_exception(tmp_path, monk
 
     monkeypatch.setattr(fm, "_owner_resolver", _BoomResolver())
     meta = fm.read_metadata(str(f))
-    assert meta.owner == ""
+    assert meta.owner == "Could not check"

@@ -25,4 +25,13 @@ class ScriptsModule(CompositeModule):
     def wrap(self, tabs):
         for index, child in enumerate(self.children):
             tabs.setTabToolTip(index, child.description)
-        return tabs
+        from PyQt6.QtWidgets import QWidget, QVBoxLayout
+        from ui.module_intro import module_intro
+        from ui.help.scripts_ui import explain_scripts
+        root = QWidget()
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(module_intro("Choose Script Library to read and run admin scripts, File Forensics to investigate files without changing them, or Explorer Navigation Pane to customize Explorer. Running scripts and applying Explorer settings can change this PC; read the selected tool?s explanation first."))
+        layout.addWidget(tabs)
+        explain_scripts(root)
+        return root

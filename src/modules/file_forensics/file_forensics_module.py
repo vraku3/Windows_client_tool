@@ -1,453 +1,417 @@
-"""File Forensics -- find a file, see who has it open, guess who created
-it. A redesigned, professional rebuild of the user's own
-Find-FileCreator.ps1, hosted as the first tab of the new Scripts hub.
-
-Built entirely on this app's existing process-forensics engine
-(core.procengine) rather than reimplementing any of it -- see
-docs/superpowers/specs/2026-09-18-scripts-file-forensics-design.md.
-"""
+"""File Forensics: streamed metadata search followed by one process/handle snapshot."""
 import csv
 import fnmatch
 import os
+from dataclasses import replace
 from typing import List, Optional
-
-from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (
-    QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QStackedWidget, QTableWidget, QTableWidgetItem,
-    QTabWidget, QVBoxLayout, QWidget,
-)
-
+from PyQt6.QtCore import QObject, pyqtSignal, Qt
+from PyQt6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
+    QLineEdit, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget,
+    QVBoxLayout, QWidget)
 from core.base_module import BaseModule
 from core.events import NOTIFY_BALLOON, BalloonNotifyData
 from core.module_groups import ModuleGroup
 from core.procengine.actions import end_process
-from core.procengine.signatures import (
-    COULD_NOT_VERIFY, INVALID, NOT_SIGNED, VALID,
-)
-from core.semantic_colors import semantic
+from core.procengine.signatures import COULD_NOT_VERIFY, INVALID, NOT_SIGNED, VALID
+from core.procengine.ntquery import system_processes
 from core.widget_life import widget_is_valid as _widget_valid
-from core.worker import Worker
-from ui.empty_state import EmptyState
+from core.worker import Worker, retire
+from core.formatting import format_size
 from ui.error_banner import ErrorBanner
-
+from ui.module_intro import module_intro
 from . import history_log
 from .engine.analysis import FileAnalysis, analyze
+from .engine.creator_heuristic import find_creator_candidates
+from .engine.bulk_locks import bulk_locks
+from .engine.search import search_batches, RESULT_LIMIT
+from .engine.selected_details import inspect_selected
 from .engine.folder_watcher import FolderWatcher
+from .results_model import matches_filter, signature_text
+from .search_view import SearchView, FILTERS
 
-_COLUMNS = ["Name", "Path", "Size", "Created", "Owner", "Locked By",
-            "Likely Creator", "File Signature"]
-
-_LOCKED_COLOR = QColor("#5c4a1a")        # amber -- in use
-_CREATOR_HIGH_COLOR = QColor("#1a5c2a")  # green -- confident single match
-_CREATOR_LOW_COLOR = QColor("#5c4a1a")   # amber -- ambiguous/multiple
-
-#: Label + foreground colour for the found file's OWN signature column.
-#: `None` (not a signable type) and `COULD_NOT_VERIFY` (a real refusal on a
-#: signable type) are deliberately different rows -- see
-#: engine/reputation.py's `check_own_signature` docstring -- so both get
-#: their own text rather than one sharing the other's blank/neutral look.
-_SIGNATURE_LABELS = {
-    VALID: "Signed",
-    NOT_SIGNED: "Unsigned",
-    INVALID: "INVALID",
-    COULD_NOT_VERIFY: "Could not verify",
-}
+_SIGNATURE_LABELS = {VALID: 'Signed', NOT_SIGNED: 'Unsigned', INVALID: 'INVALID', COULD_NOT_VERIFY: 'Could not verify'}
 
 
 class _WatchBridge(QObject):
-    """Marshals a live-watch detection back onto the UI thread.
-
-    `FolderWatcher.run()` executes on a background Worker thread, and its
-    `on_created` callback runs there too -- so the heavy part (`analyze()`,
-    including a real VirusTotal network call) stays off the UI thread, but
-    the result must cross back via a signal before anything touches a Qt
-    widget or QApplication. See CLAUDE.md's "Cross-thread widget access --
-    CRITICAL" rule. A signal needs a QObject to live on, and BaseModule
-    is not one, hence this small helper rather than a signal on the module
-    itself."""
-    detection_ready = pyqtSignal(object, str)  # (FileAnalysis, creator)
+    detection_ready = pyqtSignal(object, str)
+    search_event = pyqtSignal(object, object)
 
 
-class FileForensicsModule(BaseModule):
-    name = "File Forensics"
-    icon = "🔎"
-    description = "Find a file, see who has it open, and who created it"
+class FileForensicsModule(SearchView, BaseModule):
+    name = 'File Forensics'
+    icon = '🔎'
+    description = 'Find which program is holding files open and investigate likely creators'
     group = ModuleGroup.TOOLS
     requires_admin = False
 
     def __init__(self):
         super().__init__()
-        self._widget: Optional[QWidget] = None
+        self._widget = None
         self._loaded = False
         self._last_skip_count = 0
-        self._pending_banner_message: Optional[str] = None
-        self._watcher: Optional[FolderWatcher] = None
-        self._watch_worker: Optional[Worker] = None
-        self._watch_cb: Optional[QCheckBox] = None
+        self._pending_banner_message = None
+        self._watcher = self._watch_worker = self._watch_cb = None
+        self._search_worker = None
+        self._current_results = []
+        self._last_batch = None
+        self._detail_cache = {}
+        self._detail_busy = set()
+        self._watch_patterns = ()
+        self._search_generation = 0
         self._watch_bridge = _WatchBridge()
         self._watch_bridge.detection_ready.connect(self._on_watch_detection_ready)
+        self._watch_bridge.search_event.connect(self._on_search_event)
 
-    def on_start(self, app) -> None:
+    def on_start(self, app):
         self.app = app
 
-    def on_activate(self) -> None:
+    def on_activate(self):
         pass
 
-    def on_deactivate(self) -> None:
+    def on_deactivate(self):
         self._stop_watch()
         if _widget_valid(self._watch_cb):
-            # Reflect reality on the module's own primary control -- without
-            # this the checkbox reads "Live Watch: ON" indefinitely after any
-            # tab-away-and-back even though _stop_watch() just tore down the
-            # actual watch (BaseModule's lifecycle calls on_deactivate() on
-            # every navigation away, not just app shutdown).
             self._watch_cb.setChecked(False)
         self.cancel_all_workers()
 
-    def on_stop(self) -> None:
-        self._stop_watch()
-        self.cancel_all_workers()
+    def on_stop(self):
+        self.on_deactivate()
 
-    def get_refresh_interval(self):
+    def get_refresh_interval(self) -> Optional[int]:
         return None
 
-    def create_widget(self) -> QWidget:
+    def create_widget(self):
         self._widget = QWidget()
         layout = QVBoxLayout(self._widget)
         layout.setContentsMargins(8, 8, 8, 8)
-
+        layout.addWidget(module_intro('Find which program created or is holding files in a folder such as %TEMP%. '
+            'Searching reads metadata and never changes files. Creator matches are guesses from process start times. '
+            'Kill ends a locking process and can lose unsaved work. Signatures and reputation are checked only on request.'))
         self._error_banner = ErrorBanner()
         self._error_banner.hide()
         layout.addWidget(self._error_banner)
-
+        self._info_banner = QLabel()
+        self._info_banner.setWordWrap(True)
+        from core.table_ui import set_role
+        set_role(self._info_banner, "statusInfo")
+        self._info_banner.hide()
+        layout.addWidget(self._info_banner)
         tabs = QTabWidget()
-        tabs.addTab(self._build_search_tab(), "Search")
-        tabs.addTab(self._build_history_tab(), "History")
+        for title, builder, tip in (('Search', self._build_search_tab, 'Find files and inspect readable open handles and likely creators.'),
+                ('Live Watch', self._build_watch_tab, 'Observe new files without changing them; edit ignore patterns here.'),
+                ('History', self._build_history_tab, 'Past searches with completed, stopped or truncated outcomes, and live detections.')):
+            index = tabs.addTab(builder(), title)
+            tabs.setTabToolTip(index, tip)
         layout.addWidget(tabs, 1)
-
-        self._current_results: List[FileAnalysis] = []
+        from .help_ui import explain_forensics
+        explain_forensics(self._widget)
         return self._widget
 
-    def _build_search_tab(self) -> QWidget:
+    def _build_history_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.addLayout(self._build_toolbar())
-
-        self._results_stack = QStackedWidget()
-        self._table = self._build_table()
-        self._table.itemSelectionChanged.connect(self._on_row_selected)
-        self._results_stack.addWidget(self._table)
-        self._empty = EmptyState(
-            "🔎", "No results yet",
-            "Enter a folder and click Search, or enable Live Watch.",
-        )
-        self._results_stack.addWidget(self._empty)
-        self._results_stack.setCurrentIndex(1)
-        layout.addWidget(self._results_stack, 1)
-
-        self._detail_label = QLabel("Select a row to see details.")
-        self._detail_label.setWordWrap(True)
-        layout.addWidget(self._detail_label)
-
-        actions = QHBoxLayout()
-        self._kill_btn = QPushButton("Kill Locking Process")
-        self._kill_btn.setEnabled(False)
-        self._kill_btn.clicked.connect(self._on_kill_locking_clicked)
-        actions.addWidget(self._kill_btn)
-        self._reveal_btn = QPushButton("Reveal in Explorer")
-        self._reveal_btn.setEnabled(False)
-        self._reveal_btn.clicked.connect(self._on_reveal_clicked)
-        actions.addWidget(self._reveal_btn)
-        self._copy_btn = QPushButton("Copy Path")
-        self._copy_btn.setEnabled(False)
-        self._copy_btn.clicked.connect(self._on_copy_path_clicked)
-        actions.addWidget(self._copy_btn)
-        self._export_btn = QPushButton("Export CSV")
-        self._export_btn.clicked.connect(self._on_export_clicked)
-        actions.addWidget(self._export_btn)
-        actions.addStretch()
-        layout.addLayout(actions)
-        return tab
-
-    def _build_history_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Search history:"))
         self._history_search_edit = QLineEdit()
+        self._history_search_edit.setPlaceholderText('Search history…')
+        self._history_search_edit.setToolTip('Filter saved searches and live detections by path, outcome or creator.')
         self._history_search_edit.textChanged.connect(self._on_history_search)
-        search_row.addWidget(self._history_search_edit, 1)
-        layout.addLayout(search_row)
-
-        self._history_table = QTableWidget(0, 3)
-        self._history_table.setHorizontalHeaderLabels(["Path", "Creator", "When"])
-        self._history_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
+        layout.addWidget(self._history_search_edit)
+        self._history_table = QTableWidget(0, 4)
+        self._history_table.setHorizontalHeaderLabels(['Path', 'Creator', 'When', 'Outcome'])
+        self._history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._history_table.setAlternatingRowColors(True)
+        self._history_table.setSortingEnabled(True)
+        for i, tip in enumerate(('Searched folder or detected file.', 'Likely creator for a live detection; a heuristic, not proof.',
+                                  'Local time this search ended or file was detected.', 'Completed, stopped or truncated at the result limit.')):
+            self._history_table.horizontalHeaderItem(i).setToolTip(tip)
         layout.addWidget(self._history_table, 1)
         self._refresh_history()
         return tab
 
-    def _build_toolbar(self) -> QHBoxLayout:
-        toolbar = QHBoxLayout()
-        toolbar.addWidget(QLabel("Folder:"))
-        self._folder_edit = QLineEdit(os.environ.get("TEMP", ""))
-        toolbar.addWidget(self._folder_edit, 1)
-        toolbar.addWidget(QLabel("Name contains:"))
-        self._filter_edit = QLineEdit()
-        toolbar.addWidget(self._filter_edit)
-        self._recurse_cb = QCheckBox("Recurse")
-        self._recurse_cb.setChecked(True)
-        toolbar.addWidget(self._recurse_cb)
-        self._search_btn = QPushButton("Search")
-        self._search_btn.clicked.connect(self._on_search_clicked)
-        toolbar.addWidget(self._search_btn)
-        self._watch_cb = QCheckBox("Live Watch")
-        self._watch_cb.toggled.connect(self._on_watch_toggled)
-        toolbar.addWidget(self._watch_cb)
-        toolbar.addWidget(QLabel("Ignore:"))
-        self._ignore_edit = QLineEdit("*.tmp;~$*")
-        self._ignore_edit.setMaximumWidth(120)
-        toolbar.addWidget(self._ignore_edit)
-        return toolbar
+    def _vt_api_key(self):
+        return self.app.config.get('virustotal.api_key', '') or '' if self.app and self.app.config else ''
 
-    def _build_table(self) -> QTableWidget:
-        table = QTableWidget(0, len(_COLUMNS))
-        table.setHorizontalHeaderLabels(_COLUMNS)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        return table
+    def _confirm_broad_search(self, folder, name_filter):
+        target = os.path.normcase(os.path.abspath(folder))
+        profile = os.path.normcase(os.path.expanduser('~'))
+        if name_filter or (os.path.dirname(target) != target and target != profile):
+            return True
+        drive = os.path.splitdrive(target)[0] or target
+        box = QMessageBox(QMessageBox.Icon.Question, 'Large folder search',
+            f'This lists every file on {drive} (potentially over a million). Add a name filter?', parent=self._widget)
+        anyway = box.addButton('Search anyway', QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton('Cancel', QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        return box.clickedButton() is anyway
 
-    def _analyze_folder(self, folder: str, name_filter: str, recurse: bool
-                        ) -> List[FileAnalysis]:
-        """Walk `folder` for names containing `name_filter`, analyzing
-        each match. Raises FileNotFoundError / NotADirectoryError for the
-        UI to turn into an ErrorBanner -- never swallowed, for a refusal
-        to list the TARGET folder itself.
-
-        A refusal to list some OTHER directory encountered mid-walk (an
-        ordinary occurrence on a real Windows volume --
-        `System Volume Information`, `$RECYCLE.BIN`, another user's
-        profile subfolder) is a different, expected case: it is skipped
-        and counted, the same as a per-file refusal below, rather than
-        aborting a search that has already found real results elsewhere
-        in the tree. Only the top-level folder failing to list is treated
-        as a refusal worth surfacing as an error -- the user explicitly
-        pointed the tool there, and `isdir()` succeeding only proves it is
-        traversable, not listable (a separate Windows ACL permission), so
-        without this `os.walk`'s default `onerror=None` would otherwise
-        silently swallow that one and report "nothing found".
-
-        Either kind of refusal (a skipped subdirectory, or a skipped file
-        that vanished or became unreadable between listing and analysis)
-        adds to `self._last_skip_count`, which `_on_search_clicked`
-        discloses rather than ever dropping on the floor."""
-        if not os.path.isdir(folder):
-            raise FileNotFoundError(f"'{folder}' is not a folder.")
-        results = []
-        skipped = 0
-        if recurse:
-            target = os.path.normcase(os.path.abspath(folder))
-
-            def _on_walk_error(error: OSError) -> None:
-                nonlocal skipped
-                failed_dir = os.path.normcase(os.path.abspath(error.filename or ""))
-                if failed_dir == target:
-                    raise error  # the target folder itself can't be listed
-                skipped += 1  # an ordinary unlistable subdirectory -- skip it
-
-            walker = os.walk(folder, onerror=_on_walk_error)
-        else:
-            # os.listdir() returns subdirectories too; os.walk() already
-            # separates them into _dirs, but the single-level case must
-            # filter by hand or a subfolder gets analyzed as if it were a
-            # file (os.stat() succeeds on a directory too).
-            only_files = [f for f in os.listdir(folder)
-                         if os.path.isfile(os.path.join(folder, f))]
-            walker = [(folder, [], only_files)]
-        for root, _dirs, files in walker:
-            for filename in files:
-                if name_filter and name_filter.lower() not in filename.lower():
-                    continue
-                path = os.path.join(root, filename)
-                try:
-                    results.append(analyze(path, vt_api_key=self._vt_api_key()))
-                except (FileNotFoundError, PermissionError, OSError):
-                    skipped += 1
-                    continue  # gone or unreadable between listing and analysis
-        self._last_skip_count = skipped
-        return results
-
-    def _vt_api_key(self) -> str:
-        if self.app and self.app.config:
-            return self.app.config.get("virustotal.api_key", "") or ""
-        return ""
-
-    def _on_search_clicked(self) -> None:
-        folder = self._folder_edit.text().strip()
+    def _on_search_clicked(self):
+        if self._search_worker is not None:
+            self._search_worker.cancel()
+            self._progress_label.setText('Stopping — keeping matches found so far…')
+            return
+        folder = os.path.expandvars(self._folder_edit.text().strip())
+        if not folder:
+            self._on_search_error('Choose a folder first.')
+            return
         name_filter = self._filter_edit.text().strip()
-        recurse = self._recurse_cb.isChecked()
+        if not self._confirm_broad_search(folder, name_filter):
+            return
+        self._search_generation += 1
+        self._search_folder = folder
+        self._last_batch = None
         self._last_skip_count = 0
-        self._search_btn.setEnabled(False)
-        worker = Worker(self._run_search, folder, name_filter, recurse)
-        worker.signals.result.connect(self._on_search_result)
-        worker.signals.error.connect(self._on_search_error)
+        self._detail_cache.clear()
+        self._error_banner.clear()
+        self._info_banner.hide()
+        self._populate_table([])
+        self._on_row_selected()
+        self._search_btn.setText('Stop')
+        self._progress_label.setText('Scanning folders…')
+        worker = Worker(self._run_search, folder, name_filter, self._recurse_cb.isChecked())
+        self._search_worker = worker
+        worker.signals.result.connect(lambda result, w=worker: self._search_done(w, result))
+        worker.signals.error.connect(lambda error, w=worker: self._search_failed(w, error))
+        worker.signals.cancelled.connect(lambda w=worker: self._search_cancelled(w))
         self._workers.append(worker)
         self.thread_pool.start(worker)
 
-    def _run_search(self, worker, folder: str, name_filter: str, recurse: bool
-                    ) -> List[FileAnalysis]:
-        """The Worker function. `FileNotFoundError`/`PermissionError`/`OSError`
-        raised by `_analyze_folder` for an unlistable TARGET folder are
-        deliberately NOT caught here -- they propagate out so `Worker.run()`'s
-        own exception handling catches them and emits `signals.error`, which
-        `_on_search_error` turns into the ErrorBanner. A per-file or
-        per-subdirectory refusal mid-walk is a different, already-handled
-        case inside `_analyze_folder` itself (see its own docstring)."""
-        return self._analyze_folder(folder, name_filter, recurse)
+    def _analyze_folder(self, folder, name_filter, recurse, worker=None):
+        rows = []
+        cancelled = (lambda: worker.is_cancelled) if worker else (lambda: False)
+        for batch in search_batches(folder, name_filter, recurse, cancelled=cancelled):
+            rows.extend(batch.rows)
+            if worker:
+                self._watch_bridge.search_event.emit(worker, ('batch', batch))
+        if rows and not cancelled():
+            if worker:
+                self._watch_bridge.search_event.emit(worker, ('phase', None))
+            processes = list(system_processes())
+            locks, summaries = bulk_locks([r.metadata.path for r in rows], processes, cancelled)
+            cache = {}
+            enriched = []
+            for row in rows:
+                if cancelled():
+                    break
+                enriched.append(replace(row, locking_processes=locks[row.metadata.path],
+                    locking_summary=summaries[row.metadata.path],
+                    creator_candidates=find_creator_candidates(row.metadata.created, processes=processes, details_cache=cache)))
+                if len(enriched) == 128:
+                    if worker:
+                        self._watch_bridge.search_event.emit(worker, ('enriched', tuple(enriched)))
+                    enriched.clear()
+            if enriched and worker:
+                self._watch_bridge.search_event.emit(worker, ('enriched', tuple(enriched)))
+        return rows
 
-    def _on_search_result(self, results: List[FileAnalysis]) -> None:
+    def _run_search(self, worker, folder, name_filter, recurse):
+        return self._analyze_folder(folder, name_filter, recurse, worker=worker)
+
+    def _on_search_event(self, worker, event):
+        if worker is not self._search_worker or not _widget_valid(self._widget):
+            return
+        kind, payload = event
+        if kind == 'batch':
+            self._last_batch = payload
+            self._last_skip_count = payload.skipped
+            self._model.append(payload.rows)
+            self._current_results = self._model.rows
+            self._results_stack.setCurrentIndex(0 if self._current_results else 1)
+            self._progress_label.setText(f'Scanned {payload.folders:,} folders, {payload.files:,} files, {payload.matches:,} matches; {payload.skipped:,} skipped')
+        elif kind == 'phase':
+            self._progress_label.setText(self._progress_label.text() + ' — checking open handles once…')
+        elif kind == 'enriched':
+            updated = []
+            for row in payload:
+                index = self._model.by_path.get(row.metadata.path)
+                existing = self._model.rows[index] if index is not None else None
+                if existing and row.metadata.path in self._detail_cache:
+                    row = replace(row, own_signature=existing.own_signature,
+                                  top_creator_signature=existing.top_creator_signature, reputation=existing.reputation)
+                updated.append(row)
+            self._model.update_rows(updated)
+            selected = self._selected_analysis()
+            if selected and selected.locking_processes:
+                self._detail_cache.get(selected.metadata.path, {}).pop('metadata', None)
+            self._on_row_selected()
+        self._update_counts()
+
+    def _search_done(self, worker, results):
+        if worker is not self._search_worker:
+            return
+        if self._last_batch is None:
+            self._populate_table(results)
+        outcome = self._last_batch.outcome if self._last_batch else 'completed'
+        self._finish_search(outcome)
+
+    def _search_cancelled(self, worker):
+        if worker is self._search_worker:
+            self._finish_search('stopped')
+
+    def _search_failed(self, worker, message):
+        if worker is self._search_worker:
+            pending = self._pending_banner_message
+            self._finish_search('failed')
+            self._on_search_error(f'{pending} Also: {message}' if pending else message)
+
+    def _finish_search(self, outcome):
+        self._search_worker = None
         if not _widget_valid(self._search_btn):
             return
+        self._search_btn.setText('Search')
         self._search_btn.setEnabled(True)
+        lead = 'Stopped' if outcome == 'stopped' else outcome.capitalize()
+        progress = f'{lead} - {len(self._current_results):,} matches so far; {self._last_skip_count:,} skipped'
+        if self._last_batch:
+            progress += f'; scanned {self._last_batch.folders:,} folders, {self._last_batch.files:,} files'
+        self._progress_label.setText(progress)
+        messages = []
+        if outcome == 'truncated':
+            self._info_banner.setText(f'Showing the first {RESULT_LIMIT:,} matches -- narrow the folder or add a name filter.')
+            self._info_banner.show()
+        if self._last_skip_count:
+            messages.append(f'{self._last_skip_count:,} folders/files could not be read or were links and were skipped.')
         if self._pending_banner_message:
-            # A kill-locking-process failure queued a refresh via
-            # _on_search_clicked() and is waiting for THIS refresh to land
-            # before it can safely show its own message -- see
-            # _on_kill_locking_clicked's comment on why a plain "clear the
-            # banner on a clean search" can no longer run first now that the
-            # search is asynchronous.
-            self._error_banner.set_error(self._pending_banner_message)
+            messages.append(self._pending_banner_message)
             self._pending_banner_message = None
-        elif self._last_skip_count:
-            # A result set can be non-empty AND carry a disclosed refusal
-            # at once -- showing the table is not a reason to hide that
-            # some items could not be inspected. "item(s)" covers both a
-            # file that vanished/became unreadable and a subdirectory
-            # `os.walk` could not list along the way.
-            self._error_banner.set_error(
-                f"{self._last_skip_count} item(s) could not be analyzed and were skipped."
-            )
-        else:
-            self._error_banner.clear()
-        self._populate_table(results)
+        if messages:
+            self._error_banner.set_error(' '.join(messages))
+        self._on_row_selected()
+        try:
+            history_log.record({'path': self._search_folder, 'outcome': outcome,
+                                'matches': len(self._current_results), 'skipped': self._last_skip_count})
+            self._refresh_history()
+        except OSError as error:
+            self._error_banner.set_error(' '.join(messages) + f' History could not be saved: {error}')
 
-    def _on_search_error(self, message: str) -> None:
-        if not _widget_valid(self._search_btn):
+    def _on_search_result(self, results):
+        self._populate_table(results)
+        self._search_btn.setEnabled(True)
+
+    def _on_search_error(self, message):
+        if not _widget_valid(getattr(self, '_search_btn', None)):
             return
         self._search_btn.setEnabled(True)
+        self._search_btn.setText('Search')
         if self._pending_banner_message:
-            # A kill-locking-process failure was waiting for this refresh to
-            # show it (see _on_kill_locking_clicked), and the refresh ITSELF
-            # also failed -- neither refusal may be dropped in favor of the
-            # other (the same rule this file already applies to skipped
-            # files), so both are shown together and the pending one is only
-            # cleared now that it has actually been displayed.
-            message = f"{self._pending_banner_message} Also: {message}"
+            message = f'{self._pending_banner_message} Also: {message}'
             self._pending_banner_message = None
         self._error_banner.set_error(message)
 
-    def _populate_table(self, results: List[FileAnalysis]) -> None:
-        self._current_results = results
-        self._table.setRowCount(0)
-        for analysis in results:
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-            meta = analysis.metadata
-            self._table.setItem(row, 0, QTableWidgetItem(os.path.basename(meta.path)))
-            self._table.setItem(row, 1, QTableWidgetItem(meta.path))
-            self._table.setItem(row, 2, QTableWidgetItem(str(meta.size)))
-            self._table.setItem(row, 3, QTableWidgetItem(str(meta.created)))
-            self._table.setItem(row, 4, QTableWidgetItem(meta.owner))
-
-            locked_text = ", ".join(p.process for p in analysis.locking_processes)
-            locked_item = QTableWidgetItem(locked_text)
-            if analysis.locking_processes:
-                locked_item.setBackground(_LOCKED_COLOR)
-            self._table.setItem(row, 5, locked_item)
-
-            creator_text = (analysis.creator_candidates[0].name
-                            if analysis.creator_candidates else "")
-            creator_item = QTableWidgetItem(creator_text)
-            if len(analysis.creator_candidates) == 1:
-                creator_item.setBackground(_CREATOR_HIGH_COLOR)
-            elif len(analysis.creator_candidates) > 1:
-                creator_item.setBackground(_CREATOR_LOW_COLOR)
-            self._table.setItem(row, 6, creator_item)
-
-            sig = analysis.own_signature
-            sig_text = _SIGNATURE_LABELS.get(sig.status, "") if sig else ""
-            sig_item = QTableWidgetItem(sig_text)
-            if sig is not None:
-                if sig.status == INVALID:
-                    sig_item.setForeground(QColor(semantic("error")))
-                elif sig.status in (NOT_SIGNED, COULD_NOT_VERIFY):
-                    sig_item.setForeground(QColor(semantic("warning")))
-            self._table.setItem(row, 7, sig_item)
-        if not _widget_valid(self._results_stack):
-            return
+    def _populate_table(self, results):
+        self._model.replace(results)
+        self._current_results = self._model.rows
         self._results_stack.setCurrentIndex(0 if results else 1)
+        self._update_counts()
 
-    def _selected_analysis(self) -> Optional[FileAnalysis]:
-        row = self._table.currentRow()
-        if row < 0 or row >= len(self._current_results):
-            return None
-        return self._current_results[row]
+    def _selected_analysis(self):
+        index = self._proxy.mapToSource(self._table.currentIndex())
+        return self._model.rows[index.row()] if index.isValid() else None
 
-    def _on_row_selected(self) -> None:
-        analysis = self._selected_analysis()
-        has_lock = bool(analysis and analysis.locking_processes)
-        self._kill_btn.setEnabled(has_lock)
-        self._reveal_btn.setEnabled(analysis is not None)
-        self._copy_btn.setEnabled(analysis is not None)
-        if not analysis:
-            self._detail_label.setText("Select a row to see details.")
+    def _filter_results(self, kind):
+        self._proxy.set_kind(kind)
+        self._update_counts()
+        for key, (button, _) in self._chips.items():
+            button.setChecked(key == kind)
+        if kind == 'skipped':
+            self._error_banner.set_error(f'{self._last_skip_count:,} skipped folders/files; unreadable items and directory links have no result rows.')
+
+    def _update_counts(self):
+        counts = {key: sum(matches_filter(r, key) for r in self._current_results) for key, _ in FILTERS}
+        for key, (button, label) in self._chips.items():
+            button.setText(f'{label} ({counts[key]:,})')
+        for key, (button, label) in self._tiles.items():
+            value = format_size(sum(r.metadata.size for r in self._current_results)) if key == 'size' else self._last_skip_count if key == 'skipped' else counts[key]
+            pending = key == 'locked' and any(r.locking_summary == 'Not checked yet' for r in self._current_results)
+            if pending:
+                button.set(f'{value} observed', 'Inspection incomplete')
+            else:
+                button.set(str(value), 'Checked signatures only' if key == 'unsigned' else 'Click to filter')
+
+    def _on_row_selected(self):
+        if not _widget_valid(getattr(self, '_detail_label', None)):
             return
+        row = self._selected_analysis()
+        for button in (self._copy_btn, self._reveal_btn, self._signature_btn):
+            button.setEnabled(row is not None)
+        self._kill_btn.setEnabled(bool(row and row.locking_processes and self._search_worker is None))
+        self._reputation_btn.setEnabled(bool(row and self._vt_api_key()))
+        if not row:
+            self._detail_label.setPlainText('Select a row to see details.')
+            return
+        self._path_label.setPath(row.metadata.path)
+        meta = row.metadata
+        lines = [f'Size: {format_size(meta.size)}', f'Created: {meta.created:%Y-%m-%d %H:%M:%S}', f'Modified: {meta.modified:%Y-%m-%d %H:%M:%S}',
+                 f'Owner: {meta.owner or "Could not check"}', f'Read only: {"Yes" if meta.read_only else "No"}', row.locking_summary]
+        lines.extend(f'Open: {p.process} (PID {p.pid})' for p in row.locking_processes)
+        lines.append('Creator candidates — guess from start time, not proof:')
+        lines.extend(f'{i+1}. {c.name} (PID {c.pid}), user: {c.user or c.user_error or "could not check"}; '
+                     f'started {c.delta_seconds:+.1f}s from file creation; {c.path or c.path_error or "path unavailable"}'
+                     for i, c in enumerate(row.creator_candidates))
+        lines.append('Creator signature: ' + signature_text(row.top_creator_signature))
+        if row.own_signature:
+            lines.append(f'This file signature: {signature_text(row.own_signature)}; {row.own_signature.signer or ""}; {row.own_signature.reason or ""}')
+        cached = self._detail_cache.get(meta.path, {})
+        lines.extend(note for notes in cached.values() for note in notes)
+        if 'signatures' not in cached:
+            lines.append('File and creator signatures: not checked yet. Use Check signatures.')
+        if 'reputation' not in cached:
+            lines.append('SHA-256 / VirusTotal: not checked yet.' if self._vt_api_key() else 'Set virustotal.api_key in Settings to enable Check reputation.')
+        self._detail_label.setPlainText('\n\n'.join(lines))
+        if 'metadata' not in cached:
+            self._start_details('metadata')
 
-        lines = [f"Path: {analysis.metadata.path}", f"Owner: {analysis.metadata.owner}"]
-        own_sig = analysis.own_signature
-        # Three answers, same discipline as the creator-signature block
-        # below: not-a-signable-type (own_sig is None, nothing printed),
-        # a definite verdict, and a genuine refusal, never collapsed.
-        if own_sig is not None:
-            if own_sig.status == VALID:
-                signer = f" ({own_sig.signer})" if own_sig.signer else ""
-                lines.append(f"This file's own signature: valid{signer}.")
-            elif own_sig.status == NOT_SIGNED:
-                lines.append("⚠ This file itself is UNSIGNED.")
-            elif own_sig.status == INVALID:
-                lines.append(
-                    f"⚠ This file's own signature is INVALID: {own_sig.reason or ''}".rstrip())
-            elif own_sig.status == COULD_NOT_VERIFY:
-                lines.append(
-                    f"This file's own signature could not be verified: {own_sig.reason or ''}".rstrip())
-        if analysis.locking_processes:
-            lines.append("Locked by:")
-            for p in analysis.locking_processes:
-                lines.append(f"  {p.process} (PID {p.pid})")
+    def _check_signatures(self):
+        self._start_details('signatures')
+
+    def _check_reputation(self):
+        self._start_details('reputation')
+
+    def _start_details(self, mode):
+        row = self._selected_analysis()
+        if not row or (self._search_generation, row.metadata.path, mode) in self._detail_busy:
+            return
+        key = (self._search_generation, row.metadata.path, mode)
+        self._detail_busy.add(key)
+        api_key = self._vt_api_key()
+        worker = Worker(lambda w: inspect_selected(row, mode, api_key))
+        generation = self._search_generation
+        worker.signals.result.connect(lambda result: self._details_ready(result) if generation == self._search_generation else None)
+        worker.signals.error.connect(lambda error: self._details_failed(row.metadata.path, mode, error, generation))
+        worker.signals.finished.connect(lambda: self._detail_finished(key))
+        self._workers.append(worker)
+        self.thread_pool.start(worker)
+
+    def _detail_finished(self, key):
+        self._detail_busy.discard(key)
+        generation, path, mode = key
+        if mode == 'metadata' and generation == self._search_generation and _widget_valid(self._widget):
+            self._on_row_selected()
+
+    def _details_failed(self, path, mode, error, generation):
+        if generation == self._search_generation and _widget_valid(self._widget):
+            self._detail_cache.setdefault(path, {})[mode] = (f'{mode.capitalize()} could not be checked: {error}',)
+            self._error_banner.set_error(f'Selected file: {error}')
+            self._on_row_selected()
+
+    def _details_ready(self, payload):
+        if not _widget_valid(self._widget):
+            return
+        row, mode, notes = payload
+        current = next((r for r in self._model.rows if r.metadata.path == row.metadata.path), None)
+        if current is None:
+            return
+        if mode == 'metadata' and row.locking_processes != current.locking_processes:
+            return  # The shared snapshot arrived during this metadata read; inspect the new lock list.
+        updated = replace(current, metadata=row.metadata)
+        if mode == 'signatures':
+            updated = replace(updated, own_signature=row.own_signature, top_creator_signature=row.top_creator_signature)
         else:
-            lines.append("Not currently open by any process.")
-        lines.append(analysis.locking_summary)
-        if analysis.creator_candidates:
-            lines.append("Creator candidates:")
-            for c in analysis.creator_candidates:
-                lines.append(f"  {c.name} (PID {c.pid}, Δ{c.delta_seconds:+.1f}s)")
-            sig = analysis.top_creator_signature
-            # Three distinct answers, never collapsed into one -- see
-            # analysis.py's own docstring on why this field carries the
-            # whole SignatureFacts rather than just a bool.
-            if sig is not None and sig.status == NOT_SIGNED:
-                lines.append("⚠ Likely creator is UNSIGNED.")
-            elif sig is not None and sig.status == INVALID:
-                lines.append(f"⚠ Likely creator's signature is INVALID: {sig.reason or ''}".rstrip())
-            elif sig is not None and sig.status == COULD_NOT_VERIFY:
-                lines.append(f"Signature could not be verified: {sig.reason or ''}".rstrip())
-        else:
-            lines.append("No process started close enough to the file's creation time.")
-        self._detail_label.setText("\n".join(lines))
+            updated = replace(updated, reputation=row.reputation)
+        self._detail_cache.setdefault(row.metadata.path, {})[mode] = notes
+        self._model.update_row(updated)
+        self._update_counts()
+        self._on_row_selected()
 
     def _on_kill_locking_clicked(self) -> None:
         analysis = self._selected_analysis()
@@ -464,7 +428,7 @@ class FileForensicsModule(BaseModule):
         reply = QMessageBox.question(
             self._widget, "Kill Locking Process",
             f"Kill '{proc.process}' (PID {proc.pid})?\n\n"
-            "This ends the process immediately and cannot be undone.",
+            "This ends the process immediately. Unsaved work may be lost. It cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -513,7 +477,7 @@ class FileForensicsModule(BaseModule):
         with open(path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(["Path", "Size", "Created", "Owner", "Locked By",
-                              "Likely Creator", "File Signature"])
+                              "Likely Creator", "File Signature", "Modified", "Creator signed", "Lock inspection"])
             for analysis in self._current_results:
                 meta = analysis.metadata
                 locked = ", ".join(p.process for p in analysis.locking_processes)
@@ -522,7 +486,8 @@ class FileForensicsModule(BaseModule):
                 sig = analysis.own_signature
                 sig_text = _SIGNATURE_LABELS.get(sig.status, "") if sig else ""
                 writer.writerow([meta.path, meta.size, meta.created, meta.owner,
-                                 locked, creator, sig_text])
+                                 locked, creator, sig_text, meta.modified, signature_text(analysis.top_creator_signature),
+                                 analysis.locking_summary])
 
     def _refresh_history(self) -> None:
         entries = history_log.recent(limit=50)
@@ -551,6 +516,7 @@ class FileForensicsModule(BaseModule):
             )
 
     def _fill_history_table(self, entries: List[dict]) -> None:
+        self._history_table.setSortingEnabled(False)
         self._history_table.setRowCount(0)
         for entry in entries:
             row = self._history_table.rowCount()
@@ -558,6 +524,8 @@ class FileForensicsModule(BaseModule):
             self._history_table.setItem(row, 0, QTableWidgetItem(entry.get("path", "")))
             self._history_table.setItem(row, 1, QTableWidgetItem(entry.get("creator", "")))
             self._history_table.setItem(row, 2, QTableWidgetItem(entry.get("at", "")))
+            self._history_table.setItem(row, 3, QTableWidgetItem(entry.get("outcome", "Live detection")))
+        self._history_table.setSortingEnabled(True)
 
     def _ignore_patterns(self) -> List[str]:
         raw = self._ignore_edit.text().strip()
@@ -565,7 +533,7 @@ class FileForensicsModule(BaseModule):
 
     def _is_ignored(self, path: str) -> bool:
         name = os.path.basename(path)
-        return any(fnmatch.fnmatch(name, pat) for pat in self._ignore_patterns())
+        return any(fnmatch.fnmatch(name, pat) for pat in self._watch_patterns)
 
     def _on_watch_toggled(self, checked: bool) -> None:
         if checked:
@@ -620,21 +588,25 @@ class FileForensicsModule(BaseModule):
         if self._watch_worker is not None:
             self._watch_worker.cancel()
             if self._watch_worker in self._workers:
+                retire([self._watch_worker])
                 self._workers.remove(self._watch_worker)
         self._watcher = None
         self._watch_worker = None
 
+    def _analyze_watch(self, path):
+        from .engine.search import fast_analysis
+        result = fast_analysis(path, os.stat(path, follow_symlinks=False))
+        return replace(result, creator_candidates=find_creator_candidates(result.metadata.created))
+
     def _on_watched_file_created(self, path: str) -> None:
-        """`FolderWatcher`'s `on_created` callback -- runs on the watch
-        Worker's background thread, not the UI thread. `analyze()` and
-        `history_log.record()` are safe to do here (no Qt objects); the
-        result is handed to `_watch_bridge` to cross back to the UI thread
-        before anything Qt-related happens (`_on_watch_detection_ready`)."""
+        """Metadata and creator heuristics run on the watch thread; signals deliver rows to Qt."""
         if self._is_ignored(path):
             return
         try:
-            result = analyze(path, vt_api_key=self._vt_api_key())
-        except (FileNotFoundError, PermissionError, OSError):
+            result = self._analyze_watch(path)
+        except (FileNotFoundError, PermissionError, OSError) as error:
+            import logging
+            logging.getLogger(__name__).warning("Live file could not be inspected: %s", error)
             return  # gone or unreadable by the time we got to it
         creator = result.creator_candidates[0].name if result.creator_candidates else ""
         history_log.record({
@@ -649,8 +621,14 @@ class FileForensicsModule(BaseModule):
         runs synchronously since sender and receiver share a thread)."""
         if not _widget_valid(self._table):
             return
-        self._current_results = self._current_results + [result]
-        self._populate_table(self._current_results)
+        self._watch_feed.insertItem(0, f"{result.metadata.path} - {creator or 'no creator candidate'}")
+        if self._watch_feed.count() > RESULT_LIMIT:
+            self._watch_feed.takeItem(self._watch_feed.count() - 1)
+        if self._search_worker is None and len(self._current_results) < RESULT_LIMIT:
+            self._model.append([result])
+            self._current_results = self._model.rows
+            self._results_stack.setCurrentIndex(0)
+            self._update_counts()
         # history_log.record() already ran on the watch worker's background
         # thread inside _on_watched_file_created (safe -- no Qt objects
         # involved), but _history_table IS a Qt widget, so the refresh that

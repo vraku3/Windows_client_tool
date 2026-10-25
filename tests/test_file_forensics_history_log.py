@@ -32,3 +32,12 @@ def test_history_is_capped(tmp_path, monkeypatch):
         history_log.record({"path": f"C:\\{i}.txt", "creator": "x"})
 
     assert len(history_log.recent(limit=100)) == 5
+
+
+def test_concurrent_search_and_watch_records_are_not_lost(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    monkeypatch.setattr(history_log, '_history_path', lambda: str(tmp_path / 'history.json'))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(lambda i: history_log.record({'path': str(i), 'outcome': 'completed'}), range(20)))
+    assert len(history_log.recent()) == 20
+    assert not list(tmp_path.glob('*.tmp'))

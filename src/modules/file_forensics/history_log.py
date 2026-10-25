@@ -4,6 +4,8 @@ quick_fix_history.py: a capped JSON array under the app data dir.
 """
 import json
 import os
+import tempfile
+from threading import RLock
 from datetime import datetime
 from typing import List
 
@@ -11,6 +13,7 @@ from typing import List
 #: entries on a churning folder, and losing recent forensic findings to a
 #: tight cap would defeat the point of keeping history at all.
 _CAP = 500
+_LOCK = RLock()
 
 #: Set by the most recent _load() call (via recent()/search()). `_load()`
 #: swallows a corrupted-or-unreadable history file into a plain `[]`, which
@@ -50,10 +53,20 @@ def _load() -> list:
 
 
 def record(entry: dict) -> None:
-    entries = _load()
-    entries.append({**entry, "at": datetime.now().isoformat(timespec="seconds")})
-    with open(_history_path(), "w", encoding="utf-8") as f:
-        json.dump(entries[-_CAP:], f, indent=2)
+    with _LOCK:
+        entries = _load()
+        entries.append({**entry, "at": datetime.now().isoformat(timespec="seconds")})
+        path = _history_path()
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path),
+                                             prefix="forensics-history-", suffix=".tmp", delete=False) as stream:
+                temporary = stream.name
+                json.dump(entries[-_CAP:], stream, indent=2)
+            os.replace(temporary, path)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
 
 
 def recent(limit: int = 50) -> List[dict]:

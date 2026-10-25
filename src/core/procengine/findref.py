@@ -136,7 +136,8 @@ def find(text: str,
          modules: bool = True,
          should_stop: Optional[Callable[[], bool]] = None,
          progress: Optional[Callable[[int, int], None]] = None,
-         budget_seconds: float = FIND_BUDGET_SECONDS
+         budget_seconds: float = FIND_BUDGET_SECONDS,
+         process_snapshot=None
          ) -> FindReport:
     """Every handle name and module path containing `text`.
 
@@ -148,6 +149,8 @@ def find(text: str,
     with only a per-process deadline this took 20 seconds on this machine,
     because a handful of processes block and each burns its own limit.
     """
+    # Callers correlating many files can reuse one process snapshot for both
+    # this handle sweep and the creator heuristic. Default callers are unchanged.
     import time as _time
 
     report = FindReport()
@@ -156,7 +159,8 @@ def find(text: str,
         report.note = "Enter something to search for."
         return report
 
-    names: Dict[int, str] = {row.pid: row.name for row in system_processes()}
+    snapshot = system_processes() if process_snapshot is None else process_snapshot
+    names: Dict[int, str] = {row.pid: row.name for row in snapshot}
     report.searched_processes = len(names)
     caller_stop = should_stop or (lambda: False)
     deadline = _time.monotonic() + budget_seconds

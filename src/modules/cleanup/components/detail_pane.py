@@ -2,39 +2,13 @@
 
 from html import escape
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QTextBrowser, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QTextBrowser, QVBoxLayout, QWidget
 
 from core.widget_life import widget_is_valid as _alive
 from modules.cleanup.components.item_rows import RowFacts, knowledge_api
 
-
-class _PathLabel(QLabel):
-    """The complete path is available on hover and through Copy path."""
-
-    def __init__(self, path, parent=None):
-        super().__init__(parent)
-        self._path = path
-        self.setToolTip(path)
-        self.setAccessibleName(path)
-        self.setMinimumWidth(32)
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        self.setTextFormat(Qt.TextFormat.PlainText)
-        self._elide()
-
-    def minimumSizeHint(self):
-        return QSize(32, self.fontMetrics().height())
-
-    def sizeHint(self):
-        return QSize(80, self.fontMetrics().height())
-
-    def _elide(self):
-        self.setText(self.fontMetrics().elidedText(
-            self._path, Qt.TextElideMode.ElideMiddle, int(max(0, self.contentsRect().width()))))
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._elide()
+from ui.elided_path import ElidedPathLabel as _PathLabel
 
 
 class DetailPane(QWidget):

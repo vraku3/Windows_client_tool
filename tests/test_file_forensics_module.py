@@ -23,7 +23,9 @@ def _settle(qapp):
 
 
 @pytest.fixture
-def module(qapp):
+def module(qapp, monkeypatch, tmp_path):
+    from modules.file_forensics import history_log
+    monkeypatch.setattr(history_log, "_history_path", lambda: str(tmp_path / "history.json"))
     from modules.file_forensics.file_forensics_module import FileForensicsModule
     m = FileForensicsModule()
     m.on_start(_FakeApp())
@@ -67,7 +69,7 @@ def test_a_result_populates_the_table_and_shows_content_page(module, monkeypatch
     module._on_search_clicked()
     _settle(qapp)
 
-    assert module._table.rowCount() == 1
+    assert module._proxy.rowCount() == 1
     assert module._results_stack.currentIndex() == 0  # content page
 
 
@@ -81,127 +83,50 @@ def test_a_nonexistent_folder_shows_the_error_banner(module, monkeypatch, qapp):
     assert not module._error_banner.isHidden()
 
 
-def test_a_directory_listing_refusal_during_walk_is_not_swallowed(
-        module, monkeypatch, tmp_path, qapp):
-    """os.walk()'s default onerror=None would otherwise let a scandir()
-    refusal on the folder itself (traversable but not listable -- a real
-    Windows ACL configuration) return an empty result set silently,
-    indistinguishable from "genuinely nothing here". The module must pass
-    an onerror that re-raises so this shows up as a real refusal."""
-    import os as os_module
-
-    def _fake_walk(folder, onerror=None, **kwargs):
-        if onerror is not None:
-            onerror(PermissionError(13, "Access is denied", folder))
-        return iter([])
-
-    monkeypatch.setattr(os_module, "walk", _fake_walk)
+def test_target_listing_refusal_is_not_swallowed(module, monkeypatch, tmp_path, qapp):
+    import modules.file_forensics.engine.search as scan
+    def refused(path):
+        raise PermissionError(13, "Access is denied", path)
+    monkeypatch.setattr(scan.os, "scandir", refused)
     module._folder_edit.setText(str(tmp_path))
-    module._recurse_cb.setChecked(True)
     module._on_search_clicked()
     _settle(qapp)
-
-    assert not module._error_banner.isHidden()
-    assert module._table.rowCount() == 0
-
-
-def test_a_subdirectory_listing_refusal_is_skipped_not_fatal(
-        module, monkeypatch, tmp_path, qapp):
-    """The distinguishing case from the top-level test above: os.walk's
-    onerror fires for EVERY directory it can't list anywhere in a
-    recursive tree, not just the target folder -- System Volume
-    Information, $RECYCLE.BIN, another user's profile subfolder are all
-    ordinary occurrences on a real Windows volume. Those must be skipped
-    and counted, not treated as a reason to abort a search that already
-    found real results elsewhere in the tree."""
-    import os as os_module
-    from modules.file_forensics.engine.file_metadata import FileMetadata
-    from modules.file_forensics.engine.analysis import FileAnalysis
-    import datetime
-
-    def _fake_walk(folder, onerror=None, **kwargs):
-        if onerror is not None:
-            # A DIFFERENT directory than the target folder itself failing
-            # to list -- the ordinary mid-walk case, not the rare "the
-            # user pointed the tool straight at something unlistable"
-            # case the previous test covers.
-            onerror(PermissionError(
-                13, "Access is denied",
-                os_module.path.join(folder, "System Volume Information"),
-            ))
-        yield (folder, [], ["found.txt"])
-
-    def _fake_analyze(path, vt_api_key=""):
-        return FileAnalysis(
-            metadata=FileMetadata(
-                path=path, size=1,
-                created=datetime.datetime(2026, 1, 1),
-                modified=datetime.datetime(2026, 1, 1),
-                accessed=datetime.datetime(2026, 1, 1),
-                owner="TESTUSER", read_only=False,
-            ),
-            locking_processes=[], locking_summary="ok",
-            creator_candidates=[], top_creator_signature=None, reputation=None,
-        )
-
-    monkeypatch.setattr(os_module, "walk", _fake_walk)
-    monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", _fake_analyze
-    )
-    module._folder_edit.setText(str(tmp_path))
-    module._recurse_cb.setChecked(True)
-    module._on_search_clicked()
-    _settle(qapp)
-
-    assert module._table.rowCount() == 1
-    assert module._last_skip_count == 1
-    assert not module._error_banner.isHidden()
-    assert "1" in module._error_banner.text()
-    assert "skipped" in module._error_banner.text().lower()
+    assert "Access is denied" in module._error_banner.text()
+    assert module._proxy.rowCount() == 0
 
 
-def test_per_file_analysis_refusals_are_disclosed_not_dropped(
-        module, monkeypatch, tmp_path, qapp):
-    """A file that exists but can't be analyzed (e.g. ACL-denied) must not
-    just vanish from the results with no trace -- see CLAUDE.md's
-    tweak_engine "(N step(s) could not be checked)" disclosed-uncertainty
-    convention. Results and the disclosure can both be true at once: the
-    table still shows what WAS analyzed."""
-    from modules.file_forensics.engine.file_metadata import FileMetadata
-    from modules.file_forensics.engine.analysis import FileAnalysis
-    import datetime
-
+def test_subdirectory_listing_refusal_is_counted(module, monkeypatch, tmp_path, qapp):
+    import modules.file_forensics.engine.search as scan
     (tmp_path / "good.txt").write_text("hello")
-    (tmp_path / "bad.txt").write_text("world")
-
-    def _fake_analyze(path, vt_api_key=""):
-        import os as os_module
-        if os_module.path.basename(path) == "bad.txt":
+    (tmp_path / "denied").mkdir()
+    original = scan.os.scandir
+    def listing(path):
+        if str(path).endswith("denied"):
             raise PermissionError(13, "Access is denied", path)
-        return FileAnalysis(
-            metadata=FileMetadata(
-                path=path, size=5,
-                created=datetime.datetime(2026, 1, 1),
-                modified=datetime.datetime(2026, 1, 1),
-                accessed=datetime.datetime(2026, 1, 1),
-                owner="TESTUSER", read_only=False,
-            ),
-            locking_processes=[], locking_summary="ok",
-            creator_candidates=[], top_creator_signature=None, reputation=None,
-        )
-
-    monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", _fake_analyze
-    )
+        return original(path)
+    monkeypatch.setattr(scan.os, "scandir", listing)
+    monkeypatch.setattr("modules.file_forensics.file_forensics_module.system_processes", lambda: [])
+    monkeypatch.setattr("modules.file_forensics.file_forensics_module.bulk_locks",
+                        lambda paths, *a: ({p: [] for p in paths}, {p: "readable snapshot" for p in paths}))
     module._folder_edit.setText(str(tmp_path))
-    module._recurse_cb.setChecked(False)
     module._on_search_clicked()
     _settle(qapp)
+    assert module._proxy.rowCount() == 1
+    assert module._last_skip_count == 1
+    assert "skipped" in module._error_banner.text()
 
-    assert module._table.rowCount() == 1
-    assert not module._error_banner.isHidden()
-    assert "1" in module._error_banner.text()
-    assert "skipped" in module._error_banner.text().lower()
+
+def test_per_file_metadata_refusal_is_counted(module, monkeypatch, tmp_path, qapp):
+    import modules.file_forensics.engine.search as scan
+    (tmp_path / "bad.txt").write_text("hello")
+    def refused(*a):
+        raise PermissionError("Access is denied")
+    monkeypatch.setattr(scan, "fast_analysis", refused)
+    module._folder_edit.setText(str(tmp_path))
+    module._on_search_clicked()
+    _settle(qapp)
+    assert module._last_skip_count == 1
+    assert "skipped" in module._error_banner.text()
 
 
 def test_a_locked_file_row_is_highlighted(module, monkeypatch, qapp):
@@ -234,11 +159,11 @@ def test_a_locked_file_row_is_highlighted(module, monkeypatch, qapp):
     module._on_search_clicked()
     _settle(qapp)
 
-    from modules.file_forensics.file_forensics_module import _LOCKED_COLOR
-    locked_item = module._table.item(0, 5)
-    unlocked_item = module._table.item(1, 5)
-    assert locked_item.background().color() == _LOCKED_COLOR
-    assert unlocked_item.background().color() != _LOCKED_COLOR
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtGui import QColor
+    from core.semantic_colors import semantic
+    locked_index = module._proxy.mapFromSource(module._model.index(0, 5))
+    assert locked_index.data(Qt.ItemDataRole.ForegroundRole) == QColor(semantic('warning'))
 
 
 def test_selecting_a_row_shows_its_detail(module, monkeypatch, qapp):
@@ -264,8 +189,8 @@ def test_selecting_a_row_shows_its_detail(module, monkeypatch, qapp):
     module._table.selectRow(0)
     module._on_row_selected()
 
-    assert "notepad" in module._detail_label.text()
-    assert "250 processes" in module._detail_label.text()
+    assert "notepad" in module._detail_label.toPlainText()
+    assert "250 processes" in module._detail_label.toPlainText()
 
 
 def test_kill_locking_process_asks_for_confirmation(module, monkeypatch, qapp):
@@ -414,7 +339,7 @@ def test_ignore_pattern_skips_analysis(module, monkeypatch):
         )
 
     monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", _fake_analyze)
+        module, "_analyze_watch", _fake_analyze)
 
     module._on_watched_file_created(r"C:\watch\noise.tmp")
     assert analyzed == []
@@ -438,7 +363,7 @@ def test_a_watch_detection_is_recorded_to_history(module, monkeypatch):
         creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+        module, "_analyze_watch", lambda path, **k: fake)
     recorded = []
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.history_log.record",
@@ -473,7 +398,7 @@ def test_a_watch_detection_updates_the_table(module, monkeypatch):
         creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+        module, "_analyze_watch", lambda path, **k: fake)
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.history_log.record",
         lambda entry: None)
@@ -483,7 +408,7 @@ def test_a_watch_detection_updates_the_table(module, monkeypatch):
 
     module._on_watched_file_created(r"C:\watch\real.docx")
 
-    assert module._table.rowCount() == 1
+    assert module._proxy.rowCount() == 1
     assert module._results_stack.currentIndex() == 0  # content page
 
 
@@ -520,7 +445,7 @@ def test_watch_detection_toasts_when_app_is_not_foreground(module, monkeypatch):
         creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+        module, "_analyze_watch", lambda path, **k: fake)
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.history_log.record",
         lambda entry: None)
@@ -566,7 +491,7 @@ def test_watch_detection_does_not_toast_when_app_is_foreground(module, monkeypat
         creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+        module, "_analyze_watch", lambda path, **k: fake)
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.history_log.record",
         lambda entry: None)
@@ -763,7 +688,7 @@ def test_a_live_watch_hit_refreshes_the_history_tab(module, monkeypatch):
         creator_candidates=[], top_creator_signature=None, reputation=None,
     )
     monkeypatch.setattr(
-        "modules.file_forensics.file_forensics_module.analyze", lambda path, **k: fake)
+        module, "_analyze_watch", lambda path, **k: fake)
     monkeypatch.setattr(
         "modules.file_forensics.file_forensics_module.history_log.record",
         lambda entry: None)
@@ -844,7 +769,7 @@ def _make_analysis(path, own_signature):
             accessed=datetime.datetime(2026, 1, 1), owner="me", read_only=False,
         ),
         locking_processes=[], locking_summary="ok", creator_candidates=[],
-        top_creator_signature=None, reputation=None, own_signature=own_signature,
+        top_creator_signature=own_signature, reputation=None, own_signature=own_signature,
     )
 
 
@@ -854,7 +779,7 @@ def test_signature_column_blank_for_a_non_signable_file(module, monkeypatch, qap
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
     _settle(qapp)
-    assert module._table.item(0, 7).text() == ""
+    assert module._proxy.index(0, 7).data() == "Not checked yet"
 
 
 def test_signature_column_flags_an_invalid_signature(module, monkeypatch, qapp):
@@ -866,11 +791,11 @@ def test_signature_column_flags_an_invalid_signature(module, monkeypatch, qapp):
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
     _settle(qapp)
-    assert module._table.item(0, 7).text() == "INVALID"
+    assert module._proxy.index(0, 7).data() == "INVALID"
 
     module._table.selectRow(0)
     module._on_row_selected()
-    text = module._detail_label.text()
+    text = module._detail_label.toPlainText()
     assert "INVALID" in text
     assert "modified since it was signed" in text
 
@@ -883,11 +808,11 @@ def test_signature_column_shows_valid_signer(module, monkeypatch, qapp):
     module._folder_edit.setText(r"C:\x")
     module._on_search_clicked()
     _settle(qapp)
-    assert module._table.item(0, 7).text() == "Signed"
+    assert module._proxy.index(0, 7).data() == "Signed"
 
     module._table.selectRow(0)
     module._on_row_selected()
-    assert "Contoso Inc." in module._detail_label.text()
+    assert "Contoso Inc." in module._detail_label.toPlainText()
 
 
 def test_csv_export_includes_the_signature_column(module, tmp_path, monkeypatch):

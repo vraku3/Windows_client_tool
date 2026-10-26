@@ -24,10 +24,28 @@ def attribute_handles(targets, handles):
     return result
 
 
-def bulk_locks(paths, processes, cancelled=lambda: False):
-    targets = {path: to_device_path(path) for path in paths}
+def bulk_locks(paths, processes, cancelled=lambda: False, progress=None):
+    targets = {}
+    drives = {}
+    for index, path in enumerate(paths):
+        if cancelled():
+            return {}, {}, {}
+        if len(path) >= 3 and path[1] == ':':
+            drive = path[:2].upper()
+            if drive not in drives:
+                drives[drive] = to_device_path(drive + '\\')
+            prefix = drives[drive]
+            targets[path] = prefix[:-1] + path[2:] if prefix else None
+        else:
+            targets[path] = to_device_path(path)
+        if progress and index % 1024 == 0:
+            progress(f'Preparing one handle check: {index:,} / {len(paths):,} files')
     report = find('\\', handles=True, modules=False, should_stop=cancelled,
-                  process_snapshot=processes)
+                  process_snapshot=processes, progress=(
+                      lambda done, total: progress(f'Checking open handles once: {done:,} / {total:,} processes')
+                  ) if progress else None)
+    if cancelled():
+        return {}, {}, {}
     result = attribute_handles(targets, report.matches)
     summaries = {path: (report.summary() + ('; ' + report.note if report.note else '')
                        if device else 'Path translation refused; locks could not be checked')

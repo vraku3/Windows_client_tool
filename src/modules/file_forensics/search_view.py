@@ -9,6 +9,7 @@ from core.table_ui import set_role
 from ui.empty_state import EmptyState
 from ui.elided_path import ElidedPathLabel
 from modules.cleanup.cleanup_scanner.known_folders import known_folder
+from .limit_controls import LimitControls
 from .results_model import ResultsModel, ResultsFilter
 from ui.glance import GlanceTile, GlanceStrip
 
@@ -19,7 +20,7 @@ FILTERS = (('all', 'All'), ('locked', 'Locked'), ('unsigned', 'Unsigned creator'
 _FilterTile = GlanceTile
 
 
-class SearchView:
+class SearchView(LimitControls):
     def _build_search_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -75,13 +76,14 @@ class SearchView:
         for col, widget in enumerate((QLabel('Name'), self._filter_edit, self._recurse_cb, self._search_btn)):
             bar.addWidget(widget, 1, col)
         self._add_search_filters(bar)
+        self._build_limit_controls(bar)
         bar.setColumnStretch(1, 1)
         return bar
 
     def _add_search_filters(self, bar):
         self._extensions_edit = QLineEdit()
         self._extensions_edit.setPlaceholderText('exe,dll,ps1 (blank = all)')
-        self._extensions_edit.setToolTip('Comma-separated extensions, ignoring case. Applied during search before the 5,000 match limit.')
+        self._extensions_edit.setToolTip('Comma-separated extensions, ignoring case. Applied during search before the chosen match limit.')
         self._extensions_edit.returnPressed.connect(self._on_search_clicked)
         bar.addWidget(QLabel('Extensions'), 2, 0)
         bar.addWidget(self._extensions_edit, 2, 1, 1, 3)

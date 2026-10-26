@@ -65,6 +65,12 @@ class ResultsModel(QAbstractTableModel):
             return None
         row = self.rows[index.row()]
         m, col = row.metadata, index.column()
+        if role == SORT_ROLE and col <= 4:
+            if col == 2:
+                return m.size
+            if col in (3, 4):
+                return (m.created if col == 3 else m.modified).timestamp()
+            return (os.path.basename(m.path) if col == 0 else os.path.dirname(m.path)).casefold()
         pending = row.lock_inspection.state == 'could_not_check'
         values = (os.path.basename(m.path), os.path.dirname(m.path), m.size, m.created, m.modified,
                   '...' if pending else ', '.join(p.process for p in row.locking_processes) or 'None observed',

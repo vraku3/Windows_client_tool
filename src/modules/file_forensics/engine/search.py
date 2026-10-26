@@ -124,11 +124,11 @@ def search_batches(folder, name_filter='', recurse=True, *, cancelled=lambda: Fa
                                     matches += 1
                     except OSError as error:
                         failures.record(entry.path, error)
-                    if matches >= limit:
+                    if limit is not None and matches >= limit:
                         outcome = 'truncated'
                         break
                     now = time.monotonic()
-                    if (matches == 1 and rows) or now - last >= interval or len(rows) >= 128:
+                    if (matches == 1 and rows) or now - last >= interval or len(rows) >= 1024:
                         yield failures.batch(rows, folders, files, matches)
                         rows.clear()
                         last = now

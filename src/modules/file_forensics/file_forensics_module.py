@@ -1,6 +1,8 @@
 """File Forensics: streamed metadata search followed by one process/handle snapshot."""
 import fnmatch
 import os
+from collections import Counter
+from itertools import islice
 from dataclasses import replace
 from datetime import datetime
 from typing import List, Optional
@@ -21,7 +23,7 @@ from ui.error_banner import ErrorBanner
 from ui.module_intro import module_intro
 from . import history_log
 from .engine.analysis import FileAnalysis, analyze
-from .engine.creator_heuristic import find_creator_candidates
+from .engine.creator_heuristic import find_creator_candidates, ProcessStarts
 from .engine.bulk_locks import bulk_locks
 from .engine.search import search_batches, RESULT_LIMIT, SearchFilters
 from .engine.selected_details import inspect_selected
@@ -31,6 +33,7 @@ from .engine.export_csv import export_csv
 from .process_chooser import ProcessChooser
 from .results_model import matches_filter, signature_text
 from .search_view import SearchView, FILTERS
+from .limit_controls import limit_text
 
 _SIGNATURE_LABELS = {VALID: 'Signed', NOT_SIGNED: 'Unsigned', INVALID: 'INVALID', COULD_NOT_VERIFY: 'Could not verify'}
 
@@ -61,6 +64,8 @@ class FileForensicsModule(SearchView, BaseModule):
         self._watcher = self._watch_worker = self._watch_cb = None
         self._search_worker = None
         self._current_results = []
+        self._count_values = dict.fromkeys([key for key, _ in FILTERS] + ['size', 'pending', 'ready'], 0)
+        self._inspection_reasons = Counter()
         self._last_batch = None
         self._search_context = {}
         self._search_filters = SearchFilters()
@@ -153,10 +158,16 @@ class FileForensicsModule(SearchView, BaseModule):
     def _confirm_broad_search(self, folder, name_filter):
         target = os.path.normcase(os.path.abspath(folder))
         profile = os.path.normcase(os.path.expanduser('~'))
-        if name_filter or not self._recurse_cb.isChecked() or (os.path.dirname(target) != target and target != profile):
+        extensions = any(part.strip().lstrip('.') for part in self._extensions_edit.text().split(','))
+        if name_filter or extensions or not self._recurse_cb.isChecked() or (os.path.dirname(target) != target and target != profile):
             return True
+        budget = ('Results are unlimited.' if self._result_limit is None else
+                  f'Results stop at {self._result_limit:,} matches.')
+        warning = ('This can list over a million files and use several GB of memory; '
+                   'the handle check runs once at the end and can take minutes. Continue?'
+                   if self._result_limit is None or self._result_limit > 100000 else 'Add a name filter?')
         box = QMessageBox(QMessageBox.Icon.Question, 'Large folder search',
-            f'Search folder: {os.path.abspath(folder)}\nIncludes subfolders. Results stop at {RESULT_LIMIT:,} matches. Add a name filter?', parent=self._widget)
+            f'Search folder: {os.path.abspath(folder)}\nIncludes subfolders. {budget} {warning}', parent=self._widget)
         anyway = box.addButton('Search anyway', QMessageBox.ButtonRole.AcceptRole)
         cancel = box.addButton('Cancel', QMessageBox.ButtonRole.RejectRole)
         box.setDefaultButton(cancel)
@@ -176,13 +187,16 @@ class FileForensicsModule(SearchView, BaseModule):
         if not self._confirm_broad_search(folder, name_filter):
             return
         self._search_generation += 1
+        self._search_limit = self._result_limit
+        self._bytes_per_row = 0
+        self._memory_sample.clear()
         self._detail_busy.clear()
         self._cancelled_details.clear()
         self._search_folder = folder
         self._search_filters = SearchFilters(self._extensions_edit.text().strip(),
             self._created_days.value(), self._modified_days.value(), self._min_size.value() * 1024)
         self._search_context = {'root': folder, 'name filter': name_filter,
-            'filters': self._search_filters.summary(), 'recursion': self._recurse_cb.isChecked(),
+            'result limit': limit_text(self._search_limit), 'filters': self._search_filters.summary(), 'recursion': self._recurse_cb.isChecked(),
             'start time': datetime.now().astimezone().isoformat(timespec='seconds'),
             'end time': 'Not finished yet', 'outcome': 'searching'}
         self._last_batch = None
@@ -195,7 +209,7 @@ class FileForensicsModule(SearchView, BaseModule):
         self._on_row_selected()
         self._search_btn.setText('Stop')
         self._progress_label.setText('Scanning folders…')
-        worker = Worker(self._run_search, folder, name_filter, self._recurse_cb.isChecked(), self._search_filters)
+        worker = Worker(self._run_search, folder, name_filter, self._recurse_cb.isChecked(), self._search_filters, self._search_limit)
         self._search_worker = worker
         worker.signals.result.connect(lambda result, w=worker: self._search_done(w, result))
         worker.signals.error.connect(lambda error, w=worker: self._search_failed(w, error))
@@ -203,10 +217,10 @@ class FileForensicsModule(SearchView, BaseModule):
         self._workers.append(worker)
         self.thread_pool.start(worker)
 
-    def _analyze_folder(self, folder, name_filter, recurse, worker=None, filters=None):
+    def _analyze_folder(self, folder, name_filter, recurse, worker=None, filters=None, limit=RESULT_LIMIT):
         rows = []
         cancelled = (lambda: worker.is_cancelled) if worker else (lambda: False)
-        for batch in search_batches(folder, name_filter, recurse, cancelled=cancelled, filters=filters):
+        for batch in search_batches(folder, name_filter, recurse, cancelled=cancelled, filters=filters, limit=limit):
             rows.extend(batch.rows)
             if worker:
                 self._watch_bridge.search_event.emit(worker, ('batch', batch))
@@ -214,7 +228,9 @@ class FileForensicsModule(SearchView, BaseModule):
             if worker:
                 self._watch_bridge.search_event.emit(worker, ('phase', None))
             processes = list(system_processes())
-            locks, summaries, inspection = bulk_locks([r.metadata.path for r in rows], processes, cancelled)
+            progress = (lambda text: self._watch_bridge.search_event.emit(worker, ('handle_progress', text))) if worker else None
+            locks, summaries, inspection = bulk_locks([r.metadata.path for r in rows], processes, cancelled, progress)
+            starts = ProcessStarts(processes)
             cache = {}
             enriched = []
             for row in rows:
@@ -222,8 +238,8 @@ class FileForensicsModule(SearchView, BaseModule):
                     break
                 enriched.append(replace(row, locking_processes=locks[row.metadata.path],
                     locking_summary=summaries[row.metadata.path], lock_inspection=inspection[row.metadata.path],
-                    creator_ready=True, creator_candidates=find_creator_candidates(row.metadata.created, processes=processes, details_cache=cache)))
-                if len(enriched) == 128:
+                    creator_ready=True, creator_candidates=find_creator_candidates(row.metadata.created, processes=starts, details_cache=cache)))
+                if len(enriched) == 1024:
                     if worker:
                         self._watch_bridge.search_event.emit(worker, ('enriched', tuple(enriched)))
                     enriched.clear()
@@ -231,8 +247,8 @@ class FileForensicsModule(SearchView, BaseModule):
                 self._watch_bridge.search_event.emit(worker, ('enriched', tuple(enriched)))
         return rows
 
-    def _run_search(self, worker, folder, name_filter, recurse, filters=None):
-        return self._analyze_folder(folder, name_filter, recurse, worker=worker, filters=filters)
+    def _run_search(self, worker, folder, name_filter, recurse, filters=None, limit=RESULT_LIMIT):
+        return self._analyze_folder(folder, name_filter, recurse, worker=worker, filters=filters, limit=limit)
 
     def _on_search_event(self, worker, event):
         if worker is not self._search_worker or not _widget_valid(self._widget):
@@ -241,22 +257,32 @@ class FileForensicsModule(SearchView, BaseModule):
         if kind == 'batch':
             self._last_batch = payload
             self._last_skip_count = payload.skipped
+            self._sample_memory(payload.rows)
+            self._adjust_counts(payload.rows)
             self._model.append(payload.rows)
             self._current_results = self._model.rows
             self._results_stack.setCurrentIndex(0 if self._current_results else 1)
-            self._progress_label.setText(f'Scanned {payload.folders:,} folders, {payload.files:,} files, {payload.matches:,} matches; {payload.skipped:,} skipped; {self._search_filters.summary()}')
+            self._progress_label.setText(f'Scanned {payload.folders:,} folders, {payload.files:,} files, {payload.matches:,} matches; {payload.skipped:,} skipped; {self._search_filters.summary()}' + self._memory_status(payload.matches))
         elif kind == 'phase':
+            self._memory_sample.clear()  # Resample enriched rows once creator/lock data arrives.
             self._progress_label.setText(self._progress_label.text() + ' — checking open handles once…')
+        elif kind == 'handle_progress':
+            self._progress_label.setText(f'{len(self._current_results):,} matches so far; {payload}' + self._memory_status(len(self._current_results)))
         elif kind == 'enriched':
+            self._sample_memory(payload)
+            self._adjust_counts([self._model.rows[self._model.by_path[r.metadata.path]] for r in payload
+                                 if r.metadata.path in self._model.by_path], -1)
             updated = []
             for row in payload:
                 updated.append(self._merge_enriched(row))
+            self._adjust_counts(updated)
             self._model.update_rows(updated)
+            self._progress_label.setText(f'Checking creators: {self._count_values["ready"]:,} / {len(self._current_results):,} files; handle sweep ran once' + self._memory_status(len(self._current_results)))
             for row in updated:
                 if row.metadata.path in self._signature_requested and 'signatures' not in self._detail_cache.get(row.metadata.path, {}):
                     self._start_details('signatures', row)
             self._on_row_selected()
-        self._update_counts()
+        self._update_counts(recount=False)
 
     def _merge_enriched(self, row):
         index = self._model.by_path.get(row.metadata.path)
@@ -300,13 +326,15 @@ class FileForensicsModule(SearchView, BaseModule):
         self._search_btn.setText('Search')
         self._search_btn.setEnabled(True)
         lead = 'Stopped' if outcome == 'stopped' else outcome.capitalize()
+        if outcome == 'truncated':
+            lead += f' at {limit_text(self._search_limit)}'
         progress = f'{lead} - {len(self._current_results):,} matches so far; {self._last_skip_count:,} skipped'
         if self._last_batch:
             progress += f'; scanned {self._last_batch.folders:,} folders, {self._last_batch.files:,} files'
         self._progress_label.setText(progress + '; ' + self._search_filters.summary())
         messages = []
         if outcome == 'truncated':
-            self._info_banner.setText(f'Showing the first {RESULT_LIMIT:,} matches -- narrow the folder or add a name filter.')
+            self._info_banner.setText(f'Showing the first {limit_text(self._search_limit)} matches -- increase Show up to, narrow the folder or add a name filter.')
             self._info_banner.show()
         if self._last_skip_count:
             messages.append(self._skip_summary())
@@ -356,17 +384,33 @@ class FileForensicsModule(SearchView, BaseModule):
         for key, (button, _) in self._chips.items():
             button.setChecked(key == kind)
 
-    def _update_counts(self):
-        counts = {key: sum(matches_filter(r, key) for r in self._current_results) for key, _ in FILTERS}
+    def _adjust_counts(self, rows, sign=1):
+        for row in rows:
+            for key, _ in FILTERS:
+                self._count_values[key] += sign * matches_filter(row, key)
+            self._count_values['size'] += sign * row.metadata.size
+            self._count_values['pending'] += sign * (row.lock_inspection.state != 'complete')
+            self._count_values['ready'] += sign * row.creator_ready
+            if row.lock_inspection.state != 'complete':
+                reason = row.lock_inspection.reason or row.lock_inspection.state
+                self._inspection_reasons[reason] += sign
+                if self._inspection_reasons[reason] == 0:
+                    del self._inspection_reasons[reason]
+
+    def _update_counts(self, recount=True):
+        if recount:
+            self._count_values = dict.fromkeys([key for key, _ in FILTERS] + ['size', 'pending', 'ready'], 0)
+            self._inspection_reasons.clear()
+            self._adjust_counts(self._current_results)
+        counts = self._count_values
         for key, (button, label) in self._chips.items():
             button.setText(f'{label} ({counts[key]:,})')
         for key, (button, label) in self._tiles.items():
-            value = format_size(sum(r.metadata.size for r in self._current_results)) if key == 'size' else self._last_skip_count if key == 'skipped' else counts[key]
-            reasons = list(dict.fromkeys(r.lock_inspection.reason or r.lock_inspection.state
-                for r in self._current_results if r.lock_inspection.state != 'complete'))
-            pending = key == 'locked' and reasons
+            value = format_size(counts['size']) if key == 'size' else self._last_skip_count if key == 'skipped' else counts[key]
+            pending = key == 'locked' and counts['pending']
             if pending:
-                button.set(f'{value} observed', 'Inspection incomplete: ' + '; '.join(reasons))
+                reasons = '; '.join(islice(self._inspection_reasons, 3))
+                button.set(f'{value} observed', f'Inspection incomplete: {reasons}. Select a row for details ({counts["pending"]:,} files).')
             else:
                 button.set(str(value), 'Checked signatures only' if key == 'unsigned' else 'Click to inspect skips' if key == 'skipped' else 'Click to filter')
 
@@ -486,8 +530,10 @@ class FileForensicsModule(SearchView, BaseModule):
         elif mode == 'reputation':
             updated = replace(current, reputation=row.reputation)
         self._detail_cache.setdefault(row.metadata.path, {})[mode] = notes
+        self._adjust_counts([current], -1)
+        self._adjust_counts([updated])
         self._model.update_row(updated)
-        self._update_counts()
+        self._update_counts(recount=False)
         self._on_row_selected()
 
     def _on_kill_locking_clicked(self) -> None:
@@ -626,7 +672,10 @@ class FileForensicsModule(SearchView, BaseModule):
             self._history_table.setItem(row, 0, QTableWidgetItem(entry.get("path", "")))
             self._history_table.setItem(row, 1, QTableWidgetItem(entry.get("creator", "")))
             self._history_table.setItem(row, 2, QTableWidgetItem(entry.get("at", "")))
-            outcome = QTableWidgetItem(entry.get("outcome", "Live detection"))
+            text = entry.get("outcome", "Live detection")
+            if "result limit" in entry:
+                text += f' (limit: {entry["result limit"]})'
+            outcome = QTableWidgetItem(text)
             outcome.setToolTip(entry.get('filters', 'No search filters recorded'))
             self._history_table.setItem(row, 3, outcome)
         self._history_table.setSortingEnabled(True)

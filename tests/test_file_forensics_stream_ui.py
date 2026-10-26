@@ -46,7 +46,7 @@ def test_enter_starts_search(pane, field, monkeypatch, qapp):
 def test_streamed_row_is_visible_before_phase_two_and_stop_resets(pane, tmp_path, monkeypatch, qapp):
     (tmp_path / 'one.txt').write_text('x')
     entered = Event()
-    def locks(paths, processes, cancelled):
+    def locks(paths, processes, cancelled, progress=None):
         entered.set()
         while not cancelled():
             time.sleep(.005)
@@ -98,7 +98,7 @@ def test_one_snapshot_and_one_handle_sweep_for_many_files(pane, tmp_path, monkey
     for i in range(10): (tmp_path / f'{i}.txt').write_text('x')
     calls = []
     monkeypatch.setattr('modules.file_forensics.file_forensics_module.system_processes', lambda: calls.append('snapshot') or [])
-    def locks(paths, processes, cancelled):
+    def locks(paths, processes, cancelled, progress=None):
         calls.append('handles')
         return {p: [] for p in paths}, {p: 'No readable locks' for p in paths}, {p: LockInspection() for p in paths}
     monkeypatch.setattr('modules.file_forensics.file_forensics_module.bulk_locks', locks)

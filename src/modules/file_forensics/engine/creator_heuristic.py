@@ -4,6 +4,7 @@ Find-FileCreator.ps1 used manually, on this app's own fast process
 engine instead of one-at-a-time Get-Process calls.
 """
 from dataclasses import dataclass
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
@@ -49,6 +50,30 @@ def _filetime_to_datetime(value: int) -> Optional[datetime]:
         return None
 
 
+class ProcessStarts:
+    """Index one process snapshot once for bulk file-creation correlation."""
+    def __init__(self, processes):
+        entries = []
+        for order, proc in enumerate(processes):
+            started = _filetime_to_datetime(proc.create_time)
+            if started is not None:
+                entries.append((started, order, proc))
+        self._entries = sorted(entries, key=lambda entry: (entry[0], entry[1]))
+        self._times = [entry[0] for entry in self._entries]
+
+    def near(self, created_at, tolerance):
+        if tolerance < 0:
+            return []
+        # Clamp before arithmetic, including metadata at datetime.min/max.
+        span = timedelta(seconds=tolerance)
+        lower = created_at - min(span, created_at - datetime.min)
+        upper = created_at + min(span, datetime.max - created_at)
+        first = bisect_left(self._times, lower)
+        last = bisect_right(self._times, upper)
+        return [(proc, started) for started, _, proc in sorted(
+            self._entries[first:last], key=lambda entry: entry[1])]
+
+
 def find_creator_candidates(created_at: datetime,
                             tolerance_seconds: float = 5.0,
                             processes=None, details_cache=None
@@ -61,8 +86,10 @@ def find_creator_candidates(created_at: datetime,
     `datetime.fromtimestamp(st.st_ctime)` -- already uses).
     """
     candidates = []
-    for proc in (system_processes() if processes is None else processes):
-        started = _filetime_to_datetime(proc.create_time)
+    snapshot = system_processes() if processes is None else processes
+    entries = (snapshot.near(created_at, tolerance_seconds) if isinstance(snapshot, ProcessStarts)
+               else ((proc, _filetime_to_datetime(proc.create_time)) for proc in snapshot))
+    for proc, started in entries:
         if started is None:
             continue
         delta = (started - created_at).total_seconds()

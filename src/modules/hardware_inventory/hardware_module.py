@@ -71,7 +71,7 @@ class _LoadingTab(QWidget):
         layout.addLayout(btn_row)
         layout.addWidget(self._progress)
 
-        self._empty = EmptyState("↻", "Hardware inventory", "Reading this tab's hardware information.",
+        self._empty = EmptyState('refresh', "Hardware inventory", "Reading this tab's hardware information.",
                                  "Refresh", variant="empty")
         self._empty.action_triggered.connect(self._load)
         layout.addWidget(self._empty)

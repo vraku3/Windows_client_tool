@@ -182,7 +182,7 @@ class RegistryExplorerModule(BaseModule):
     def _build_navigation_start(self, layout):
         self._navigation_start = QWidget()
         start = QVBoxLayout(self._navigation_start)
-        empty = EmptyState("\u2318", "Choose a registry key", "Browse the tree, paste a path above, or open a bookmark below. This browser is read-only.", "Open bookmark")
+        empty = EmptyState('registry', "Choose a registry key", "Browse the tree, paste a path above, or open a bookmark below. This browser is read-only.", "Open bookmark")
         empty.action_triggered.connect(self._open_bookmark)
         start.addWidget(empty)
         self._bookmarks = QListWidget()

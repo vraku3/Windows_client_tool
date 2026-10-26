@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 class _FixCard(QFrame):
     _line = pyqtSignal(str)   # marshals output to main thread
+    history_changed = pyqtSignal()
 
     def __init__(self, action: FixAction, last_entry: dict = None,
                  recurring_count: int = 0, parent=None):
@@ -184,6 +185,7 @@ class _FixCard(QFrame):
         self._run_btn.setEnabled(True)
         from modules.quick_fix import quick_fix_history
         self._last_entry = quick_fix_history.record(self._action.title, "ok")
+        self.history_changed.emit()
         self._recurring_count = quick_fix_history.recurring_actions().get(
             self._action.title, 0)
         self._refresh_status()
@@ -199,6 +201,7 @@ class _FixCard(QFrame):
         self._output.appendPlainText(f"ERROR: {error_str}")
         from modules.quick_fix import quick_fix_history
         self._last_entry = quick_fix_history.record(self._action.title, "error")
+        self.history_changed.emit()
         self._recurring_count = quick_fix_history.recurring_actions().get(
             self._action.title, 0)
         self._refresh_status()
@@ -206,7 +209,10 @@ class _FixCard(QFrame):
     def cancel(self) -> None:
         """Cancel the running worker if any."""
         if self._worker is not None and self._running:
-            self._worker.cancel()
+            # retire(): dropping a running worker freed its signals while queued
+            # ones were pending -- the native abort in whole-suite runs.
+            from core.worker import retire
+            retire([self._worker])
             self._running = False
             self._worker = None
             self._run_btn.setEnabled(True)
@@ -291,7 +297,7 @@ class QuickFixModule(BaseModule):
         self._search.textChanged.connect(self._apply_filter)
         outer_layout.addWidget(self._search)
 
-        self._filter_empty = EmptyState("Search", "No matching repair actions", "Clear the search to see the available repair tools.", "Clear search")
+        self._filter_empty = EmptyState('search', "No matching repair actions", "Clear the search to see the available repair tools.", "Clear search")
         self._filter_empty.action_triggered.connect(self._search.clear)
         self._filter_empty.hide()
         outer_layout.addWidget(self._filter_empty)
@@ -361,15 +367,35 @@ class QuickFixModule(BaseModule):
     def _build_glance(self, layout, categories):
         self._glance = {}
         values = (("Repair actions", len(self._cards), "Available tools"),
-                  ("Categories", len(categories), "Choose a repair by purpose"),
-                  ("Require confirmation", sum(bool(card._action.confirm_text) for card in self._cards), "Review the prompt before running"))
+                  ("Recent failed runs", None, "Select to open History"),
+                  ("Last run", None, "Select to open History"))
         for caption, count, detail in values:
             tile = GlanceTile(caption, tooltip=f"{caption} in the repair catalog. Opening this pane does not run any repair.")
             tile.set(count, detail)
             self._glance[caption] = tile
+            if caption != "Repair actions":
+                tile.clicked.connect(self._show_history)
         layout.insertWidget(0, GlanceStrip(self._glance.values()))
+        for card in self._cards:
+            if isinstance(card, _FixCard):
+                card.history_changed.connect(self._refresh_history_glance)
+        self._refresh_history_glance()
+
+    def _refresh_history_glance(self):
+        from modules.quick_fix import quick_fix_history
+        runs = quick_fix_history.recent(limit=20)
+        failures = sum(run.get("outcome") == "error" for run in runs)
+        self._glance["Recent failed runs"].set(failures, f"In last {len(runs)} recorded runs; History",
+                                               severity="danger" if failures else "info")
+        last = runs[0] if runs else None
+        self._glance["Last run"].set(last.get("outcome", "Unknown") if last else "No runs",
+                                    last.get("action", "") if last else "History is empty",
+                                    tooltip=f"{last.get('at', '') if last else 'No recorded runs'}. Select to open History.",
+                                    severity="danger" if last and last.get("outcome") == "error" else "info")
 
     def on_activate(self) -> None:
+        if hasattr(self, "_glance"):
+            self._refresh_history_glance()
         for card in self._cards:
             if isinstance(card, BrowserLinksCard):
                 card.activate()

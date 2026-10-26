@@ -149,7 +149,9 @@ class _ResultsView(QWidget):
         reason = "; ".join(report.errors.values())
         tiles[0].set(len(report.disks) if report.disks or not report.errors else None, reason=reason)
         findings = [f for f in dr.all_findings(report) if f.severity in ("warning", "error")]
-        tiles[1].set(len(findings), sub="Review findings below", severity="warning" if findings else "ok")
+        tiles[1].set(None if report.errors else len(findings),
+                     sub=f"Incomplete read; {len(findings)} known findings" if report.errors else "Review findings below",
+                     reason=reason, severity="warning" if findings else "ok")
         measured = [d for d in report.disks if not d.is_virtual and d.temperature is not None]
         hottest = max(measured, key=lambda d: d.temperature) if measured else None
         tiles[2].set(f"{hottest.temperature} C" if hottest else None,
@@ -283,7 +285,7 @@ class _DiskHealthWidget(QWidget):
         # Takes the scroll area's place until there is something to show: the
         # cards layout ends in a stretch, which would pin a message to the top.
         self._empty = EmptyState(
-            "\U0001F4BD", "No drives scanned yet",
+            'drive', "No drives scanned yet",
             "Drive health is read on demand: Windows' health verdict, temperature, wear, "
             "volume free space, TRIM and BitLocker state.",
             action_text="Scan Drives")

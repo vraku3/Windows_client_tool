@@ -1,12 +1,54 @@
 """Centred empty, loading and failed-read states with an optional next action."""
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QLabel, QPushButton, QProgressBar, QVBoxLayout, QWidget
+from PyQt6.QtGui import QFont, QFontDatabase, QPainter, QPalette
+from PyQt6.QtWidgets import QLabel, QPushButton, QProgressBar, QVBoxLayout, QWidget, QStyle
+
+
+# Windows symbol fonts share these MDL2 code points. Names keep callers
+# independent of font selection and avoid emoji/letter placeholders.
+ICONS = {
+    "drive": (0xEDA2, "SP_DriveHDIcon"), "record": (0xE7C8, "SP_MediaPlay"),
+    "power": (0xE7E8, "SP_ComputerIcon"), "search": (0xE721, "SP_FileDialogContentsView"),
+    "registry": (0xE8A5, "SP_DirIcon"), "log": (0xE8A5, "SP_FileIcon"),
+    "check": (0xE73E, "SP_DialogApplyButton"), "warning": (0xE7BA, "SP_MessageBoxWarning"),
+    "error": (0xEA39, "SP_MessageBoxCritical"), "shield": (0xEA18, "SP_VistaShield"),
+    "network": (0xE968, "SP_DriveNetIcon"), "folder": (0xE8B7, "SP_DirIcon"),
+    "refresh": (0xE72C, "SP_BrowserReload"), "temperature": (0xE9CA, "SP_ComputerIcon"),
+}
+
+
+class _IconLabel(QLabel):
+    """Paint with the symbol font even when the app QSS sets a text font."""
+    symbol_font = None
+
+    def paintEvent(self, event):
+        if self.symbol_font is None:
+            return super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setFont(self.symbol_font)
+        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
+        painter.end()
+
+
+def set_state_icon(label, name):
+    codepoint, standard = ICONS[name]
+    families = QFontDatabase.families()
+    family = next((f for f in ("Segoe Fluent Icons", "Segoe MDL2 Assets") if f in families), None)
+    if family:
+        label.symbol_font = QFont(family, 32)
+        label.setFont(label.symbol_font)
+        label.setMinimumSize(56, 56)
+        label.setText(chr(codepoint))
+    else:
+        label.setPixmap(label.style().standardIcon(getattr(QStyle.StandardPixmap, standard)).pixmap(48, 48))
+    label.setToolTip(name.replace("_", " ").capitalize())
 
 
 class EmptyState(QWidget):
     action_triggered = pyqtSignal()
 
-    def __init__(self, glyph, title, hint, action_text="", parent=None,
+    def __init__(self, icon, title, hint, action_text="", parent=None,
                  *, variant="empty", reason="", last_checked=""):
         super().__init__(parent)
         self.title, self.hint = title, hint
@@ -15,7 +57,9 @@ class EmptyState(QWidget):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.setSpacing(8)
-        self.glyph_label = self._label(glyph, "emptyGlyph", layout)
+        self.glyph_label = self._label("", "emptyGlyph", layout)
+        self.icon_name = icon
+        set_state_icon(self.glyph_label, icon)
         self.title_label = self._label(title, "emptyTitle", layout)
         self.hint_label = self._label(hint, "emptyHint", layout)
         self.hint_label.setWordWrap(True)
@@ -38,7 +82,7 @@ class EmptyState(QWidget):
         self.set_variant(variant, reason=reason)
 
     def _label(self, text, role, layout):
-        label = QLabel(text)
+        label = _IconLabel(text) if role == "emptyGlyph" else QLabel(text)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setObjectName(role)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)

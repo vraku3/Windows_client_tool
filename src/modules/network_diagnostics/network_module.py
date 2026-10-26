@@ -353,7 +353,7 @@ def _build_port_scanner_card() -> _ToolCard:
     table_stack = QStackedWidget()
     table_stack.addWidget(table)
     empty_label = EmptyState(
-        "🔌", "No open ports found",
+        'network', "No open ports found",
         "The scan finished and nothing was open in that range.")
     empty_label.setMinimumHeight(140)
     table_stack.addWidget(empty_label)

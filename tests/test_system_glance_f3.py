@@ -152,7 +152,7 @@ def test_driver_glance_measures_inventory_without_pseudo_filter(qapp):
     assert all(t.value.text() == "—" for t in mod._glance.tiles)
     drivers = [DriverInfo("NIC", "NET", "1", "2020-01-01", "Vendor", False, 28, "Old", "oem1.inf")]
     mod._update_glance(drivers)
-    assert [t.value.text() for t in mod._glance.tiles[:3]] == ["1", "1", "1"]
+    assert [t.value.text() for t in mod._glance.tiles] == ["1", "1", "0", "1", "0"]
 
 
 @pytest.mark.parametrize("code", [0, 1])
@@ -174,5 +174,5 @@ def test_features_glance_counts_pending_separately(qapp):
     assert all(t.value.text() == "—" for t in mod._glance.tiles)
     mod._update_glance([("A", "Enabled"), ("B", "Disabled"), ("C", "Enable Pending"),
                         ("D", "Disable Pending"), ("E", "Disabled with Payload Removed")])
-    assert [t.value.text() for t in mod._glance.tiles] == ["1", "2", "2"]
+    assert [t.value.text() for t in mod._glance.tiles] == ["1", "2", "2", "0"]
     root.deleteLater()

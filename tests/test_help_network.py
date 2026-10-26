@@ -44,6 +44,7 @@ def test_repairs_distinguish_confirmation_verification_and_no_undo():
 def test_every_built_network_tab_has_a_top_introduction(tmp_path, monkeypatch):
     from PyQt6.QtWidgets import QLabel, QScrollArea, QTabWidget
     from ui import tooltip_audit
+    from ui.module_intro import _layout_intro
 
     def inspect(root, name):
         for tabs in ([root] if isinstance(root, QTabWidget) else []) + root.findChildren(QTabWidget):
@@ -52,8 +53,10 @@ def test_every_built_network_tab_has_a_top_introduction(tmp_path, monkeypatch):
                 if isinstance(page, QScrollArea):
                     page = page.widget()
                 assert page.layout() is not None, (name, tabs.tabText(index))
-                label = page.layout().itemAt(0).widget()
-                assert isinstance(label, QLabel) and label.objectName() == "moduleIntro", (name, tabs.tabText(index))
+                # Lazy composite placeholders get no duplicate introduction;
+                # a built child owns the intro inside its hosting wrapper.
+                if page.layout().count():
+                    assert _layout_intro(page.layout(), True) is not None, (name, tabs.tabText(index))
         return inspect_widget(root, name)
 
     monkeypatch.setattr(tooltip_audit, "inspect_widget", inspect)

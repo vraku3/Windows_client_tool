@@ -179,7 +179,7 @@ class _RefreshTab(QWidget):
         self._table = _make_table(columns)
         self._content = QStackedWidget()
         self._content.addWidget(self._table)
-        self._empty = EmptyState('📂', 'No resources to show',
+        self._empty = EmptyState('folder', 'No resources to show',
                                  'Refresh reads this section from Windows without changing it.', 'Refresh')
         self._empty.action_triggered.connect(self.refresh)
         self._content.addWidget(self._empty)

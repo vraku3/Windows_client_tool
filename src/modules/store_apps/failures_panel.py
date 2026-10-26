@@ -88,7 +88,7 @@ class DeploymentFailuresPanel(QWidget):
         self._table.setHorizontalScrollMode(
             QTableWidget.ScrollMode.ScrollPerPixel)
         self._stack.addWidget(self._table)
-        self._stack.addWidget(EmptyState("⏳", "Not read yet",
+        self._stack.addWidget(EmptyState('refresh', "Not read yet",
                                          "Failures load with the app list."))
         self._stack.setCurrentIndex(1)
         layout.addWidget(self._stack)
@@ -108,14 +108,14 @@ class DeploymentFailuresPanel(QWidget):
     def show_report(self, report: FailureReport) -> None:
         if report.read_error:
             self._summary.setText("")
-            self._set_empty("⚠️", "Could not read the deployment log",
+            self._set_empty('warning', "Could not read the deployment log",
                             report.read_error)
             return
         self._summary.setText(summary_line(report))
         if not report.groups:
             since = (f" since {_local(report.log_since)}"
                      if report.log_since else "")
-            self._set_empty("✅", "No failed installs or updates",
+            self._set_empty('check', "No failed installs or updates",
                             f"Windows logged no failed app deployment{since}.")
             return
         self._table.setRowCount(0)

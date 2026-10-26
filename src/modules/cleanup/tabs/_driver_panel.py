@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
 
 from core.long_op_pool import get_long_op_pool
 from core.widget_life import widget_is_valid
-from core.worker import Worker
+from core.worker import Worker, retire
 from modules.cleanup import cleanup_scanner as cs
 from modules.cleanup.cleanup_scanner import driver_store
 
@@ -222,5 +222,5 @@ class _DriverStorePanel(QWidget):
 
     def _cancel_all(self) -> None:
         if self._worker is not None:
-            self._worker.cancel()
+            retire([self._worker])  # held until its finished is delivered
             self._worker = None

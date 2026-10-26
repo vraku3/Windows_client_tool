@@ -94,7 +94,7 @@ def _tabs(widget, tabs):
         if tip and not widget.tabToolTip(index):
             widget.setTabToolTip(index, tip)
             page = widget.widget(index)
-            add_module_intro(page, tip)
+            add_module_intro(page, tip, hosting_page=True)
 
 
 def explain_menu(menu, controls):

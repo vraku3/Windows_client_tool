@@ -20,6 +20,7 @@ import os
 from PyQt6.QtWidgets import QMessageBox, QPushButton
 
 from core.log_reader_module import LogReaderModule
+from core.types import LogReadResult
 from core.widget_life import widget_is_valid
 from core.windows_utils import system_root
 from core.worker import Worker
@@ -156,8 +157,9 @@ class DISMLogModule(LogReaderModule):
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             raw = result.stdout.strip()
-            if not raw:
-                return []
+            if result.returncode or result.stderr.strip() or not raw:
+                return LogReadResult(problems=["DISM.log unavailable; Get-HotFix fallback could not be read: "
+                                               + (result.stderr.strip() or "No output returned")])
             import json
             try:
                 data = json.loads(raw)
@@ -190,12 +192,12 @@ class DISMLogModule(LogReaderModule):
                         message=f"{kb} — {desc}",
                         raw=entry,
                     ))
-                return entries
+                return LogReadResult(entries, ["DISM.log unavailable; showing installed hotfixes instead of servicing evidence"])
             except Exception as ex:
                 logger.warning("Failed to parse Get-HotFix output: %s", ex)
-                return []
+                return LogReadResult(problems=[f"Could not parse Get-HotFix fallback: {ex}"])
 
         parser = DISMParser(DISM_LOG_PATH)
-        return parser.parse(
+        return parser.parse_result(
             progress_callback=lambda p: worker.signals.progress.emit(p)
         )

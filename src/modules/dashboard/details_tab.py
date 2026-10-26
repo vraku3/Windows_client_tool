@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView,
                              QTableView, QVBoxLayout, QWidget)
 
 from core.worker import Worker, retire
+from core.table_ui import set_role
 from .glance_support import summary, unreadable, make_chips, set_chip_counts, process_matches
 
 from .details_model import DetailsModel, DetailsProxy
@@ -83,8 +84,11 @@ class DetailsTab(QWidget):
         self._glance = summary(self, layout, [
             ("all", "Processes", "Processes in the current snapshot; select to show all."),
             ("elevated", "Elevated", "Processes whose token is elevated. Unreadable tokens are excluded."),
-            ("unsigned", "Unsigned", "Signature verification is not part of the live process snapshot."),
             ("high", "High CPU", "Processes using at least 10% CPU; select to filter.")])
+        note = QLabel("Signatures are not checked. Counts cover readable process fields.")
+        note.setToolTip("Protected processes can refuse token or CPU reads; unreadable fields are excluded from the counts.")
+        set_role(note, "muted")
+        layout.addWidget(note)
         top = QHBoxLayout()
         self.filter_box = QLineEdit(self)
         self.filter_box.setPlaceholderText(
@@ -280,7 +284,6 @@ class DetailsTab(QWidget):
                         is not None for i in rows)
             self._glance[key].set(counts[key] if known or not rows else None,
                                   f"{known} of {len(rows)} readable", reason="No readable values")
-        self._glance["unsigned"].set_unreadable("Signatures are not checked by the live snapshot")
 
     def _on_cancelled(self):
         self._busy = False

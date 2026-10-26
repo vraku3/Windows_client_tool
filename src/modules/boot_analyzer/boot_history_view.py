@@ -54,7 +54,8 @@ class BootHistoryPanel(QWidget):
         self._duration = GlanceTile("Last measured boot", tooltip="Duration from Windows' detailed boot trace; the trend runs oldest to newest.")
         self._recorded = GlanceTile("Recorded boots", tooltip="Number of detailed boot traces retained in the current read.")
         self._degraded = GlanceTile("Degraded boots", tooltip="Boots Windows explicitly marked as degraded in the current read.")
-        self._glance = GlanceStrip([self._duration, self._recorded, self._degraded])
+        self._fallback_duration = GlanceTile("Approximate boot interval", tooltip="System-log boot-to-ready interval, separate from the detailed boot trace duration.")
+        self._glance = GlanceStrip([self._duration, self._recorded, self._degraded, self._fallback_duration])
         layout.addWidget(self._glance)
         title = QLabel("Recent boots (from Windows' own boot traces)")
         set_role(title, "heading")
@@ -107,6 +108,11 @@ class BootHistoryPanel(QWidget):
         self._problems.setText("Not read: " + "; ".join(facts.problems) if facts.problems else "")
 
     def _update_glance(self, facts):
+        fallback = sorted((b for b in facts.fallback_boots if b.duration_seconds is not None), key=lambda b: b.when)
+        self._fallback_duration.set(f"{fallback[-1].duration_seconds:.0f} s" if fallback else None,
+                                    sub=f"{fallback[-1].when:%Y-%m-%d %H:%M}" if fallback else "",
+                                    reason="No fallback boot interval was returned")
+        self._fallback_duration.setVisible(bool(fallback))
         boots = sorted(facts.boots, key=lambda b: b.when)
         reason = "; ".join(facts.problems) or "No detailed boot trace was returned"
         self._duration.set(f"{boots[-1].boot_ms / 1000:.1f} s" if boots else None,

@@ -114,7 +114,7 @@ class RemoteToolsModule(BaseModule):
         top.addWidget(self._exp_details)
         top.addWidget(self._exp_status, 1)
         layout.addLayout(top)
-        self._exp_empty = EmptyState('🔒', 'Remote access', 'Reading local remote-access settings.',
+        self._exp_empty = EmptyState('shield', 'Remote access', 'Reading local remote-access settings.',
                                      variant='loading')
         layout.addWidget(self._exp_empty)
         self._feature_area = QScrollArea()

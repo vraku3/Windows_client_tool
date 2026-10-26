@@ -15,7 +15,7 @@ from core.base_module import BaseModule
 from core.composite_module import CompositeModule
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, center_header
-from core.worker import Worker, COMWorker
+from core.worker import Worker, COMWorker, retire
 from modules.startup_manager.startup_reader import (
     get_registry_entries,
     set_registry_entry_enabled,
@@ -362,7 +362,7 @@ class _StartupTab(QWidget):
 
     def _cancel_all(self) -> None:
         if self._worker is not None:
-            self._worker.cancel()
+            retire([self._worker])  # held until its finished is delivered
             self._worker = None
 
 

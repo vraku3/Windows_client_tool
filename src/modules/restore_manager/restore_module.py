@@ -5,6 +5,7 @@ from modules.restore_manager.help_widgets import (
     describe_control, describe_headers, describe_cell, explain_widget,
 )
 import logging
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -14,7 +15,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QProgressBar,
-    QPushButton, QTableWidget, QVBoxLayout, QWidget,
+    QPushButton, QTableWidget, QVBoxLayout, QWidget, QComboBox,
 )
 
 from core.admin_utils import is_admin
@@ -137,12 +138,17 @@ class RestoreManagerModule(BaseModule):
         self._error_banner.hide()
         layout.addWidget(self._error_banner)
         self._glance = GlanceStrip([
-            GlanceTile("Protection on C:", tooltip="System Protection state read for C:."),
+            GlanceTile("Volume protection", tooltip="System Protection state for the selected volume; defaults to the Windows system drive."),
             GlanceTile("Restore points", tooltip="Number of restore points Windows listed."),
             GlanceTile("Newest point", tooltip="Age of the newest restore point; its absolute date is in the tooltip."),
-            GlanceTile("C: shadow storage", tooltip="Used shadow storage and its configured maximum on C:."),
+            GlanceTile("Volume shadow storage", tooltip="Used shadow storage and its configured maximum on the selected volume."),
         ])
         layout.addWidget(self._glance)
+        self._volume_combo = QComboBox()
+        self._volume_combo.setToolTip("Choose the volume whose System Protection and shadow storage appear above. Restore points are system-wide.")
+        self._volume_combo.addItem(os.environ.get("SystemDrive", "C:").rstrip("\\").upper())
+        self._volume_combo.currentTextChanged.connect(lambda _: self._update_glance())
+        layout.addWidget(self._volume_combo)
         self._update_glance()
         layout.addLayout(self._build_toolbar())
 
@@ -374,11 +380,12 @@ class RestoreManagerModule(BaseModule):
 
     def _update_glance(self) -> None:
         snap = self._snapshot
+        volume = self._volume_combo.currentText()
         protection, count, newest, space = self._glance.tiles
         if snap.protection is None:
             protection.set(None, reason=snap.protection_error or "Protection has not been read")
         else:
-            enabled = "C:" in [m.rstrip("\\").upper() for m in snap.protection.mounts]
+            enabled = volume in [m.rstrip("\\").upper() for m in snap.protection.mounts]
             protection.set("On" if enabled else "Off", severity="ok" if enabled else "warning")
         count.set(None if snap.points is None else len(snap.points),
                   reason=snap.points_error or "Restore points have not been read")
@@ -391,9 +398,11 @@ class RestoreManagerModule(BaseModule):
                        severity="warning" if (point.age_days or 0) > 7 else "info")
         else:
             newest.set(None, reason=snap.points_error or "No dated restore point available")
-        storage = next((s for s in snap.storage or [] if s.volume.rstrip("\\").upper() == "C:"), None)
+        protection.set_tooltip(f"System Protection on {volume}. Select another volume below."
+                               + (f"\n{snap.protection_error or 'Protection has not been read'}" if snap.protection is None else ""))
+        storage = next((s for s in snap.storage or [] if s.volume.rstrip("\\").upper() == volume), None)
         if storage is None or storage.used is None or (storage.maximum is None and not storage.unbounded):
-            space.set(None, reason=snap.storage_error or "No complete C: shadow-storage measurement")
+            space.set(None, reason=snap.storage_error or f"No complete {volume} shadow-storage measurement")
         else:
             maximum = "unbounded" if storage.unbounded else ra.format_bytes(storage.maximum)
             space.set(f"{ra.format_bytes(storage.used)} / {maximum}",
@@ -414,6 +423,10 @@ class RestoreManagerModule(BaseModule):
     def _fill_drives(self) -> None:
         snap = self._snapshot
         rows = ra.protection_rows(snap.mounts, snap.protection, snap.storage)
+        for row in rows:
+            volume = row.mount.rstrip("\\").upper()
+            if self._volume_combo.findText(volume) < 0:
+                self._volume_combo.addItem(volume)
         self._drive_table.setRowCount(len(rows))
         for r, v in enumerate(rows):
             if snap.protection is None:

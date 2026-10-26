@@ -49,8 +49,10 @@ class LogParserBase(ABC):
 
     def parse(self, progress_callback: Optional[Callable[[int], None]] = None) -> List[LogEntry]:
         """Parse the log file and return entries. Runs on worker thread."""
+        self.read_problems = []
         if not self.file_exists():
             logger.warning("Log file not found: %s", self._file_path)
+            self.read_problems.append(f"Log file not found: {self._file_path}")
             return []
 
         encoding = self._detect_encoding()
@@ -72,8 +74,15 @@ class LogParserBase(ABC):
 
         except OSError as e:
             logger.error("Failed to read %s: %s", self._file_path, e)
+            self.read_problems.append(f"Could not read {self._file_path}: {e}")
 
         return entries
+
+    def parse_result(self, progress_callback=None):
+        """Preserve read failure separately from a successfully parsed empty file."""
+        from core.types import LogReadResult
+        entries = self.parse(progress_callback=progress_callback)
+        return LogReadResult(entries, self.read_problems)
 
     @abstractmethod
     def parse_line(self, line: str) -> Optional[LogEntry]:

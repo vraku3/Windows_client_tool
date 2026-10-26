@@ -23,7 +23,7 @@ from ui.table_style import apply_table_style
 from .overview import UpdatesOverview
 from core.system_paths import cmd_exe
 from core.module_groups import ModuleGroup
-from core.worker import Worker, COMWorker
+from core.worker import Worker, COMWorker, retire
 from core.windows_utils import is_reboot_pending
 from core.blocklist import add_pattern, normalize_patterns
 from core.events import NOTIFY_BALLOON, BalloonNotifyData
@@ -50,6 +50,39 @@ _widget_valid = widget_is_valid
 
 UNATTENDED_TASK_NAME = "WinClientTool_UnattendedMaintenance"
 LEGACY_TASK_NAME = "WinClientTool_UpdateCheck"
+
+
+def _start_scan(tab, worker, on_result=None):
+    """Only the current read may update controls or the displayed offers."""
+    tab._scan_worker = worker
+    for name in ("_install_btn", "_update_sel_btn", "_update_all_btn", "_refresh_btn"):
+        button = getattr(tab, name, None)
+        if button is not None:
+            button.setEnabled(False)
+    tab._empty_state.action_button.setEnabled(False)
+
+    def deliver(callback, value):
+        if not _widget_valid(tab) or tab._scan_worker is not worker:
+            return
+        tab._scan_worker = None
+        tab._empty_state.action_button.setEnabled(not getattr(tab, "_installing", False))
+        tab._refresh_btn.setEnabled(not getattr(tab, "_installing", False))
+        installing = getattr(tab, "_installing", False)
+        callback(value)
+        if installing:
+            tab._installing = True
+            tab._empty_state.action_button.setEnabled(False)
+            for name in ("_install_btn", "_update_sel_btn", "_update_all_btn", "_refresh_btn"):
+                button = getattr(tab, name, None)
+                if button is not None:
+                    button.setEnabled(False)
+
+    worker.signals.result.connect(lambda result: deliver(on_result or tab._on_updates, result))
+    worker.signals.error.connect(lambda error: deliver(tab._on_error, error))
+    worker.signals.cancelled.connect(lambda: deliver(tab._on_error, "Scan cancelled; check again to retry."))
+    worker.signals.finished.connect(lambda: tab._workers.remove(worker) if worker in tab._workers else None)
+    tab._workers.append(worker)
+    QThreadPool.globalInstance().start(worker)
 
 
 def _maybe_toast(app, timer: Optional[QElapsedTimer], title: str, message: str) -> None:
@@ -145,7 +178,7 @@ class _AppUpdatesTab(QWidget):
         # log -- a user watching a long winget run had no way to see more
         # than a few lines of it, or to give the log space back to the table
         # once it was done.
-        self._empty_state = EmptyState("\u2713", "All up to date", "No offers were returned by the latest successful scan.", "Check again")
+        self._empty_state = EmptyState('check', "All up to date", "No offers were returned by the latest successful scan.", "Check again")
         self._empty_state.action_triggered.connect(self._do_refresh)
         self._empty_state.hide()
         layout.addWidget(self._empty_state, 1)
@@ -182,6 +215,9 @@ class _AppUpdatesTab(QWidget):
     # ------------------------------------------------------------------
 
     def _do_refresh(self):
+        if getattr(self, "_scan_worker", None) is not None or getattr(self, "_installing", False):
+            return
+        self._empty_state.action_button.setEnabled(False)
         self._empty_state.title_label.setText("Checking for updates")
         self._empty_state.set_variant("loading", progress_text="Reading available updates; no installation is started.")
         self._empty_state.show()
@@ -205,10 +241,7 @@ class _AppUpdatesTab(QWidget):
             return fetch_updates(patterns=patterns)
 
         w = Worker(_fetch)
-        w.signals.result.connect(self._on_updates)
-        w.signals.error.connect(self._on_error)
-        self._workers.append(w)
-        QThreadPool.globalInstance().start(w)
+        _start_scan(self, w)
 
     def _on_updates(self, updates: List[AppUpdate]):
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
@@ -218,8 +251,8 @@ class _AppUpdatesTab(QWidget):
         self._progress.hide()
         self._render_table()
         self._status_lbl.setText(f"{len(updates)} update(s) available.")
-        self._update_sel_btn.setEnabled(len(updates) > 0)
-        self._update_all_btn.setEnabled(len(updates) > 0)
+        self._update_sel_btn.setEnabled(bool(updates) and not getattr(self, "_installing", False))
+        self._update_all_btn.setEnabled(bool(updates) and not getattr(self, "_installing", False))
         if self._updates_listener:
             self._updates_listener(updates)
 
@@ -264,6 +297,8 @@ class _AppUpdatesTab(QWidget):
             self._table.setRowHidden(row, not match)
 
     def _on_error(self, err_str: str):
+        self._installing = False
+        self._empty_state.action_button.setEnabled(True)
         self._empty_state.title_label.setText("Could not check updates")
         self._empty_state.set_variant("error", reason=err_str)
         self._empty_state.show()
@@ -289,8 +324,12 @@ class _AppUpdatesTab(QWidget):
         self._run_updates([u.winget_id for u in self._updates])
 
     def _run_updates(self, ids: List[str]):
+        if getattr(self, "_installing", False) or getattr(self, "_scan_worker", None) is not None:
+            return
         if not ids:
             return
+        self._installing = True
+        self._empty_state.action_button.setEnabled(False)
         self._refresh_btn.setEnabled(False)
         self._update_sel_btn.setEnabled(False)
         self._update_all_btn.setEnabled(False)
@@ -343,6 +382,8 @@ class _AppUpdatesTab(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def _on_update_done(self, outcomes: dict):
+        self._installing = False
+        self._empty_state.action_button.setEnabled(True)
         self._refresh_btn.setEnabled(True)
         self._update_all_btn.setEnabled(True)
         self._progress.hide()
@@ -366,10 +407,7 @@ class _AppUpdatesTab(QWidget):
             return fetch_updates(patterns=patterns)
 
         w = Worker(_fetch)
-        w.signals.result.connect(lambda after: self._on_verify_done(outcomes, after))
-        w.signals.error.connect(self._on_error)
-        self._workers.append(w)
-        QThreadPool.globalInstance().start(w)
+        _start_scan(self, w, lambda after: self._on_verify_done(outcomes, after))
 
     def _on_verify_done(self, outcomes: dict, after_updates: List[AppUpdate]) -> None:
         results = {wid: ("CONFIRMED" if o else o.state) for wid, o in outcomes.items()}
@@ -413,9 +451,8 @@ class _AppUpdatesTab(QWidget):
         self._do_refresh()
 
     def _cancel_all(self) -> None:
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
+        self._scan_worker = None
+        retire(self._workers)
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +538,7 @@ class _WinUpdatesTab(QWidget):
         self._log.setReadOnly(True)
         self._log.setFont(QFont("Consolas", 8))
 
-        self._empty_state = EmptyState("\u2713", "All up to date", "No offers were returned by the latest successful scan.", "Check again")
+        self._empty_state = EmptyState('check', "All up to date", "No offers were returned by the latest successful scan.", "Check again")
         self._empty_state.action_triggered.connect(self._do_refresh)
         self._empty_state.hide()
         layout.addWidget(self._empty_state, 1)
@@ -541,6 +578,9 @@ class _WinUpdatesTab(QWidget):
         return self.app.config.get("updates.blocklist_patterns", []) if self.app else []
 
     def _do_refresh(self):
+        if getattr(self, "_scan_worker", None) is not None or getattr(self, "_installing", False):
+            return
+        self._empty_state.action_button.setEnabled(False)
         self._empty_state.title_label.setText("Checking for updates")
         self._empty_state.set_variant("loading", progress_text="Reading available updates; no installation is started.")
         self._empty_state.show()
@@ -569,10 +609,7 @@ class _WinUpdatesTab(QWidget):
             return {"updates": updates, "held": held}
 
         w = COMWorker(_fetch)
-        w.signals.result.connect(self._on_updates)
-        w.signals.error.connect(self._on_error)
-        self._workers.append(w)
-        QThreadPool.globalInstance().start(w)
+        _start_scan(self, w)
 
     def _on_updates(self, payload) -> None:
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
@@ -584,7 +621,7 @@ class _WinUpdatesTab(QWidget):
         self._progress.hide()
         self._render_table()
         self._status_lbl.setText(wu_status_text(updates, held))
-        self._install_btn.setEnabled(any(not u.pending_restart for u in updates))
+        self._install_btn.setEnabled(any(not u.pending_restart for u in updates) and not getattr(self, "_installing", False))
         try:
             self._reboot_banner.setVisible(is_reboot_pending())
         except Exception:
@@ -642,6 +679,8 @@ class _WinUpdatesTab(QWidget):
                 self._table.setItem(row, col, item)
 
     def _on_error(self, err_str: str):
+        self._installing = False
+        self._empty_state.action_button.setEnabled(True)
         self._empty_state.title_label.setText("Could not check updates")
         self._empty_state.set_variant("error", reason=err_str)
         self._empty_state.show()
@@ -654,6 +693,8 @@ class _WinUpdatesTab(QWidget):
         self._status_lbl.setText(f"Error: {err_str}")
 
     def _do_install(self):
+        if getattr(self, "_installing", False) or getattr(self, "_scan_worker", None) is not None:
+            return
         selected_rows = {i.row() for i in self._table.selectedIndexes()}
         if not selected_rows:
             return
@@ -673,6 +714,8 @@ class _WinUpdatesTab(QWidget):
         self._refresh_btn.setEnabled(False)
         self._install_btn.setEnabled(False)
         self._log.clear()
+        self._installing = True
+        self._empty_state.action_button.setEnabled(False)
         for warning in warnings:
             self._log.appendPlainText(warning)
         self._progress.setRange(0, len(selected))
@@ -714,6 +757,8 @@ class _WinUpdatesTab(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def _on_install_done(self, results: List[InstallResult]):
+        self._installing = False
+        self._empty_state.action_button.setEnabled(True)
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         installed = sum(1 for r in results if r.success)
@@ -754,10 +799,7 @@ class _WinUpdatesTab(QWidget):
             return {"updates": updates, "held": held}
 
         w = COMWorker(_fetch)
-        w.signals.result.connect(lambda after: self._on_verify_done(results, after))
-        w.signals.error.connect(self._on_error)
-        self._workers.append(w)
-        QThreadPool.globalInstance().start(w)
+        _start_scan(self, w, lambda after: self._on_verify_done(results, after))
 
     def _on_verify_done(self, results: List[InstallResult], payload) -> None:
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
@@ -882,9 +924,8 @@ class _WinUpdatesTab(QWidget):
             self._error_banner.set_error(f"Could not open Settings: {e}")
 
     def _cancel_all(self) -> None:
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
+        self._scan_worker = None
+        retire(self._workers)
 
 
 # ---------------------------------------------------------------------------
@@ -1339,6 +1380,35 @@ class UpdatesModule(BaseModule):
         return root
 
     def _refresh_overview_health(self):
+        if getattr(self, "_health_worker", None) is not None or not hasattr(self, "_overview"):
+            return
+        worker = Worker(self._read_overview_health)
+        self._health_worker = worker
+
+        def received(result):
+            if _widget_valid(self._overview) and self._health_worker is worker:
+                self._overview.set_health(*result)
+
+        def failed(message):
+            logger.warning("Update overview health read failed: %s", message)
+            if _widget_valid(self._overview) and self._health_worker is worker:
+                for key in ("task", "last", "restart"):
+                    self._overview.tiles_by_key[key].set_unreadable(str(message))
+
+        def finished():
+            if self._health_worker is worker:
+                self._health_worker = None
+
+        worker.signals.result.connect(received)
+        worker.signals.error.connect(failed)
+        worker.signals.finished.connect(finished)
+        self._workers.append(worker)
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
+        pool = getattr(self.app, "thread_pool", None) or self.thread_pool
+        pool.start(worker)
+
+    @staticmethod
+    def _read_overview_health(worker):
         from .task_health import check_task_health
         health = check_task_health(UNATTENDED_TASK_NAME)
         reason = ""
@@ -1350,7 +1420,7 @@ class UpdatesModule(BaseModule):
         except Exception as exc:
             logger.warning("Could not read pending restart: %s", exc)
             restart, reason = None, str(exc)
-        self._overview.set_health(health, restart, reason)
+        return health, restart, reason
 
     def _on_app_updates(self, updates: List[AppUpdate]) -> None:
         if self._store_tab is not None:

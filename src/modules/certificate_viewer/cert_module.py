@@ -5,6 +5,7 @@ from modules.certificate_viewer.help_widgets import (
 import datetime
 import os
 from typing import List, Optional
+from PyQt6 import sip
 
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -20,7 +21,7 @@ from ui.chip_bar import ChipBar
 from ui.table_style import apply_table_style
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
-from core.worker import Worker
+from core.worker import Worker, retire
 from core.table_ui import centered_item, center_header, set_role
 from modules.certificate_viewer import cert_findings as cf
 from modules.certificate_viewer.cert_reader import CertInfo, fetch_certs
@@ -110,7 +111,7 @@ class _CertTab(QWidget):
         self._progress.hide()
         layout.addWidget(self._progress)
 
-        self._empty_state = EmptyState("\u25cb", "No certificates to display", "This store is empty or no certificates match the current filter.", "Refresh store")
+        self._empty_state = EmptyState('shield', "No certificates to display", "This store is empty or no certificates match the current filter.", "Refresh store")
         self._empty_state.action_triggered.connect(self._load)
         self._empty_state.hide()
         layout.addWidget(self._empty_state, 1)
@@ -151,9 +152,12 @@ class _CertTab(QWidget):
             self._load()
 
     def _load(self):
+        if self._worker is not None:
+            return
         self._attempted = True
         self._stop()
         self._refresh_btn.setEnabled(False)
+        self._empty_state.action_button.setEnabled(False)
         self._status.setText("Loading certificates…")
         self._progress.show()
         self._empty_state.set_variant("loading", progress_text="Reading this certificate store...")
@@ -163,20 +167,32 @@ class _CertTab(QWidget):
 
         self._worker = Worker(
             lambda _w: fetch_certs(self._store_name, self._store_location))
-        self._worker.signals.result.connect(self._on_result)
-        self._worker.signals.error.connect(self._on_error)
-        self._worker.signals.finished.connect(self._on_finished)
+        worker = self._worker
+        worker.signals.result.connect(lambda rows: self._deliver(worker, self._on_result, rows))
+        worker.signals.error.connect(lambda error: self._deliver(worker, self._on_error, error))
+        worker.signals.finished.connect(lambda: self._deliver(worker, self._on_finished))
         self._thread_pool.start(self._worker)
 
     def _stop(self):
         if self._worker is not None:
-            self._worker.cancel()
+            retire([self._worker])  # held until its finished is delivered
             self._worker = None
+            self._attempted = False
+            if not sip.isdeleted(self):
+                self._refresh_btn.setEnabled(True)
+                self._empty_state.action_button.setEnabled(True)
+                self._progress.hide()
+                self._empty_state.set_variant("empty", reason="Read cancelled. Refresh to try again.")
 
     def _on_finished(self):
         self._refresh_btn.setEnabled(True)
+        self._empty_state.action_button.setEnabled(True)
         self._progress.hide()
         self._worker = None
+
+    def _deliver(self, worker, callback, *args):
+        if not sip.isdeleted(self) and self._worker is worker:
+            callback(*args)
 
     # ── display ───────────────────────────────────────────────────────────
 
@@ -257,7 +273,6 @@ class _CertTab(QWidget):
         self._empty_state.set_variant("error", reason=err_str)
         self._empty_state.show()
         self._table.hide()
-        self._worker = None
 
     def _on_selection_changed(self):
         has_sel = bool(self._table.selectedItems())

@@ -35,7 +35,7 @@ class SearchView:
         self._results_stack = QStackedWidget()
         self._table = self._build_table()
         self._results_stack.addWidget(self._table)
-        self._empty = EmptyState('🔎', 'No results yet', 'Search a folder such as %TEMP%; add a name to narrow the search.')
+        self._empty = EmptyState('search', 'No results yet', 'Search a folder such as %TEMP%; add a name to narrow the search.')
         self._results_stack.addWidget(self._empty)
         self._results_stack.setCurrentIndex(1)
         splitter.addWidget(self._results_stack)

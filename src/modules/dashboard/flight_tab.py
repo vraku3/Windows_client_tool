@@ -388,7 +388,7 @@ class FlightTab(DashTab):
             ("state", "Recording state", "Manual recording status. A recording continues while you visit another tab."),
             ("samples", "Samples", "Number of samples in the currently open trace."),
             ("duration", "Recorded duration", "Elapsed time between the first and last trace samples.")])
-        self._empty = EmptyState("REC", "Capture the moment a slowdown happens",
+        self._empty = EmptyState('record', "Capture the moment a slowdown happens",
             "Record CPU, memory, disk and GPU activity, then scrub the timeline to see which processes were busy. Or open a saved trace.",
             "Start recording", parent=self)
         self._empty.action_triggered.connect(lambda: self._rec_btn.setChecked(True))

@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 COLUMNS = ["Device Name", "Class", "Version", "Date", "Publisher", "Provider", "Signed", "Status", "Update Status"]
 
-FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "Old"]
+FLAG_FILTER_OPTIONS = ["All", "Signed only", "Unsigned only", "Has error", "No driver installed", "Old"]
 
 # A machine with default scheduled checkpoints can have dozens of restore
 # points; the System Restore Points QMessageBox caps its DISPLAY at this
@@ -282,7 +282,7 @@ class DriverModule(BaseModule):
         self._table_stack = QStackedWidget()
         self._table_stack.addWidget(self._table)
         self._empty = EmptyState(
-            "↻", "Driver inventory", "Driver inventory loads automatically when this pane opens.", "Refresh")
+            'refresh', "Driver inventory", "Driver inventory loads automatically when this pane opens.", "Refresh")
         self._empty.action_triggered.connect(self._do_refresh)
         self._table_stack.addWidget(self._empty)
         layout.addWidget(self._table_stack, 1)
@@ -496,7 +496,8 @@ class DriverModule(BaseModule):
             and not (hide_pseudo and d.driver_class in _PSEUDO_CLASSES)
             and (flag == "All"
                  or (flag == "Signed only" and d.signed)
-                 or (flag == "Unsigned only" and not d.signed)
+                 or (flag == "Unsigned only" and not d.signed and "No driver installed" not in d.flags)
+                 or (flag == "No driver installed" and "No driver installed" in d.flags)
                  or (flag == "Has error" and d.error_code != 0)
                  or (flag == "Old" and "Old" in d.flags))
         ]
@@ -682,8 +683,9 @@ class DriverModule(BaseModule):
 
     def _build_glance(self, layout):
         specs = [("Problem devices", "Has error", "Windows-reported device error codes."),
-                 ("Old OEM drivers", "Old", "OEM driver packages flagged as over two years old; age alone is not a fault."),
                  ("Unsigned", "Unsigned only", "Devices whose signature metadata reports unsigned."),
+                 ("No driver installed", "No driver installed", "Devices Windows found without an installed driver."),
+                 ("Old OEM drivers", "Old", "OEM driver packages flagged as over two years old; age alone is not a fault."),
                  ("Held AMD", None, HELD_REASON)]
         tiles = []
         for caption, flag, tip in specs:
@@ -703,8 +705,10 @@ class DriverModule(BaseModule):
     def _update_glance(self, drivers, reason=""):
         values = None if drivers is None else (
             sum(d.error_code != 0 for d in drivers),
+            sum(not d.signed and "No driver installed" not in d.flags for d in drivers),
+            sum("No driver installed" in d.flags for d in drivers),
             sum("Old" in d.flags and bool(published_name_for(d.inf_name)) for d in drivers),
-            sum(not d.signed for d in drivers), sum(is_held_driver(d) for d in drivers))
+            sum(is_held_driver(d) for d in drivers))
         for index, tile in enumerate(self._glance.tiles):
             value = None if values is None else values[index]
             tile.set(value, sub="Inventory devices", reason=reason,

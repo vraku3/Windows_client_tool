@@ -79,4 +79,5 @@ class ReliabilityModule(LogReaderModule):
         )
         self._metrics = metrics or []
         self._problems = problems
-        return entries
+        from core.types import LogReadResult
+        return LogReadResult(entries, problems)

@@ -421,7 +421,7 @@ class ServicesModule(BaseModule):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
         self._table_stack.addWidget(self._table)
-        empty_lbl = EmptyState("○", "No services match", "Clear the inventory filters to see all services.")
+        empty_lbl = EmptyState('search', "No services match", "Clear the inventory filters to see all services.")
         self._table_stack.addWidget(empty_lbl)
         layout.addWidget(self._table_stack)
 

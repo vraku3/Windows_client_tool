@@ -439,7 +439,7 @@ class StoreAppsModule(BaseModule):
         self._table_stack.addWidget(self._table)
 
         self._empty = EmptyState(
-            "📦", "No apps loaded",
+            'log', "No apps loaded",
             "Click Refresh to list installed Store apps.",
             "Refresh",
         )
@@ -678,7 +678,7 @@ class StoreAppsModule(BaseModule):
         )
 
         if not apps and not provisioned_only:
-            self._set_empty("📦", "No Store apps found",
+            self._set_empty('folder', "No Store apps found",
                             "Nothing to show for this machine. Click Refresh to scan again.")
             return
 
@@ -789,7 +789,7 @@ class StoreAppsModule(BaseModule):
         self._progress.setVisible(False)
         self._load_error = str(err)
         logger.error("Store Apps scan error: %s", err)
-        self._set_empty("⚠️", "Scan failed", str(err))
+        self._set_empty('error', "Scan failed", str(err))
 
     def _set_empty(self, glyph: str, title: str, hint: str) -> None:
         old = self._table_stack.widget(1)

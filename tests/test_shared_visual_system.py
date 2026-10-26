@@ -132,7 +132,7 @@ def test_chip_counts_selection_and_keyboard_focus(qapp, exclusive):
 
 
 def test_empty_loading_error_and_action(qapp):
-    state = EmptyState("!", "No data", "Read the source.", "Retry")
+    state = EmptyState("warning", "No data", "Read the source.", "Retry")
     actions = []
     state.action_triggered.connect(lambda: actions.append(True))
     state.action_button.click()

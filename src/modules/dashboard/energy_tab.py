@@ -39,7 +39,7 @@ class EnergyTab(DashTab):
             ("package", "Package power", "Measured package power from the CPU energy meter; never inferred from core power."),
             ("cores", "Core power", "Sum of measured per-core power readings."),
             ("energy", "Energy this session", "Energy accumulated while the meter is open, in watt-hours.")])
-        self._empty = EmptyState("W", "Waiting for the energy meter",
+        self._empty = EmptyState('power', "Waiting for the energy meter",
             "Open this pane to collect two energy-counter samples. Unsupported hardware cannot provide power readings.",
             parent=self, variant="loading")
         layout.addWidget(self._empty)

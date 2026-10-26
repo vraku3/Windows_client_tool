@@ -620,7 +620,7 @@ class LogViewerWidget(QWidget):
     def _build_empty_state(self, layout) -> None:
         self._content_stack = QStackedWidget(self)
         self._content_stack.addWidget(self.splitter)
-        self._empty = EmptyState("\u2261", "Open a log to start investigating",
+        self._empty = EmptyState('log', "Open a log to start investigating",
                                  "Open a log, reopen a recent file, or drop a file or folder here. CMTrace, plain text, CAB and ZIP bundles are supported.",
                                  "Open log...")
         self._empty.action_triggered.connect(self.choose_file)

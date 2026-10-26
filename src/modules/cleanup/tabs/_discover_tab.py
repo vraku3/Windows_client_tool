@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 from core.long_op_pool import get_long_op_pool
 from core.table_ui import NumericSortItem, set_role
 from core.widget_life import widget_is_valid
-from core.worker import Worker
+from core.worker import Worker, retire
 from modules.cleanup.cleanup_scanner import format_size
 from modules.cleanup.cleanup_scanner import discover as _discover
 from modules.cleanup.cleanup_scanner._common import ScanItem
@@ -602,7 +602,7 @@ class _DiscoverTab(QWidget):
 
     def _cancel_all(self):
         if self._worker is not None:
-            self._worker.cancel()
+            retire([self._worker])  # held until its finished is delivered
             self._worker = None
             if widget_is_valid(self):
                 self._set_busy(False)

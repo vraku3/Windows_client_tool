@@ -310,7 +310,7 @@ class SystemReportModule(BaseModule):
             content.addWidget(text)
             grid.addWidget(card, index // 2, index % 2)
         cards.addLayout(grid)
-        self._report_empty = EmptyState("\u25a4", "Build a system report", "Collection takes about ten seconds. Each section reports its own read failures.", "Generate report")
+        self._report_empty = EmptyState('log', "Build a system report", "Collection takes about ten seconds. Each section reports its own read failures.", "Generate report")
         self._report_empty.action_triggered.connect(self._do_generate)
         cards.addWidget(self._report_empty)
         layout.addWidget(self._report_start, 1)

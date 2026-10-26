@@ -521,7 +521,7 @@ def test_each_screen_invalidates_before_requesting_fresh_facts(monkeypatch, scre
         'store': lambda: StoreAppsModule._load_apps(owner),
         'tweaks-appx': lambda: AppManagerTab.populate_installed(owner, set()),
         'tweaks-desktop': lambda: AppManagerTab.populate_installed_desktop(owner, []),
-        'updates': lambda: _AppUpdatesTab._do_refresh(MagicMock(_busy=False, _widget=object())),
+        'updates': lambda: _AppUpdatesTab._do_refresh(MagicMock(_busy=False, _widget=object(), _scan_worker=None, _installing=False)),
         'optimise': lambda: OptimiseTab.refresh(owner),
     }
     with pytest.raises(ReachedInvalidation):

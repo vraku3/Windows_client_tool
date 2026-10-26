@@ -79,7 +79,7 @@ class DiskSpaceTab(DashTab):
         self._folders.customContextMenuRequested.connect(self._show_folder_menu)
         apply_table_style(self._vol, numeric_columns=(2, 3, 4, 5))
         apply_table_style(self._folders, numeric_columns=(1, 2))
-        self._empty = EmptyState("Disk", "Find what fills a drive",
+        self._empty = EmptyState('drive', "Find what fills a drive",
             "Drive usage loads automatically. Select a drive, then start a read-only folder scan; large drives can take time.",
             "Find biggest folders", parent=self)
         self._empty.action_triggered.connect(self._scan)

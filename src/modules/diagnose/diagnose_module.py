@@ -22,7 +22,7 @@ from core.composite_module import CompositeModule
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchQuery, SearchResult
 from core.types import LogEntry
-from core.worker import Worker
+from core.worker import Worker, retire
 from ui.event_detail_dialog import EventDetailDialog
 from modules.diagnose.help_ui import explain
 from modules.diagnose.help_text import INTRO, CONTROLS, HEADERS, READERS
@@ -185,7 +185,7 @@ class DiagnoseModule(CompositeModule):
         if self._search_timer:
             self._search_timer.stop()
         if self._active_search:
-            self._active_search.cancel()
+            retire([self._active_search])  # held until its finished is delivered
             self._active_search = None
 
         if self._search_input:
@@ -286,6 +286,6 @@ class DiagnoseModule(CompositeModule):
 
     def on_stop(self) -> None:
         if self._active_search is not None:
-            self._active_search.cancel()
+            retire([self._active_search])  # held until its finished is delivered
             self._active_search = None
         super().on_stop()

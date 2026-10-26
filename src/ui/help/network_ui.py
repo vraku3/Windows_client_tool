@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-from ui.module_intro import module_intro, add_module_intro
+from ui.module_intro import add_module_intro
 from ui.help.network_text import (
     APIPA, BAND, BUTTON_HELP, CARDS, CONTROL_HELP, DNS, FIX_HELP, HEADERS,
     HOSTS, INTRO, MTU, QUICK_HELP, READ_ONLY, RDP, SMB, WIFI, WINRM, CONTEXT_HEADERS,
@@ -69,7 +69,7 @@ def table_page(table, key):
     """An intro above a table used directly as a tab, preserving the table itself."""
     page = QWidget()
     layout = QVBoxLayout(page)
-    layout.addWidget(module_intro(INTRO[key]))
+    add_module_intro(page, INTRO[key])
     layout.addWidget(table)
     return page
 
@@ -107,7 +107,8 @@ def explain_tabs(tabs, context):
         text = INTRO.get(key, INTRO.get(context, READ_ONLY))
         previous = tabs.tabToolTip(index)
         tabs.setTabToolTip(index, previous + "\n" + text if previous else text)
-        explain(tabs.widget(index), key)
+        add_module_intro(tabs.widget(index), text, hosting_page=True)
+        explain(tabs.widget(index), key, intro=False)
     return explain(tabs, context, intro=False)
 
 

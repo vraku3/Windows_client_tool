@@ -32,6 +32,7 @@ class DashTab(QWidget):
         self._workers: list = []
         self._app = None
         self._busy = False
+        self._read_worker = None
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.refresh)
 
@@ -52,6 +53,7 @@ class DashTab(QWidget):
         self.cancel_all()
 
     def cancel_all(self) -> None:
+        self._read_worker = None
         retire(self._workers)
         self._busy = False
 
@@ -70,17 +72,18 @@ class DashTab(QWidget):
                 (on_error or self._default_error)(str(e))
             return
         worker = (COMWorker if com else Worker)(fn)
+        self._read_worker = worker
         def received(result):
-            if not sip.isdeleted(self):
+            if not sip.isdeleted(self) and self._read_worker is worker:
                 on_result(result)
 
         def failed(message):
-            if not sip.isdeleted(self):
+            if not sip.isdeleted(self) and self._read_worker is worker:
                 (on_error or self._default_error)(message)
 
         worker.signals.result.connect(received)
         worker.signals.error.connect(failed)
-        worker.signals.cancelled.connect(self._read_cancelled)
+        worker.signals.cancelled.connect(lambda: self._read_cancelled() if not sip.isdeleted(self) and self._read_worker is worker else None)
         worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         self._workers.append(worker)
         pool.start(worker)

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QWidget
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
+from core.types import LogReadResult
 from ui.log_pane import LogPane
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class LogReaderModule(BaseModule):
 
     # -- BaseModule ------------------------------------------------------
     def create_widget(self) -> QWidget:
-        self._pane = LogPane(loader=self.load_entries,
+        self._pane = LogPane(loader=self._read_entries,
                              extra_controls=self.build_controls,
                              **self.pane_options())
         from modules.diagnose.help_ui import explain
@@ -67,6 +68,10 @@ class LogReaderModule(BaseModule):
         if self._activated_slot is not None:
             self._pane.entry_activated.connect(self._activated_slot)
         return self._pane
+
+    def _read_entries(self, worker):
+        result = self.load_entries(worker)
+        return result if isinstance(result, LogReadResult) else LogReadResult(list(result or []))
 
     def connect_activated(self, slot: Callable) -> None:
         """Hook a double-clicked row.

@@ -13,6 +13,13 @@ class LogEntry:
 
 
 @dataclass
+class LogReadResult:
+    """Records and read limits travel together, including an unavailable empty read."""
+    entries: List[LogEntry] = field(default_factory=list)
+    problems: List[str] = field(default_factory=list)
+
+
+@dataclass
 class ProcessInfo:
     pid: int
     name: str

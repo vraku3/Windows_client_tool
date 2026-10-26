@@ -134,7 +134,7 @@ class HostsEditorModule(BaseModule):
         self._table.itemChanged.connect(self._on_item_changed)
         self._content = QStackedWidget()
         self._content.addWidget(self._table)
-        self._empty = EmptyState('🌐', 'No overrides',
+        self._empty = EmptyState('network', 'No overrides',
                                  'Windows will resolve names normally. Add an entry to prepare a local override.', 'Add Entry')
         self._empty.action_triggered.connect(self._add_entry)
         self._content.addWidget(self._empty)

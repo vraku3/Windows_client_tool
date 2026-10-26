@@ -3,7 +3,7 @@ import hashlib
 import logging
 import re
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QToolButton, QHBoxLayout, QVBoxLayout, QGridLayout, QWidget, QScrollArea, QSizePolicy
+from PyQt6.QtWidgets import QLabel, QToolButton, QHBoxLayout, QVBoxLayout, QGridLayout, QWidget, QScrollArea, QSizePolicy, QTabWidget, QStackedWidget
 
 INTRO_NAME = "moduleIntro"
 
@@ -68,28 +68,36 @@ def module_intro(text: str, parent=None, *, summary=None, config=None, key=None)
     return ModuleIntro(text, parent, summary=summary, config=config, key=key)
 
 
-def _layout_intro(layout):
+def _layout_intro(layout, through_wrappers=False):
     """Search nested layouts, never descend into another pane's widgets."""
     for index in range(layout.count()):
         item = layout.itemAt(index)
         widget = item.widget()
         if isinstance(widget, ModuleIntro) or (isinstance(widget, QLabel) and widget.objectName() == INTRO_NAME):
             return widget
+        # Wrappers and scroll areas are the same hosting level; tabs and
+        # stacks own independent panes and must keep their own introductions.
+        if through_wrappers and widget is not None and not isinstance(widget, (QTabWidget, QStackedWidget, ModuleIntro)):
+            content = widget.widget() if isinstance(widget, QScrollArea) else widget
+            if content is not None and content.layout() is not None:
+                found = _layout_intro(content.layout(), True)
+                if found is not None:
+                    return found
         if item.layout() is not None:
-            found = _layout_intro(item.layout())
+            found = _layout_intro(item.layout(), through_wrappers)
             if found is not None:
                 return found
     return None
 
 
-def add_module_intro(target, text, **kwargs):
+def add_module_intro(target, text, *, hosting_page=False, **kwargs):
     """Insert at most one intro into this pane; child tabs remain independent."""
     if isinstance(target, QScrollArea):
         target = target.widget()
     layout = target.layout() if target is not None else None
-    if layout is None:
+    if layout is None or (hosting_page and layout.count() == 0):
         return None
-    existing = _layout_intro(layout)
+    existing = _layout_intro(layout, hosting_page)
     if existing is not None:
         return existing
     intro = module_intro(text, target, **kwargs)

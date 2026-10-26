@@ -11,6 +11,7 @@ import logging
 import os
 
 from core.log_reader_module import LogReaderModule
+from core.types import LogReadResult
 from core.windows_utils import program_files, system_root
 
 from modules.cbs_log.cbs_parser import CBSParser
@@ -55,7 +56,7 @@ class CBSLogModule(LogReaderModule):
 
             if not cab_files:
                 logger.warning("No CBS cab files found in %s", cab_dir)
-                return []
+                return LogReadResult(problems=[f"CBS.log is unavailable and no CBS CAB archives were readable in {cab_dir}"])
 
             cab_files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
             latest_cab = cab_files[0]
@@ -81,7 +82,7 @@ class CBSLogModule(LogReaderModule):
             if os.path.exists(log_path):
                 parser = CBSParser(log_path)
                 worker.signals.progress.emit(50)
-                entries = parser.parse(
+                entries = parser.parse_result(
                     progress_callback=lambda p: worker.signals.progress.emit(50 + p // 2)
                 )
                 # Clean up temp file
@@ -93,9 +94,9 @@ class CBSLogModule(LogReaderModule):
                 return entries
             else:
                 logger.warning("Could not extract CBS log from cab: %s", latest_cab)
-                return []
+                return LogReadResult(problems=[f"Could not extract CBS records from {latest_cab}; check 7-Zip availability and archive access"])
 
         parser = CBSParser(CBS_LOG_PATH)
-        return parser.parse(
+        return parser.parse_result(
             progress_callback=lambda p: worker.signals.progress.emit(p)
         )

@@ -11,8 +11,8 @@ def key(text):
     return text.replace('&&', '&').replace('&', '').strip().split('\t')[0].lstrip('🔄💾⌨⛭☑☐🗑️✕⚡🧹📦 ').strip()
 
 
-def add_intro(root, text):
-    add_module_intro(root, text)
+def add_intro(root, text, *, hosting_page=False):
+    add_module_intro(root, text, hosting_page=hosting_page)
 
 
 def action_help(action, controls):
@@ -40,7 +40,7 @@ def explain(root, controls=None, headers=None, panes=None, intro=None):
                 text = panes.get(name)
                 if text:
                     widget.setTabToolTip(index, text)
-                    add_intro(widget.widget(index), text)
+                    add_intro(widget.widget(index), text, hosting_page=True)
         if isinstance(widget, QTabBar):
             for index in range(widget.count()):
                 if not widget.tabToolTip(index):

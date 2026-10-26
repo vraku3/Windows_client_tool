@@ -163,7 +163,7 @@ class TasksModule(BaseModule):
         right = QWidget()
         lay = QVBoxLayout(right)
         lay.setContentsMargins(0, 0, 0, 0)
-        self._chip_bar = ChipBar([(key, key, 0) for key in task_view.FILTERS])
+        self._chip_bar = ChipBar([(key, label, 0) for key, label, _predicate in task_view.FILTERS])
         self._chips = self._chip_bar.chips
         self._chip_bar.selection_changed.connect(lambda keys: self._pick_filter(keys[0]) if keys else None)
         lay.addWidget(self._chip_bar)

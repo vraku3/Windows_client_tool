@@ -301,9 +301,9 @@ def component_module():
             table.horizontalHeader().setStretchLastSection(True)
             layout.addWidget(table)
             states = QHBoxLayout()
-            states.addWidget(EmptyState("○", "No matching results", "Clear the filter to see all results.", "Clear filter"))
-            states.addWidget(EmptyState("↻", "Reading status", "Checking available sources.", variant="loading"))
-            states.addWidget(EmptyState("!", "Could not read", "Try the check again.", "Retry", variant="error", reason="Access to this source was denied.", last_checked="Last checked just now"))
+            states.addWidget(EmptyState("search", "No matching results", "Clear the filter to see all results.", "Clear filter"))
+            states.addWidget(EmptyState("refresh", "Reading status", "Checking available sources.", variant="loading"))
+            states.addWidget(EmptyState("warning", "Could not read", "Try the check again.", "Retry", variant="error", reason="Access to this source was denied.", last_checked="Last checked just now"))
             layout.addLayout(states)
             return root
 

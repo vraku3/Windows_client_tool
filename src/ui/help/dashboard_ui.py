@@ -67,9 +67,14 @@ def explain_menu(menu):
             explain_menu(action.menu())
 
 
-def _intro(root, pane):
+def _intro(root, pane, *, hosting_page=False):
+    # Empty tab pages belong to CompositeModule's lazy host. The child
+    # supplies its introduction when built; decorating the placeholder too
+    # would put two introductions above the same pane.
+    if root.layout() is None or root.layout().count() == 0:
+        return
     if pane in INTRO:
-        add_module_intro(root, INTRO[pane])
+        add_module_intro(root, INTRO[pane], hosting_page=hosting_page)
 
 
 def _combo_help(widget, pane):
@@ -170,7 +175,7 @@ def apply_help(root, pane):
                 name = contexts[widget.widget(index)]
                 if not widget.tabToolTip(index):
                     widget.setTabToolTip(index, INTRO.get(name, HEADERS.get(name, "")))
-                _intro(widget.widget(index), name)
+                _intro(widget.widget(index), name, hosting_page=True)
     # Toolbar buttons are Qt-created proxies for actions; share the action help.
     for button in root.findChildren(QAbstractButton):
         if button.toolTip() in ("Kill", "Suspend", "System Information", "Find Handle or DLL"):

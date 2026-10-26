@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.table_ui import set_role
+from core.types import LogReadResult
 from core.worker import Worker, retire, track
 from ui.chip_bar import ChipBar
 from ui.empty_state import EmptyState
@@ -75,6 +76,7 @@ class LogPane(QWidget):
         self._summarizer = summarizer
         self._healthy_empty = healthy_empty
         self._read_problems = read_problems
+        self._result_problems = []
         self._empty_text = empty_text
         self.extra: dict = {}
         self.loaded = False
@@ -152,7 +154,7 @@ class LogPane(QWidget):
 
         self._stack = QStackedWidget()
         self._stack.addWidget(splitter)
-        self._empty = EmptyState("\u2261", "Ready to read this source",
+        self._empty = EmptyState('log', "Ready to read this source",
                                  "Read-only records load when this tab opens. Refresh to try again.",
                                  "Refresh")
         self._empty.action_triggered.connect(lambda: self.load(force=True))
@@ -166,8 +168,8 @@ class LogPane(QWidget):
     def _build_glance(self, root, extra_tiles) -> None:
         self._glance_tiles = {}
         for key, caption in (("critical", "Critical"), ("error", "Errors"),
-                             ("warning", "Warnings"), ("sources", "Top sources"),
-                             ("newest", "Newest problem")):
+                             ("warning", "Warnings"), ("sources", "Problem sources"),
+                             ("newest", "Newest problem"), ("window", "Loaded timestamps")):
             tile = GlanceTile(caption, tooltip=f"{caption} within the loaded window, before filters. This is not the complete Windows history.")
             tile.set_unreadable("Not read yet")
             tile.setMinimumHeight(128)
@@ -199,7 +201,18 @@ class LogPane(QWidget):
     def _update_glance(self) -> None:
         self._chips.setEnabled(True)
         counts = Counter(e.level.lower() for e in self._source)
-        self._chips.set_counts({"all": len(self._source), **counts})
+        self._chips.set_counts({"all": len(self._source), **{key: counts[key] for key in ("critical", "error", "warning")}})
+        limits = self._problems()
+        if limits:
+            self._unknown_glance("; ".join(limits))
+            return
+        dated = [e.timestamp for e in self._source if e.timestamp.year >= 2000]
+        self._glance_tiles["window"].set(
+            f"{min(dated):%Y-%m-%d}" if dated else None,
+            f"Oldest: {min(dated):%H:%M}\nNewest: {max(dated):%Y-%m-%d %H:%M}" if dated else "",
+            tooltip=(f"Oldest: {min(dated):%Y-%m-%d %H:%M:%S}\nNewest: {max(dated):%Y-%m-%d %H:%M:%S}\nBefore filters."
+                     if dated else "No usable loaded timestamps"),
+            reason="No usable loaded timestamps")
         for key, role in (("critical", "danger"), ("error", "danger"), ("warning", "warning")):
             self._glance_tiles[key].set(f"{counts[key]:,}", "In loaded window",
                                         severity=role if counts[key] else "ok")
@@ -210,6 +223,14 @@ class LogPane(QWidget):
             "\n".join(f"{name[:28]} ({count:,})" for name, count in sources) or "No loaded records",
             tooltip=f"Top three sources by record count in the loaded window:\n{text}\nSelect to clear the severity filter.")
         problems = [e for e in self._source if e.level.lower() in ("critical", "error", "warning")]
+        ranked = Counter(e.source or "Unknown source" for e in problems).most_common(3)
+        self._glance_tiles["sources"].set(
+            f"{len(set(e.source for e in problems)):,}",
+            "\n".join(f"{name[:28]} ({count:,})" for name, count in ranked) or "No loaded problems")
+        self._glance_tiles["sources"].set_tooltip(
+            "Problem sources (critical, errors and warnings):\n"
+            + ("\n".join(f"{name} ({count:,})" for name, count in ranked) or "None")
+            + "\nAll sources:\n" + text + "\nSelect to clear the severity filter.")
         tile = self._glance_tiles["newest"]
         if not problems:
             tile.set("None", "In loaded window", severity="ok")
@@ -281,7 +302,10 @@ class LogPane(QWidget):
     def _on_result(self, entries) -> None:
         self._worker = None
         self.loaded = True
-        self.set_entries(entries or [])
+        if isinstance(entries, LogReadResult):
+            self.set_entries(entries.entries, problems=entries.problems)
+        else:
+            self.set_entries(entries or [])
         self._update_note()
         self.entries_loaded.emit(self._source)
 
@@ -290,17 +314,18 @@ class LogPane(QWidget):
         self.show_error(str(error_info))
 
     # -- content ---------------------------------------------------------
-    def set_entries(self, entries) -> None:
+    def set_entries(self, entries, *, problems=()) -> None:
         if sip.isdeleted(self):
             return
         self._source = list(entries or [])
+        self._result_problems = list(problems)
         self._progress.setVisible(False)
         self._update_glance()
         self._update_empty()
         self.refresh_view()
 
     def _update_empty(self) -> None:
-        problems = self._read_problems() if self._read_problems else []
+        problems = self._problems()
         title = "No records in this window"
         hint = self._empty_text
         role = "muted"
@@ -319,6 +344,9 @@ class LogPane(QWidget):
         self._empty.title_label.setText(title)
         self._empty.set_variant("empty", reason=hint)
         set_role(self._empty.title_label, role)
+
+    def _problems(self):
+        return [*self._result_problems, *(self._read_problems() if self._read_problems else [])]
 
     def refresh_view(self) -> None:
         """Re-derive what the table shows from everything that was loaded."""

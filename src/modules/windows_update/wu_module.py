@@ -37,6 +37,6 @@ class WindowsUpdateModule(LogReaderModule):
         if not parser.file_exists():
             # A log that is not there is a different answer from an empty one.
             raise FileNotFoundError(f"{WU_LOG_PATH} does not exist on this machine")
-        return parser.parse(
+        return parser.parse_result(
             progress_callback=lambda p: worker.signals.progress.emit(p)
         )

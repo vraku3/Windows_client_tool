@@ -164,6 +164,18 @@ def _disable_feature(name: str, output_cb, is_cancelled: Callable[[], bool] = la
 from modules.diagnose.help_ui import explain
 from modules.windows_features.help_text import INTRO, CONTROLS, HEADERS, TABS
 
+
+def _feature_group(state):
+    normalized = str(state or "").replace(" ", "").casefold()
+    if normalized == "enabled":
+        return "Enabled"
+    if normalized in ("disabled", "disabledwithpayloadremoved"):
+        return "Disabled"
+    if normalized in ("enablepending", "disablepending"):
+        return "Pending restart"
+    return "Unknown / unreadable"
+
+
 class WindowsFeaturesModule(BaseModule):
     name = "Windows Features"
     icon = "🧩"
@@ -181,22 +193,22 @@ class WindowsFeaturesModule(BaseModule):
         self._glance = GlanceStrip([GlanceTile(name, tooltip=tip) for name, tip in (
             ("Enabled", "Optional features whose DISM state is Enabled."),
             ("Disabled", "Disabled features, including those with payload removed."),
-            ("Pending restart", "Features whose enable or disable operation is pending a restart."))])
+            ("Pending restart", "Features whose enable or disable operation is pending a restart."),
+            ("Unknown / unreadable", "Features with an unrecognized state; a failed read leaves all counts unknown."))])
         layout.addWidget(self._glance)
         self._update_glance(None, "Features have not been read")
-        self._empty = EmptyState("↻", "Windows features", "Reading optional feature states with DISM may take a moment.",
+        self._empty = EmptyState('refresh', "Windows features", "Reading optional feature states with DISM may take a moment.",
                                  "Refresh")
         self._empty.action_triggered.connect(lambda: self._load_features())
         layout.addWidget(self._empty)
 
     def _update_glance(self, features, reason=""):
-        values = None if features is None else (
-            sum(s == "Enabled" for _, s in features),
-            sum(s.startswith("Disabled") for _, s in features),
-            sum("pending" in s.lower() for _, s in features))
+        groups = ("Enabled", "Disabled", "Pending restart", "Unknown / unreadable")
+        values = None if features is None else [
+            sum(_feature_group(state) == group for _, state in features) for group in groups]
         for index, tile in enumerate(self._glance.tiles):
             value = None if values is None else values[index]
-            tile.set(value, reason=reason, severity="warning" if index == 2 and value else "info")
+            tile.set(value, reason=reason, severity="warning" if index >= 2 and value else "info")
             if value is None:
                 tile.sub.setText("Feature states unavailable")
 
@@ -253,9 +265,9 @@ class WindowsFeaturesModule(BaseModule):
         filter_edit.setPlaceholderText("Filter features...")
         status_lbl = QLabel("Click Refresh to load features.")
         state_combo = QComboBox()
-        state_combo.addItems(["All states", "Enabled", "Disabled", "Pending restart"])
+        state_combo.addItems(["All states", "Enabled", "Disabled", "Pending restart", "Unknown / unreadable"])
         state_combo.setToolTip("Filter optional features by their Windows-reported state, including changes pending a restart.")
-        for tile, state in zip(self._glance.tiles, ("Enabled", "Disabled", "Pending restart")):
+        for tile, state in zip(self._glance.tiles, ("Enabled", "Disabled", "Pending restart", "Unknown / unreadable")):
             tile.clicked.connect(lambda target=state: state_combo.setCurrentText(target))
         toolbar.addWidget(refresh_btn)
         toolbar.addWidget(QLabel("Filter:"))
@@ -333,9 +345,7 @@ class WindowsFeaturesModule(BaseModule):
             for feat_name, state in features:
                 if ft and ft not in feat_name.lower():
                     continue
-                if want == "Pending restart" and "pending" not in state.lower():
-                    continue
-                if want not in ("All states", "Pending restart") and not state.startswith(want):
+                if want != "All states" and _feature_group(state) != want:
                     continue
                 if feat_name in PINNED_FEATURES:
                     pinned.append((feat_name, state))

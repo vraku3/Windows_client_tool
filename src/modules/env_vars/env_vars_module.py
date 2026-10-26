@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from modules.env_vars.secret_values import HIDDEN, is_secret, display_value, redact_snapshot, snapshot_differences
 from core.base_module import BaseModule
 from ui.glance import GlanceStrip, GlanceTile
 from ui.table_style import apply_table_style
@@ -28,6 +29,48 @@ from modules.env_vars import effective_env, env_ops, path_analysis, process_env_
 from modules.env_vars.env_ops import EnvVar, SYS_PATH as _SYS_PATH, USR_PATH as _USR_PATH
 
 logger = logging.getLogger(__name__)
+
+
+def _secret_row(table, row, name, values, columns, action_column, *, copy_column=None):
+    """Render only masked text until a row's explicit Show action is used."""
+    secret = any(is_secret(name, values[c]) for c in columns)
+    def render(revealed=False):
+        for c, value in enumerate(values):
+            text = HIDDEN if secret and c in columns and not revealed else value
+            table.setItem(row, c, centered_item(text))
+            describe_cell(table, c, table.item(row, c))
+    render()
+    # Clear old buttons as filtering can put another variable into this row.
+    table.removeCellWidget(row, action_column)
+    actions = QWidget()
+    layout = QHBoxLayout(actions)
+    layout.setContentsMargins(0, 0, 0, 0)
+    if secret:
+        show = QPushButton("Show")
+        show.setCheckable(True)
+        show.setToolTip("Reveal this row's sensitive values on screen. Hide conceals them again; refreshing also hides them.")
+        def toggle(checked):
+            render(checked)
+            show.setText("Hide" if checked else "Show")
+        show.toggled.connect(toggle)
+        layout.addWidget(show)
+    if copy_column is not None:
+        copy = QPushButton("Copy value")
+        copy.setToolTip("Copy the original value to the clipboard. Sensitive values require confirmation first.")
+        def copy_value():
+            if secret and not _allow_secret(table, "Copy sensitive value", "Copy this sensitive value to the clipboard?"):
+                return
+            from PyQt6.QtWidgets import QApplication
+            QApplication.clipboard().setText(values[copy_column])
+        copy.clicked.connect(copy_value)
+        layout.addWidget(copy)
+    table.setCellWidget(row, action_column, actions)
+
+
+def _allow_secret(parent, title, text):
+    return QMessageBox.question(parent, title, text,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
 
 
 class _EnvPanel(QWidget):
@@ -62,10 +105,10 @@ class _EnvPanel(QWidget):
         header.addWidget(self._search)
         layout.addLayout(header)
 
-        self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["Name", "Type", "Value", "Expanded"])
+        self._table = QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(["Name", "Type", "Value", "Expanded", "Actions"])
         describe_headers(self._table)
-        fit_table(self._table, stretch=[2, 3], content=[0, 1])
+        fit_table(self._table, stretch=[2, 3], content=[0, 1, 4])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
@@ -115,9 +158,8 @@ class _EnvPanel(QWidget):
             expanded = path_analysis.expand(v.value) if v.kind == winreg.REG_EXPAND_SZ else ""
             if expanded == v.value:
                 expanded = ""
-            for c, txt in enumerate((v.name, kind, v.value, expanded)):
-                self._table.setItem(r, c, centered_item(txt))
-                describe_cell(self._table, c, self._table.item(r, c))
+            _secret_row(self._table, r, v.name, (v.name, kind, v.value, expanded),
+                        (2, 3), 4, copy_column=2)
 
     def _selected(self) -> Optional[EnvVar]:
         row = self._table.currentRow()
@@ -149,12 +191,14 @@ class _EnvPanel(QWidget):
         var = self._selected()
         if var is None:
             return
-        value, ok = QInputDialog.getText(self, "Edit Variable", f"Value for {var.name}:", text=var.value)
+        value, ok = QInputDialog.getText(self, "Edit Variable", f"Value for {var.name}:", text=var.value,
+                                         echo=QLineEdit.EchoMode.Password if is_secret(var.name, var.value)
+                                         else QLineEdit.EchoMode.Normal)
         if not ok or value == var.value:
             return
         if not confirm_destructive(
                 self, f"Edit {self._label} variable",
-                f"Change {var.name}?", detail=f"Old: {var.value}\nNew: {value}", irreversible=False):
+                f"Change {var.name}?", detail=f"Old: {display_value(var.name, var.value)}\nNew: {display_value(var.name, value)}", irreversible=False):
             return
         self._report(env_ops.set_verified(self._hive, self._reg_path, var.name, value))
 
@@ -164,7 +208,7 @@ class _EnvPanel(QWidget):
             return
         if not confirm_destructive(
                 self, f"Delete {self._label} variable", f"Delete '{var.name}'?",
-                detail=f"Current value: {var.value}"):
+                detail=f"Current value: {display_value(var.name, var.value)}"):
             return
         self._report(env_ops.delete_verified(self._hive, self._reg_path, var.name))
 
@@ -175,7 +219,7 @@ class _EnvPanel(QWidget):
             return
         if not confirm_destructive(
                 self, "Copy variable", f"Write {var.name} into {target._label} scope?",
-                detail=f"Value: {var.value}", irreversible=False):
+                detail=f"Value: {display_value(var.name, var.value)}", irreversible=False):
             return
         target._report(env_ops.set_verified(target._hive, target._reg_path, var.name, var.value))
 
@@ -299,11 +343,11 @@ class _EffectivePane(QWidget):
         refresh_btn.clicked.connect(self._refresh)
         head.addWidget(refresh_btn)
         layout.addLayout(head)
-        self._table = QTableWidget(0, 5)
+        self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
-            ["Name", "System", "User", "This process has", "State"])
+            ["Name", "System", "User", "This process has", "State", "Actions"])
         describe_headers(self._table)
-        fit_table(self._table, stretch=[1, 2, 3], content=[0, 4])
+        fit_table(self._table, stretch=[1, 2, 3], content=[0, 4, 5])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
@@ -323,12 +367,9 @@ class _EffectivePane(QWidget):
             state = "stale" if row.is_stale else ("process-only" if row.process_only else "current")
             values = (row.name, row.system_value or "—", row.user_value or "—",
                      row.process_value if row.process_value is not None else "—", state)
-            for c, text in enumerate(values):
-                item = centered_item(text)
-                if state == "stale":
-                    item.setForeground(QColor(semantic("warning")))
-                self._table.setItem(r, c, item)
-                describe_cell(self._table, c, self._table.item(r, c))
+            _secret_row(self._table, r, row.name, values, (1, 2, 3), 5)
+            if state == "stale":
+                self._table.item(r, 4).setForeground(QColor(semantic("warning")))
         self._status.setText(
             f"{len(rows)} row(s) shown. Stale rows need a new process to take effect."
             if not self._only_stale.isChecked() else
@@ -375,14 +416,14 @@ class _EffectivePane(QWidget):
         dlg.resize(760, 480)
         layout = QVBoxLayout(dlg)
         header = QLabel(
-            f"Registry says a new process would get: {expected if expected is not None else '(not set)'}")
+            f"Registry says a new process would get: {display_value(name, expected) if expected is not None else '(not set)'}")
         header.setWordWrap(True)
         set_role(header, "muted")
         layout.addWidget(header)
-        table = QTableWidget(0, 5)
-        table.setHorizontalHeaderLabels(["PID", "Process", "User", "Value", "State"])
+        table = QTableWidget(0, 6)
+        table.setHorizontalHeaderLabels(["PID", "Process", "User", "Value", "State", "Actions"])
         describe_headers(table)
-        fit_table(table, stretch=[1, 3], content=[0, 2, 4])
+        fit_table(table, stretch=[1, 3], content=[0, 2, 4, 5])
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
         shown = [r for r in rows if r.value is not None or not r.readable]
@@ -394,14 +435,8 @@ class _EffectivePane(QWidget):
                 state, value = "stale", row.value
             else:
                 state, value = "current", row.value
-            for c, text in enumerate((str(row.pid), row.name, row.username or "—", value, state)):
-                item = centered_item(text)
-                if not row.readable:
-                    item.setForeground(QColor(semantic("info")))
-                elif row.is_stale:
-                    item.setForeground(QColor(semantic("warning")))
-                table.setItem(r, c, item)
-                describe_cell(table, c, table.item(r, c))
+            _secret_row(table, r, name, (str(row.pid), row.name, row.username or "\u2014", value, state),
+                        (3,), 5, copy_column=3)
         layout.addWidget(table, 1)
         absent = summary.total - summary.has_value - summary.refused
         footer = QLabel(
@@ -498,8 +533,10 @@ class EnvVarsModule(BaseModule):
         if not path:
             return
         try:
-            env_ops.save_snapshot(path, env_ops.to_snapshot(self._sys_panel.variables(),
-                                                            self._usr_panel.variables()))
+            snapshot = env_ops.to_snapshot(self._sys_panel.variables(), self._usr_panel.variables())
+            include = _allow_secret(self._widget, "Export sensitive values",
+                                    "Include clear sensitive values in this snapshot? Choose No to hide them.")
+            env_ops.save_snapshot(path, snapshot if include else redact_snapshot(snapshot))
         except OSError as e:
             QMessageBox.critical(self._widget, "Snapshot", f"Could not save: {e}")
 
@@ -516,7 +553,7 @@ class EnvVarsModule(BaseModule):
             QMessageBox.critical(self._widget, "Snapshot", f"Could not read the snapshot: {e}")
             return
         new = env_ops.to_snapshot(self._sys_panel.variables(), self._usr_panel.variables())
-        lines = env_ops.diff_snapshots(old, new)
+        lines = snapshot_differences(old, new)
         box = QPlainTextEdit("\n".join(lines) or "No differences.")
         box.setReadOnly(True)
         box.setWindowTitle("Environment differences")

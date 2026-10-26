@@ -61,10 +61,8 @@ _SOURCES = (
 _SOURCE_ORDER = {key: index for index, key in enumerate(_SOURCE_LABELS)}
 
 _HONESTY_NOTE = (
-    "Windows grades an app's \"startup impact\" High, Medium or Low from "
-    "boot traces it records over your last few starts. This tool does not "
-    "read those traces, so it cannot know an app's real impact -- a "
-    "High/Medium/Low grade shown here would be made up, and there is none.")
+    "Counts cover readable sources. Startup impact, signatures and date added are not measured: "
+    "Task Manager grades impact from boot traces this tool does not read.")
 
 
 class StartupTab(QWidget):
@@ -91,10 +89,11 @@ class StartupTab(QWidget):
         self._entries = []
         self._glance = summary(self, layout, [
             ("enabled", "Enabled", "Enabled items in the sources successfully read; select to filter."),
-            ("impact", "High impact", "Windows boot-trace impact grades are not read by this tool."),
-            ("unsigned", "Unsigned", "Startup executable signatures are not verified by this reader."),
-            ("recent", "Added recently", "These startup sources do not expose a reliable date added.")])
+            ("disabled", "Disabled", "Disabled items in readable sources; select to filter."),
+            ("registry", "Registry items", "Startup items from user and machine Run keys."),
+            ("sources", "By source", "Counts by successfully read startup source.")])
         self._glance["enabled"].clicked.connect(lambda: self._chips.chips["enabled"].click())
+        self._glance["disabled"].clicked.connect(lambda: self._chips.chips["disabled"].click())
         note = QLabel(_HONESTY_NOTE)
         note.setWordWrap(True)
         set_role(note, "muted")
@@ -195,9 +194,16 @@ class StartupTab(QWidget):
         enabled = sum(e.enabled for e in entries)
         self._glance["enabled"].set(enabled if entries or not problems else None,
                                    "in readable sources", reason="; ".join(problems))
-        self._glance["impact"].set_unreadable("Windows boot-trace impact grades are not read")
-        self._glance["unsigned"].set_unreadable("Startup signatures are not checked")
-        self._glance["recent"].set_unreadable("Reliable date added is not available")
+        reason = "; ".join(problems)
+        self._glance["disabled"].set(len(entries) - enabled if entries or not problems else None,
+                                    "in readable sources", reason=reason)
+        self._glance["registry"].set(sum(e.source.startswith("registry_run") for e in entries)
+                                    if entries or not problems else None, "in readable sources", reason=reason)
+        from collections import Counter
+        sources = Counter(e.source for e in entries)
+        self._glance["sources"].set(len(sources) if entries or not problems else None,
+                                   "\n".join(f"{_SOURCE_LABELS.get(k, k)}: {v}" for k, v in sources.items()),
+                                   reason=reason)
         self._chips.set_counts({"all": len(entries), "enabled": enabled, "disabled": len(entries) - enabled})
         self._filter_entries()
 

@@ -107,14 +107,17 @@ def load_overview(worker=None):
         "CPU": [("Model", overview.get("CPU") or cpu.get("Model", "")),
                 ("Cores", cpu.get("Physical Cores", "")),
                 ("Threads", cpu.get("Logical Cores", ""))],
-        "Memory": [("Total", overview.get("RAM Total", "")), *memory],
-        "GPU": [(g.get("Name", "GPU"), g.get("RAM", "")) for g in gpus],
+        "Memory": [("Type", "System memory"), ("Total", overview.get("RAM Total", "")), *memory] if memory or overview.get("RAM Total") else [],
+        "GPU": [("Model", g.get("Name", "")) for g in gpus]
+               + [(key, g.get(source, "")) for g in gpus
+                  for key, source in (("VRAM", "RAM"), ("Driver", "Driver Version"))],
         "Board / BIOS": [("Model", overview.get("Model", "")), *bios],
-        "Disks": [("Total", overview.get("Disk Total", "")),
-                  ("Free", overview.get("Disk Free", ""))],
-        "Monitors": [(m.name or m.make, "Connected" if m.active else "Remembered")
+        "Disks": [("Type", "Fixed storage"), ("Total", overview.get("Disk Total", "")),
+                  ("Free", overview.get("Disk Free", ""))] if overview.get("Disk Total") else [],
+        "Monitors": [("Model", m.name or m.make)
                      for m in monitors if m.active is not None] if not error else [],
-        "Network": [(n["Name"], n["IP"] or n["Speed"]) for n in network if n["Up"] == "Yes"],
+        "Network": [(key, n[source]) for n in network if n["Up"] == "Yes"
+                    for key, source in (("Adapter", "Name"), ("IP", "IP"), ("Speed", "Speed"))],
     }
 
 
@@ -128,11 +131,11 @@ def setup_overview(layout, data):
         tile = GlanceTile(name, tooltip=f"{name}: measured inventory. Open its tab for the full details.")
         tile.value.setWordWrap(True)
         tile.sub.setWordWrap(True)
-        primary = rows[0][1] if rows else None
-        if rows and rows[0][0] == "Cores":
-            primary += " cores"
+        identity = next(((k, v) for k, v in rows if k.lower() in
+                         ("model", "name", "adapter", "type", "device")), None)
+        primary = identity[1] if identity else (rows[0][1] if rows and name in ("Memory", "Disks") else None)
         tile.set(primary,
-                 "\n".join(f"{k}: {v}" for k, v in rows[1:5]),
+                 "\n".join(f"{k}: {v}" for k, v in rows if (k, v) != identity),
                  reason="Not reported by the inventory reader")
         tile.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         tile.setCursor(Qt.CursorShape.ArrowCursor)

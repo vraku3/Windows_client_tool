@@ -21,7 +21,11 @@ def apply_table_style(view, numeric_columns=(), *, size_columns=(), date_columns
     view.setTextElideMode(Qt.TextElideMode.ElideRight)
     view.setWordWrap(False)
     columns = set(numeric_columns) | set(size_columns) | set(date_columns)
-    view.setItemDelegate(_ScanDelegate(columns, view))
+    delegate = view.itemDelegate()
+    if isinstance(delegate, _ScanDelegate):
+        delegate.numeric_columns = frozenset(columns)
+    else:
+        view.setItemDelegate(_ScanDelegate(columns, view))
     header = view.horizontalHeader()
     header.setTextElideMode(Qt.TextElideMode.ElideRight)
     header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

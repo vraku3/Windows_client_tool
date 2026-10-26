@@ -45,7 +45,7 @@ class ThermalTab(DashTab):
             ("hot", "Hottest sensor", "Highest measured temperature among the key hardware sensors."),
             ("gpu", "GPU temperature", "Highest measured GPU temperature among key sensors."),
             ("alerts", "Thermal alerts", "Sensors exceeding their own warning or critical limits.")])
-        self._empty = EmptyState("C", "Waiting for hardware sensors",
+        self._empty = EmptyState('temperature', "Waiting for hardware sensors",
             "Readings load automatically. Run elevated for CPU and motherboard sensors; GPU readings need no elevation.",
             "Refresh sensors", parent=self, variant="loading")
         self._empty.action_triggered.connect(self.refresh)

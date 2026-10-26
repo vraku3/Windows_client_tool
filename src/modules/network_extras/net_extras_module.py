@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from ui.help.network_ui import control_help, explain_tabs
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.worker import Worker
+from core.worker import Worker, retire
 from ui.help.network_overview import add_glance, feature_card, unreadable
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ class NetExtrasModule(BaseModule):
         self._workers: list = []
         self._widget = None
         self._loaded = False
+        self._overview_worker = None
 
     def create_widget(self) -> QWidget:
         root = QWidget()
@@ -265,6 +266,7 @@ class NetExtrasModule(BaseModule):
                     winreg.SetValueEx(k, "ProxyServer", 0, winreg.REG_SZ, server_edit.text())
                     winreg.SetValueEx(k, "ProxyOverride", 0, winreg.REG_SZ, override_edit.text())
                 status.setText("Saved.")
+                self.on_activate()
             except Exception as e:
                 status.setText(f"Error: {e}")
 
@@ -319,17 +321,27 @@ class NetExtrasModule(BaseModule):
     def on_start(self, app) -> None:
         self.app = app
     def on_stop(self) -> None:
+        self._overview_worker = None
         self.cancel_all_workers()
     def on_activate(self):
-        if self._widget is None or self._loaded:
+        if self._widget is None:
             return
+        if self._overview_worker is not None:
+            retire([self._overview_worker])
         self._loaded = True
         worker = Worker(lambda _: _read_overview())
-        worker.signals.result.connect(self._show_overview)
-        worker.signals.error.connect(self._overview_failed)
-        worker.signals.cancelled.connect(self._overview_cancelled)
+        self._overview_worker = worker
+        worker.signals.result.connect(lambda data: self._deliver_overview(worker, self._show_overview, data))
+        worker.signals.error.connect(lambda error: self._deliver_overview(worker, self._overview_failed, error))
+        worker.signals.cancelled.connect(lambda: self._deliver_overview(worker, self._overview_cancelled))
+        worker.signals.finished.connect(lambda: self._workers.remove(worker) if worker in self._workers else None)
         self._workers.append(worker)
         self.thread_pool.start(worker)
+
+    def _deliver_overview(self, worker, callback, *args):
+        if self._widget is not None and not sip.isdeleted(self._widget) and self._overview_worker is worker:
+            self._overview_worker = None
+            callback(*args)
 
     def _overview_failed(self, message):
         if self._widget is not None and not sip.isdeleted(self._widget):
@@ -340,4 +352,5 @@ class NetExtrasModule(BaseModule):
     def _overview_cancelled(self):
         self._loaded = False
     def on_deactivate(self) -> None:
+        self._overview_worker = None
         self.cancel_all_workers()

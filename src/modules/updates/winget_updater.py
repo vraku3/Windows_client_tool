@@ -197,8 +197,8 @@ class UpdateOutcome:
     """What ONE package's update did, decided by reading its version back.
 
     `state` is one of core.winget_list's UPDATED / UNCONFIRMED / NOT_APPLICABLE /
-    NEEDS_USER / NEEDS_INPUT / FAILED; `detail` is the sentence the table and the
-    report show.
+    NEEDS_USER / NEEDS_INPUT / DIFF_TECH / FAILED; `detail` is the sentence the
+    table and the report show.
     Truthy only when the read-back proved the update.
     """
     winget_id: str

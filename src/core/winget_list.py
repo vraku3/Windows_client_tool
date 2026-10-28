@@ -22,6 +22,7 @@ UNCONFIRMED = "UNCONFIRMED"      # could not prove it either way
 NOT_APPLICABLE = "NOT APPLICABLE"  # winget had nothing that applies to this PC
 NEEDS_USER = "NEEDS USER"        # per-user install, refused from an elevated process
 NEEDS_INPUT = "NEEDS INPUT"      # the package wants an answer only a person can give
+DIFF_TECH = "DIFF TECH"          # installed via a different technology (e.g. system MSIX vs winget)
 FAILED = "FAILED"                # read back: the old version is still installed
 BROKEN = "BROKEN"                # portable metadata exists, program files do not
 STILL_RUNNING = "STILL RUNNING"  # do not overlap a potentially running installer
@@ -41,6 +42,14 @@ NEEDS_INPUT_MARKERS = (
     "0x8a150042",
 )
 LOCATION_MARKERS = ("requires an install location", "specify the install root")
+#: Measured on this machine (2026-10-28): Microsoft.Edge is installed as a
+#: system component and winget offers a newer version through its own source;
+#: the upgrade exits 0x8A15008E (2316632206) with the message below.
+DIFF_TECH_MARKERS = (
+    "install technology is different",
+    "0x8a15008e",
+)
+DIFF_TECH_EXIT = 0x8A15008E  # 2316632206 unsigned
 
 
 def portable_snapshot(winget_id: str, scope: str = "") -> list:
@@ -160,6 +169,10 @@ def refusal(upgrade_output: str) -> Optional[Tuple[str, str]]:
                              "location, or an interactive prompt -- so winget left it as it "
                              "was. Update this one by hand (winget with --location, or its "
                              "own updater).")
+    if any(marker in text for marker in DIFF_TECH_MARKERS):
+        return (DIFF_TECH, "This package was installed by Windows or its own installer, not "
+                           "by winget, so winget cannot upgrade it. Update it through "
+                           "Settings → Apps, the app’s own updater, or Windows Update.")
     if NO_APPLICABLE in text:
         return (NOT_APPLICABLE, "winget found no update that applies to this PC.")
     return None
@@ -198,6 +211,10 @@ def verdict(list_rc: int, list_output: str, winget_id: str, target: str,
         # No newer version listed is not proof: the source may simply not have answered.
         return (UNCONFIRMED, f"{installed} is installed, not {target or 'the new version'}; "
                              "the update is unconfirmed.")
+    if upgrade_rc is not None and (upgrade_rc & 0xFFFFFFFF) == DIFF_TECH_EXIT:
+        return (DIFF_TECH, "This package was installed by Windows or its own installer, not "
+                           "by winget, so winget cannot upgrade it. Update it through "
+                           "Settings → Apps, the app’s own updater, or Windows Update.")
     exit_text = f"exit {upgrade_rc}" if upgrade_rc is not None else "it finished"
     return (FAILED, f"winget finished ({exit_text}), but {installed} is still installed "
                     f"({available} available).")

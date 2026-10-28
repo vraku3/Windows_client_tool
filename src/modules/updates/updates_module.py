@@ -392,20 +392,31 @@ class _AppUpdatesTab(QWidget):
             self.app, self._op_timer, "App updates finished",
             f"{confirmed}/{len(outcomes)} package(s) confirmed updated.",
         )
-        self._auto_blocklist_diff_tech(outcomes)
+        self._auto_blocklist_unfixable(outcomes)
         if outcomes:
             self._verify_after(outcomes)
         else:
             self._do_refresh()
 
-    def _auto_blocklist_diff_tech(self, outcomes: dict) -> None:
-        """Blocklist packages that can never be updated via winget."""
+    def _auto_blocklist_unfixable(self, outcomes: dict) -> None:
+        """Blocklist packages that will always re-appear as updates.
+
+        DIFF_TECH: winget cannot upgrade across install technologies.
+        UPDATED_UNVERIFIED: winget said it installed but can never read the
+        version back, so every future scan re-offers the same update.
+        """
         from core.blocklist import add_pattern
+        from core.winget_list import DIFF_TECH, UPDATED_UNVERIFIED
+        reasons = {
+            DIFF_TECH: "not updatable via winget",
+            UPDATED_UNVERIFIED: "version unverifiable — would always re-appear",
+        }
         for wid, o in outcomes.items():
-            if o.state == "DIFF TECH" and self.app:
+            reason = reasons.get(o.state)
+            if reason and self.app:
                 add_pattern(self.app, wid)
                 self._log.appendPlainText(
-                    f"  → {wid} added to blocklist (not updatable via winget)."
+                    f"  → {wid} added to blocklist ({reason})."
                 )
 
     def _verify_after(self, outcomes: dict) -> None:

@@ -20,11 +20,13 @@ import os
 import re
 import time
 import threading
+from core.operation_lock import OperationBusy, operation_lock
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from . import catalog
+from . import catalog, session_history
 from .journal import Journal
+from .preflight import PreflightItem as PreflightItem, preflight as preflight
 from .system import BELOW_NORMAL, NORMAL, PRIORITY_NAMES, Proc, split_command_line
 
 logger = logging.getLogger(__name__)
@@ -383,6 +385,9 @@ class _On:
         self.log(OK, "Window animations turned off")
 
     def tasks(self, elevated: bool, choices: Choices) -> None:
+        if not elevated:
+            self.log(WARN, "Scheduled tasks: pausing them needs administrator -- skipped")
+            return
         wanted = choices.paused_tasks
         if choices.preset in (catalog.REC, catalog.MAX):
             levels = {catalog.REC, catalog.MAX} if choices.preset == catalog.MAX else {catalog.REC}
@@ -540,10 +545,54 @@ class _On:
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             session: int) -> dict:
-    with OPERATION_LOCK:
-        if journal.active:
+    with OPERATION_LOCK, operation_lock("Game Mode ON"):
+        if journal.load():
             raise RuntimeError("Game Mode is already ON; use OFF to restore it first")
-        return _turn_on(system, choices, journal, log, own_pid, session)
+        report = []
+        def say(level, text):
+            report.append({"level": level, "text": text})
+            log(level, text)
+        try:
+            result = _turn_on(system, choices, journal, say, own_pid, session)
+            from core.timeline import record
+            record(os.path.dirname(journal.folder), "game_mode", "on", "Game Mode ON", {"changes": len(journal.actions), "handles_before": result.get("handles_before"), "handles_after": result.get("handles_after")})
+            return result
+        except Exception:
+            from core.timeline import record
+            record(os.path.dirname(journal.folder), "game_mode", "on", "Game Mode ON interrupted; recovery may be needed", {"changes": len(journal.actions)}, "error")
+            raise
+        finally:
+            if journal.active:
+                journal.data["on_report"] = report
+                _history_start(journal, say)
+
+
+def _history_start(journal: Journal, log: Log, only_missing=False) -> None:
+    try:
+        data = journal.data
+        if only_missing and any(e["started"] == data.get("started") for e in
+                                session_history.load_history(None, folder=journal.folder)):
+            return
+        session_history.record_session_start(
+            None, data.get("preset", "Unknown"), len(journal.actions),
+            data.get("handles_before"), data.get("processes_before"),
+            started=data.get("started"), actions=journal.actions, report=data.get("on_report", []),
+            handles_after=data.get("handles_after"), processes_after=data.get("processes_after"),
+            folder=journal.folder)
+    except (OSError, ValueError, TypeError) as error:
+        logger.warning("game mode: could not save session history: %s", error)
+        log(WARN, f"Session history could not be saved: {error}")
+
+
+def _history_end(journal: Journal, data: dict, report: list, log: Log,
+                 complete: bool, restored: int) -> None:
+    try:
+        session_history.record_session_end(
+            None, report, data.get("handles_after"), data.get("processes_after"),
+            started=data.get("started"), complete=complete, restored=restored, folder=journal.folder)
+    except (OSError, ValueError, TypeError) as error:
+        logger.warning("game mode: could not save restore history: %s", error)
+        log(WARN, f"Restore history could not be saved: {error}")
 
 
 def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
@@ -552,7 +601,9 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     elevated = system.is_admin()
     procs = system.processes()
     journal.begin(handles_before=total_handles(procs), processes_before=len(procs),
-                  elevated=elevated)
+                  elevated=elevated, preset={catalog.REC: "Recommended", catalog.MAX: "Maximum"}.get(
+                      choices.preset, "Custom"))
+    _history_start(journal, log)
     on = _On(system, journal, log)
     if choices.plan:
         on.plan(system.cpu_name())
@@ -585,7 +636,18 @@ def enforce(system, journal: Journal, log: Log) -> int:
     if not OPERATION_LOCK.acquire(blocking=False):
         return 0
     try:
-        return _enforce(system, journal, log)
+        try:
+            with operation_lock("Game Mode enforce", timeout_ms=0):
+                if not journal.load():
+                    return 0
+                count = _enforce(system, journal, log)
+                if count:
+                    from core.timeline import record
+                    record(os.path.dirname(journal.folder), "game_mode", "enforce", f"Game Mode re-stopped {count} service(s)", {"services": count})
+                return count
+        except OperationBusy as exc:
+            logger.info("Game Mode enforce skipped: %s", exc)
+            return 0
     finally:
         OPERATION_LOCK.release()
 
@@ -644,8 +706,15 @@ def _enforce(system, journal: Journal, log: Log) -> int:
 # ==== OFF =======================================================================================
 def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[dict]:
     """Serialize OFF after ON/enforce, retaining every unresolved change."""
-    with OPERATION_LOCK:
-        return _turn_off(system, journal, log, settle)
+    with OPERATION_LOCK, operation_lock("Game Mode OFF"):
+        if not journal.load():
+            return []
+        from core.timeline import record
+        record(os.path.dirname(journal.folder), "game_mode", "recovery", "Game Mode restore attempt", {"changes": len(journal.actions)})
+        report = _turn_off(system, journal, log, settle)
+        incomplete = journal.active
+        record(os.path.dirname(journal.folder), "game_mode", "off_failed" if incomplete else "off", "Game Mode recovery incomplete" if incomplete else "Game Mode OFF: restore completed", {"remaining": len(journal.actions), "warnings": sum(r.get("level") in (WARN, BAD) for r in report)}, "error" if incomplete else "warning" if any(r.get("level") in (WARN, BAD) for r in report) else "info")
+        return report
 
 
 def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
@@ -658,7 +727,12 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
     if journal.data.get("corrupt"):
         say(BAD, f"The Game Mode journal could not be read ({journal.data['corrupt']}); "
                  "nothing could be put back automatically. Game Mode stays ON; journal kept.")
+        _history_end(journal, {}, report, say, complete=False, restored=0)
         return report
+    if not journal.active:
+        return report
+    _history_start(journal, say, only_missing=True)
+    history_data = dict(journal.data)
     ctx: dict = {"reopened": [], "priority": {}, "tasks": 0}
     failed, validated = [], []
     for entry in reversed(journal.actions):
@@ -688,8 +762,12 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
         journal.save()
         say(BAD, f"Recovery incomplete: {len(failed)} change(s) could not be put back -- "
                  "Game Mode stays ON so OFF can be tried again (for example as administrator)")
+        _history_end(journal, history_data, report, say, complete=False,
+                     restored=len(validated) - len(failed))
     else:
-        journal.finish(report)
+        history_error = journal.finish(report, restored=len(validated))
+        if history_error:
+            say(WARN, history_error)
     return report
 
 

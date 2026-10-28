@@ -42,6 +42,8 @@ The portable spec must include `a.binaries` and `a.datas` in the EXE constructor
 
 **After every portable build, deploy it** — copy `dist/WinClientTool-Portable.exe` over `C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe`, the copy the user actually runs day to day. Not optional cleanup — skipping it leaves a stale exe running there. See the `build-portable` skill if present.
 
+**Keep exactly two versions in `Aplicații/Windows Client Tool Share/`** (user, 2026-10-28): newest in the root, the immediately previous iteration in `old/`. Rotate on every build: demote the current share root copy to `old/WinClientTool-Portable.exe`, copy the new build into the share root, and delete anything older (`old/*.exe_old`, `*-new.exe` test copies). The tree must contain exactly `WinClientTool-Portable.exe` and `old/WinClientTool-Portable.exe`.
+
 **Code-signing** — the unsigned exe is blocked by SmartScreen/WDAC on many machines. After building, sign with `tools/sign_build.ps1` (a `.pfx` + password, or a SHA-1 thumbprint of a cert already in the user's store):
 ```
 powershell -ExecutionPolicy Bypass -File tools\sign_build.ps1 -Pfx C:\certs\wct.pfx -Password "secret"

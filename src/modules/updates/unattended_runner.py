@@ -10,6 +10,9 @@ the Updates module's Settings tab (see updates_module.py's _ScheduleTab).
 import logging
 import sys
 from typing import List
+from core.operation_lock import OperationBusy
+from modules.updates import run_checkpoint
+from modules.updates.operation_guard import maintenance_operation
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +55,23 @@ def run_unattended(stages: List[str]) -> int:
         logger.error(msg)
         return 1
 
+    try:
+        with maintenance_operation("Unattended maintenance"):
+            return _run_unattended_locked(valid_stages)
+    except OperationBusy as exc:
+        logger.info("Unattended maintenance skipped: %s", exc)
+        return 0
+    except Exception:
+        logger.exception("Unattended maintenance failed")
+        return 1
+
+
+def _run_unattended_locked(valid_stages: List[str]) -> int:
     from app import App
     app = App.instance or App()
+    from core.timeline import detect_reboot, record
+    detect_reboot(app.app_data_dir)
+    record(app.app_data_dir, "system", "app_start", "Unattended maintenance started")
 
     import pythoncom
     pythoncom.CoInitialize()
@@ -68,6 +86,7 @@ def run_unattended(stages: List[str]) -> int:
         data = {}
         failures = []
         lines = []
+        run_checkpoint.begin(app.app_data_dir, valid_stages, "unattended")
         def log(line):
             lines.append(line)
             logger.info("%s", line)
@@ -75,7 +94,8 @@ def run_unattended(stages: List[str]) -> int:
             logger.info("--- unattended stage: %s ---", STAGE_LABELS.get(stage, stage))
             fn = STAGE_RUNNERS[stage]
             try:
-                data[stage] = fn(app, log, lambda: False)
+                kwargs = {"context": "unattended"} if stage in ("wu", "winget") else {}
+                data[stage] = fn(app, log, lambda: False, **kwargs)
             except Exception as exc:
                 logger.exception("Unattended stage %s failed", stage)
                 data[stage] = {"error": str(exc) or type(exc).__name__}
@@ -91,6 +111,7 @@ def run_unattended(stages: List[str]) -> int:
         finalize_run(data)
         logger.info("%s", outstanding_text(data["outstanding"]))
         write_session_log(app.app_data_dir, data, lines)
+        run_checkpoint.finish(app.app_data_dir, "completed" if exit_code == 0 else "completed_with_errors")
         normalized = normalize_stage_data(data)
         append_run(
             app.app_data_dir,

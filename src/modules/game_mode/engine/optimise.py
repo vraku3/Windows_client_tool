@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ctypes
 from core.system_paths import powershell_exe
+from core.operation_lock import operation_lock
 import json
 import logging
 import os
@@ -546,7 +547,7 @@ class Optimiser:
 
     def apply(self, selected: set[str], expected: dict[str, dict] | None = None, cancelled=lambda: False) -> Report:
         """Re-read before each step; an approved preview may also pin its exact before-state."""
-        with _LOCK:
+        with _LOCK, operation_lock("Optimise OS apply"):
             data = self._load()
             entries = {e["id"]: e for e in data["items"]}
             report = Report()
@@ -611,10 +612,12 @@ class Optimiser:
                 except (OSError, ValueError) as error:
                     logger.warning("optimise OS: %s apply incomplete: %s", spec.id, error)
                     report.failed[spec.id] = f"Apply incomplete; before-state kept for Revert: {error}"
+            from core.timeline import record
+            record(self.path.parent.parent, "optimise", "apply", f"Optimise OS: {len(report.changed)} changed, {len(report.failed)} failed", {"changed": report.changed, "failed": list(report.failed), "skipped": len(report.skipped), "restart": report.restart}, "warning" if report.failed or report.skipped else "info")
             return report
 
     def revert(self, cancelled=lambda: False) -> Report:
-        with _LOCK:
+        with _LOCK, operation_lock("Optimise OS revert"):
             data = self._load()
             report = Report()
             admin = self.system.is_admin()
@@ -668,6 +671,8 @@ class Optimiser:
                     report.failed[spec.id] = f"Restore incomplete; journal kept: {error}"
             if not data["items"] and self.path.exists():
                 self.path.unlink()
+            from core.timeline import record
+            record(self.path.parent.parent, "optimise", "revert", f"Optimise OS revert: {len(report.changed)} restored, {len(report.failed)} failed", {"restored": report.changed, "failed": list(report.failed), "skipped": len(report.skipped), "restart": report.restart}, "warning" if report.failed or report.skipped else "info")
             return report
 
 

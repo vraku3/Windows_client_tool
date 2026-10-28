@@ -39,6 +39,8 @@ def record(action: str, outcome: str) -> dict:
     entries.append(entry)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(entries[-200:], f, indent=2)
+    from core.timeline import record as timeline_record
+    timeline_record(os.path.dirname(path), "quick_fix", "fix_run", f"{action}: {outcome}", {"outcome": outcome}, "error" if outcome == "error" else "warning" if outcome == "cancelled" else "info")
     return entry
 
 

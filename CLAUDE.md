@@ -46,11 +46,23 @@ cp "dist/WinClientTool-Portable.exe" "C:/Users/iorda/OneDrive/1 Personal/Aplica�
 ```
 The user runs the app day-to-day from `Aplicații/`, not from this repo's own (gitignored) `dist/`. Skipping this step leaves a stale copy running there indefinitely — do it every time, overwriting whatever's already there. Same deal for an onedir build: `cp -r "dist/WinClientTool" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool"`. See the `build-portable` skill (`.claude/skills/build-portable/SKILL.md`), which bakes this step in.
 
+**Keep exactly two versions in `Aplicații/Windows Client Tool Share/`** (user, 2026-10-28): the newest build in the folder root and the immediately previous iteration in `old/`. Every portable build rotates them:
+```
+# 1. demote the current share copy, 2. install the new build, 3. leave no third copy
+cp "C:/Users/iorda/OneDrive/1 Personal/Aplicații/Windows Client Tool Share/WinClientTool-Portable.exe" \
+   "C:/Users/iorda/OneDrive/1 Personal/Aplicații/Windows Client Tool Share/old/WinClientTool-Portable.exe"
+cp "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe" \
+   "C:/Users/iorda/OneDrive/1 Personal/Aplicații/Windows Client Tool Share/WinClientTool-Portable.exe"
+```
+Anything older (`old/WinClientTool-Portable.exe_old`, `*-new.exe` test copies) is deleted, so the share tree holds exactly `WinClientTool-Portable.exe` + `old/WinClientTool-Portable.exe`. This is a standing instruction, not a per-build decision.
+
 **Then prove the deployed exe actually RUNS** — also a hard requirement (user, 2026-10-20): launch
 the copy in `Aplicații/` elevated, wait ~10 s, and check the process is still alive. Smart App
 Control has blocked fresh unsigned builds on this PC before; pyinstaller exiting 0 proves nothing.
 If it is gone, read `Microsoft-Windows-CodeIntegrity/Operational` (3077 = Smart App Control/WDAC
-block) and Bitdefender's history, and report the block — never "built and deployed" alone.
+block) and Bitdefender's history, and report the block — never "built and deployed" alone. A first
+launch of a brand-new unsigned hash can be refused and the same file allowed on a retry; say so
+instead of silently declaring either outcome.
 
 **Syntax check** (without running):
 ```
@@ -1012,10 +1024,10 @@ Measured here (2026-10-15), each of which shaped the code:
 5-tab module in `ModuleGroup.TOOLS`, `requires_admin = True`. This installs updates — it is a different thing from `DiagnoseModule`'s embedded Windows Update *log* viewer.
 
 - **App Updates tab** (`_AppUpdatesTab` in `updates_module.py`) — winget-based via `winget_updater.py`. Live filter box, "Package Details" (`winget show`), "Add to Blocklist", post-update verification. "Update All" is routed through the same per-item loop as "Update Selected" rather than one opaque `winget upgrade --all` call, so progress/pass-fail is per-package.
-- **Windows Updates tab** (`_WinUpdatesTab`) — WUA COM via `windows_updater.py`'s `fetch_pending_updates()` / `install_updates_iter()` (per-item downloader/installer calls, real progress). Hide/show-hidden support, an opt-in restore point before install (`core/system_restore.py` — a real `Checkpoint-Computer`, NOT `BackupService.create_restore_point`, which is this app's own separate revert-log mechanism), post-install verification, WU HRESULT decoding (`core/wu_error_codes.py`).
+- **Windows Updates tab** (`_WinUpdatesTab`) — WUA COM via `windows_updater.py`'s `fetch_pending_updates()` / `install_updates_iter()` (per-item downloader/installer calls, real progress). Hide/show-hidden support, an opt-in restore point before install (`core/system_restore.py` — a real `Checkpoint-Computer`, NOT `BackupService.create_restore_point`, which is this app's own separate revert-log mechanism), post-install verification, WU HRESULT decoding (`core/wu_error_codes.py`). **Details** opens the selected update's KB/support/more-info links and description; **History** is the searchable, date-filtered, paginated table from `history_dialog.py`.
 - **Microsoft Store tab** (`_StoreUpdatesTab`, `store_updates_tab.py`) — renders the `source == "msstore"` subset of the *same* winget scan the App Updates tab already ran, dispatched via `UpdatesModule._on_app_updates()` → `_store_tab.set_updates()`. Does **not** run its own winget scan. "Verify Store Updates" triggers `core/mdm_store_trigger.py` (MDM CIM class — needs `COMWorker`).
 - **Run All tab** (`_RunAllTab`, `run_all_tab.py`) — runs checked stages (wu/winget/store/cleanup/dism) sequentially in one worker, then writes run history and an HTML report.
-- **Settings tab** (`_UpdateSettingsTab`) — blocklist editor, verify/restore-point/driver toggles, and the Task Scheduler wiring for `--unattended` mode.
+- **Settings tab** (`_UpdateSettingsTab`) — blocklist editor, verify/restore-point/driver toggles, the effective-policy table (`update_policy.py`) and the Task Scheduler wiring for `--unattended` mode.
 
 **A winget update counts only when the installed version READ BACK says so** (`core/winget_list.py`, 2026-10-12). `install_update` returns an `UpdateOutcome(state, detail)` — `UPDATED` / `UNCONFIRMED` / `NOT APPLICABLE` / `NEEDS USER` / `FAILED` — decided by `winget list --id X --exact` after the upgrade, parsed by column. The old code counted "No applicable upgrade" as success and called a package updated when it was ABSENT from a re-scan, which a failed re-scan grants to every package at once. A version that moved off the old one is an update even when it is not the newest offered (winget installs the newest installer that applies); "Unknown"/"< x" versions, an unreadable list and an installer that asked for a restart are `UNCONFIRMED`, never `UPDATED`. App Buster's update action decides through the same `verdict()`. `updates.verify_after_update` off skips the read-back and reports `UNCONFIRMED`.
 
@@ -1025,7 +1037,33 @@ Measured here (2026-10-15), each of which shaped the code:
 
 **Shared stage logic** (`stage_runners.py`): `run_wu_stage` / `run_winget_stage` / `run_store_stage` / `run_cleanup_safe_stage` / `run_dism_stage`, each `(app, log_fn, is_cancelled_fn) -> dict`. Used by *both* `_RunAllTab` (threaded, `is_cancelled=lambda: worker.is_cancelled`) and `unattended_runner.py` (headless, `is_cancelled=lambda: False`) — extend this file rather than duplicating stage logic in either caller. `normalize_stage_data()` flattens the per-stage result dicts into the shape `report_generator.py` / `history_writer.py` expect.
 
-**Blocklist** (`core/blocklist.py`): `is_blocked(name, id, patterns)` is fnmatch-based — a pattern with no `*` is auto-wrapped as `*pattern*`. Stored at config key `updates.blocklist_patterns` (`list[str]`), not a separate file. `add_pattern(app, pattern)` backs the "Add to Blocklist" button on both the winget and WU tabs.
+**Blocklist** (`core/blocklist.py`): `is_blocked(name, id, patterns)` is fnmatch-based — a pattern with no `*` is auto-wrapped as `*pattern*`. Stored at config key `updates.blocklist_patterns` (`list[str]`), not a separate file. `add_pattern(app, pattern)` backs the "Add to Blocklist" button on both the winget and WU tabs. `matching_offers(pattern, offers)` previews what a new pattern would hide; the exclusion dialog shows that live, from the offers of the last scans.
+
+**Run safety spine** (2026-10-28, roadmap batch 2):
+
+- `run_checkpoint.py` — durable `updates/run_checkpoint.json`, written atomically before the first change and after each item (`begin`/`item`/`finish`). A run that dies leaves `status: running` with a dead PID; `unfinished()` reports it (psutil, with a recycled-PID guard), and Run All shows it in a warning label and in the pre-run dialog. `item()` never invents a checkpoint when none was begun, so per-tab installs stay safe.
+- `reboot_preflight.py` — `assess()` combines pending-restart evidence (`core/pending_reboot`, not the judge) with an unfinished checkpoint and returns the lines shown before Run All and before a manual WU install. An unreadable restart state is reported, not treated as "no".
+- `reboot_reconcile.py` — records `updates/pending_restart.json` for WU items that asked for a restart, then judges the first scan after the reboot. Winget/Store items are CONFIRMED only when the installed version advanced or a successful scan no longer offers them; WU items are never called installed from a cleared flag — that is `restart_cleared_unverified`. Results also go to the activity ledger (context `post_reboot`) and the timeline, and a banner on the Updates module summarises them.
+- Checkpoints are begun by Run All, `--unattended`, the App Updates batch and the manual WU batch, and per item in `run_wu_stage` / `run_winget_stage`.
+
+**Visibility batch** (2026-10-28, roadmap batch 3):
+
+- `core/operation_lock.active_owner()` — the holder of a LIVE operation: the in-process lock, or another process whose sidecar PID is still alive. A crashed holder's sidecar is ignored. `UpdatesModule` polls it every 1.5s while the module is active, shows a banner and calls `set_maintenance_busy(owner)` on the App/Windows/Run All tabs, which disable their install/run buttons but never Stop.
+- **Details** (`wu_details_dialog.py`) — the WU table's Details button renders the selected update: KB links to `support.microsoft.com/help/KB…`, `SupportUrl`, `MoreInfoUrls`, description, classification/severity/restart. `WindowsUpdate` now carries `kb_ids`, `support_url`, `more_info_urls`, `description` captured at scan time. Only `http(s)` values become links; everything is HTML-escaped.
+- **History** (`history_model.py` + `history_dialog.py`) — the old last-30-lines dump is replaced by a 2000-entry dialog: search over title/result/decoded HRESULT, 7/30/90-day filter, 100 rows per page. `patch_status.HistoryEntry` gained `operation` (1 install, 2 uninstall) and `read_history(operations=...)`.
+- **Policy** (`update_policy.py`) — effective quality/feature deferral, pause expiry, deadlines, active hours, target release, preview builds, driver/exclusion and WU-access flags, read from `Policies\...\WindowsUpdate`, `\AU`, the PolicyManager MDM scope and the UX settings key, each row with its provenance. Missing keys are "not configured"; refused scopes are listed as unreadable. Rendered in Settings' policy table.
+
+**Sources & filtering batch** (2026-10-28, roadmap batch 4):
+
+- **Ownership** (`update_ownership.py`) — managed-by (WSUS / WUfB / MDM), WSUS server + status server, target group, per-class update source, internet-location policy and MDM enrollments (`HKLM\SOFTWARE\Microsoft\Enrollments`). Read from the same policy scopes via the public `read_registry_scopes()`; a refused scope is listed, never reported as unmanaged. Settings renders it above the policy table.
+- **Scan history** (`scan_history.py`) — last 50 successful snapshots per source; the first scan reports no diff (not "everything is new"), and a failed scan is never recorded. New/changed/`gone` are compared by id; both tabs show a collapsible changes panel.
+- **Filters and "update visible"** — App tab: search + source + result filters; WU tab: search + severity + classification + restart. "Update Visible"/"Install Visible" act on exactly the rows left visible. Header-click sorting sorts `self._updates` itself (never `QTableWidget` sorting) so a row index stays the model index for selection/install; the choice persists in `updates.sort_apps` / `updates.sort_wu`.
+
+**Categories, progress, uninstall** (2026-10-28, roadmap batch 5):
+
+- **`wu_categories.py`** — Defender / Feature / Driver / Preview / .NET / Security / Quality from classification + title. Run All and `--unattended` skip feature upgrades unless `updates.allow_feature_updates` and skip driver/preview/.NET unless `updates.allow_optional_updates` (both in Settings); the skip is logged with the setting to change. A manual WU batch that contains a feature upgrade asks a dedicated confirmation. The WU status line shows the category summary; the filter row gains a category selector.
+- **Progress/stall** — stage runners log `Phase: scanning|installing|verifying|cleaning`. Run All hides those lines, shows `Installing… 4m 12s`, and appends `no output for 3m` when nothing has arrived for `STALL_AFTER_S` (180s). It reports, never cancels.
+- **Uninstall (#20)** — `windows_updater.uninstall_update(kb)` finds the installed software update, refuses when `UninstallationBehavior.CanUninstall` is False, and calls `IUpdateInstaller.Uninstall()`. The History dialog enables "Uninstall update…" only for a succeeded KB installation; the tab confirms, honours the restore-point setting, records the result in the activity ledger + timeline and re-scans. `history_model.kb_of_title`/`uninstallable` gate it.
 
 **Unattended mode**: `python src/main.py --unattended --stages wu,winget,cleanup` — headless, no `QApplication`/`MainWindow`; calls `pythoncom.CoInitialize()` explicitly since there's no `COMWorker`/Qt event loop available. Requires admin — exits 1 immediately if not elevated. The Settings tab's "Create/Update Task" button wires this into Task Scheduler as `WinClientTool_UnattendedMaintenance` (`/rl HIGHEST`, `/sc DAILY /mo <N>`). The older winget-only `WinClientTool_UpdateCheck` task (`_save_legacy`) is kept as-is for existing users — don't merge it into the new one.
 
@@ -1514,7 +1552,11 @@ columns, filter chips, badges, detail text) are testable headless;
 - **Overview's "Needs attention" is computed, and a refused read is an
   `unknown` finding, never silence.** Checks run on a Worker, at most once a
   minute (`FINDINGS_EVERY_S`), not on every refresh tick; `wevtutil` for the
-  event log costs real time.
+  event log costs real time. It is now a `COMWorker`, because patch compliance
+  reads Windows Update history over COM (`judge_patch`, from `patch_status`):
+  last monthly security update and its age (warning past
+  `STALE_SECURITY_DAYS`), plus unresolved WU failures with their HRESULT. A
+  refused history read is UNKNOWN, never "up to date".
 - **Processes' extra columns are hidden by default** (only User shows) and the
   choice persists in `modules.dashboard.process_columns`. Values we were refused
   are blank, never guessed.
@@ -2113,6 +2155,12 @@ twice: ON ~4 s, OFF ~3-7 s, state identical, probes back unelevated.
   OFF reads only that file, so it works after a crash, a closed app or a
   reboot, and deletes it only after complete recovery (`last_restore.json`
   keeps the report).
+  The lazy **History** tab reads `game_mode/session_history.json`: an atomic,
+  capped list of the latest 100 sessions, with preset, duration, ON action
+  breakdown, measured handle/process reduction and restore issues. Its
+  Qt-free `engine/session_history.py` records ON immediately, updates the
+  same entry on partial OFF/retry, and completes it from `Journal.finish()`.
+  History failures are reported without blocking recovery.
   OFF restores the recorded BEFORE state only: a service already running is
   not started twice, an app already open is not reopened, a priority someone
   changed since is left alone, an absent registry value is deleted again.

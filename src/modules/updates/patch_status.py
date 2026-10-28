@@ -50,6 +50,7 @@ class HistoryEntry:
     title: str
     result_code: int
     hresult: int = 0
+    operation: int = 1        # 1 installation, 2 uninstallation
 
 
 @dataclass
@@ -99,7 +100,7 @@ def analyse(entries: Sequence[HistoryEntry], now: Optional[datetime] = None,
     return status
 
 
-def read_history(limit: int = 1000) -> Tuple[Optional[List[HistoryEntry]], str]:
+def read_history(limit: int = 1000, operations=(1,)) -> Tuple[Optional[List[HistoryEntry]], str]:
     """Install history over COM; (None, reason) when it cannot be read.
 
     Needs COM initialised on the calling thread -- run it on a COMWorker.
@@ -116,13 +117,14 @@ def read_history(limit: int = 1000) -> Tuple[Optional[List[HistoryEntry]], str]:
     for i in range(history.Count if history is not None else 0):
         item = history.Item(i)
         try:
-            if int(item.Operation) != 1:          # 1 = installation, 2 = uninstallation
+            operation = int(item.Operation)
+            if operation not in operations:
                 continue
             when = item.Date
             if when.tzinfo is None:
                 when = when.replace(tzinfo=timezone.utc)
             out.append(HistoryEntry(when, str(item.Title or ""), int(item.ResultCode),
-                                    int(item.HResult or 0)))
+                                    int(item.HResult or 0), operation))
         except Exception as e:  # one malformed entry must not lose the rest
             logger.warning("skipping an unreadable Windows Update history entry: %s", e)
     return out, ""

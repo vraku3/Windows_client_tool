@@ -258,7 +258,8 @@ def test_run_entrypoints_save_final_inventory_and_separate_counts(tmp_path, monk
     app = NS(app_data_dir=str(tmp_path), config=NS(get=lambda key, default=None: default), shutdown=lambda: None)
     order = []
     raw = "DISM header\n[====== 42.0% ======]\nThe operation completed successfully."
-    def winget_stage(app, log, cancelled):
+    def winget_stage(app, log, cancelled, *, context="run_all"):
+        assert context == ("unattended" if entrypoint == "unattended" else "run_all")
         order.append("install")
         return {"results": [{"name": "Broken app", "id": "Acme.App", "state": "BROKEN", "confirmed": False}]}
     def dism_stage(app, log, cancelled):
@@ -268,7 +269,7 @@ def test_run_entrypoints_save_final_inventory_and_separate_counts(tmp_path, monk
         order.append("final scan")
         assert kwargs == {"include_hidden": False, "include_drivers": True}
         return []
-    monkeypatch.setitem(stages.STAGE_RUNNERS, "wu", lambda *a: {"installed_count": 1, "pending_restart_count": 2})
+    monkeypatch.setitem(stages.STAGE_RUNNERS, "wu", lambda *a, **k: {"installed_count": 1, "pending_restart_count": 2})
     monkeypatch.setitem(stages.STAGE_RUNNERS, "winget", winget_stage)
     monkeypatch.setitem(stages.STAGE_RUNNERS, "store", lambda *a: {"triggered": 1})
     monkeypatch.setitem(stages.STAGE_RUNNERS, "dism", dism_stage)

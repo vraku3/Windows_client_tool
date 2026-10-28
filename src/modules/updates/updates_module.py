@@ -1,5 +1,6 @@
 import os
 import html
+import re
 import subprocess
 import sys
 from dataclasses import replace
@@ -8,10 +9,11 @@ from typing import List, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QTabWidget,
     QTableWidget, QHeaderView, QPlainTextEdit,
+    QTableWidgetItem,
     QCheckBox, QTimeEdit, QComboBox, QProgressBar, QLineEdit, QMessageBox,
     QGroupBox, QScrollArea, QSpinBox, QSplitter,
 )
-from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer, QUrl
+from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer, QUrl, QTimer
 from PyQt6.QtGui import QFont, QColor, QDesktopServices
 
 from ui.app_facts import bind_row
@@ -21,11 +23,16 @@ from core.base_module import BaseModule
 from ui.empty_state import EmptyState
 from ui.table_style import apply_table_style
 from .overview import UpdatesOverview
+from .activity_ledger import record_winget_activity, record_wu_activity
+from .activity_widget import ActivityWidget
+from . import reboot_reconcile, run_checkpoint, scan_history, wu_categories
 from core.system_paths import cmd_exe
 from core.module_groups import ModuleGroup
 from core.worker import Worker, COMWorker, retire
+from modules.updates.operation_guard import maintenance_worker
 from core.windows_utils import is_reboot_pending
-from core.blocklist import add_pattern, normalize_patterns
+from core.blocklist import add_pattern, add_exclusion, load_exclusions, is_blocked
+from .exclusions_ui import ExclusionsEditor, ExcludedOffers
 from core.events import NOTIFY_BALLOON, BalloonNotifyData
 from core.table_ui import centered_item, center_header, set_role
 from core.widget_life import widget_is_valid
@@ -39,6 +46,7 @@ from modules.updates.windows_updater import (
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
 from modules.updates.run_all_tab import _RunAllTab
+from modules.updates.scan_timestamps import record_scan, load_timestamps, elapsed_text, is_stale
 from ui.error_banner import ErrorBanner
 import logging
 from core.semantic_colors import chrome, semantic
@@ -48,8 +56,109 @@ logger = logging.getLogger(__name__)
 _widget_valid = widget_is_valid
 
 
+def _version_key(value) -> tuple:
+    """Numeric sort key for versions; unparseable versions sort as (0,)."""
+    parts = re.findall(r"\d+", str(value or ""))
+    return tuple(int(part) for part in parts) if parts else (0,)
+
+
 UNATTENDED_TASK_NAME = "WinClientTool_UnattendedMaintenance"
 LEGACY_TASK_NAME = "WinClientTool_UpdateCheck"
+
+
+class _ScanStatusLabel(QLabel):
+    def __init__(self, source, parent=None):
+        super().__init__("Never scanned", parent)
+        self.source = source
+        self.app = None
+        self._timer = QTimer(self)
+        self._timer.setInterval(60_000)
+        self._timer.timeout.connect(self.refresh)
+        self._timer.start()
+
+    def set_app(self, app):
+        self.app = app
+        self.refresh()
+
+    def record(self, count):
+        directory = getattr(self.app, "app_data_dir", None)
+        if directory is None:
+            return
+        try:
+            record_scan(directory, self.source, True, count)
+        except OSError as exc:
+            logger.warning("Could not save %s scan timestamp: %s", self.source, exc)
+            self.setText("Scan completed; could not save last scan time")
+            self.setToolTip(str(exc))
+            self.setStyleSheet(f"color: {semantic('warning')};")
+            return
+        self.refresh()
+
+    def refresh(self):
+        if not widget_is_valid(self):
+            return
+        directory = getattr(self.app, "app_data_dir", None)
+        entry = load_timestamps(directory).get(self.source) if directory is not None else None
+        self.setStyleSheet("")
+        self.setToolTip("")
+        if not entry:
+            self.setText("Never scanned")
+            return
+        threshold = self.app.config.get("updates.stale_hours", 4)
+        stale = is_stale(entry["ts"], threshold)
+        text = f"Last scan: {elapsed_text(entry['ts'])} ({entry['count']} updates found)"
+        if stale:
+            text += " -- results may be stale"
+            self.setStyleSheet(f"color: {semantic('warning')};")
+        self.setText(text)
+        self.setToolTip(f"Last successful scan: {entry['ts']}")
+
+
+class _ScanChanges(QGroupBox):
+    """Collapsible "what changed since the previous successful scan" panel."""
+
+    def __init__(self, parent=None):
+        super().__init__("Changes since last scan", parent)
+        self.setCheckable(True)
+        self.setChecked(False)
+        layout = QVBoxLayout(self)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Update", "Change", "Detail"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setMaximumHeight(150)
+        apply_table_style(self.table)
+        layout.addWidget(self.table)
+        self.table.hide()
+        self.toggled.connect(self.table.setVisible)
+        self.setVisible(False)
+
+    def set_changes(self, result) -> None:
+        rows = []
+        for row in (result or {}).get("new", []):
+            rows.append((row["name"], "New", f"offered {row.get('offered') or 'unknown'}"))
+        for row in (result or {}).get("changed", []):
+            rows.append((row["name"], "Changed", f"{row.get('was')} → {row.get('offered')}"))
+        for row in (result or {}).get("gone", []):
+            rows.append((row["name"], "No longer offered", row.get("offered") or ""))
+        first = bool((result or {}).get("first"))
+        if first or not rows:
+            self.setVisible(False)
+            self.table.setRowCount(0)
+            return
+        self.setTitle(f"Changes since last scan ({len(rows)})")
+        self.setVisible(True)
+        self.table.setRowCount(len(rows))
+        for i, values in enumerate(rows):
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if values[1] == "New":
+                    item.setForeground(QColor(semantic("success")))
+                elif values[1] == "No longer offered":
+                    item.setForeground(QColor(chrome("text_muted")))
+                else:
+                    item.setForeground(QColor(semantic("warning")))
+                self.table.setItem(i, col, item)
 
 
 def _start_scan(tab, worker, on_result=None):
@@ -110,10 +219,16 @@ class _AppUpdatesTab(QWidget):
         self._workers: List = []
         self._op_timer: Optional[QElapsedTimer] = None
         self._updates_listener = None
+        self._busy_owner = ""
         self._setup_ui()
 
     def set_app(self, app) -> None:
         self.app = app
+        self._package_activity.set_app(app)
+        self._scan_status.set_app(app)
+        self._scan_changes.set_changes(scan_history.last_changes(
+            getattr(app, "app_data_dir", None), "winget"))
+        self._restore_sort()
 
     def set_updates_listener(self, cb) -> None:
         """cb(updates: List[AppUpdate]) — called whenever the fetched list
@@ -129,16 +244,19 @@ class _AppUpdatesTab(QWidget):
         self._refresh_btn = QPushButton("Refresh")
         self._update_sel_btn = QPushButton("Update Selected")
         self._update_all_btn = QPushButton("Update All")
+        self._update_visible_btn = QPushButton("Update Visible")
         self._details_btn = QPushButton("Package Details")
         self._block_btn = QPushButton("Add to Blocklist")
         self._update_sel_btn.setEnabled(False)
         self._update_all_btn.setEnabled(False)
+        self._update_visible_btn.setEnabled(False)
         self._details_btn.setEnabled(False)
         self._block_btn.setEnabled(False)
         self._status_lbl = QLabel("Click Refresh to check for updates.")
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(self._update_sel_btn)
         toolbar.addWidget(self._update_all_btn)
+        toolbar.addWidget(self._update_visible_btn)
         toolbar.addWidget(self._details_btn)
         toolbar.addWidget(self._block_btn)
         toolbar.addStretch()
@@ -150,6 +268,16 @@ class _AppUpdatesTab(QWidget):
         self._filter_edit = QLineEdit()
         self._filter_edit.setPlaceholderText("Filter by name, id, or source…")
         filter_row.addWidget(self._filter_edit, 1)
+        self._source_filter = QComboBox()
+        self._source_filter.addItem("All sources", None)
+        self._source_filter.addItem("winget", "winget")
+        self._source_filter.addItem("Microsoft Store", "msstore")
+        self._result_filter = QComboBox()
+        self._result_filter.addItem("All results", None)
+        self._result_filter.addItem("Confirmed", "confirmed")
+        self._result_filter.addItem("Failed / not confirmed", "unconfirmed")
+        filter_row.addWidget(self._source_filter)
+        filter_row.addWidget(self._result_filter)
         layout.addLayout(filter_row)
 
         # Progress bar (thin strip)
@@ -184,16 +312,28 @@ class _AppUpdatesTab(QWidget):
         layout.addWidget(self._empty_state, 1)
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._table)
+        self._package_activity = ActivityWidget(package=True)
+        splitter.addWidget(self._package_activity)
         splitter.addWidget(self._log)
-        splitter.setSizes([400, 120])
+        splitter.setSizes([320, 160, 120])
         layout.addWidget(splitter, 1)
+        self._excluded_offers = ExcludedOffers()
+        layout.addWidget(self._excluded_offers)
+        self._scan_changes = _ScanChanges()
+        layout.addWidget(self._scan_changes)
+        self._scan_status = _ScanStatusLabel("winget", self)
+        layout.addWidget(self._scan_status)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
         self._update_sel_btn.clicked.connect(self._do_update_selected)
         self._update_all_btn.clicked.connect(self._do_update_all)
+        self._update_visible_btn.clicked.connect(self._do_update_visible)
         self._details_btn.clicked.connect(self._do_details)
         self._block_btn.clicked.connect(self._do_add_blocklist)
         self._filter_edit.textChanged.connect(self._apply_filter)
+        self._source_filter.currentIndexChanged.connect(lambda _i: self._apply_filter(self._filter_edit.text()))
+        self._result_filter.currentIndexChanged.connect(lambda _i: self._apply_filter(self._filter_edit.text()))
+        self._table.horizontalHeader().sectionClicked.connect(self._sort_by)
 
     def auto_scan(self):
         """Trigger a refresh if this tab hasn't been loaded yet."""
@@ -205,9 +345,12 @@ class _AppUpdatesTab(QWidget):
         has_sel = bool(self._table.selectedIndexes())
         self._details_btn.setEnabled(has_sel)
         self._block_btn.setEnabled(has_sel)
+        rows = self._table.selectionModel().selectedRows()
+        item = self._table.item(rows[0].row(), 1) if rows else None
+        self._package_activity.set_package(item.text() if item else None)
 
-    def _patterns(self) -> List[str]:
-        return self.app.config.get("updates.blocklist_patterns", []) if self.app else []
+    def _patterns(self) -> list[dict]:
+        return load_exclusions(self.app) if self.app else []
 
     # ------------------------------------------------------------------
     # Worker functions — Worker passes itself as first argument, so all
@@ -230,31 +373,67 @@ class _AppUpdatesTab(QWidget):
         self._refresh_btn.setEnabled(False)
         self._update_sel_btn.setEnabled(False)
         self._update_all_btn.setEnabled(False)
+        self._update_visible_btn.setEnabled(False)
         self._status_lbl.setText("Checking for updates...")
         self._progress.setRange(0, 0)
         self._progress.show()
         self._table.setRowCount(0)
 
-        patterns = self._patterns()
-
         def _fetch(worker):
-            return fetch_updates(patterns=patterns)
+            return fetch_updates()
 
         w = Worker(_fetch)
         _start_scan(self, w)
 
     def _on_updates(self, updates: List[AppUpdate]):
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "scan_complete", f"App update scan: {len(updates)} available", {"available": len(updates), "kind": "winget"})
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
             return
+        raw_offers = updates
+        updates = self._partition_offers(raw_offers)
         self._updates = updates
+        self._scan_changes.set_changes(scan_history.record(
+            getattr(self.app, "app_data_dir", None), "winget", raw_offers))
+        self._restore_sort()
+        self._scan_status.record(len(updates))
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._render_table()
         self._status_lbl.setText(f"{len(updates)} update(s) available.")
-        self._update_sel_btn.setEnabled(bool(updates) and not getattr(self, "_installing", False))
-        self._update_all_btn.setEnabled(bool(updates) and not getattr(self, "_installing", False))
+        self._sync_action_buttons()
         if self._updates_listener:
             self._updates_listener(updates)
+
+    def _partition_offers(self, offers):
+        self._all_offers = offers
+        entries = self._patterns()
+        self._excluded_offers.set_offers([(u.name, u.winget_id) for u in offers], entries)
+        return [u for u in offers if not is_blocked(u.name, u.winget_id, entries)]
+
+    def refresh_exclusions(self):
+        if hasattr(self, "_all_offers") and not getattr(self, "_installing", False):
+            self._updates = self._partition_offers(self._all_offers)
+            self._render_table()
+            self._status_lbl.setText(f"{len(self._updates)} update(s) available.")
+            self._sync_action_buttons()
+            if self._updates_listener:
+                self._updates_listener(self._updates)
+
+    def set_maintenance_busy(self, owner) -> None:
+        """Another operation (this app or another process) holds the machine."""
+        self._busy_owner = owner or ""
+        self._sync_action_buttons()
+
+    def _sync_action_buttons(self) -> None:
+        busy = bool(getattr(self, "_busy_owner", ""))
+        idle = (not getattr(self, "_installing", False)
+                and getattr(self, "_scan_worker", None) is None)
+        has = bool(getattr(self, "_updates", []))
+        visible = bool(self._visible_rows()) if self._table.rowCount() else False
+        self._update_sel_btn.setEnabled(has and idle and not busy)
+        self._update_all_btn.setEnabled(has and idle and not busy)
+        self._update_visible_btn.setEnabled(has and idle and not busy and visible)
 
     def _render_table(self, results: Optional[dict] = None) -> None:
         apply_table_style(self._table)
@@ -273,6 +452,7 @@ class _AppUpdatesTab(QWidget):
                 result_item.setForeground(QColor(semantic("warning")))
             self._table.setItem(row, 5, result_item)
             bind_row(self._table, row, u, safety=False)
+        self._on_selection_changed()
         self._apply_filter(self._filter_edit.text())
         self._empty_state.title_label.setText("All up to date")
         self._empty_state.set_variant("empty")
@@ -284,19 +464,75 @@ class _AppUpdatesTab(QWidget):
 
     def _apply_filter(self, text: str) -> None:
         text = (text or "").strip().lower()
+        source = self._source_filter.currentData()
+        result_want = self._result_filter.currentData()
         for row in range(self._table.rowCount()):
-            if not text:
-                self._table.setRowHidden(row, False)
-                continue
-            match = False
-            for col in (0, 1, 4):
-                item = self._table.item(row, col)
-                if item is not None and text in item.text().lower():
-                    match = True
-                    break
-            self._table.setRowHidden(row, not match)
+            show = True
+            if text:
+                show = any(self._table.item(row, col) is not None
+                           and text in self._table.item(row, col).text().lower()
+                           for col in (0, 1, 4))
+            if show and source:
+                item = self._table.item(row, 4)
+                show = item is not None and item.text().casefold() == source.casefold()
+            if show and result_want:
+                item = self._table.item(row, 5)
+                value = (item.text() if item is not None else "").strip()
+                confirmed = value in ("CONFIRMED", "LIKELY OK")
+                show = confirmed if result_want == "confirmed" else (bool(value) and not confirmed)
+            self._table.setRowHidden(row, not show)
+        self._sync_action_buttons()
+
+    def _visible_rows(self) -> list:
+        return [row for row in range(self._table.rowCount())
+                if not self._table.isRowHidden(row)]
+
+    def _visible_update_ids(self) -> List[str]:
+        return [self._updates[row].winget_id for row in self._visible_rows()
+                if row < len(self._updates)]
+
+    @staticmethod
+    def _sort_key_for(section):
+        def key(u):
+            if section == 0:
+                return u.name.casefold()
+            if section == 1:
+                return u.winget_id.casefold()
+            if section == 2:
+                return _version_key(u.installed_version)
+            if section == 3:
+                return _version_key(u.available_version)
+            if section == 4:
+                return (u.source or "").casefold()
+            return ""
+        return key
+
+    def _saved_sort(self):
+        saved = self.app.config.get("updates.sort_apps", {}) if self.app else {}
+        section = saved.get("section") if isinstance(saved, dict) else None
+        if isinstance(section, int) and 0 <= section <= 5:
+            return section, bool(saved.get("asc", True))
+        return None
+
+    def _restore_sort(self) -> None:
+        choice = self._saved_sort()
+        if choice:
+            self._updates.sort(key=self._sort_key_for(choice[0]), reverse=not choice[1])
+
+    def _sort_by(self, section: int) -> None:
+        if getattr(self, "_installing", False):
+            return
+        saved = self._saved_sort()
+        asc = not (saved is not None and saved[0] == section and saved[1])
+        self._updates.sort(key=self._sort_key_for(section), reverse=not asc)
+        if self.app:
+            self.app.config.set("updates.sort_apps", {"section": section, "asc": asc})
+            self.app.config.save()
+        self._render_table()
 
     def _on_error(self, err_str: str):
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "install_failed" if getattr(self, "_installing", False) else "scan_failed", "Update operation failed", {"error": err_str[:500]}, "error")
         self._installing = False
         self._empty_state.action_button.setEnabled(True)
         self._empty_state.title_label.setText("Could not check updates")
@@ -307,6 +543,7 @@ class _AppUpdatesTab(QWidget):
         if overview is not None:
             overview.scan_failed("apps", err_str)
         self._refresh_btn.setEnabled(True)
+        self._sync_action_buttons()
         self._progress.hide()
         self._status_lbl.setText(f"Error: {err_str}")
 
@@ -323,16 +560,25 @@ class _AppUpdatesTab(QWidget):
         # opaque `winget upgrade --all` call.
         self._run_updates([u.winget_id for u in self._updates])
 
+    def _do_update_visible(self) -> None:
+        """Update only the rows the current filter/search leaves visible (#10)."""
+        ids = self._visible_update_ids()
+        if ids:
+            self._run_updates(ids)
+
     def _run_updates(self, ids: List[str]):
         if getattr(self, "_installing", False) or getattr(self, "_scan_worker", None) is not None:
             return
         if not ids:
             return
         self._installing = True
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "install_start", "App update batch started")
         self._empty_state.action_button.setEnabled(False)
         self._refresh_btn.setEnabled(False)
         self._update_sel_btn.setEnabled(False)
         self._update_all_btn.setEnabled(False)
+        self._update_visible_btn.setEnabled(False)
         self._log.clear()
         self._progress.setRange(0, len(ids))
         self._progress.setValue(0)
@@ -343,14 +589,19 @@ class _AppUpdatesTab(QWidget):
         targets = {u.winget_id: u.available_version for u in self._updates if u.winget_id in ids}
         befores = {u.winget_id: u.installed_version for u in self._updates if u.winget_id in ids}
         names = {u.winget_id: u.name for u in self._updates if u.winget_id in ids}
+        offers = {u.winget_id: u for u in self._updates if u.winget_id in ids}
+        app = self.app
         verify = bool(self.app.config.get("updates.verify_after_update", True)) if self.app else True
 
+        @maintenance_worker("Updates install")
         def _run(worker):
             outcomes = {}
             stopped_reason = ""
+            run_checkpoint.begin(app.app_data_dir, ["winget"], "manual")
             for i, wid in enumerate(ids):
                 if stopped_reason:
                     outcomes[wid] = UpdateOutcome(wid, "SKIPPED", stopped_reason)
+                    record_winget_activity(app, offers[wid], outcomes[wid], "manual", worker.signals.log_line.emit)
                     worker.signals.log_line.emit(f"SKIPPED {wid}: {stopped_reason}")
                     worker.signals.progress.emit(i + 1)
                     continue
@@ -358,19 +609,32 @@ class _AppUpdatesTab(QWidget):
                     worker.signals.log_line.emit("Cancelled.")
                     break
                 worker.signals.log_line.emit(f"Updating {wid}...")
-                outcome = install_update(
-                    wid, lambda line: worker.signals.log_line.emit(line),
-                    is_cancelled=lambda: worker.is_cancelled,
-                    target_version=targets.get(wid, ""),
-                    before_version=befores.get(wid, ""),
-                    package_name=names.get(wid, ""),
-                    verify=verify,
-                )
+                run_checkpoint.item(app.app_data_dir, f"winget:{wid}", "started",
+                                    f"{befores.get(wid, '')} -> {targets.get(wid, '')}")
+                try:
+                    outcome = install_update(
+                        wid, lambda line: worker.signals.log_line.emit(line),
+                        is_cancelled=lambda: worker.is_cancelled,
+                        target_version=targets.get(wid, ""),
+                        before_version=befores.get(wid, ""),
+                        package_name=names.get(wid, ""),
+                        verify=verify,
+                    )
+                except Exception as exc:
+                    record_winget_activity(app, offers[wid], UpdateOutcome(wid, "FAILED", str(exc)),
+                                           "manual", worker.signals.log_line.emit)
+                    run_checkpoint.item(app.app_data_dir, f"winget:{wid}", "failed", str(exc))
+                    raise
                 worker.signals.log_line.emit(f"  {outcome.state}: {outcome.detail}")
                 outcomes[wid] = outcome
+                record_winget_activity(app, offers[wid], outcome, "manual", worker.signals.log_line.emit)
+                run_checkpoint.item(app.app_data_dir, f"winget:{wid}",
+                                    "installed" if outcome else "failed", outcome.detail)
                 if outcome.state == "STILL RUNNING":
                     stopped_reason = outcome.detail
                 worker.signals.progress.emit(i + 1)
+            run_checkpoint.finish(app.app_data_dir,
+                                  "cancelled" if worker.is_cancelled else "completed")
             return outcomes
 
         w = Worker(_run)
@@ -382,7 +646,13 @@ class _AppUpdatesTab(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def _on_update_done(self, outcomes: dict):
+        from core.timeline import record
+        count = sum(bool(o) for o in outcomes.values())
+        failed = sum(getattr(o, "state", "") in ("FAILED", "BROKEN", "STILL RUNNING") for o in outcomes.values())
+        record(getattr(self.app, "app_data_dir", None), "updates", "install_failed" if failed else "install_complete", f"App updates: {count}/{len(outcomes)} confirmed installed", {"installed": count, "attempted": len(outcomes), "failed": failed}, "error" if failed else "warning" if count < len(outcomes) else "info")
+        self._package_activity.refresh()
         self._installing = False
+        self._sync_action_buttons()
         self._empty_state.action_button.setEnabled(True)
         self._refresh_btn.setEnabled(True)
         self._update_all_btn.setEnabled(True)
@@ -405,7 +675,6 @@ class _AppUpdatesTab(QWidget):
         UPDATED_UNVERIFIED: winget said it installed but can never read the
         version back, so every future scan re-offers the same update.
         """
-        from core.blocklist import add_pattern
         from core.winget_list import DIFF_TECH, UPDATED_UNVERIFIED
         reasons = {
             DIFF_TECH: "not updatable via winget",
@@ -414,7 +683,7 @@ class _AppUpdatesTab(QWidget):
         for wid, o in outcomes.items():
             reason = reasons.get(o.state)
             if reason and self.app:
-                add_pattern(self.app, wid)
+                add_exclusion(self.app, wid, reason, origin="auto")
                 self._log.appendPlainText(
                     f"  → {wid} added to blocklist ({reason})."
                 )
@@ -423,15 +692,15 @@ class _AppUpdatesTab(QWidget):
         """Re-scan for the table only: each package's verdict already came from
         reading ITS installed version back (install_update), never from being
         absent from this list -- a failed re-scan would make every package look updated."""
-        patterns = self._patterns()
-
         def _fetch(worker):
-            return fetch_updates(patterns=patterns)
+            return fetch_updates()
 
         w = Worker(_fetch)
         _start_scan(self, w, lambda after: self._on_verify_done(outcomes, after))
 
     def _on_verify_done(self, outcomes: dict, after_updates: List[AppUpdate]) -> None:
+        if not widget_is_valid(self._table) or not widget_is_valid(self._status_lbl):
+            return
         def _result_text(o):
             if o.state == "UPDATED":
                 return "CONFIRMED"
@@ -439,15 +708,16 @@ class _AppUpdatesTab(QWidget):
                 return "LIKELY OK"
             return o.state
         results = {wid: _result_text(o) for wid, o in outcomes.items()}
+        after_updates = self._partition_offers(after_updates)
         self._updates = after_updates
+        self._scan_status.record(len(after_updates))
         self._render_table(results)
         confirmed = sum(1 for o in outcomes.values() if o)
         not_confirmed = [f"{wid}: {o.detail}" for wid, o in outcomes.items() if not o]
         self._status_lbl.setText(f"Verified — {confirmed}/{len(outcomes)} confirmed updated.")
         if not_confirmed:
             self._log.appendPlainText("\nNot confirmed:\n  " + "\n  ".join(not_confirmed))
-        self._update_sel_btn.setEnabled(len(after_updates) > 0)
-        self._update_all_btn.setEnabled(len(after_updates) > 0)
+        self._sync_action_buttons()
         if self._updates_listener:
             self._updates_listener(after_updates)
 
@@ -497,10 +767,119 @@ class _WinUpdatesTab(QWidget):
         self._loaded = False
         self._workers: List = []
         self._op_timer: Optional[QElapsedTimer] = None
+        self._busy_owner = ""
         self._setup_ui()
 
     def set_app(self, app) -> None:
         self.app = app
+        self._scan_status.set_app(app)
+        self._scan_changes.set_changes(scan_history.last_changes(
+            getattr(app, "app_data_dir", None), "wu"))
+        self._restore_wu_sort()
+
+    def set_maintenance_busy(self, owner) -> None:
+        self._busy_owner = owner or ""
+        self._sync_install_button()
+
+    def _sync_install_button(self) -> None:
+        busy = bool(getattr(self, "_busy_owner", ""))
+        idle = not getattr(self, "_installing", False)
+        can = any(not u.pending_restart for u in getattr(self, "_updates", []))
+        self._install_btn.setEnabled(can and not busy and idle)
+        visible = any(not u.pending_restart for u in self._visible_wu_updates())
+        self._install_visible_btn.setEnabled(visible and not busy and idle)
+
+    def _visible_wu_rows(self) -> list:
+        return [row for row in range(self._table.rowCount())
+                if not self._table.isRowHidden(row)]
+
+    def _visible_wu_updates(self) -> List[WindowsUpdate]:
+        return [self._updates[row] for row in self._visible_wu_rows()
+                if row < len(self._updates) and not self._updates[row].pending_restart]
+
+    def _apply_wu_filters(self) -> None:
+        query = self._wu_search.text().strip().casefold()
+        severity = self._wu_severity.currentData()
+        classification = self._wu_classification.currentData()
+        restart = self._wu_restart.currentData()
+        category = self._wu_category.currentData()
+        for row, update in enumerate(self._updates):
+            show = True
+            if query:
+                haystack = " ".join((update.kb or "", update.title or "",
+                                     update.classification or "")).casefold()
+                show = query in haystack
+            if show and severity:
+                current = (severity_text(update) or "").casefold()
+                show = current in ("", "—") if severity == "unspecified" else severity in current
+            if show and classification:
+                show = (update.classification or "").casefold() == classification.casefold()
+            if show and restart:
+                show = str(update.reboot or "") == restart
+            if show and category:
+                show = wu_categories.category_of(update) == category
+            self._table.setRowHidden(row, not show)
+        filtering = bool(query or severity or classification or restart or category)
+        for row in range(len(self._updates), self._table.rowCount()):
+            self._table.setRowHidden(row, filtering)
+        self._sync_install_button()
+
+    def _rebuild_classification_filter(self, updates) -> None:
+        current = self._wu_classification.currentData()
+        values = sorted({(u.classification or "Unknown") for u in updates})
+        self._wu_classification.blockSignals(True)
+        self._wu_classification.clear()
+        self._wu_classification.addItem("Any classification", None)
+        for value in values:
+            self._wu_classification.addItem(value, value)
+        index = self._wu_classification.findData(current)
+        self._wu_classification.setCurrentIndex(max(0, index))
+        self._wu_classification.blockSignals(False)
+
+    def _wu_sort_key_for(self, section: int):
+        severity_rank = {"critical": 0, "important": 1, "moderate": 2, "low": 3}
+        reboot_rank = {"1": 0, "2": 1, "0": 2}
+
+        def key(u: WindowsUpdate):
+            if section == 0:
+                return _version_key(str(u.kb or "").replace("KB", "").split(",")[0])
+            if section == 1:
+                return (u.title or "").casefold()
+            if section == 2:
+                return (u.classification or "").casefold()
+            if section == 3:
+                return severity_rank.get((u.severity or "").casefold(), 9)
+            if section == 4:
+                return u.size_mb or 0
+            if section == 5:
+                return reboot_rank.get(str(u.reboot or ""), 9)
+            if section == 6:
+                return u.release_date or ""
+            return ""
+        return key
+
+    def _saved_wu_sort(self):
+        saved = self.app.config.get("updates.sort_wu", {}) if self.app else {}
+        section = saved.get("section") if isinstance(saved, dict) else None
+        if isinstance(section, int) and 0 <= section <= 7:
+            return section, bool(saved.get("asc", True))
+        return None
+
+    def _restore_wu_sort(self) -> None:
+        choice = self._saved_wu_sort()
+        if choice:
+            self._updates.sort(key=self._wu_sort_key_for(choice[0]), reverse=not choice[1])
+
+    def _sort_wu_by(self, section: int) -> None:
+        if getattr(self, "_installing", False):
+            return
+        saved = self._saved_wu_sort()
+        asc = not (saved is not None and saved[0] == section and saved[1])
+        self._updates.sort(key=self._wu_sort_key_for(section), reverse=not asc)
+        if self.app:
+            self.app.config.set("updates.sort_wu", {"section": section, "asc": asc})
+            self.app.config.save()
+        self._render_table()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -521,16 +900,22 @@ class _WinUpdatesTab(QWidget):
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
         self._install_btn = QPushButton("Install Selected")
+        self._install_visible_btn = QPushButton("Install Visible")
+        self._details_btn = QPushButton("Details")
         self._hide_btn = QPushButton("Hide Selected")
         self._block_btn = QPushButton("Add to Blocklist")
         self._history_btn = QPushButton("History")
         self._open_btn = QPushButton("Open Settings")
         self._install_btn.setEnabled(False)
+        self._install_visible_btn.setEnabled(False)
+        self._details_btn.setEnabled(False)
         self._hide_btn.setEnabled(False)
         self._block_btn.setEnabled(False)
         self._status_lbl = QLabel("Click Refresh to check for Windows Updates.")
         toolbar.addWidget(self._refresh_btn)
         toolbar.addWidget(self._install_btn)
+        toolbar.addWidget(self._install_visible_btn)
+        toolbar.addWidget(self._details_btn)
         toolbar.addWidget(self._hide_btn)
         toolbar.addWidget(self._block_btn)
         toolbar.addWidget(self._history_btn)
@@ -538,6 +923,32 @@ class _WinUpdatesTab(QWidget):
         toolbar.addStretch()
         toolbar.addWidget(self._status_lbl)
         layout.addLayout(toolbar)
+
+        filters_row = QHBoxLayout()
+        self._wu_search = QLineEdit()
+        self._wu_search.setPlaceholderText("Search KB, title, classification…")
+        self._wu_search.setClearButtonEnabled(True)
+        self._wu_severity = QComboBox()
+        for label, value in (("Any severity", None), ("Critical", "critical"),
+                             ("Important", "important"), ("Moderate", "moderate"),
+                             ("Low", "low"), ("Unspecified", "unspecified")):
+            self._wu_severity.addItem(label, value)
+        self._wu_classification = QComboBox()
+        self._wu_classification.addItem("Any classification", None)
+        self._wu_restart = QComboBox()
+        for label, value in (("Any restart behaviour", None), ("Requires restart", "1"),
+                             ("May request restart", "2"), ("Never restarts", "0")):
+            self._wu_restart.addItem(label, value)
+        self._wu_category = QComboBox()
+        self._wu_category.addItem("Any category", None)
+        for key in (wu_categories.SECURITY, wu_categories.QUALITY, wu_categories.FEATURE,
+                    wu_categories.DRIVER, wu_categories.PREVIEW, wu_categories.DOTNET,
+                    wu_categories.DEFENDER, wu_categories.OTHER):
+            self._wu_category.addItem(wu_categories.LABELS[key], key)
+        for widget in (self._wu_search, self._wu_severity, self._wu_classification,
+                       self._wu_restart, self._wu_category):
+            filters_row.addWidget(widget, 1 if widget is self._wu_search else 0)
+        layout.addLayout(filters_row)
 
         opts_row = QHBoxLayout()
         self._chk_hidden = QCheckBox("Show hidden updates")
@@ -575,14 +986,27 @@ class _WinUpdatesTab(QWidget):
         splitter.addWidget(self._log)
         splitter.setSizes([400, 120])
         layout.addWidget(splitter, 1)
+        self._excluded_offers = ExcludedOffers()
+        layout.addWidget(self._excluded_offers)
+        self._scan_changes = _ScanChanges()
+        layout.addWidget(self._scan_changes)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
+        self._scan_status = _ScanStatusLabel("wu", self)
+        layout.addWidget(self._scan_status)
         self._install_btn.clicked.connect(self._do_install)
+        self._details_btn.clicked.connect(self._do_details)
         self._hide_btn.clicked.connect(self._do_hide)
         self._block_btn.clicked.connect(self._do_add_blocklist)
         self._history_btn.clicked.connect(self._do_history)
         self._open_btn.clicked.connect(self._do_open_settings)
         self._chk_hidden.toggled.connect(lambda _c: self._do_refresh())
+        self._install_visible_btn.clicked.connect(self._do_install_visible)
+        self._wu_search.textChanged.connect(lambda _t: self._apply_wu_filters())
+        for combo in (self._wu_severity, self._wu_classification,
+                      self._wu_restart, self._wu_category):
+            combo.currentIndexChanged.connect(lambda _i: self._apply_wu_filters())
+        self._table.horizontalHeader().sectionClicked.connect(self._sort_wu_by)
 
     def auto_scan(self):
         """Trigger a refresh if this tab hasn't been loaded yet."""
@@ -601,9 +1025,10 @@ class _WinUpdatesTab(QWidget):
         has_sel = bool(self._table.selectedIndexes())
         self._hide_btn.setEnabled(has_sel)
         self._block_btn.setEnabled(has_sel)
+        self._details_btn.setEnabled(has_sel)
 
-    def _patterns(self) -> List[str]:
-        return self.app.config.get("updates.blocklist_patterns", []) if self.app else []
+    def _patterns(self) -> list[dict]:
+        return load_exclusions(self.app) if self.app else []
 
     def _do_refresh(self):
         if getattr(self, "_scan_worker", None) is not None or getattr(self, "_installing", False):
@@ -630,11 +1055,12 @@ class _WinUpdatesTab(QWidget):
 
         def _fetch(worker):
             held: List[WindowsUpdate] = []
+            excluded: List[WindowsUpdate] = []
             updates = fetch_pending_updates(
                 include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
-                held_out=held,
+                held_out=held, excluded_out=excluded,
             )
-            return {"updates": updates, "held": held}
+            return {"updates": updates, "held": held, "excluded": excluded}
 
         w = COMWorker(_fetch)
         _start_scan(self, w)
@@ -643,13 +1069,25 @@ class _WinUpdatesTab(QWidget):
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
             return
         updates, held = split_scan(payload)
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "scan_complete", f"Windows Update scan: {len(updates)} available, {len(held)} held", {"available": len(updates), "held": len(held), "kind": "wu"})
+        self._excluded = payload.get("excluded", []) if isinstance(payload, dict) else []
+        self._excluded_offers.set_offers([(u.title, u.kb) for u in self._excluded], self._patterns())
+        self._scan_changes.set_changes(scan_history.record(
+            getattr(self.app, "app_data_dir", None), "wu",
+            list(updates) + list(held) + list(self._excluded)))
+        self._scan_status.record(len(updates) + len(held))
         self._updates = updates
         self._held = held
+        self._restore_wu_sort()
+        self._rebuild_classification_filter(updates + held)
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._render_table()
-        self._status_lbl.setText(wu_status_text(updates, held))
-        self._install_btn.setEnabled(any(not u.pending_restart for u in updates) and not getattr(self, "_installing", False))
+        summary = wu_categories.summary_line(list(updates) + list(held))
+        self._status_lbl.setText(wu_status_text(updates, held)
+                                 + (f"  —  {summary}" if summary else ""))
+        self._sync_install_button()
         try:
             self._reboot_banner.setVisible(is_reboot_pending())
         except Exception:
@@ -679,6 +1117,7 @@ class _WinUpdatesTab(QWidget):
                 for col in range(self._table.columnCount()):
                     self._table.item(row, col).setFlags(Qt.ItemFlag.ItemIsEnabled)
         self._render_held_rows()
+        self._apply_wu_filters()
         self._empty_state.title_label.setText("All up to date")
         self._empty_state.set_variant("empty")
         self._empty_state.setVisible(not self._updates and not self._held)
@@ -707,6 +1146,8 @@ class _WinUpdatesTab(QWidget):
                 self._table.setItem(row, col, item)
 
     def _on_error(self, err_str: str):
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "install_failed" if getattr(self, "_installing", False) else "scan_failed", "Windows Update operation failed", {"error": err_str[:500]}, "error")
         self._installing = False
         self._empty_state.action_button.setEnabled(True)
         self._empty_state.title_label.setText("Could not check updates")
@@ -717,19 +1158,41 @@ class _WinUpdatesTab(QWidget):
         if overview is not None:
             overview.scan_failed("windows", err_str)
         self._refresh_btn.setEnabled(True)
+        self._sync_install_button()
         self._progress.hide()
         self._status_lbl.setText(f"Error: {err_str}")
 
     def _do_install(self):
-        if getattr(self, "_installing", False) or getattr(self, "_scan_worker", None) is not None:
-            return
         selected_rows = {i.row() for i in self._table.selectedIndexes()}
         if not selected_rows:
             return
         selected = [self._updates[r] for r in selected_rows if r < len(self._updates)
                     and not self._updates[r].pending_restart]
+        self._install(selected)
+
+    def _do_install_visible(self):
+        self._install(self._visible_wu_updates())
+
+    def _install(self, selected):
+        if getattr(self, "_installing", False) or getattr(self, "_scan_worker", None) is not None:
+            return
         if not selected:
             return
+        feature = [u for u in selected if wu_categories.category_of(u) == wu_categories.FEATURE]
+        if feature:
+            names = "\n".join(f"• {u.title}" for u in feature[:6])
+            if len(feature) > 6:
+                names += f"\n… and {len(feature) - 6} more"
+            answer = QMessageBox.warning(
+                self, "Feature upgrade selected",
+                "This is a Windows feature upgrade, not a security or quality update:\n\n"
+                + names
+                + "\n\nIt can take a long time, may change the build, and cannot always "
+                  "be rolled back.\n\nInstall it anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
         from core.disk_space import check_wu_preflight
         from modules.updates.windows_updater import download_size_mb
@@ -738,11 +1201,27 @@ class _WinUpdatesTab(QWidget):
         if reason:
             self._status_lbl.setText(f"Blocked: {reason}")
             return
+        from modules.updates.reboot_preflight import assess
+        try:
+            preflight = assess(getattr(self.app, "app_data_dir", None))
+        except Exception:
+            logger.warning("Could not build the install preflight", exc_info=True)
+            preflight = None
+        if preflight is not None and preflight.should_ask:
+            answer = QMessageBox.warning(
+                self, "Restart evidence",
+                "\n".join(preflight.evidence_lines()) + "\n\nInstall anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
 
         self._refresh_btn.setEnabled(False)
         self._install_btn.setEnabled(False)
         self._log.clear()
         self._installing = True
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "install_start", "Windows Update batch started", {"selected": len(selected)})
         self._empty_state.action_button.setEnabled(False)
         for warning in warnings:
             self._log.appendPlainText(warning)
@@ -754,6 +1233,7 @@ class _WinUpdatesTab(QWidget):
 
         app = self.app
 
+        @maintenance_worker("Updates install")
         def _run(worker):
             if app is not None and app.config.get("updates.restore_point_before_install", True):
                 from core.system_restore import create_restore_point
@@ -769,12 +1249,31 @@ class _WinUpdatesTab(QWidget):
             def _progress(done, total, title):
                 worker.signals.progress.emit(done)
 
-            return install_updates_iter(
+            folder = getattr(app, "app_data_dir", None)
+            run_checkpoint.begin(folder, ["wu"], "manual")
+            for update in selected:
+                run_checkpoint.item(folder, f"wu:{update.kb or update.title}", "started", update.title)
+
+            def _result(result):
+                record_wu_activity(app, result, "manual", worker.signals.log_line.emit)
+                phase = ("installed" if result.success
+                         else "reboot_required" if result.pending_restart else "failed")
+                run_checkpoint.item(folder, f"wu:{result.kb or result.title}", phase, result.message)
+
+            results = install_updates_iter(
                 selected,
                 progress_cb=_progress,
                 output_cb=lambda line: worker.signals.log_line.emit(line),
                 is_cancelled=lambda: worker.is_cancelled,
+                result_cb=_result,
             )
+            pending = [{"source": "wu", "id": r.kb or r.title, "name": r.title}
+                       for r in results if r.pending_restart]
+            if pending:
+                reboot_reconcile.record(folder, pending)
+            run_checkpoint.finish(folder,
+                                  "cancelled" if worker.is_cancelled else "completed")
+            return results
 
         w = COMWorker(_run)
         w.signals.log_line.connect(self._log.appendPlainText)
@@ -785,11 +1284,16 @@ class _WinUpdatesTab(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def _on_install_done(self, results: List[InstallResult]):
+        from core.timeline import record
+        count = sum(bool(r.success) for r in results)
+        failed = sum(not r.success and not r.pending_restart for r in results)
+        record(getattr(self.app, "app_data_dir", None), "updates", "install_failed" if failed else "install_complete", f"Windows Update: {count}/{len(results)} installed", {"installed": count, "attempted": len(results), "failed": failed, "pending_restart": any(r.pending_restart for r in results)}, "error" if failed else "info")
         self._installing = False
         self._empty_state.action_button.setEnabled(True)
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         installed = sum(1 for r in results if r.success)
+        self._sync_install_button()
         pending = sum(r.pending_restart for r in results)
         restart_note = f" Restart required to finish {pending} update(s)" if pending else ""
         self._status_lbl.setText(f"{installed}/{len(results)} installed." + restart_note)
@@ -820,11 +1324,12 @@ class _WinUpdatesTab(QWidget):
 
         def _fetch(worker):
             held: List[WindowsUpdate] = []
+            excluded: List[WindowsUpdate] = []
             updates = fetch_pending_updates(
                 include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
-                held_out=held,
+                held_out=held, excluded_out=excluded,
             )
-            return {"updates": updates, "held": held}
+            return {"updates": updates, "held": held, "excluded": excluded}
 
         w = COMWorker(_fetch)
         _start_scan(self, w, lambda after: self._on_verify_done(results, after))
@@ -833,6 +1338,9 @@ class _WinUpdatesTab(QWidget):
         if not _widget_valid(self._table) or not _widget_valid(self._status_lbl):
             return
         after_updates, held = split_scan(payload)
+        self._scan_status.record(len(after_updates) + len(held))
+        self._excluded = payload.get("excluded", []) if isinstance(payload, dict) else []
+        self._excluded_offers.set_offers([(u.title, u.kb) for u in self._excluded], self._patterns())
         self._held = held
         waiting = {(r.kb, r.title) for r in results if r.pending_restart}
         failed = {(r.kb, r.title) for r in results if r.result_code in (0, 1, 3, 4, 5)}
@@ -870,7 +1378,7 @@ class _WinUpdatesTab(QWidget):
         self._updates = after_updates
         self._render_table(verify_map)
         self._status_lbl.setText("Verified — " + wu_status_text(after_updates, held))
-        self._install_btn.setEnabled(any(not u.pending_restart for u in after_updates))
+        self._sync_install_button()
 
     def _do_hide(self) -> None:
         rows = sorted({i.row() for i in self._table.selectedIndexes()}, reverse=True)
@@ -913,35 +1421,107 @@ class _WinUpdatesTab(QWidget):
         self._status_lbl.setText(f"Blocked: {pattern}")
         self._do_refresh()
 
+    def _do_details(self) -> None:
+        rows = {i.row() for i in self._table.selectedIndexes()}
+        if len(rows) != 1:
+            return
+        row = next(iter(rows))
+        if not 0 <= row < len(self._updates):
+            return
+        from .wu_details_dialog import WindowsUpdateDetailsDialog
+        WindowsUpdateDetailsDialog(self._updates[row], self).exec()
+
     def _do_history(self) -> None:
-        self._log.clear()
-        self._log.appendPlainText("Fetching Windows Update history…")
+        self._history_btn.setEnabled(False)
+        self._log.appendPlainText("Fetching Windows Update history.")
 
         def _run(worker):
-            import win32com.client
-            from core.wu_error_codes import decode_wu_error
+            from modules.updates.patch_status import read_history
+            return read_history(limit=2000, operations=(1, 2))
 
-            session = win32com.client.Dispatch("Microsoft.Update.Session")
-            searcher = session.CreateUpdateSearcher()
-            total = searcher.GetTotalHistoryCount()
-            take = min(30, total)
-            lines = [f"Last {take} of {total} entries:"]
-            result_text = {2: "OK", 3: "PARTIAL", 4: "FAILED", 5: "CANCELLED"}
-            if take > 0:
-                h = searcher.QueryHistory(0, take)
-                for i in range(h.Count):
-                    e = h.Item(i)
-                    code = int(e.ResultCode)
-                    r = result_text.get(code, f"code {code}")
-                    line = f"  {e.Date}  {r}  {e.Title}"
-                    if code == 4:
-                        line += f"  ({decode_wu_error(e.HResult)})"
-                    lines.append(line)
-            return "\n".join(lines)
+        def _received(payload):
+            entries, reason = payload
+            self._history_btn.setEnabled(True)
+            if entries is None:
+                self._log.appendPlainText(f"Error: {reason}")
+                return
+            self._log.appendPlainText(f"{len(entries)} history entries read.")
+            from .history_dialog import UpdateHistoryDialog
+            dialog = UpdateHistoryDialog(entries, self)
+            dialog.exec()
+            if dialog.uninstall_kb:
+                self._do_uninstall(dialog.uninstall_kb)
+
+        def _failed(message):
+            self._history_btn.setEnabled(True)
+            self._log.appendPlainText(f"Error: {message}")
 
         w = COMWorker(_run)
-        w.signals.result.connect(self._log.appendPlainText)
-        w.signals.error.connect(lambda e: self._log.appendPlainText(f"Error: {e}"))
+        w.signals.result.connect(_received)
+        w.signals.error.connect(_failed)
+        self._workers.append(w)
+        QThreadPool.globalInstance().start(w)
+
+    def _do_uninstall(self, kb: str) -> None:
+        """Remove one installed KB, after the history dialog's confirmation."""
+        if self.app is None or getattr(self, "_installing", False):
+            return
+        app = self.app
+        from core.timeline import record
+        record(getattr(app, "app_data_dir", None), "updates", "uninstall_start",
+               f"Uninstalling Windows update {kb}", {"kb": kb})
+        self._installing = True
+        self._install_btn.setEnabled(False)
+        self._install_visible_btn.setEnabled(False)
+        self._refresh_btn.setEnabled(False)
+        self._log.appendPlainText(f"Uninstalling {kb}...")
+
+        @maintenance_worker("Updates uninstall")
+        def _run(worker):
+            from modules.updates.activity_ledger import record_wu_uninstall_activity
+            from modules.updates.windows_updater import uninstall_update
+            if app.config.get("updates.restore_point_before_install", True):
+                from core.system_restore import create_restore_point
+                worker.signals.log_line.emit(
+                    "Creating a System Restore point before uninstalling...")
+                ok, _out = create_restore_point(f"Windows Client Tool — before uninstalling {kb}")
+                if not ok:
+                    raise RuntimeError(
+                        "Nothing was uninstalled: the System Restore point could not be "
+                        "created (System Restore off or blocked by policy?).")
+                worker.signals.log_line.emit("Restore point created.")
+            result = uninstall_update(
+                kb,
+                output_cb=lambda line: worker.signals.log_line.emit(line),
+                is_cancelled=lambda: worker.is_cancelled)
+            record_wu_uninstall_activity(
+                app, result, "manual", worker.signals.log_line.emit)
+            return result
+
+        def _done(result):
+            self._installing = False
+            self._refresh_btn.setEnabled(True)
+            self._sync_install_button()
+            note = " A restart is required to finish." if result.reboot_required else ""
+            text = f"{result.message}: {kb}.{note}"
+            self._status_lbl.setText(text)
+            self._log.appendPlainText(text)
+            from core.timeline import record
+            record(getattr(app, "app_data_dir", None), "updates",
+                   "update_uninstalled" if result.success else "uninstall_failed",
+                   text, {"kb": kb, "result_code": result.result_code},
+                   "info" if result.success else "error")
+            QMessageBox.information(
+                self, "Uninstall update",
+                ("Uninstalled {0}.{1}" if result.success else "Could not uninstall {0}.{1}\n\n{2}")
+                .format(kb, note, result.message))
+            if result.success:
+                self._do_refresh()
+
+        w = COMWorker(_run)
+        w.signals.log_line.connect(self._log.appendPlainText)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(self._on_error)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
 
@@ -983,32 +1563,91 @@ class _UpdateSettingsTab(QWidget):
         self._chk_verify = QCheckBox("Verify versions after updating and report confirmed/unchanged")
         self._chk_restore = QCheckBox("Create a System Restore point before installing Windows updates")
         self._chk_drivers = QCheckBox("Include driver updates from Windows Update")
+        self._chk_allow_feature = QCheckBox(
+            "Let Run All and unattended runs install feature upgrades (Windows 11 versions)")
+        self._chk_allow_optional = QCheckBox(
+            "Let Run All and unattended runs install optional updates (drivers, previews, .NET)")
         general_lay.addWidget(self._chk_verify)
         general_lay.addWidget(self._chk_restore)
         general_lay.addWidget(self._chk_drivers)
+        general_lay.addWidget(self._chk_allow_feature)
+        general_lay.addWidget(self._chk_allow_optional)
+        stale_row = QHBoxLayout()
+        stale_label = QLabel("Flag results as stale after")
+        self._stale_hours = QSpinBox()
+        self._stale_hours.setRange(1, 8760)
+        self._stale_hours.setSuffix(" hours")
+        self._stale_hours.setValue(4)
+        stale_label.setBuddy(self._stale_hours)
+        stale_row.addWidget(stale_label)
+        stale_row.addWidget(self._stale_hours)
+        stale_row.addStretch()
+        general_lay.addLayout(stale_row)
+        self._stale_hours.valueChanged.connect(lambda value: self._set_cfg("updates.stale_hours", value))
         layout.addWidget(general_box)
+
+        # -- Update source & ownership --
+        owner_box = QGroupBox("Update source & ownership")
+        owner_lay = QVBoxLayout(owner_box)
+        owner_desc = QLabel(
+            "Where these updates come from: a WSUS server, Windows Update for "
+            "Business policy, or an MDM enrollment. A key that cannot be read is "
+            "reported, never treated as unmanaged."
+        )
+        owner_desc.setWordWrap(True)
+        self._owner_table = QTableWidget(0, 3)
+        self._owner_table.setHorizontalHeaderLabels(["Item", "Value", "Source"])
+        self._owner_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._owner_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._owner_table.setMaximumHeight(220)
+        apply_table_style(self._owner_table)
+        owner_row = QHBoxLayout()
+        self._owner_refresh_btn = QPushButton("Refresh ownership")
+        self._owner_refresh_btn.clicked.connect(self._load_ownership)
+        owner_row.addWidget(self._owner_refresh_btn)
+        owner_row.addStretch()
+        owner_lay.addWidget(owner_desc)
+        owner_lay.addWidget(self._owner_table)
+        owner_lay.addLayout(owner_row)
+        layout.addWidget(owner_box)
+
+        # -- Effective update policy --
+        policy_box = QGroupBox("Windows Update policy (deferrals, pause, deadlines)")
+        policy_lay = QVBoxLayout(policy_box)
+        policy_desc = QLabel(
+            "Read from the local policy, MDM and Windows Update settings keys. "
+            "Every row says where its value comes from; a refused key is reported, "
+            "never shown as 'not configured'."
+        )
+        policy_desc.setWordWrap(True)
+        self._policy_table = QTableWidget(0, 3)
+        self._policy_table.setHorizontalHeaderLabels(["Setting", "Effective value", "Source"])
+        self._policy_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._policy_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._policy_table.setMaximumHeight(240)
+        apply_table_style(self._policy_table)
+        policy_row = QHBoxLayout()
+        self._policy_refresh_btn = QPushButton("Refresh policy")
+        self._policy_refresh_btn.clicked.connect(self._load_policy)
+        policy_row.addWidget(self._policy_refresh_btn)
+        policy_row.addStretch()
+        policy_lay.addWidget(policy_desc)
+        policy_lay.addWidget(self._policy_table)
+        policy_lay.addLayout(policy_row)
+        layout.addWidget(policy_box)
 
         # -- Blocklist --
         block_box = QGroupBox("Blocklist")
         block_lay = QVBoxLayout(block_box)
         block_desc = QLabel(
-            "One entry per line: a winget package id (e.g. Microsoft.Teams) or text from a "
+            "Exclude a winget package id (e.g. Microsoft.Teams) or text from a "
             "Windows Update title (e.g. Radeon). '*' works as a wildcard. Matching packages "
-            "and updates never appear in scans and are never installed."
+            "and updates appear under Excluded offers and are not installed until the exclusion expires."
         )
         block_desc.setWordWrap(True)
         block_lay.addWidget(block_desc)
-        self._block_edit = QPlainTextEdit()
-        self._block_edit.setFont(QFont("Consolas", 9))
-        self._block_edit.setFixedHeight(110)
-        block_lay.addWidget(self._block_edit)
-        block_btn_row = QHBoxLayout()
-        self._block_save_btn = QPushButton("Save Blocklist")
-        self._block_info_lbl = QLabel("")
-        block_btn_row.addWidget(self._block_save_btn)
-        block_btn_row.addWidget(self._block_info_lbl)
-        block_btn_row.addStretch()
-        block_lay.addLayout(block_btn_row)
+        self._exclusions_editor = ExclusionsEditor()
+        block_lay.addWidget(self._exclusions_editor)
         layout.addWidget(block_box)
 
         # -- Scheduled unattended maintenance --
@@ -1111,7 +1750,10 @@ class _UpdateSettingsTab(QWidget):
         self._chk_verify.toggled.connect(lambda v: self._set_cfg("updates.verify_after_update", v))
         self._chk_restore.toggled.connect(lambda v: self._set_cfg("updates.restore_point_before_install", v))
         self._chk_drivers.toggled.connect(lambda v: self._set_cfg("updates.wu_include_drivers", v))
-        self._block_save_btn.clicked.connect(self._save_blocklist)
+        self._chk_allow_feature.toggled.connect(
+            lambda v: self._set_cfg("updates.allow_feature_updates", v))
+        self._chk_allow_optional.toggled.connect(
+            lambda v: self._set_cfg("updates.allow_optional_updates", v))
         self._sched_save_btn.clicked.connect(self._save_schedule)
         self._sched_remove_btn.clicked.connect(self._remove_schedule)
         self._sched_run_btn.clicked.connect(self._run_schedule_now)
@@ -1132,13 +1774,18 @@ class _UpdateSettingsTab(QWidget):
     def _load(self) -> None:
         if self.app is None:
             return
+        self._stale_hours.blockSignals(True)
+        self._stale_hours.setValue(self.app.config.get("updates.stale_hours", 4))
+        self._stale_hours.blockSignals(False)
         self._chk_verify.setChecked(self.app.config.get("updates.verify_after_update", True))
         self._chk_restore.setChecked(self.app.config.get("updates.restore_point_before_install", True))
         self._chk_drivers.setChecked(self.app.config.get("updates.wu_include_drivers", False))
+        self._chk_allow_feature.setChecked(
+            self.app.config.get("updates.allow_feature_updates", False))
+        self._chk_allow_optional.setChecked(
+            self.app.config.get("updates.allow_optional_updates", False))
 
-        patterns = self.app.config.get("updates.blocklist_patterns", [])
-        self._block_edit.setPlainText("\n".join(patterns))
-        self._block_info_lbl.setText(f"{len(patterns)} pattern(s) saved.")
+        self._exclusions_editor.load(self.app)
 
         stages = set(self.app.config.get("updates.unattended_stages", ["wu", "winget", "cleanup"]))
         self._sched_wu.setChecked("wu" in stages)
@@ -1155,6 +1802,45 @@ class _UpdateSettingsTab(QWidget):
             logger.warning("Ignored bad saved unattended time %r", time_str)
 
         self._refresh_task_health()
+        self._load_ownership()
+        self._load_policy()
+
+    def _render_readonly_rows(self, table, rows) -> None:
+        table.setRowCount(len(rows))
+        for row, entry in enumerate(rows):
+            table.setItem(row, 0, QTableWidgetItem(entry.label))
+            value = QTableWidgetItem(entry.value)
+            if entry.note:
+                value.setToolTip(entry.note)
+            table.setItem(row, 1, value)
+            table.setItem(row, 2, QTableWidgetItem(entry.source or "—"))
+
+    def _load_ownership(self) -> None:
+        from modules.updates.update_ownership import read_ownership
+        try:
+            rows = read_ownership().rows
+        except Exception as e:
+            logger.warning("Could not read the update ownership", exc_info=True)
+            self._owner_table.setRowCount(1)
+            self._owner_table.setItem(0, 0, centered_item("Ownership read failed"))
+            self._owner_table.setItem(0, 1, centered_item(str(e)))
+            self._owner_table.setItem(0, 2, centered_item("unreadable"))
+            return
+        self._render_readonly_rows(self._owner_table, rows)
+
+    def _load_policy(self) -> None:
+        """Render the effective Windows Update policy with its provenance."""
+        from modules.updates.update_policy import read_policy
+        try:
+            rows = read_policy().rows
+        except Exception as e:
+            logger.warning("Could not read the Windows Update policy", exc_info=True)
+            self._policy_table.setRowCount(1)
+            self._policy_table.setItem(0, 0, centered_item("Policy read failed"))
+            self._policy_table.setItem(0, 1, centered_item(str(e)))
+            self._policy_table.setItem(0, 2, centered_item("unreadable"))
+            return
+        self._render_readonly_rows(self._policy_table, rows)
 
     def _refresh_task_health(self) -> None:
         """Re-read the scheduled task's actual last-run outcome from
@@ -1208,20 +1894,6 @@ class _UpdateSettingsTab(QWidget):
             set_role(self._task_health_lbl, "statusWarning")
         else:
             set_role(self._task_health_lbl, "statusSuccess")
-
-    def _save_blocklist(self) -> None:
-        if self.app is None:
-            return
-        patterns = normalize_patterns(self._block_edit.toPlainText())
-        self.app.config.set("updates.blocklist_patterns", patterns)
-        # Flush now — unattended_runner.py may read this from a fresh process.
-        if self.app.config.save() is False:
-            self._block_info_lbl.setText(
-                f"NOT saved — the settings file could not be written (see the log). "
-                f"{len(patterns)} pattern(s) apply to this session only; the scheduled "
-                "maintenance run still uses the old list.")
-            return
-        self._block_info_lbl.setText(f"Saved — {len(patterns)} pattern(s).")
 
     def _selected_unattended_stages(self) -> List[str]:
         stages = []
@@ -1374,6 +2046,14 @@ class UpdatesModule(BaseModule):
         layout = QVBoxLayout(root)
         self._overview = UpdatesOverview()
         layout.addWidget(self._overview)
+        self._reconcile_lbl = QLabel()
+        self._reconcile_lbl.setWordWrap(True)
+        self._reconcile_lbl.setVisible(False)
+        layout.addWidget(self._reconcile_lbl)
+        self._busy_lbl = QLabel()
+        self._busy_lbl.setWordWrap(True)
+        self._busy_lbl.setVisible(False)
+        layout.addWidget(self._busy_lbl)
         self._tabs = QTabWidget()
         layout.addWidget(self._tabs, 1)
 
@@ -1387,12 +2067,18 @@ class UpdatesModule(BaseModule):
         self._win_tab._overview = self._overview
 
         self._store_tab = _StoreUpdatesTab()
+        self._store_scan_status = _ScanStatusLabel("store", self._store_tab)
+        self._store_scan_status.set_app(self.app)
+        self._store_tab.layout().addWidget(self._store_scan_status)
 
         self._runall_tab = _RunAllTab()
         self._runall_tab.set_app(self.app)
 
         self._settings_tab = _UpdateSettingsTab()
         self._settings_tab.set_app(self.app)
+        self._settings_tab._exclusions_editor.changed.connect(self._app_tab.refresh_exclusions)
+        self._settings_tab._exclusions_editor.changed.connect(self._win_tab._do_refresh)
+        self._settings_tab._stale_hours.valueChanged.connect(lambda _: self._refresh_scan_status())
 
         self._tabs.addTab(self._app_tab, "App Updates")
         self._tabs.addTab(self._win_tab, "Windows Updates")
@@ -1451,14 +2137,135 @@ class UpdatesModule(BaseModule):
         return health, restart, reason
 
     def _on_app_updates(self, updates: List[AppUpdate]) -> None:
-        if self._store_tab is not None:
+        if widget_is_valid(self._store_tab):
             self._store_tab.set_updates(updates)
+            self._store_scan_status.record(len(self._store_tab._updates))
+
+    def _refresh_scan_status(self):
+        for tab in (self._app_tab, self._win_tab):
+            if widget_is_valid(tab):
+                tab._scan_status.refresh()
+        label = getattr(self, "_store_scan_status", None)
+        if widget_is_valid(label):
+            label.refresh()
 
     def on_activate(self) -> None:
         self._refresh_overview_health()
+        self._reconcile_after_restart()
+        self._start_busy_poll()
         self._on_tab_changed(self._tabs.currentIndex() if self._tabs else 0)
 
+    def _start_busy_poll(self) -> None:
+        if getattr(self, "_busy_timer", None) is None:
+            self._busy_timer = QTimer(self._busy_lbl)
+            self._busy_timer.setInterval(1500)
+            self._busy_timer.timeout.connect(self._refresh_busy)
+        self._refresh_busy()
+        self._busy_timer.start()
+
+    def _refresh_busy(self) -> None:
+        """Show and gate on the machine-wide operation owner (#17)."""
+        try:
+            from core.operation_lock import active_owner
+            owner = active_owner()
+        except Exception:
+            logger.warning("Could not read the operation coordinator state", exc_info=True)
+            owner = None
+        if owner:
+            self._busy_lbl.setText(
+                f"Operation in progress: {owner}. Installing is disabled until it finishes.")
+            self._busy_lbl.setStyleSheet(f"color: {semantic('warning')};")
+        self._busy_lbl.setVisible(bool(owner))
+        for tab in (self._app_tab, self._win_tab, self._runall_tab):
+            setter = getattr(tab, "set_maintenance_busy", None)
+            if setter is not None:
+                try:
+                    setter(owner or "")
+                except Exception:
+                    logger.warning("Could not update a tab's busy state", exc_info=True)
+
+    def _reconcile_after_restart(self) -> None:
+        """Verify updates that asked for a restart, once per session."""
+        if getattr(self, "_reconciled_once", False) or getattr(self, "_reconcile_worker", None):
+            return
+        self._reconciled_once = True
+        folder = getattr(self.app, "app_data_dir", None)
+        pending = reboot_reconcile.load(folder)
+        if not pending:
+            return
+
+        def _run(_worker):
+            offers = None
+            if any(str(row.get("source") or "winget").casefold() != "wu" for row in pending):
+                try:
+                    from modules.updates.winget_updater import fetch_updates
+                    offers = fetch_updates()
+                except Exception:
+                    logger.warning("Post-restart scan failed", exc_info=True)
+            reboot = None
+            try:
+                from core.pending_reboot import check
+                state = check()
+                if not (state.unreadable and not state.reasons):
+                    reboot = bool(state.reasons)
+            except Exception:
+                logger.warning("Could not read the restart state after a reboot", exc_info=True)
+            return reboot_reconcile.reconcile(pending, offers, reboot)
+
+        def _received(results):
+            if not _widget_valid(self._reconcile_lbl):
+                return
+            from .activity_ledger import record_activity
+            from core.timeline import record
+            for row in results:
+                try:
+                    record_activity(folder, {
+                        "source": row["source"], "id": row["id"], "name": row["name"],
+                        "version_before": row.get("version_before"),
+                        "version_offered": row.get("version_offered"),
+                        "version_after": None, "outcome": row["status"],
+                        "detail": row["detail"], "context": "post_reboot"})
+                except (OSError, AttributeError):
+                    logger.warning("Could not record a post-restart result", exc_info=True)
+            reboot_reconcile.forget(folder, reboot_reconcile.resolved(results))
+            confirmed = sum(1 for row in results if row["status"] == reboot_reconcile.CONFIRMED)
+            pending_count = sum(1 for row in results if row["status"] == reboot_reconcile.STILL_PENDING)
+            unverified = sum(1 for row in results if row["status"] in
+                             (reboot_reconcile.UNVERIFIED, reboot_reconcile.UNKNOWN))
+            parts = [f"{confirmed} confirmed"]
+            if unverified:
+                parts.append(f"{unverified} unverifiable")
+            if pending_count:
+                parts.append(f"{pending_count} still pending")
+            self._reconcile_lbl.setText("After the restart: " + ", ".join(parts) + ".")
+            self._reconcile_lbl.setToolTip("\n".join(f"{r['name']}: {r['detail']}" for r in results))
+            self._reconcile_lbl.setStyleSheet(
+                f"color: {semantic('warning') if pending_count else semantic('success')};")
+            self._reconcile_lbl.setVisible(True)
+            record(folder, "updates", "post_reboot_reconcile",
+                   f"Post-restart reconciliation: {confirmed} confirmed, {pending_count} still pending, {unverified} unverifiable",
+                   {"confirmed": confirmed, "pending": pending_count, "unverified": unverified},
+                   "warning" if pending_count or unverified else "info")
+
+        def _failed(message):
+            logger.warning("Post-restart reconciliation failed: %s", message)
+
+        def _finished():
+            self._reconcile_worker = None
+            if worker in self._workers:
+                self._workers.remove(worker)
+
+        worker = Worker(_run)
+        worker.signals.result.connect(_received)
+        worker.signals.error.connect(_failed)
+        worker.signals.finished.connect(_finished)
+        self._reconcile_worker = worker
+        self._workers.append(worker)
+        pool = getattr(self.app, "thread_pool", None) or self.thread_pool
+        pool.start(worker)
+
     def _on_tab_changed(self, index: int) -> None:
+        self._refresh_scan_status()
         if index == 0:
             self._app_tab.auto_scan()
         elif index == 1:
@@ -1466,22 +2273,39 @@ class UpdatesModule(BaseModule):
         elif index == 2:
             # Store tab piggybacks on the shared winget scan — no separate call.
             self._app_tab.auto_scan()
+        elif index == 3:
+            self._runall_tab._activity.refresh()
+            self._runall_tab.refresh_checkpoint_note()
         elif index == 4:
+            self._settings_tab._exclusions_editor.set_offers(self._current_offers())
+            self._settings_tab._exclusions_editor.load(self.app)
             # Settings' task-health line is a live read, not a cache — refresh
             # it every time the tab becomes visible, not just at module build.
             self._settings_tab._refresh_task_health()
+
+    def _current_offers(self):
+        """Every offer the last scans saw, for exclusion previews."""
+        rows = []
+        for offer in getattr(self._app_tab, "_all_offers", None) or []:
+            rows.append((offer.name, offer.winget_id))
+        for offer in getattr(self._win_tab, "_updates", None) or []:
+            rows.append((offer.title, offer.kb))
+        return rows
 
     def on_deactivate(self) -> None:
         # Leaving the pane cancels nothing: a cancel used to reach winget as
         # `taskkill /T /F` in the middle of an install. Scans and installs run
         # on until they finish; Run All has Stop (before the next package), and
         # app exit (on_stop) stops the rest between packages.
-        pass
+        if getattr(self, "_busy_timer", None) is not None:
+            self._busy_timer.stop()
 
     def on_start(self, app) -> None:
         self.app = app
 
     def on_stop(self) -> None:
+        if getattr(self, "_busy_timer", None) is not None:
+            self._busy_timer.stop()
         self.cancel_all_workers()
         for tab in (self._app_tab, self._win_tab, self._store_tab, self._runall_tab):
             if tab is not None:

@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
+from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel,
                              QPlainTextEdit, QPushButton, QTabWidget, QTreeWidget, QTreeWidgetItem,
                              QVBoxLayout, QWidget)
 
@@ -78,6 +78,8 @@ class GameModeModule(BaseModule):
         self._journal = Journal()
         self._choices = session.Choices()
         self._busy = False
+        self._preflight_worker = None
+        self._preflight_dialog = None
         self._loaded = False
         self._groups: List[session.AppGroup] = []
         self._procs: list = []
@@ -94,6 +96,7 @@ class GameModeModule(BaseModule):
         self._advice = self._advice_status = self._estimate = None
         self._pending_log: List[str] = []
         self._optimise_tab = None
+        self._history_tab = None
 
     # ---- lifecycle ----------------------------------------------------------------------------
     def on_start(self, app) -> None:
@@ -116,6 +119,7 @@ class GameModeModule(BaseModule):
         self._live_timer.start(LIVE_MS)
 
     def on_deactivate(self) -> None:
+        self._cancel_preflight()
         if self._live_timer is not None:
             self._live_timer.stop()
 
@@ -132,6 +136,7 @@ class GameModeModule(BaseModule):
         self._show_state(session.total_handles(procs), len(procs))
 
     def on_stop(self) -> None:
+        self._cancel_preflight()
         if self._optimise_tab is not None:
             self._optimise_tab.cancel()
         if self._live_timer is not None:
@@ -180,6 +185,10 @@ class GameModeModule(BaseModule):
         self._optimise_tab = OptimiseTab(lambda: self.app.thread_pool, w, host_busy=lambda: self._busy,
                                          busy_changed=self._show_state, navigate=self._navigate_to)
         self._tabs.addTab(self._optimise_tab, "Optimise OS")
+        from .history_tab import HistoryTab
+        self._history_tab = HistoryTab(self._journal.folder, w)
+        self._tabs.addTab(self._history_tab, "History")
+        self._tabs.currentChanged.connect(self._tab_changed)
         lay.addWidget(self._tabs, 1)
         self._widget = w
         self._state.setToolTip("ON means this app has an active recorded Game Mode session; OFF means no active session. Unresolved recovery entries keep it ON so OFF can retry.")
@@ -192,6 +201,10 @@ class GameModeModule(BaseModule):
                                  "was closed while it was on. Game Mode OFF restores the changes.")
         explain(w, help_info.CONTROLS, help_info.HEADERS, help_info.PANES, help_info.INTRO)
         return w
+
+    def _tab_changed(self, index: int) -> None:
+        if self._history_tab is not None and self._tabs.widget(index) is self._history_tab:
+            self._history_tab.activate()
 
     def _build_header(self, parent: QWidget) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -528,41 +541,69 @@ class GameModeModule(BaseModule):
         self._log.appendPlainText(line)
 
     # ---- ON / OFF -----------------------------------------------------------------------------
-    def _confirm_on(self) -> bool:
-        closing = [g.label for g in self._groups if g.exe in self._choices.close]
-        text = ("Game Mode ON will:\n\n"
-                + ("• switch the power plan for gaming\n" if self._choices.plan else "")
-                + f"• stop {len(self._choices.services)} kind(s) of background service if running\n"
-                + ("• pause Windows Automatic Maintenance\n" if self._choices.maintenance else "")
-                + (("• pause scheduled updater/maintenance tasks, and STOP any of them already "
-                    "running (they run again at their next trigger)\n"
-                    if self._choices.preset == catalog.MAX else
-                    "• pause scheduled updater/maintenance tasks\n") if self._choices.tasks else "")
-                + ("• turn transparency and animations off\n" if self._choices.visuals else "")
-                + ("• restart Explorer (interrupts File Explorer copies and closes folder windows)\n" if self._choices.explorer else "")
-                + (f"• close: {', '.join(closing)}\n" if closing else "")
-                + ("• lower the priority of apps left open\n" if self._choices.lower else "")
-                + "\nPrograms that do not close within 8 seconds are ended; unsaved work in them "
-                  "is lost. Save your work before continuing. Game Mode OFF puts the settings "
-                  "back and reopens the closed apps.")
-        return QMessageBox.question(self._widget, "Game Mode ON", text,
-                                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-                                    QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Ok
+    def _confirm_on(self, items) -> bool:
+        from PyQt6.QtWidgets import QDialog
+        from .confirm_dialog import PreflightDialog
+        self._preflight_dialog = PreflightDialog(self._widget, items)
+        try:
+            return self._preflight_dialog.exec() == QDialog.DialogCode.Accepted
+        finally:
+            self._preflight_dialog = None
+
+    def _cancel_preflight(self) -> None:
+        if self._preflight_worker is not None:
+            self._preflight_worker.cancel()
+            self._preflight_worker = None
+            self._busy = False
+            self._show_state()
+        if widget_is_valid(self._preflight_dialog):
+            self._preflight_dialog.reject()
 
     def _turn_on(self) -> None:
         if (self._busy or self._journal.active
-                or (self._optimise_tab is not None and self._optimise_tab.busy)
-                or not self._confirm_on()):
+                or (self._optimise_tab is not None and self._optimise_tab.busy)):
             return
         self._busy = True
         self._show_state()
+        choices = session.choices_from_config(self._choices.to_config())
+        own, sid, system = os.getpid(), _session_id(), self._system
+        worker = Worker(lambda w: session.preflight(system, choices, own_pid=own, session_id=sid))
+        self._preflight_worker = worker
+        worker.signals.result.connect(lambda items: self._preflight_ready(worker, items, choices, own, sid))
+        worker.signals.error.connect(lambda error: self._preflight_failed(worker, error))
+        self._start(worker)
+
+    def _preflight_failed(self, worker, error) -> None:
+        if worker is not self._preflight_worker:
+            return
+        self._preflight_worker = None
+        self._busy = False
+        if widget_is_valid(self._widget):
+            self._show_state()
+            self._show_error(f"Game Mode preflight could not complete: {error}")
+
+    def _preflight_ready(self, worker, items, choices, own, sid) -> None:
+        if worker is not self._preflight_worker:
+            return
+        self._preflight_worker = None
+        if not widget_is_valid(self._widget):
+            self._busy = False
+            return
+        if not self._confirm_on(items):
+            self._busy = False
+            self._show_state()
+            return
+        if not widget_is_valid(self._widget) or self._journal.active:
+            self._busy = False
+            self._show_state()
+            return
         self._log.clear()
         self._tabs.setCurrentIndex(2)
-        own, sid, system, journal = os.getpid(), _session_id(), self._system, self._journal
-        choices = session.choices_from_config(self._choices.to_config())
+        system, journal = self._system, self._journal
 
         def work(w):
-            log = lambda level, text: w.signals.log_line.emit(f"{level}\t{text}")  # noqa: E731
+            def log(level, text):
+                w.signals.log_line.emit(f"{level}\t{text}")
             return session.turn_on(system, choices, journal, log, own, sid)
         self._run(work, self._on_done)
 
@@ -596,6 +637,8 @@ class GameModeModule(BaseModule):
 
     def _on_done(self, data: dict) -> None:
         self._busy = False
+        if self._history_tab is not None:
+            self._history_tab.invalidate()
         self._start_enforcing()
         self._append(f"{session.OK}\tGame Mode is ON. Handles {data.get('handles_before', 0):,} -> "
                      f"{data.get('handles_after', 0):,}, processes {data.get('processes_before')} -> "
@@ -604,6 +647,8 @@ class GameModeModule(BaseModule):
 
     def _off_done(self, report: List[dict]) -> None:
         self._busy = False
+        if self._history_tab is not None:
+            self._history_tab.invalidate()
         if self._enforce_timer is not None:
             self._enforce_timer.stop()
         _keep_awake(False)
@@ -630,6 +675,8 @@ class GameModeModule(BaseModule):
 
     def _failed(self, err) -> None:
         self._busy = False
+        if self._history_tab is not None:
+            self._history_tab.invalidate()
         self._show_error(f"Game Mode stopped with an error: {err}. Whatever was changed is in the "
                          "journal -- Game Mode OFF puts it back.")
         self._journal.load()

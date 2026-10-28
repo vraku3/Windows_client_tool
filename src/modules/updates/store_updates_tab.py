@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from core.table_ui import centered_item, center_header
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
+from modules.updates.operation_guard import maintenance_worker
 from modules.updates.winget_updater import AppUpdate
 from ui.error_banner import ErrorBanner
 
@@ -98,6 +99,7 @@ class _StoreUpdatesTab(QWidget):
         self._trigger_btn.setEnabled(False)
         self._log.clear()
 
+        @maintenance_worker("Updates install")
         def _run(worker):
             from core.mdm_store_trigger import trigger_store_scan
             return trigger_store_scan(output_cb=lambda line: worker.signals.log_line.emit(line))
@@ -132,6 +134,7 @@ class _StoreUpdatesTab(QWidget):
         self._reset_btn.setEnabled(False)
         self._log.appendPlainText("Resetting Store cache (wsreset.exe)...")
 
+        @maintenance_worker("Updates Store cache reset")
         def _run(worker):
             try:
                 subprocess.run(

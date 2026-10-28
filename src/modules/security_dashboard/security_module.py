@@ -1601,7 +1601,12 @@ class SecurityDashboardModule(BaseModule):
         return apply_batch(self._changeset, TweakEngine(backup), backup,
                            create_windows_restore_point=create_restore_point)
 
-    def _on_batch_result(self, result) -> None:
+    def _on_batch_result(self, result, timeline_event="apply") -> None:
+        from core.timeline import record
+        count = len(result.results) if result is not None else 0
+        problems = len(result.problems) if result is not None else 0
+        error = getattr(result, "error", "")
+        record(getattr(self.app, "app_data_dir", None), "security", timeline_event, f"Security {timeline_event}: {count} controls, {problems} problems" if result is not None else f"Security {timeline_event}: helper outcome unknown", {"controls": count, "problems": problems, "restore_point": result.rp_id if result is not None else None, "error": error[:500]}, "error" if error else "warning" if result is None or problems else "info")
         if result is None:
             # The elevated helper wrote no usable result. That is UNKNOWN, and
             # the only honest thing to do is re-read and show what the machine
@@ -1759,7 +1764,7 @@ class SecurityDashboardModule(BaseModule):
             return revert_batch(point.id, backup, self.catalog)
 
         worker = COMWorker(job)
-        worker.signals.result.connect(self._on_batch_result)
+        worker.signals.result.connect(lambda result: self._on_batch_result(result, "revert"))
         worker.signals.error.connect(self._on_batch_error)
         worker.signals.finished.connect(self._load_history)
         self._workers.append(worker)

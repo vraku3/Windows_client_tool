@@ -32,6 +32,16 @@ in `Aplicații/` and `Aplicații/old/` before (cleaned up 2026-08-14).
    ```
    cp "dist/WinClientTool-Portable.exe" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe"
    ```
+6. **Rotate the two-version share — always** (user, 2026-10-28): keep the newest
+   build in `Windows Client Tool Share/` and the previous iteration in `old/`:
+   ```
+   $share = "C:/Users/iorda/OneDrive/1 Personal/Aplicații/Windows Client Tool Share"
+   cp "$share/WinClientTool-Portable.exe" "$share/old/WinClientTool-Portable.exe"
+   cp "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe" \
+      "$share/WinClientTool-Portable.exe"
+   ```
+   Delete anything older (`old/*.exe_old`, `*-new.exe` test copies). The tree
+   must hold exactly those two files — the newest and one older iteration.
 
 ## Steps — onedir (folder) build, if also requested
 
@@ -47,10 +57,10 @@ in `Aplicații/` and `Aplicații/old/` before (cleaned up 2026-08-14).
 
 ## Notes
 
-- Don't ask before doing the deploy copy — it's a standing instruction, not a
-  per-build decision. Do ask before deleting anything unexpected already
-  sitting in `Aplicații/` that isn't a previous WinClientTool build (that
-  folder holds unrelated personal apps too).
+- Don't ask before doing the deploy copy or the two-version share rotation —
+  both are standing instructions, not per-build decisions. Do ask before
+  deleting anything unexpected already sitting in `Aplicații/` that isn't a
+  previous WinClientTool build (that folder holds unrelated personal apps too).
 - If only source-checking (not producing a build the user will run), a plain
   `pyinstaller ... -y --distpath dist` without the deploy step is fine —
   this skill applies when the *point* of the build is to hand the user a

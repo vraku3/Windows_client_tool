@@ -200,6 +200,9 @@ def main():
 
     # Initialize App singleton (wires all core services)
     app = App()
+    from core.timeline import detect_reboot, record
+    detect_reboot(app.app_data_dir)
+    record(app.app_data_dir, "system", "app_start", "Windows Client Tool started")
 
     # Install global exception handler (after logging is set up)
     sys.excepthook = _global_exception_handler

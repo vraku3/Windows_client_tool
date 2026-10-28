@@ -672,6 +672,7 @@ def test_old_session_warns_once_each_enforce_run(journal):
     import time
     journal.begin()
     journal.data["started"] = time.time() - 7 * 3600 - 12 * 60
+    journal.save()
     lines = []
     session.enforce(FakeSystem(), journal, lambda lvl, text: lines.append((lvl, text)))
     assert len([t for lvl, t in lines if lvl == session.WARN and "still paused" in t]) == 1
@@ -764,14 +765,12 @@ def test_failed_off_ui_stays_on_with_recovery_banner(qapp, journal, monkeypatch)
 
 
 def test_confirmation_warns_of_lost_work_and_defaults_to_cancel(qapp, monkeypatch):
-    from modules.game_mode.game_mode_module import GameModeModule, QMessageBox
-    m = GameModeModule()
-    question = Mock(return_value=QMessageBox.StandardButton.Cancel)
-    monkeypatch.setattr(QMessageBox, "question", question)
-    assert not m._confirm_on()
-    text = question.call_args.args[2]
+    from PyQt6.QtWidgets import QDialogButtonBox
+    from modules.game_mode.confirm_dialog import PreflightDialog
+    dialog = PreflightDialog(None, [])
+    text = dialog.warning.text()
     assert "8 seconds" in text and "unsaved work" in text and "is lost" in text
-    assert question.call_args.args[-1] == QMessageBox.StandardButton.Cancel
+    assert dialog.buttons.button(QDialogButtonBox.StandardButton.Cancel).isDefault()
 
 
 def test_startup_and_live_state_show_age_and_long_session_warning(qapp, journal, monkeypatch):

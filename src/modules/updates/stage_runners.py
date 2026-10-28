@@ -11,8 +11,12 @@ unattended runner).
 """
 import logging
 import os
+from core.blocklist import load_exclusions
 from core.formatting import format_size as _fmt_size
 from typing import Callable
+from modules.updates import reboot_reconcile, run_checkpoint
+from modules.updates.operation_guard import maintenance_stage
+from modules.updates.activity_ledger import record_winget_activity, record_wu_activity
 
 logger = logging.getLogger(__name__)
 
@@ -20,21 +24,83 @@ LogFn = Callable[[str], None]
 CancelFn = Callable[[], bool]
 
 
-def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
+def _timeline_stage(stage):
+    from functools import wraps
+
+    def decorate(fn):
+        @wraps(fn)
+        def run(app, log, is_cancelled, **kwargs):
+            from core.timeline import record
+            folder = getattr(app, "app_data_dir", None)
+            updating = stage in ("wu", "winget", "store")
+            try:
+                result = fn(app, log, is_cancelled, **kwargs)
+            except Exception as error:
+                if folder:
+                    record(folder, "updates" if updating else "system", "install_failed" if updating else "maintenance_stage_failed", f"Maintenance {stage} stage failed", {"stage": stage, "error": str(error)[:500]}, "error")
+                raise
+            if folder:
+                try:
+                    _record_stage_completion(folder, stage, result, is_cancelled())
+                except Exception:
+                    logger.warning("Could not summarize maintenance stage for timeline", exc_info=True)
+            return result
+        return run
+    return decorate
+
+
+def _record_stage_completion(folder, stage, result, cancelled):
+    from core.timeline import record
+    problems = stage_failures(stage, result)
+    rows = result.get("results", [])
+    installed = result.get("installed_count", sum(bool(r.get("confirmed")) for r in rows))
+    unconfirmed = max(0, len(rows) - installed)
+    detail = {"stage": stage, "installed": installed, "failed": len(problems),
+              "cancelled": bool(result.get("cancelled")) or cancelled,
+              "pending_restart": bool(result.get("reboot_required")),
+              "unconfirmed": unconfirmed}
+    severity = "info"
+    if problems:
+        severity = "error"
+    elif detail["cancelled"] or unconfirmed or result.get("status") == "SKIPPED":
+        severity = "warning"
+    source = "system"
+    event = "maintenance_stage_complete"
+    summary = f"Maintenance {stage} stage completed"
+    if stage in ("wu", "winget"):
+        source = "updates"
+        event = "install_failed" if problems else "install_complete"
+        summary = f"Maintenance {stage}: {installed} confirmed installed, {len(problems)} failures"
+    elif stage == "store":
+        source, event = "updates", "scan_complete"
+        detail["triggered"] = result.get("triggered", 0)
+        summary = f"Store update scan requested ({detail['triggered']} trigger(s)); installation not verified"
+    if "freed" in result:
+        detail["freed_bytes"] = result["freed"]
+        summary += f"; {_fmt_size(result['freed'])} freed"
+    record(folder, source, event, summary, detail, severity)
+
+
+@maintenance_stage
+@_timeline_stage("wu")
+def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") -> dict:
     """Scan + install pending Windows Updates. Returns results + reboot flag."""
     from modules.updates.windows_updater import (
         fetch_pending_updates, install_updates_iter, download_size_mb, HELD_TEXT,
     )
 
-    patterns = app.config.get("updates.blocklist_patterns", [])
+    patterns = load_exclusions(app)
     include_hidden = app.config.get("updates.wu_include_hidden", False)
     include_drivers = app.config.get("updates.wu_include_drivers", False)
+    log("Phase: scanning")
     log("Windows Update: scanning...")
     held_found: list = []
     updates = fetch_pending_updates(
         include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
         held_out=held_found,
     )
+    from core.timeline import record
+    record(getattr(app, "app_data_dir", None), "updates", "scan_complete", f"Maintenance Windows Update scan: {len(updates)} available", {"available": len(updates), "stage": "wu"})
     # Held updates are reported, never installed: they are not in `updates`.
     held = [{"kb": u.kb, "title": u.title, "state": "held", "message": HELD_TEXT}
             for u in held_found]
@@ -45,13 +111,23 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     updates = [u for u in updates if not u.pending_restart]
     for entry in waiting:
         log(f"Windows Update: {entry['title']}: {entry['message']}")
+    from modules.updates import wu_categories
+    runnable, skipped = wu_categories.split_for_automatic(
+        updates,
+        allow_feature=bool(app.config.get("updates.allow_feature_updates", False)),
+        allow_optional=bool(app.config.get("updates.allow_optional_updates", False)))
+    if skipped:
+        log(f"Windows Update: not installed — {wu_categories.skipped_text(skipped)}. "
+            "Change this in Updates → Settings.")
+    updates = runnable
     if not updates:
-        log("Windows Update: nothing to install." if held or waiting
+        log("Windows Update: nothing to install." if held or waiting or skipped
             else "Windows Update: system is up to date.")
         if waiting:
             log(f"Restart required to finish {len(waiting)} update(s)")
         return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
-                "pending_restart_count": len(waiting), "held": held}
+                "pending_restart_count": len(waiting), "held": held,
+                "deferred": {cat: len(rows) for cat, rows in skipped.items()}}
     log(f"Windows Update: {len(updates)} update(s) found"
         + (f", {len(held)} held." if held else "."))
 
@@ -80,8 +156,21 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         if title:
             log(f"Installing ({done + 1}/{total}): {title}")
 
+    log("Phase: installing")
+    record(getattr(app, "app_data_dir", None), "updates", "install_start", f"Installing {len(updates)} Windows update(s)", {"selected": len(updates), "stage": "wu"})
+    folder = getattr(app, "app_data_dir", None)
+    for update in updates:
+        run_checkpoint.item(folder, f"wu:{update.kb or update.title}", "started", update.title)
+
+    def _result(result):
+        record_wu_activity(app, result, context, log)
+        phase = ("installed" if result.success
+                 else "reboot_required" if result.pending_restart else "failed")
+        run_checkpoint.item(folder, f"wu:{result.kb or result.title}", phase, result.message)
+
     results = install_updates_iter(
-        updates, progress_cb=_progress, output_cb=log, is_cancelled=is_cancelled
+        updates, progress_cb=_progress, output_cb=log, is_cancelled=is_cancelled,
+        result_cb=_result,
     )
     results_dicts = waiting + [
         {"kb": r.kb, "title": r.title, "success": r.success, "message": r.message,
@@ -90,10 +179,17 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     ]
     installed = sum(1 for r in results if r.success)
     log(f"Windows Update: {installed}/{len(results)} installed.")
+    log("Phase: verifying")
     pending_count = sum(bool(r.get("reboot_required")) and r.get("result_code") in (None, 2)
                         for r in results_dicts)
     if pending_count:
         log(f"Restart required to finish {pending_count} update(s)")
+    pending_items = [{"source": "wu", "id": r.get("kb") or r.get("title"),
+                      "name": r.get("title")}
+                     for r in results_dicts
+                     if r.get("reboot_required") and r.get("result_code") in (None, 2)]
+    if pending_items:
+        reboot_reconcile.record(folder, pending_items)
 
     reboot_required = False
     try:
@@ -106,22 +202,31 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
             "installed_count": installed, "pending_restart_count": pending_count, "held": held}
 
 
-def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
+@maintenance_stage
+@_timeline_stage("winget")
+def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") -> dict:
     """Scan + update all winget packages one at a time, then verify."""
-    from modules.updates.winget_updater import fetch_updates, install_update
+    from modules.updates.winget_updater import fetch_updates, install_update, UpdateOutcome
 
-    patterns = app.config.get("updates.blocklist_patterns", [])
+    patterns = load_exclusions(app)
+    log("Phase: scanning")
     log("winget: scanning for updates...")
     before = fetch_updates(patterns=patterns)
+    from core.timeline import record
+    record(getattr(app, "app_data_dir", None), "updates", "scan_complete", f"Maintenance app update scan: {len(before)} available", {"available": len(before), "stage": "winget"})
     if not before:
         log("winget: all packages up to date.")
         return {"results": []}
     log(f"winget: {len(before)} package(s) have updates.")
+    record(getattr(app, "app_data_dir", None), "updates", "install_start", f"Updating {len(before)} app(s)", {"selected": len(before), "stage": "winget"})
 
     results = []
     stopped_reason = ""
+    folder = getattr(app, "app_data_dir", None)
+    log("Phase: installing")
     for i, u in enumerate(before):
         if stopped_reason:
+            record_winget_activity(app, u, UpdateOutcome(u.winget_id, "SKIPPED", stopped_reason), context, log)
             log(f"SKIPPED {u.winget_id}: {stopped_reason}")
             results.append({"name": u.name, "id": u.winget_id, "before": u.installed_version,
                             "confirmed": False, "state": "SKIPPED", "after": stopped_reason})
@@ -130,14 +235,24 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
             log("Cancelled.")
             break
         log(f"[{i + 1}/{len(before)}] Updating {u.name} ({u.winget_id})...")
+        run_checkpoint.item(folder, f"winget:{u.winget_id}", "started",
+                            f"{u.installed_version} -> {u.available_version}")
         # Each package is judged by reading ITS installed version back -- not by
         # its absence from a re-scan, which a failed re-scan grants to every package.
-        outcome = install_update(u.winget_id, output_cb=log, is_cancelled=is_cancelled,
-                                 target_version=u.available_version,
-                                 before_version=u.installed_version,
-                                 package_name=u.name,
-                                 verify=app.config.get("updates.verify_after_update", True))
+        try:
+            outcome = install_update(u.winget_id, output_cb=log, is_cancelled=is_cancelled,
+                                     target_version=u.available_version,
+                                     before_version=u.installed_version,
+                                     package_name=u.name,
+                                     verify=app.config.get("updates.verify_after_update", True))
+        except Exception as exc:
+            record_winget_activity(app, u, UpdateOutcome(u.winget_id, "FAILED", str(exc)), context, log)
+            run_checkpoint.item(folder, f"winget:{u.winget_id}", "failed", str(exc))
+            raise
         log(f"  {outcome.state}: {outcome.detail}")
+        record_winget_activity(app, u, outcome, context, log)
+        run_checkpoint.item(folder, f"winget:{u.winget_id}",
+                            "installed" if outcome else "failed", outcome.detail)
         results.append({"name": u.name, "id": u.winget_id, "before": u.installed_version,
                         "confirmed": bool(outcome), "state": outcome.state,
                         "after": outcome.detail})
@@ -150,6 +265,8 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     return {"results": results}
 
 
+@maintenance_stage
+@_timeline_stage("store")
 def run_store_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """Trigger a Microsoft Store update scan (fire-and-forget — Store downloads
     updates itself once triggered, there's nothing further to wait for)."""
@@ -158,6 +275,8 @@ def run_store_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     return {"triggered": count}
 
 
+@maintenance_stage
+@_timeline_stage("cleanup")
 def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """Cached catalog + overview scans, selected with Quick Cleanup's Light preset."""
     from modules.cleanup import cleanup_scanner as cs
@@ -166,6 +285,7 @@ def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     from modules.cleanup.cleanup_scanner.scanners_system import _is_inside
     from modules.cleanup import cleanup_presets
 
+    log("Phase: scanning")
     log("Cleanup: scanning safe categories...")
     sources = [(area, fn) for area, scanners in cs._OV_GROUPS for fn in (scanners or [])]
     for category, area in catalog.CATEGORY_TABS.items():
@@ -203,6 +323,7 @@ def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
         log("Cleanup: nothing to clean.")
         return {"freed": 0, "deleted": 0}
 
+    log("Phase: cleaning")
     log(f"Cleanup: deleting {len(all_items)} item(s), {_fmt_size(total)}...")
     report, refused, per_item = cs.delete_items_report(
         all_items, stop_wuauserv=needs_wu, cancelled=is_cancelled)
@@ -240,6 +361,8 @@ def cleanup_left_text(report, refused) -> str:
             + (f" (first reason: {reasons[0][1]})" if reasons else ""))
 
 
+@maintenance_stage
+@_timeline_stage("dism")
 def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """DISM /StartComponentCleanup — the slow WinSxS cleanup, not the fast
     /AnalyzeComponentStore preview (that one lives in the Cleanup module)."""
@@ -250,6 +373,7 @@ def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     if pending_reboot.check().needed:
         log(f"DISM: {restart_message}")
         return {"status": "SKIPPED", "reboot_required": True, "output": restart_message}
+    log("Phase: cleaning")
     log("DISM: running StartComponentCleanup (this can take several minutes)...")
     proc = subprocess.run(
         ["dism", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
@@ -284,6 +408,8 @@ def stage_failures(stage: str, result: dict) -> list:
     return problems
 
 
+@maintenance_stage
+@_timeline_stage("health")
 def run_health_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     """Read-only System Health findings only -- never ScanHealth,
     Component Cleanup, or Reset Base. Writes its own result to

@@ -14,8 +14,15 @@ from . import help_text as help_info
 
 import html
 
+from collections import Counter
+
 from PyQt6.QtCore import QSize
-from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QTextBrowser, QVBoxLayout, QWidget
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (QDialog, QDialogButtonBox, QHeaderView, QLabel, QTextBrowser,
+                             QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+
+from core.semantic_colors import chrome, semantic
+from .engine.preflight import PreflightItem
 
 #: The share of the available screen the dialog may open at.
 SCREEN_SHARE = 0.7
@@ -91,3 +98,75 @@ class ConfirmDialog(QDialog):
 
 def confirm(parent: QWidget | None, title: str, lead: str, details: str) -> bool:
     return ConfirmDialog(parent, title, lead, details).exec() == QDialog.DialogCode.Accepted
+
+
+class PreflightDialog(QDialog):
+    def __init__(self, parent: QWidget | None, items: list[PreflightItem]) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Game Mode Preflight")
+        self.setSizeGripEnabled(True)
+        layout = QVBoxLayout(self)
+        lead = QLabel("Review the selected actions before turning Game Mode ON. "
+                      "Checks reflect the current state; Windows may still refuse an action.", self)
+        lead.setWordWrap(True)
+        layout.addWidget(lead)
+        self.tree = QTreeWidget(self)
+        self.tree.setHeaderLabels(["Action", "Status", "Privilege", "Details"])
+        self.tree.header().setStretchLastSection(False)
+        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.tree.setMinimumSize(0, 100)
+        categories = {"service": "Services", "app": "Apps", "task": "Scheduled tasks",
+                      "power": "Power plan", "registry": "Windows settings", "priority": "Priorities"}
+        statuses = {"ready": ("✓ Ready", "success"),
+                    "already_done": ("✓ Already done — skipped", None),
+                    "needs_admin": ("⚠ Needs admin — skipped", "warning"),
+                    "not_found": ("✕ Not found — skipped", "error"),
+                    "protected": ("✕ Protected — skipped", "error"),
+                    "unknown": ("? Unknown", "warning")}
+        parents = {}
+        for item in items:
+            if item.category not in parents:
+                parents[item.category] = QTreeWidgetItem(self.tree, [categories[item.category]])
+            text, color = statuses[item.status]
+            row = QTreeWidgetItem(parents[item.category],
+                                  [f"{text.split()[0]} {item.action}", text,
+                                   "Administrator" if item.requires_admin else "Current user",
+                                   item.detail])
+            foreground = QColor(semantic(color) if color else chrome("text_muted"))
+            row.setForeground(0, foreground)
+            row.setForeground(1, foreground)
+            for col in range(4):
+                row.setToolTip(col, f"{item.name}\n{item.action}\n{text}\n{item.detail}")
+        self.tree.expandAll()
+        layout.addWidget(self.tree, 1)
+        counts = Counter(item.status for item in items)
+        self.summary = QLabel(", ".join(f"{counts[status]} {label}" for status, label in (
+            ("ready", "actions ready"), ("already_done", "already done"), ("needs_admin", "need admin"),
+            ("not_found", "not found"), ("protected", "protected"), ("unknown", "unknown"))), self)
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+        self.warning = QLabel("Programs that do not close within 8 seconds are ended; unsaved work in them "
+                              "is lost. Save your work before continuing. Game Mode OFF puts the settings "
+                              "back and reopens the closed apps.", self)
+        self.warning.setWordWrap(True)
+        layout.addWidget(self.warning)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                        | QDialogButtonBox.StandardButton.Cancel, self)
+        ok = self.buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel = self.buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        ok.setAutoDefault(False)
+        ok.setDefault(False)
+        cancel.setAutoDefault(True)
+        cancel.setDefault(True)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        area = self.screen().availableGeometry()
+        self.setMaximumSize(area.size())
+        self.resize(min(900, int(area.width() * SCREEN_SHARE)),
+                    min(650, int(area.height() * SCREEN_SHARE)))
+        cancel.setFocus()
+
+
+def confirm_preflight(parent: QWidget | None, items: list[PreflightItem]) -> bool:
+    return PreflightDialog(parent, items).exec() == QDialog.DialogCode.Accepted

@@ -37,7 +37,7 @@ from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
 from core.composite_module import CompositeModule
 from core.events import NAV_REQUEST_MODULE, NavRequestData
-from core.worker import Worker
+from core.worker import COMWorker, Worker
 from modules.dashboard.overview_health import (
     QUICK_TOOLS, RESTART_ACTION, History, collect_findings, identity_lines, launch_tool,
     network_summary, self_usage, summary_text)
@@ -574,7 +574,8 @@ class _DashboardWidget(QWidget):
             return
         self._findings_busy = True
         drivers = _driver_problem_count(self.app)
-        worker = Worker(lambda _w: collect_findings(driver_problems=drivers))
+        # WU history (patch compliance) needs COM on this thread.
+        worker = COMWorker(lambda _w: collect_findings(driver_problems=drivers))
         worker.signals.result.connect(self._on_findings)
         worker.signals.error.connect(self._on_findings_error)
         self._workers.append(worker)
@@ -801,6 +802,7 @@ class DashboardModule(CompositeModule):
         # imported at the top would be loaded even when the tab is never
         # opened, and the frozen build needs each one in HIDDEN_IMPORTS.
         from modules.dashboard.app_history_module import AppHistoryModule
+        from modules.dashboard.timeline_tab import TimelineModule
         from modules.dashboard.details_module import DetailsModule
         from modules.dashboard.performance_module import PerformanceModule
         from modules.dashboard.processes_module import ProcessesModule
@@ -822,6 +824,7 @@ class DashboardModule(CompositeModule):
 
         self.children = [
             OverviewModule(),
+            TimelineModule(),
             ProcessesModule(),
             PerformanceModule(),
             DetailsModule(),

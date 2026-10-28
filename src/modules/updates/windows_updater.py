@@ -39,6 +39,11 @@ class WindowsUpdate:
     held: bool = False
     pending_restart: bool = False
     downloaded: bool = False
+    #: `IUpdate.KBArticleIDs`, without the "KB" prefix.
+    kb_ids: List[str] = field(default_factory=list)
+    support_url: str = ""
+    more_info_urls: List[str] = field(default_factory=list)
+    description: str = ""
 
 
 #: What every surface says for a held update instead of hiding it.
@@ -155,6 +160,17 @@ def _com_str(obj, attr: str) -> str:
         return ""
 
 
+def _com_urls(obj) -> List[str]:
+    """`IUpdate.MoreInfoUrls` as a plain list; empty when refused."""
+    try:
+        collection = obj.MoreInfoUrls
+        return [str(collection.Item(i)).strip() for i in range(collection.Count)
+                if str(collection.Item(i)).strip()]
+    except Exception:
+        logger.debug("MoreInfoUrls is unreadable", exc_info=True)
+        return []
+
+
 def _com_reboot(obj) -> str:
     try:
         return str(int(obj.InstallationBehavior.RebootBehavior))
@@ -243,6 +259,7 @@ def fetch_pending_updates(
     patterns: Optional[List[str]] = None,
     include_drivers: bool = True,
     held_out: Optional[List[WindowsUpdate]] = None,
+    excluded_out: Optional[List[WindowsUpdate]] = None,
 ) -> List[WindowsUpdate]:
     """
     Uses Microsoft.Update.Session COM object to get pending updates.
@@ -266,6 +283,9 @@ def fetch_pending_updates(
     hold kept out of the result, as a `held=True` entry WITHOUT a COM identity
     -- so a caller can say "held" instead of letting the update vanish. The
     returned list never contains one, whether or not held_out is passed.
+
+    excluded_out: optional display-only offers suppressed by patterns, without
+    COM identities. These offers are never returned for installation.
     """
     import win32com.client
     updates = []
@@ -305,8 +325,21 @@ def fetch_pending_updates(
                 hidden = bool(u.IsHidden)
             except Exception:
                 hidden = False
+            kb_ids = [str(k) for k in kb_list]
+            support_url = _com_str(u, "SupportUrl")
+            more_info = _com_urls(u)
+            description = _com_str(u, "Description")
 
-            if patterns and is_blocked(u.Title, kb, patterns):
+            if is_blocked(u.Title, kb, patterns):
+                if excluded_out is not None:
+                    excluded_out.append(WindowsUpdate(
+                        kb=kb, title=u.Title, classification=classification,
+                        size_mb=size_mb, min_size_mb=min_size_mb,
+                        severity=severity, reboot=reboot,
+                        release_date=release_date, identity=None, is_hidden=hidden,
+                        kb_ids=kb_ids, support_url=support_url,
+                        more_info_urls=more_info, description=description,
+                    ))
                 continue
             if drop_drivers and not is_held_amd_display_driver(u):
                 kind = _update_type(u)
@@ -327,6 +360,8 @@ def fetch_pending_updates(
                         severity=severity, reboot=reboot,
                         release_date=release_date, identity=None,
                         is_hidden=hidden, held=True,
+                        kb_ids=kb_ids, support_url=support_url,
+                        more_info_urls=more_info, description=description,
                     ))
                 continue
 
@@ -337,6 +372,8 @@ def fetch_pending_updates(
                 release_date=release_date, identity=u, is_hidden=hidden,
                 pending_restart=_awaiting_restart(u, pending_ids),
                 downloaded=_com_bool(u, "IsDownloaded") is True,
+                kb_ids=kb_ids, support_url=support_url,
+                more_info_urls=more_info, description=description,
             ))
     except Exception as e:
         raise RuntimeError(f"Failed to query Windows Updates: {_explain(e)}") from e
@@ -414,11 +451,70 @@ def hide_update(update: WindowsUpdate) -> None:
     update.identity.IsHidden = True
 
 
+def uninstall_update(kb: str, output_cb: Optional[Callable[[str], None]] = None,
+                     is_cancelled: Optional[Callable[[], bool]] = None) -> InstallResult:
+    """Remove one installed KB through WUA, after asking Windows if it can.
+
+    Must run on a COM-initialised thread. Windows may refuse (`CanUninstall`
+    False, or the uninstaller itself reports failure); nothing here retries or
+    forces it. The caller is responsible for the restore point and confirmation.
+    """
+    import win32com.client
+
+    emit = output_cb or (lambda line: None)
+    cancel = is_cancelled or (lambda: False)
+    kb = (kb or "").strip().upper()
+    if not kb.startswith("KB"):
+        kb = f"KB{kb}"
+    number = kb[2:]
+    emit(f"Searching installed software updates for {kb}...")
+    session = win32com.client.Dispatch("Microsoft.Update.Session")
+    searcher = session.CreateUpdateSearcher()
+    try:
+        found = searcher.Search(
+            f"IsInstalled=1 AND Type='Software' AND KBArticleIDs='{number}'")
+        candidates = [found.Updates.Item(i) for i in range(found.Updates.Count)]
+    except Exception as e:
+        return InstallResult(kb, kb, False, None,
+                             f"Could not list installed updates: {e}")
+    if not candidates:
+        return InstallResult(kb, kb, False, None,
+                             "Not found among installed software updates "
+                             "(superseded, removed, or installed by another channel).")
+    target = candidates[0]
+    title = str(getattr(target, "Title", "") or kb)
+    can_uninstall = None
+    try:
+        can_uninstall = bool(target.UninstallationBehavior.CanUninstall)
+    except Exception:
+        logger.debug("UninstallationBehavior is unreadable", exc_info=True)
+    if can_uninstall is False:
+        return InstallResult(kb, title, False, None,
+                             "Windows reports this update cannot be uninstalled.")
+    if cancel():
+        return InstallResult(kb, title, False, None, "Cancelled before starting.")
+    emit(f"Uninstalling {title}...")
+    try:
+        collection = win32com.client.Dispatch("Microsoft.Update.UpdateColl")
+        collection.Add(target)
+        installer = session.CreateUpdateInstaller()
+        installer.Updates = collection
+        outcome = installer.Uninstall()
+    except Exception as e:
+        return InstallResult(kb, title, False, None, f"Uninstall failed: {e}")
+    code = int(outcome.ResultCode)
+    message = {2: "Uninstalled", 3: "Uninstalled (with warnings)",
+               4: "Uninstall failed", 5: "Uninstall cancelled"}.get(code, f"Result code {code}")
+    return InstallResult(kb, title, code in (2, 3), int(outcome.HResult or 0),
+                         message, bool(outcome.RebootRequired), code)
+
+
 def install_updates_iter(
     updates: List[WindowsUpdate],
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
     output_cb: Optional[Callable[[str], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
+    result_cb: Optional[Callable[[InstallResult], None]] = None,
 ) -> List[InstallResult]:
     """Download and install updates one at a time (own downloader/installer call
     per item) so callers get real per-item progress and isolated pass/fail
@@ -441,6 +537,12 @@ def install_updates_iter(
     installer = session.CreateUpdateInstaller()
     total = len(updates)
     results: List[InstallResult] = []
+
+    def _result(result):
+        results.append(result)
+        if result_cb:
+            result_cb(result)
+
     try:
         pending_ids = _pending_restart_ids(session.CreateUpdateSearcher())
     except Exception:
@@ -465,7 +567,7 @@ def install_updates_iter(
             # already collected. Unsure means not installed.
             detail = _explain(e)
             _log(f"  not installed: could not confirm it is not a held AMD driver ({detail})")
-            results.append(InstallResult(u.kb, u.title, False, hresult_from_com_error(e),
+            _result(InstallResult(u.kb, u.title, False, hresult_from_com_error(e),
                                          "not installed: the AMD driver hold could not be "
                                          f"checked ({detail})"))
             continue
@@ -475,11 +577,11 @@ def install_updates_iter(
 
         if u.pending_restart or _awaiting_restart(u.identity, pending_ids):
             _log(f"  {RESTART_TEXT}")
-            results.append(InstallResult(u.kb, u.title, False, None, RESTART_TEXT, True))
+            _result(InstallResult(u.kb, u.title, False, None, RESTART_TEXT, True))
             continue
 
         if u.identity is None:
-            results.append(InstallResult(u.kb, u.title, False, None, "stale scan — no COM identity, re-scan first"))
+            _result(InstallResult(u.kb, u.title, False, None, "stale scan — no COM identity, re-scan first"))
             continue
 
         coll = win32com.client.Dispatch("Microsoft.Update.UpdateColl")
@@ -498,7 +600,7 @@ def install_updates_iter(
                 _log(f"  download: {_RESULT_TEXT.get(dl_code, dl_code)}")
                 if dl_code != 2:
                     msg = f"download {_RESULT_TEXT.get(dl_code, dl_code)} — {decode_wu_error(dl_result.HResult)}"
-                    results.append(InstallResult(u.kb, u.title, False, dl_result.HResult, msg))
+                    _result(InstallResult(u.kb, u.title, False, dl_result.HResult, msg))
                     continue
             else:
                 _log("  already downloaded")
@@ -521,12 +623,12 @@ def install_updates_iter(
                 if reboot_required and code != 3:
                     msg += "; a restart is also required"
             _log(f"  install: {msg}")
-            results.append(InstallResult(u.kb, u.title, success, install_result.HResult, msg,
+            _result(InstallResult(u.kb, u.title, success, install_result.HResult, msg,
                                          reboot_required, code))
         except Exception as e:
             detail = _explain(e)
             _log(f"  error: {detail}")
-            results.append(InstallResult(u.kb, u.title, False,
+            _result(InstallResult(u.kb, u.title, False,
                                          hresult_from_com_error(e), detail))
 
     if progress_cb:

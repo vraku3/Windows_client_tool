@@ -78,6 +78,18 @@ def test_size_mb_is_a_float_even_though_com_returns_decimal(monkeypatch):
     assert updates[0].size_mb == pytest.approx(524.0, abs=0.5)
 
 
+def test_structured_exclusions_keep_offers_separate_without_com_identity(monkeypatch):
+    _install_fake_session(monkeypatch, [_Update()])
+    excluded = []
+    entries = [{"pattern": "KB5001234", "reason": "Pinned", "expires": None}]
+    assert windows_updater.fetch_pending_updates(patterns=entries, excluded_out=excluded) == []
+    assert len(excluded) == 1
+    assert excluded[0].kb == "KB5001234"
+    assert excluded[0].identity is None
+    entries[0]["expires"] = "2000-01-01"
+    assert len(windows_updater.fetch_pending_updates(patterns=entries)) == 1
+
+
 def test_size_text_is_an_upper_bound_not_an_exact_figure():
     """MaxDownloadSize is the whole-package maximum; the Defender security
     intelligence update here reported 1539 MB. Shown as `<= max`."""

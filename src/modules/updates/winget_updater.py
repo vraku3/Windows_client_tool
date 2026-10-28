@@ -204,6 +204,7 @@ class UpdateOutcome:
     winget_id: str
     state: str
     detail: str
+    version_after: Optional[str] = None
 
     def __bool__(self) -> bool:
         return self.state in (winget_list.UPDATED, winget_list.UPDATED_UNVERIFIED)
@@ -417,7 +418,7 @@ def install_update(
             state, detail = winget_list.BROKEN, problem
         if user_retry and output == "no output captured":
             detail += "; no output captured"
-        return UpdateOutcome(winget_id, state, detail)
+        return UpdateOutcome(winget_id, state, detail, version or None)
     output = _run_winget(
         args,
         returncode_out=upgrade_rc,
@@ -461,7 +462,7 @@ def install_update(
                                         before=before_version, upgrade_output=output,
                                         upgrade_rc=upgrade_rc[0] if upgrade_rc else None)
     row = winget_list.parse_list_row(listed, winget_id)
-    return outcome(state, detail, row[0] if row else "")
+    return outcome(state, detail, row[0] if row and list_rc and list_rc[0] == 0 else "")
 
 
 def install_all_updates(

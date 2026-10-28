@@ -166,6 +166,54 @@ def judge_drivers(count: Optional[int]) -> Optional[Finding]:
                    "Error code set, or not signed", "Driver Manager", "Open Drivers")
 
 
+def judge_patch(status, now=None) -> List[Finding]:
+    """Patch compliance from Windows Update's own OS-update history.
+
+    `status` is modules.updates.patch_status.PatchStatus, or None when the
+    history was refused -- refusal is UNKNOWN, never "up to date".
+    """
+    from datetime import datetime, timezone
+    from modules.updates import patch_status as ps
+
+    if status is None:
+        return [Finding(UNKNOWN, "Could not check patch compliance",
+                        "Windows Update history was refused; open Updates for details.",
+                        "Updates", "Open Updates")]
+    found: List[Finding] = []
+    now = now or datetime.now(timezone.utc)
+    last = status.last_security
+    if last is None:
+        found.append(Finding(WARNING, "No OS security update in Windows Update history",
+                             f"{status.entries_read} install record(s) read; none is a monthly security update.",
+                             "Updates", "Open Updates"))
+    else:
+        days = max(0, (now - last.when).days)
+        kb = ps.kb_of(last.title)
+        when = last.when.astimezone().strftime("%Y-%m-%d")
+        if days > ps.STALE_SECURITY_DAYS:
+            found.append(Finding(
+                WARNING, f"Last OS security update was {days} days ago",
+                f"{kb or 'Unknown KB'} installed {when}; a monthly cycle may have been missed.",
+                "Updates", "Open Updates"))
+        else:
+            found.append(Finding(
+                INFO, f"OS security update {days} day(s) old",
+                f"{kb or 'Unknown KB'} installed {when}.", "Updates", "Open Updates"))
+    if status.unresolved_failures:
+        latest = status.unresolved_failures[0]
+        found.append(Finding(
+            WARNING, f"{len(status.unresolved_failures)} Windows Update failure(s) unresolved",
+            f"Latest: {latest.title} (result {latest.result_code}"
+            + (f", HRESULT 0x{latest.hresult:08X}" if latest.hresult else "") + ").",
+            "Updates", "Open Updates"))
+    return found
+
+
+def _read_patch_status():
+    from modules.updates.patch_status import read_patch_status
+    return read_patch_status()
+
+
 def format_size(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024:
@@ -216,12 +264,42 @@ def unexpected_shutdown_count(days: int = 7) -> Optional[int]:
     return None if incidents is None else len(incidents)
 
 
+def check_game_mode() -> list[Finding]:
+    """Check if Game Mode is ON and report it as a finding."""
+    from modules.game_mode.engine.journal import Journal
+
+    journal = Journal()
+    if not journal.load():
+        return []
+    if journal.data.get("corrupt"):
+        return [Finding(CRITICAL,
+                        "Game Mode journal is unreadable -- recovery may be needed",
+                        "Open Game Mode to review recovery warnings.",
+                        action_module="Game Mode", action_label="Open Game Mode")]
+
+    started = journal.data.get("started", 0)
+    if not started:
+        return [Finding(WARNING, "Game Mode is ON",
+                        "Session journal exists but has no start time",
+                        action_module="Game Mode", action_label="Open Game Mode")]
+
+    hours = (time.time() - started) / 3600
+    if hours > 6:
+        return [Finding(WARNING, f"Game Mode ON for {hours:.1f} hours",
+                        "Updates, maintenance and updaters remain paused. Consider turning it off.",
+                        action_module="Game Mode", action_label="Open Game Mode")]
+    return [Finding(INFO, f"Game Mode is ON ({hours:.1f}h)",
+                    "Maintenance is paused while gaming.",
+                    action_module="Game Mode", action_label="Open Game Mode")]
+
+
 # ---- assembly ---------------------------------------------------------------
 
 def collect_findings(driver_problems: Optional[int] = None,
                      shutdown_counter: Callable = unexpected_shutdown_count,
                      reboot_reader: Callable = pending_reboot_reasons,
-                     thermal_reader: Callable = thermal_alerts) -> List[Finding]:
+                     thermal_reader: Callable = thermal_alerts,
+                     patch_reader: Callable = _read_patch_status) -> List[Finding]:
     """Everything that needs attention, worst first. Run on a worker thread."""
     import psutil
     found: List[Optional[Finding]] = []
@@ -249,6 +327,14 @@ def collect_findings(driver_problems: Optional[int] = None,
     found.append(judge_shutdowns(shutdown_counter()))
     found.append(judge_drivers(driver_problems))
     found.extend(judge_thermals(thermal_reader()))
+    found.extend(check_game_mode())
+    try:
+        answer = patch_reader()
+        found.extend(judge_patch(answer[0] if isinstance(answer, tuple) else answer))
+    except Exception as e:   # one refused read must not empty the whole panel
+        logger.warning("patch compliance read failed: %s", e)
+        found.append(Finding(UNKNOWN, "Could not check patch compliance", str(e)[:200],
+                             "Updates", "Open Updates"))
     return sort_findings([f for f in found if f is not None])
 
 

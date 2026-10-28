@@ -467,6 +467,8 @@ class OptimiseTab(QWidget):
                 else:
                     self._start(*action)
         elif kind == "space":
+            from core.timeline import record
+            record(self._engine.path.parent.parent, "optimise", "space_freed", f"Optimise OS freed {format_size(payload.freed)}", {"freed_bytes": payload.freed, "failed": bool(payload.failed)}, "warning" if payload.failed else "info")
             text = payload.text()
             self._space_failed = payload.failed
             self._space_result.setPlainText(text)

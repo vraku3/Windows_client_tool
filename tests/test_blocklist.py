@@ -61,17 +61,54 @@ class _FakeApp:
 def test_add_pattern_appends_new_pattern():
     app = _FakeApp()
     add_pattern(app, "Microsoft.Teams")
-    assert app.config.get("updates.blocklist_patterns") == ["Microsoft.Teams"]
+    assert app.config.get("updates.blocklist_patterns")[0]["pattern"] == "Microsoft.Teams"
 
 
 def test_add_pattern_does_not_duplicate():
     app = _FakeApp()
     add_pattern(app, "Microsoft.Teams")
     add_pattern(app, "Microsoft.Teams")
-    assert app.config.get("updates.blocklist_patterns") == ["Microsoft.Teams"]
+    assert len(app.config.get("updates.blocklist_patterns")) == 1
 
 
 def test_add_pattern_ignores_blank():
     app = _FakeApp()
     add_pattern(app, "   ")
     assert app.config.get("updates.blocklist_patterns") == []
+
+
+def test_migration_and_metadata_round_trip():
+    from core.blocklist import load_exclusions, save_exclusions
+    from datetime import date
+    app = _FakeApp()
+    app.config.set("updates.blocklist_patterns", ["  Foo  ", "# comment", ""])
+    entries = load_exclusions(app)
+    assert len(entries) == 1
+    assert entries[0]["pattern"] == "Foo"
+    assert entries[0]["origin"] == "manual"
+    assert entries[0]["added"] == date.today().isoformat()
+    entries[0].update(reason="Pinned", added_by="Admin", review_by="2030-01-01")
+    save_exclusions(app, entries)
+    assert load_exclusions(app) == entries
+
+
+def test_auto_add_preserves_existing_manual_metadata_and_remove_ignores_case():
+    from core.blocklist import add_exclusion, load_exclusions, remove_exclusion
+    app = _FakeApp()
+    add_exclusion(app, "Foo", "Pinned")
+    add_exclusion(app, "foo", "Unverifiable", origin="auto")
+    assert len(load_exclusions(app)) == 1
+    assert load_exclusions(app)[0]["reason"] == "Pinned"
+    remove_exclusion(app, "FOO")
+    assert load_exclusions(app) == []
+
+
+def test_expiry_boundary_and_structured_matching():
+    from core.blocklist import expired_exclusions
+    from datetime import date
+    old = {"pattern": "Foo", "expires": "2000-01-01"}
+    today = {"pattern": "Bar", "expires": date.today().isoformat()}
+    assert expired_exclusions([old, today, {"pattern": "Baz", "expires": None}]) == [old]
+    assert not is_blocked("Foo", "", [old])
+    assert is_blocked("Bar", "", [today])
+    assert is_blocked("Baz", "", [{"pattern": "Baz", "expires": "invalid"}])

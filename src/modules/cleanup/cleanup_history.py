@@ -131,6 +131,10 @@ def _append_entry(entry: dict) -> None:
     """Append to the log. Never raises: a log must not fail a clean."""
     try:
         path = _deleted_path()
+        from core.timeline import record as timeline_record
+        from core.formatting import format_size
+        freed = entry.get("bytes", 0)
+        timeline_record(os.path.dirname(path), "cleanup", "preset_clean" if entry.get("preset") else "clean_complete", f"Cleanup freed {format_size(freed)}", {"freed_bytes": freed, "files": entry.get("count", 0), "preset": entry.get("preset"), "cancelled": entry.get("cancelled", False)}, "warning" if entry.get("cancelled") or entry.get("refused") or entry.get("denied_count") else "info")
         entries = _read_entries(path, "cleanup deletion log")
         entries.append(entry)
         with open(path, "w", encoding="utf-8") as f:

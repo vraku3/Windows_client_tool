@@ -10,6 +10,17 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import pytest
 from PyQt6.QtWidgets import QApplication
 
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_operation_mutex():
+    import uuid
+    from core import operation_lock
+    original = operation_lock.MUTEX_NAME
+    operation_lock.MUTEX_NAME = "Local\\WinClientTool_pytest_" + uuid.uuid4().hex
+    yield
+    operation_lock.MUTEX_NAME = original
+
+
 @pytest.fixture(scope="session", autouse=True)
 def qapp():
     app = QApplication.instance() or QApplication(sys.argv)

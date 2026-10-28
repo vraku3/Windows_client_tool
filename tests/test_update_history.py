@@ -1,212 +1,58 @@
-import json
-import os
+"""Searchable Windows Update history model."""
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
-import pytest
-
-from modules.driver_manager.vendor_updates import update_history as uh
-
-
-@pytest.fixture(autouse=True)
-def _isolated_history_path(tmp_path, monkeypatch):
-    path = str(tmp_path / "update_history.json")
-    monkeypatch.setattr(uh, "_history_path", lambda: path)
-    return path
+from modules.updates import history_model as hm
 
 
-def test_get_returns_none_when_nothing_recorded_yet():
-    assert uh.get("PCI\\DEV1") is None
+def entry(days_ago, title="Security Update", code=2, hresult=0, operation=1):
+    return SimpleNamespace(when=datetime.now(timezone.utc) - timedelta(days=days_ago),
+                           title=title, result_code=code, hresult=hresult,
+                           operation=operation)
 
 
-def test_get_returns_none_for_empty_device_id():
-    assert uh.get("") is None
+def test_labels_cover_known_codes_and_keep_unknown_ones_visible():
+    assert hm.result_label(2) == "Succeeded"
+    assert hm.result_label(4) == "Failed"
+    assert hm.result_label(9) == "Result 9"
+    assert hm.operation_label(1) == "Install"
+    assert hm.operation_label(2) == "Uninstall"
 
 
-def test_record_check_then_get_round_trips():
-    uh.record_check("PCI\\DEV1", "AMD Radeon RX 7900 XTX", "AMD",
-                    uh.OUTCOME_UPDATE_FOUND, seen_vendor_version="26.8.1")
-    result = uh.get("PCI\\DEV1")
-    assert result is not None
-    assert result.device_name == "AMD Radeon RX 7900 XTX"
-    assert result.vendor == "AMD"
-    assert result.last_check_outcome == uh.OUTCOME_UPDATE_FOUND
-    assert result.last_seen_vendor_version == "26.8.1"
-    assert result.last_checked_at is not None
+def test_detail_is_decoded_only_for_a_failed_entry_with_a_hresult():
+    assert hm.detail_text(entry(1, code=2, hresult=0)) == ""
+    text = hm.detail_text(entry(1, code=4, hresult=0x80240034))
+    assert text.lower().startswith("0x") and "download failed" in text.lower()
+    assert hm.detail_text(entry(1, code=4, hresult=0)) == ""
 
 
-def test_record_check_persists_across_a_fresh_load(tmp_path, _isolated_history_path):
-    uh.record_check("PCI\\DEV1", "AMD Radeon RX 7900 XTX", "AMD", uh.OUTCOME_NO_UPDATE)
-    # a second, independent read (simulating a new process) must see it
-    assert os.path.exists(_isolated_history_path)
-    with open(_isolated_history_path) as f:
-        data = json.load(f)
-    assert "PCI\\DEV1" in data
+def test_search_matches_title_result_and_detail():
+    rows = [entry(1, "2026-10 Security Update (KB5129195)"), entry(2, "Driver update", code=4, hresult=0x80240034)]
+    assert [r.title for r in hm.filter_entries(rows, "kb5129195")] == [rows[0].title]
+    assert [r.title for r in hm.filter_entries(rows, "failed")] == [rows[1].title]
+    assert len(hm.filter_entries(rows, "")) == 2
 
 
-def test_record_check_overwrites_previous_check_fields_but_keeps_apply_fields():
-    uh.record_applied("PCI\\DEV1", "AMD Radeon RX 7900 XTX", "AMD", "26.8.1", "32.0.1", "light")
-    uh.record_check("PCI\\DEV1", "AMD Radeon RX 7900 XTX", "AMD", uh.OUTCOME_NO_UPDATE)
-    result = uh.get("PCI\\DEV1")
-    assert result.last_check_outcome == uh.OUTCOME_NO_UPDATE
-    # the apply record from before must survive a later check
-    assert result.last_applied_vendor_version == "26.8.1"
-    assert result.last_applied_mode == "light"
+def test_date_filter_and_newest_first():
+    rows = [entry(1), entry(40, "Old"), entry(3, "Newer")]
+    recent = hm.filter_entries(rows, "", days=7)
+    assert [r.title for r in recent] == ["Security Update", "Newer"]
+    assert [r.title for r in hm.filter_entries(rows, "")] == ["Security Update", "Newer", "Old"]
 
 
-def test_record_applied_then_get_round_trips():
-    uh.record_applied("PCI\\DEV1", "AMD Radeon RX 7900 XTX", "AMD",
-                      "26.8.1", "32.0.31041.3013", "full")
-    result = uh.get("PCI\\DEV1")
-    assert result.last_applied_vendor_version == "26.8.1"
-    assert result.last_applied_windows_version == "32.0.31041.3013"
-    assert result.last_applied_mode == "full"
-    assert result.last_applied_at is not None
+def test_pagination_clamps_out_of_range_pages():
+    rows = list(range(250))
+    page, current, pages = hm.paginate(rows, 2, 100)
+    assert len(page) == 50 and current == 2 and pages == 3
+    page, current, pages = hm.paginate(rows, 99, 100)
+    assert current == 2 and len(page) == 50
+    page, current, pages = hm.paginate([], 5, 100)
+    assert page == [] and current == 0 and pages == 1
 
-
-def test_record_functions_are_no_ops_for_an_empty_device_id():
-    uh.record_check("", "x", "AMD", uh.OUTCOME_NO_UPDATE)
-    uh.record_applied("", "x", "AMD", "1.0", "1.0", "light")
-    assert uh.get("") is None
-
-
-def test_get_recovers_from_a_corrupt_json_file(_isolated_history_path):
-    with open(_isolated_history_path, "w") as f:
-        f.write("{ not valid json")
-    assert uh.get("PCI\\DEV1") is None
-
-
-def test_get_recovers_when_the_file_is_a_json_array_not_an_object(_isolated_history_path):
-    with open(_isolated_history_path, "w") as f:
-        json.dump([1, 2, 3], f)
-    assert uh.get("PCI\\DEV1") is None
-
-
-def test_get_drops_unknown_fields_from_a_future_version_of_the_file(_isolated_history_path):
-    with open(_isolated_history_path, "w") as f:
-        json.dump({"PCI\\DEV1": {"device_id": "PCI\\DEV1", "some_future_field": "x"}}, f)
-    result = uh.get("PCI\\DEV1")
-    assert result is not None
-    assert result.device_id == "PCI\\DEV1"
-
-
-# ---------------------------------------------------------------------
-# status_label -- pure function, the core "is it up to date" logic
-# ---------------------------------------------------------------------
-
-def test_status_label_never_checked():
-    assert uh.status_label("1.0", None) == "Not checked yet"
-
-
-def test_status_label_update_found_not_yet_applied():
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_checked_at="2026-09-13T12:00:00+00:00",
-                         last_check_outcome=uh.OUTCOME_UPDATE_FOUND,
-                         last_seen_vendor_version="26.8.1")
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "26.8.1" in label
-    assert "not compared" in label.lower()
-
-
-def test_status_label_no_update_found():
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_checked_at="2026-09-13T12:00:00+00:00",
-                         last_check_outcome=uh.OUTCOME_NO_UPDATE)
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "no update" in label.lower()
-
-
-def test_status_label_check_failed_shows_the_error():
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_checked_at="2026-09-13T12:00:00+00:00",
-                         last_check_outcome=uh.OUTCOME_CHECK_FAILED,
-                         last_check_error="network unreachable")
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "failed" in label.lower()
-    assert "network unreachable" in label
-
-
-def test_status_label_up_to_date_when_both_versions_match_what_we_applied():
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_applied_at="2026-09-13T12:00:00+00:00",
-                         last_applied_vendor_version="26.8.1",
-                         last_applied_windows_version="32.0.31041.3013",
-                         last_seen_vendor_version="26.8.1")
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "up to date" in label.lower()
-    assert "26.8.1" in label
-
-
-def test_status_label_windows_version_changed_since_our_install():
-    # Windows Update (or a manual reinstall) changed the driver after
-    # this app applied one -- must say so, never claim "up to date".
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_applied_at="2026-09-13T12:00:00+00:00",
-                         last_applied_vendor_version="26.8.1",
-                         last_applied_windows_version="32.0.31041.3013",
-                         last_seen_vendor_version="26.8.1")
-    label = uh.status_label("99.0.99999.9999", h)
-    assert "up to date" not in label.lower()
-    assert "changed" in label.lower()
-    assert "re-check" in label.lower()
-
-
-def test_status_label_vendor_published_something_newer_since_our_install():
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_applied_at="2026-09-13T12:00:00+00:00",
-                         last_applied_vendor_version="26.8.1",
-                         last_applied_windows_version="32.0.31041.3013",
-                         last_seen_vendor_version="26.9.5")
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "update available" in label.lower()
-    assert "26.9.5" in label
-    assert "26.8.1" in label
-
-
-def test_status_label_applied_but_windows_version_not_yet_confirmed():
-    # record_applied can be called with applied_windows_version=None when
-    # a fresh post-install read wasn't available -- must not be treated
-    # as a mismatch (which would wrongly say "the driver changed").
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_applied_at="2026-09-13T12:00:00+00:00",
-                         last_applied_vendor_version="26.8.1",
-                         last_applied_windows_version=None)
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "not yet confirmed" in label.lower()
-    assert "changed" not in label.lower()
-
-
-def test_status_label_applied_status_takes_priority_over_a_stale_check_outcome():
-    # last_check_outcome can be stale relative to last_applied_at (e.g. a
-    # check happened, then we installed) -- the applied facts must win.
-    h = uh.DeviceHistory(device_id="d", vendor="AMD",
-                         last_checked_at="2026-09-01T00:00:00+00:00",
-                         last_check_outcome=uh.OUTCOME_UPDATE_FOUND,
-                         last_seen_vendor_version="26.8.1",
-                         last_applied_at="2026-09-13T12:00:00+00:00",
-                         last_applied_vendor_version="26.8.1",
-                         last_applied_windows_version="32.0.31041.3013")
-    label = uh.status_label("32.0.31041.3013", h)
-    assert "up to date" in label.lower()
-
-
-def test_get_all_returns_every_recorded_device():
-    uh.record_check("PCI\\DEV1", "AMD Radeon RX 7900 XTX", "AMD", uh.OUTCOME_NO_UPDATE)
-    uh.record_check("PCI\\DEV2", "Realtek NIC", "Realtek", uh.OUTCOME_UPDATE_FOUND,
-                    seen_vendor_version="1.2.3")
-    result = uh.get_all()
-    assert set(result.keys()) == {"PCI\\DEV1", "PCI\\DEV2"}
-    assert result["PCI\\DEV2"].last_seen_vendor_version == "1.2.3"
-
-
-def test_get_all_returns_empty_dict_when_nothing_recorded():
-    assert uh.get_all() == {}
-
-
-def test_get_all_skips_a_malformed_individual_record(_isolated_history_path):
-    with open(_isolated_history_path, "w") as f:
-        json.dump({
-            "PCI\\GOOD": {"device_id": "PCI\\GOOD", "vendor": "AMD"},
-            "PCI\\BAD": "not even a dict",
-        }, f)
-    result = uh.get_all()
-    assert "PCI\\GOOD" in result
-    assert "PCI\\BAD" not in result
+def test_kb_extraction_and_uninstall_eligibility():
+    assert hm.kb_of_title("2026-10 Security Update (KB5129195) (26200.9457)") == "KB5129195"
+    assert hm.kb_of_title("No KB here") == ""
+    assert hm.uninstallable(entry(1, "Update (KB1234567)", code=2))
+    assert not hm.uninstallable(entry(1, "Update (KB1234567)", code=4))
+    assert not hm.uninstallable(entry(1, "Update (KB1234567)", code=2, operation=2))
+    assert not hm.uninstallable(entry(1, "No KB", code=2))

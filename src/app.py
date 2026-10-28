@@ -136,5 +136,7 @@ class App:
         get_long_op_pool().waitForDone(5000)  # same best-effort grace period as thread_pool above
         self.backup.close()
         self.config.save()
+        from core.timeline import record
+        record(self.app_data_dir, "system", "app_stop", "Windows Client Tool stopped")
         self.logger.shutdown()
         App.instance = None

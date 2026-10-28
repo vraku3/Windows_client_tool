@@ -50,10 +50,60 @@ def test_sorted_worst_first_and_unknown_last():
 def test_collect_uses_injected_readers():
     found = oh.collect_findings(driver_problems=2,
                                 shutdown_counter=lambda: 4,
-                                reboot_reader=lambda: ["Windows Update"])
+                                reboot_reader=lambda: ["Windows Update"],
+                                patch_reader=lambda: (None, "test"))
     titles = " | ".join(f.title for f in found)
     assert "restart is pending" in titles and "unexpected shutdown" in titles
     assert "driver" in titles
+
+
+def _patch(status):
+    from modules.updates import patch_status as ps
+    return oh.judge_patch(status, now=ps.datetime(2026, 10, 28, tzinfo=ps.timezone.utc))
+
+
+def test_patch_compliance_reports_age_and_failures():
+    from modules.updates import patch_status as ps
+    when = ps.datetime(2026, 10, 20, tzinfo=ps.timezone.utc)
+    status = ps.PatchStatus(
+        last_security=ps.HistoryEntry(when, "2026-10 Security Update (KB5129195) (26200.9457)", 2),
+        unresolved_failures=[ps.HistoryEntry(when, "Driver update", 4, 0x80240034)],
+        entries_read=10)
+    found = _patch(status)
+    titles = " | ".join(f.title for f in found)
+    details = " ".join(f.detail for f in found)
+    assert "8 day(s) old" in titles and "KB5129195" in details
+    assert "1 Windows Update failure(s) unresolved" in titles
+    assert "0x80240034" in details
+
+
+def test_a_stale_security_update_is_a_warning():
+    from modules.updates import patch_status as ps
+    when = ps.datetime(2026, 8, 1, tzinfo=ps.timezone.utc)
+    status = ps.PatchStatus(last_security=ps.HistoryEntry(when, "2026-07 Update (KB1) (26100.1)", 2))
+    found = _patch(status)
+    assert found[0].severity == oh.WARNING and "88 days" in found[0].title
+
+
+def test_no_security_update_and_a_refused_read_are_never_fine():
+    from modules.updates import patch_status as ps
+    empty = _patch(ps.PatchStatus(entries_read=5))
+    assert empty[0].severity == oh.WARNING and "No OS security update" in empty[0].title
+    assert _patch(None)[0].severity == oh.UNKNOWN
+
+
+def test_collect_findings_passes_the_reader_through_and_survives_a_failure():
+    from modules.updates import patch_status as ps
+    when = ps.datetime(2026, 10, 20, tzinfo=ps.timezone.utc)
+    found = oh.collect_findings(shutdown_counter=lambda: 0, reboot_reader=lambda: [],
+                                thermal_reader=lambda: [],
+                                patch_reader=lambda: (ps.PatchStatus(
+                                    last_security=ps.HistoryEntry(when, "x KB1 (26100.1)", 2)), "") )
+    assert any("OS security update" in f.title for f in found)
+    broken = oh.collect_findings(shutdown_counter=lambda: 0, reboot_reader=lambda: [],
+                                 thermal_reader=lambda: [],
+                                 patch_reader=lambda: (_ for _ in ()).throw(OSError("denied")))
+    assert any(f.severity == oh.UNKNOWN and "patch compliance" in f.title for f in broken)
 
 
 def test_history_is_capped():

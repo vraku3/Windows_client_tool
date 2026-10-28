@@ -15,6 +15,8 @@ import time
 import tempfile
 from typing import List, Optional
 
+from .session_history import record_session_end
+
 logger = logging.getLogger(__name__)
 
 VERSION = 1
@@ -65,16 +67,25 @@ class Journal:
         entry["done"] = True
         self.save()
 
-    def finish(self, report: List[dict]) -> None:
+    def finish(self, report: List[dict], *, restored: int = 0) -> Optional[str]:
         """Everything is back: drop the session, keep the report."""
         os.makedirs(self.folder, exist_ok=True)
         last = {"finished": time.time(), "started": self.data.get("started"), "report": report}
         self._write(os.path.join(self.folder, "last_restore.json"), last)
+        history_error = None
+        try:
+            record_session_end(None, report, self.data.get("handles_after"),
+                               self.data.get("processes_after"), started=self.data.get("started"),
+                               restored=restored, folder=self.folder)
+        except (OSError, ValueError, TypeError) as error:
+            logger.warning("game mode: could not save restore history: %s", error)
+            history_error = f"Restore history could not be saved: {error}"
         try:
             os.remove(self.path)
         except FileNotFoundError:
             logger.info("game mode: journal was already gone")
         self.data = {}
+        return history_error
 
     # ---- access --------------------------------------------------------------------------------
     @property

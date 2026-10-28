@@ -10,18 +10,33 @@ killing an installer mid-write can leave an application half-installed.
 """
 import logging
 import os
+import time
 from typing import Optional
 
-from PyQt6.QtCore import QElapsedTimer, QThreadPool
+from PyQt6.QtCore import QElapsedTimer, QThreadPool, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QCheckBox, QHBoxLayout, QLabel, QMessageBox, QPlainTextEdit, QPushButton,
     QVBoxLayout, QWidget,
 )
 
 from core.worker import COMWorker
+from core.semantic_colors import semantic
+from modules.updates import run_checkpoint
+from modules.updates.operation_guard import maintenance_worker
+from .activity_widget import ActivityWidget
 
 logger = logging.getLogger(__name__)
+
+#: No log line for this long during a run is reported as a stall.
+STALL_AFTER_S = 180
+
+
+def format_running_status(phase: str, elapsed_s: float, idle_s: float = 0.0) -> str:
+    text = f"{phase or 'Working'}… {int(elapsed_s) // 60}m {int(elapsed_s) % 60:02d}s"
+    if idle_s >= STALL_AFTER_S:
+        text += f" — no output for {int(idle_s) // 60}m"
+    return text
 
 
 class _RunAllTab(QWidget):
@@ -31,10 +46,22 @@ class _RunAllTab(QWidget):
         self._workers: list = []
         self._last_data: dict = {}
         self._op_timer: Optional[QElapsedTimer] = None
+        self._busy_owner = ""
+        self._running = False
+        self._phase = ""
+        self._last_activity = 0.0
         self._setup_ui()
 
     def set_app(self, app) -> None:
         self.app = app
+        self._activity.set_app(app)
+
+    def set_maintenance_busy(self, owner) -> None:
+        self._busy_owner = owner or ""
+        self._sync_run_button()
+
+    def _sync_run_button(self) -> None:
+        self._run_btn.setEnabled(not self._busy_owner and not self._running)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -45,6 +72,10 @@ class _RunAllTab(QWidget):
         )
         desc.setWordWrap(True)
         layout.addWidget(desc)
+        self._checkpoint_lbl = QLabel()
+        self._checkpoint_lbl.setWordWrap(True)
+        self._checkpoint_lbl.setVisible(False)
+        layout.addWidget(self._checkpoint_lbl)
 
         checks_row = QHBoxLayout()
         self._chk_wu = QCheckBox("Windows Update")
@@ -80,10 +111,15 @@ class _RunAllTab(QWidget):
         self._log.setReadOnly(True)
         self._log.setFont(QFont("Consolas", 9))
         layout.addWidget(self._log, 1)
+        self._activity = ActivityWidget()
+        layout.addWidget(self._activity, 1)
 
         self._run_btn.clicked.connect(self._do_run)
         self._stop_btn.clicked.connect(self._do_stop)
         self._report_btn.clicked.connect(self._do_report)
+        self._watch = QTimer(self)
+        self._watch.setInterval(5000)
+        self._watch.timeout.connect(self._tick_watch)
 
     def _selected_stages(self):
         stages = []
@@ -99,6 +135,43 @@ class _RunAllTab(QWidget):
             stages.append("dism")
         return stages
 
+    def refresh_checkpoint_note(self) -> None:
+        """Say so when the last run never finished, without blocking anything."""
+        run = run_checkpoint.unfinished(getattr(self.app, "app_data_dir", None))
+        if run is None:
+            self._checkpoint_lbl.setVisible(False)
+            return
+        rows = run_checkpoint.item_summary(run)[-5:]
+        self._checkpoint_lbl.setText(
+            f"A previous maintenance run did not finish (context: {run.get('context') or 'unknown'}, "
+            f"started {run.get('started') or 'unknown'})."
+            + (" Last recorded: " + "; ".join(rows) if rows else ""))
+        self._checkpoint_lbl.setStyleSheet(f"color: {semantic('warning')};")
+        self._checkpoint_lbl.setVisible(True)
+
+    def _confirm_preflight(self) -> bool:
+        """Show restart and previous-run evidence before anything installs."""
+        from modules.updates.reboot_preflight import assess
+        folder = getattr(self.app, "app_data_dir", None)
+        try:
+            preflight = assess(folder)
+        except Exception:
+            logger.warning("Could not build the run preflight", exc_info=True)
+            return True
+        if not preflight.should_ask:
+            return True
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Restart evidence")
+        box.setText("A restart is pending." if preflight.reasons
+                    else "A previous maintenance run did not finish.")
+        box.setInformativeText("\n".join(preflight.evidence_lines()))
+        run_anyway = box.addButton("Run anyway", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(run_anyway)
+        box.exec()
+        return box.clickedButton() is run_anyway
+
     def _do_run(self):
         if self.app is None:
             return
@@ -106,14 +179,21 @@ class _RunAllTab(QWidget):
         if not stages:
             self._status_lbl.setText("Select at least one stage.")
             return
+        if not self._confirm_preflight():
+            return
 
+        self._running = True
         self._run_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
         self._report_btn.setEnabled(False)
         self._log.clear()
+        self._status_lbl.setStyleSheet("")
         self._status_lbl.setText("Running…")
+        self._phase = ""
+        self._last_activity = time.monotonic()
         self._op_timer = QElapsedTimer()
         self._op_timer.start()
+        self._watch.start()
 
         app = self.app
 
@@ -122,11 +202,13 @@ class _RunAllTab(QWidget):
         data = {}
         lines = []
 
+        @maintenance_worker("Updates install")
         def _run(worker):
             from modules.updates.stage_runners import STAGE_LABELS, STAGE_RUNNERS, finalize_run, write_session_log
             def log(line):
                 lines.append(line)
                 worker.signals.log_line.emit(line)
+            run_checkpoint.begin(app.app_data_dir, stages, "run_all")
             for stage in stages:
                 if worker.is_cancelled:
                     log("Cancelled.")
@@ -151,10 +233,12 @@ class _RunAllTab(QWidget):
                 data["session_log"] = write_session_log(app.app_data_dir, data, lines)
             except OSError:
                 logger.warning("Could not write maintenance session log", exc_info=True)
+            run_checkpoint.finish(app.app_data_dir,
+                                  "cancelled" if worker.is_cancelled else "completed")
             return dict(data)
 
         w = COMWorker(_run)
-        w.signals.log_line.connect(self._log.appendPlainText)
+        w.signals.log_line.connect(self._on_log)
         w.signals.result.connect(self._on_run_done)
         w.signals.error.connect(self._on_run_error)
         def _cancelled():
@@ -170,10 +254,35 @@ class _RunAllTab(QWidget):
             w.cancel()
         self._stop_btn.setEnabled(False)
 
+    def _on_log(self, line: str) -> None:
+        """Show log lines; turn "Phase: x" markers into the running status."""
+        self._last_activity = time.monotonic()
+        if line.startswith("Phase: "):
+            self._phase = line[len("Phase: "):].strip().capitalize()
+            self._update_running_status()
+            return
+        self._log.appendPlainText(line)
+
+    def _update_running_status(self) -> None:
+        if not self._running or self._op_timer is None:
+            return
+        elapsed = self._op_timer.elapsed() / 1000
+        idle = time.monotonic() - self._last_activity
+        self._status_lbl.setText(format_running_status(self._phase, elapsed, idle))
+        self._status_lbl.setStyleSheet(
+            f"color: {semantic('warning')};" if idle >= STALL_AFTER_S else "")
+
+    def _tick_watch(self) -> None:
+        self._update_running_status()
+
     def _on_run_done(self, data: dict, cancelled: bool = False) -> None:
-        self._run_btn.setEnabled(True)
+        self._activity.refresh()
+        self._running = False
+        self._watch.stop()
+        self._run_btn.setEnabled(not self._busy_owner)
         self._stop_btn.setEnabled(False)
         self._report_btn.setEnabled(True)
+        self._status_lbl.setStyleSheet("")
         self._last_data = self._normalize_data(data)
         from modules.updates.stage_runners import outstanding_text
         self._log.setPlainText(outstanding_text(data.get("outstanding") or {}) + "\n\n" + self._log.toPlainText())
@@ -199,8 +308,12 @@ class _RunAllTab(QWidget):
         self._maybe_toast()
 
     def _on_run_error(self, err: str) -> None:
-        self._run_btn.setEnabled(True)
+        self._activity.refresh()
+        self._running = False
+        self._watch.stop()
+        self._run_btn.setEnabled(not self._busy_owner)
         self._stop_btn.setEnabled(False)
+        self._status_lbl.setStyleSheet("")
         self._status_lbl.setText(f"Error: {err}")
         self._log.appendPlainText(f"Error: {err}")
 
@@ -247,6 +360,7 @@ class _RunAllTab(QWidget):
         )
 
     def _cancel_all(self) -> None:
+        self._watch.stop()
         for w in self._workers:
             w.cancel()
         self._workers.clear()

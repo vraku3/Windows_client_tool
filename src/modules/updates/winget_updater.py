@@ -196,17 +196,17 @@ def _parse_upgrade_output(output: str) -> List[AppUpdate]:
 class UpdateOutcome:
     """What ONE package's update did, decided by reading its version back.
 
-    `state` is one of core.winget_list's UPDATED / UNCONFIRMED / NOT_APPLICABLE /
-    NEEDS_USER / NEEDS_INPUT / DIFF_TECH / FAILED; `detail` is the sentence the
-    table and the report show.
-    Truthy only when the read-back proved the update.
+    `state` is one of core.winget_list's UPDATED / UPDATED_UNVERIFIED /
+    UNCONFIRMED / NOT_APPLICABLE / NEEDS_USER / NEEDS_INPUT / DIFF_TECH / FAILED;
+    `detail` is the sentence the table and the report show.
+    Truthy when the update succeeded or very likely succeeded.
     """
     winget_id: str
     state: str
     detail: str
 
     def __bool__(self) -> bool:
-        return self.state == winget_list.UPDATED
+        return self.state in (winget_list.UPDATED, winget_list.UPDATED_UNVERIFIED)
 
 
 #: An install still running after this long is stuck, not slow.

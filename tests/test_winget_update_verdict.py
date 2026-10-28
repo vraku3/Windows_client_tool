@@ -52,16 +52,16 @@ def test_per_user_refusal_says_what_to_do(monkeypatch):
     assert outcome.state == wl.UNCONFIRMED and "unreadable" in outcome.detail
 
 
-def test_an_unreadable_list_is_unconfirmed_never_updated(monkeypatch):
+def test_an_unreadable_list_but_install_said_success_is_updated_unverified(monkeypatch):
     _fake_winget(monkeypatch, "Successfully installed", "winget not found. Please install App Installer")
     outcome = wu.install_update("Acme.App", lambda line: None, target_version="2.0")
-    assert outcome.state == wl.UNCONFIRMED and not outcome
+    assert outcome.state == wl.UPDATED_UNVERIFIED and outcome
 
 
-def test_unknown_installed_version_is_unconfirmed(monkeypatch):
+def test_unknown_version_but_install_said_success_is_updated_unverified(monkeypatch):
     _fake_winget(monkeypatch, "Successfully installed", _listed("Unknown", "2.0"))
     outcome = wu.install_update("Acme.App", lambda line: None, target_version="2.0")
-    assert outcome.state == wl.UNCONFIRMED
+    assert outcome.state == wl.UPDATED_UNVERIFIED
 
 
 def test_run_all_stage_reports_each_package_from_its_own_read_back(monkeypatch):

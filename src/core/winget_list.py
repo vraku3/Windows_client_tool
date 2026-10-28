@@ -18,6 +18,7 @@ from typing import Optional, Tuple
 logger = logging.getLogger(__name__)
 
 UPDATED = "UPDATED"
+UPDATED_UNVERIFIED = "UPDATED?"  # winget said success, version unverifiable
 UNCONFIRMED = "UNCONFIRMED"      # could not prove it either way
 NOT_APPLICABLE = "NOT APPLICABLE"  # winget had nothing that applies to this PC
 NEEDS_USER = "NEEDS USER"        # per-user install, refused from an elevated process
@@ -192,12 +193,18 @@ def verdict(list_rc: int, list_output: str, winget_id: str, target: str,
     offered, so a version that moved off `before` is an update even when it is
     not `target`.
     """
+    install_claimed_success = "successfully installed" in upgrade_output.lower()
     row = parse_list_row(list_output, winget_id) if list_rc == 0 else None
     if row is None:
+        if install_claimed_success:
+            return (UPDATED_UNVERIFIED, "winget said it installed, but the version could not "
+                                        "be read back to confirm.")
         return (UNCONFIRMED, "Could not read the installed version back, so the update is unconfirmed.")
     installed, available = row
     if not _exact(installed):
-        # Windows records no exact version for it, and an update does not add one.
+        if install_claimed_success:
+            return (UPDATED_UNVERIFIED, "winget said it installed, but Windows records no exact "
+                                        "version for this package, so the update cannot be confirmed.")
         return (UNCONFIRMED, "Windows records no exact version for it, so the update is unconfirmed.")
     if target and same_version(installed, target):
         return (UPDATED, f"Now {installed}")

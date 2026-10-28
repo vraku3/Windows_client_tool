@@ -267,7 +267,7 @@ class _AppUpdatesTab(QWidget):
             self._table.setItem(row, 4, centered_item(u.source))
             result_text = (results or {}).get(u.winget_id, "")
             result_item = centered_item(result_text)
-            if result_text == "CONFIRMED":
+            if result_text in ("CONFIRMED", "LIKELY OK"):
                 result_item.setForeground(QColor(semantic("success")))
             elif result_text:
                 result_item.setForeground(QColor(semantic("warning")))
@@ -392,10 +392,21 @@ class _AppUpdatesTab(QWidget):
             self.app, self._op_timer, "App updates finished",
             f"{confirmed}/{len(outcomes)} package(s) confirmed updated.",
         )
+        self._auto_blocklist_diff_tech(outcomes)
         if outcomes:
             self._verify_after(outcomes)
         else:
             self._do_refresh()
+
+    def _auto_blocklist_diff_tech(self, outcomes: dict) -> None:
+        """Blocklist packages that can never be updated via winget."""
+        from core.blocklist import add_pattern
+        for wid, o in outcomes.items():
+            if o.state == "DIFF TECH" and self.app:
+                add_pattern(self.app, wid)
+                self._log.appendPlainText(
+                    f"  → {wid} added to blocklist (not updatable via winget)."
+                )
 
     def _verify_after(self, outcomes: dict) -> None:
         """Re-scan for the table only: each package's verdict already came from
@@ -410,7 +421,13 @@ class _AppUpdatesTab(QWidget):
         _start_scan(self, w, lambda after: self._on_verify_done(outcomes, after))
 
     def _on_verify_done(self, outcomes: dict, after_updates: List[AppUpdate]) -> None:
-        results = {wid: ("CONFIRMED" if o else o.state) for wid, o in outcomes.items()}
+        def _result_text(o):
+            if o.state == "UPDATED":
+                return "CONFIRMED"
+            if o.state == "UPDATED?":
+                return "LIKELY OK"
+            return o.state
+        results = {wid: _result_text(o) for wid, o in outcomes.items()}
         self._updates = after_updates
         self._render_table(results)
         confirmed = sum(1 for o in outcomes.values() if o)

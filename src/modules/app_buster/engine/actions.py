@@ -660,8 +660,8 @@ def update_app(rec: m.AppRecord, runner: Runner, log: Log) -> Outcome:
                               "--disable-interactivity", "--accept-source-agreements"], timeout=120)
     state, detail = winget_list.verdict(rc2, listed, rec.winget_id, rec.update, upgrade_rc=rc,
                                         before=rec.version, upgrade_output=out)
-    return Outcome(rec, {winget_list.UPDATED: UPDATED, winget_list.FAILED: FAILED}.get(state, SKIPPED),
-                   detail)
+    return Outcome(rec, {winget_list.UPDATED: UPDATED, winget_list.UPDATED_UNVERIFIED: UPDATED,
+                        winget_list.FAILED: FAILED}.get(state, SKIPPED), detail)
 
 
 #: Kept importable under their old names; the logic lives in core.winget_list.

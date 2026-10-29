@@ -2,6 +2,10 @@
 
 CONTROLS = {'Refresh': 'Scan the update source again. This downloads update metadata, not installers, and can '
             'take a minute; no update is installed by Refresh.',
+ 'Refresh services': 'Read the state and start type of the Windows Update, BITS, '
+                     'cryptographic, installer, Delivery Optimization and Windows '
+                     'Modules Installer services. Read-only; a refused query is '
+                     'listed with its reason.',
  'Update Selected': 'Start winget upgrades for the highlighted packages immediately, without an '
                     'extra app confirmation; on the Microsoft Store tab it upgrades the selected '
                     'Store offers by exact id. Installers can change apps or need elevation; '

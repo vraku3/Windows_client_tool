@@ -1272,8 +1272,16 @@ class _WinUpdatesTab(QWidget):
                 self._table.setItem(row, col, item)
 
     def _on_error(self, err_str: str):
+        scan_failed = not (getattr(self, "_installing", False)
+                           or getattr(self, "_downloading", False))
         from core.timeline import record
         record(getattr(self.app, "app_data_dir", None), "updates", "install_failed" if getattr(self, "_installing", False) else "scan_failed", "Windows Update operation failed", {"error": err_str[:500]}, "error")
+        if scan_failed:
+            try:
+                from modules.updates.wu_health import read_all, summary
+                self._log.appendPlainText("Service health: " + summary(read_all()))
+            except Exception:
+                logger.warning("Could not read Windows Update service health", exc_info=True)
         self._op_worker = None
         self._installing = False
         self._downloading = False
@@ -2025,6 +2033,31 @@ class _UpdateSettingsTab(QWidget):
         pause_lay.addLayout(pause_row)
         layout.addWidget(pause_box)
 
+        # -- Windows Update services --
+        health_box = QGroupBox("Windows Update services")
+        health_lay = QVBoxLayout(health_box)
+        health_desc = QLabel(
+            "Read-only state of the services a Windows Update scan or install "
+            "depends on. A stopped service, or a refusal to read one, is listed "
+            "with its reason.")
+        health_desc.setWordWrap(True)
+        self._wu_health_table = QTableWidget(0, 4)
+        self._wu_health_table.setHorizontalHeaderLabels(
+            ["Service", "State", "Start type", "Detail"])
+        self._wu_health_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch)
+        self._wu_health_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._wu_health_table.setMaximumHeight(190)
+        apply_table_style(self._wu_health_table)
+        self._wu_health_refresh_btn = QPushButton("Refresh services")
+        health_row = QHBoxLayout()
+        health_row.addWidget(self._wu_health_refresh_btn)
+        health_row.addStretch()
+        health_lay.addWidget(health_desc)
+        health_lay.addWidget(self._wu_health_table)
+        health_lay.addLayout(health_row)
+        layout.addWidget(health_box)
+
         # -- Blocklist --
         block_box = QGroupBox("Blocklist")
         block_lay = QVBoxLayout(block_box)
@@ -2149,6 +2182,7 @@ class _UpdateSettingsTab(QWidget):
             lambda v: self._set_cfg("updates.allow_auto_drivers", v))
         self._pause_btn.clicked.connect(self._do_pause)
         self._resume_btn.clicked.connect(self._do_resume)
+        self._wu_health_refresh_btn.clicked.connect(self._refresh_wu_health)
         self._sched_save_btn.clicked.connect(self._save_schedule)
         self._sched_remove_btn.clicked.connect(self._remove_schedule)
         self._sched_run_btn.clicked.connect(self._run_schedule_now)
@@ -2204,6 +2238,7 @@ class _UpdateSettingsTab(QWidget):
         self._load_ownership()
         self._load_policy()
         self._refresh_pause_label()
+        self._refresh_wu_health()
 
     def _refresh_pause_label(self) -> None:
         from modules.updates.update_pause import read_pause
@@ -2214,6 +2249,19 @@ class _UpdateSettingsTab(QWidget):
             self._pause_status.setText(f"Updates are paused until {expiry}.")
         else:
             self._pause_status.setText("Updates are not paused by these settings.")
+
+    def _refresh_wu_health(self) -> None:
+        from modules.updates.wu_health import read_all
+        rows = read_all()
+        self._wu_health_table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            values = [row["label"], row["state"], row["start_type"],
+                      row["error"] or ("Running" if row["state"] == "Running" else "")]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if row.get("error") or row.get("state") != "Running":
+                    item.setForeground(QColor(semantic("warning")))
+                self._wu_health_table.setItem(row_index, col, item)
 
     def _do_pause(self) -> None:
         if not is_admin():

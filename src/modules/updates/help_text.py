@@ -67,6 +67,12 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
                                                                     'personal-file backup and '
                                                                     'depends on System Protection '
                                                                     'being available.',
+ 'Create a System Restore point before app and Store update batches': 'Save this setting '
+                                                    'immediately. Off by default; winget and the '
+                                                    'Store provide no rollback. When on, each app '
+                                                    'or Store batch asks Windows for a checkpoint '
+                                                    'first and refuses to run if it cannot create '
+                                                    'one.',
  'Include driver updates from Windows Update': 'Save this setting immediately to include eligible '
                                                'driver offers in scans. This does not install them '
                                                'by itself and does not let an automated run install '

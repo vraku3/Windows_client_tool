@@ -225,6 +225,9 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_al
     log(f"winget: {len(before)} package(s) have updates.")
     record(getattr(app, "app_data_dir", None), "updates", "install_start", f"Updating {len(before)} app(s)", {"selected": len(before), "stage": "winget"})
 
+    from modules.updates.restore_before import ensure_restore_point
+    ensure_restore_point(app, "app updates", log)
+
     results = []
     stopped_reason = ""
     folder = getattr(app, "app_data_dir", None)

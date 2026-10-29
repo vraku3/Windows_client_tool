@@ -153,7 +153,9 @@ class _StoreUpdatesTab(QWidget):
 
         @maintenance_worker("Updates install")
         def _run(worker):
+            from modules.updates.restore_before import ensure_restore_point
             from modules.updates.store_update import update_apps
+            ensure_restore_point(app, "Store app updates", worker.signals.log_line.emit)
             return update_apps(
                 app, targets,
                 log=lambda line: worker.signals.log_line.emit(line),

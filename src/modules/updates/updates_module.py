@@ -606,6 +606,8 @@ class _AppUpdatesTab(QWidget):
 
         @maintenance_worker("Updates install")
         def _run(worker):
+            from modules.updates.restore_before import ensure_restore_point
+            ensure_restore_point(app, "app updates", worker.signals.log_line.emit)
             outcomes = {}
             stopped_reason = ""
             run_checkpoint.begin(app.app_data_dir, ["winget"], "manual")
@@ -1908,6 +1910,12 @@ class _UpdateSettingsTab(QWidget):
         general_lay = QVBoxLayout(general_box)
         self._chk_verify = QCheckBox("Verify versions after updating and report confirmed/unchanged")
         self._chk_restore = QCheckBox("Create a System Restore point before installing Windows updates")
+        self._chk_restore_apps = QCheckBox(
+            "Create a System Restore point before app and Store update batches")
+        self._chk_restore_apps.setToolTip(
+            "Off by default. winget and the Store provide no rollback; enabling this "
+            "asks Windows for a checkpoint before each batch and refuses the batch if "
+            "the checkpoint cannot be created.")
         self._chk_drivers = QCheckBox("Include driver updates from Windows Update")
         self._chk_allow_feature = QCheckBox(
             "Let Run All and unattended runs install feature upgrades (Windows 11 versions)")
@@ -1920,6 +1928,7 @@ class _UpdateSettingsTab(QWidget):
             "Manager instead; this opts automated runs into installing them anyway.")
         general_lay.addWidget(self._chk_verify)
         general_lay.addWidget(self._chk_restore)
+        general_lay.addWidget(self._chk_restore_apps)
         general_lay.addWidget(self._chk_drivers)
         general_lay.addWidget(self._chk_allow_feature)
         general_lay.addWidget(self._chk_allow_optional)
@@ -2101,6 +2110,8 @@ class _UpdateSettingsTab(QWidget):
 
         self._chk_verify.toggled.connect(lambda v: self._set_cfg("updates.verify_after_update", v))
         self._chk_restore.toggled.connect(lambda v: self._set_cfg("updates.restore_point_before_install", v))
+        self._chk_restore_apps.toggled.connect(
+            lambda v: self._set_cfg("updates.restore_point_before_app_updates", v))
         self._chk_drivers.toggled.connect(lambda v: self._set_cfg("updates.wu_include_drivers", v))
         self._chk_allow_feature.toggled.connect(
             lambda v: self._set_cfg("updates.allow_feature_updates", v))
@@ -2133,6 +2144,8 @@ class _UpdateSettingsTab(QWidget):
         self._stale_hours.blockSignals(False)
         self._chk_verify.setChecked(self.app.config.get("updates.verify_after_update", True))
         self._chk_restore.setChecked(self.app.config.get("updates.restore_point_before_install", True))
+        self._chk_restore_apps.setChecked(
+            self.app.config.get("updates.restore_point_before_app_updates", False))
         self._chk_drivers.setChecked(self.app.config.get("updates.wu_include_drivers", False))
         self._chk_allow_feature.setChecked(
             self.app.config.get("updates.allow_feature_updates", False))

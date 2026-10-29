@@ -56,6 +56,12 @@ cp "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe" \
 ```
 Anything older (`old/WinClientTool-Portable.exe_old`, `*-new.exe` test copies) is deleted, so the share tree holds exactly `WinClientTool-Portable.exe` + `old/WinClientTool-Portable.exe`. This is a standing instruction, not a per-build decision.
 
+**Sign every fresh build with a local cert, then delete the previous cert** (user, 2026-10-29): after PyInstaller and before deploying, run
+```
+powershell -ExecutionPolicy Bypass -File tools\sign_build_local.ps1
+```
+It creates a NEW self-signed code-signing cert, imports it into `Cert:\CurrentUser\Root` and `TrustedPublisher`, signs/verifies the dist exes, then removes the previous WinClientTool code-signing cert from `My`, `Root` and `TrustedPublisher`. One cert per build; never leave the old one behind. Smart App Control blocks each new unsigned hash, so this is part of the build, not an optional extra. A real CA cert can still be used with `tools\sign_build.ps1` instead.
+
 **Then prove the deployed exe actually RUNS** — also a hard requirement (user, 2026-10-20): launch
 the copy in `Aplicații/` elevated, wait ~10 s, and check the process is still alive. Smart App
 Control has blocked fresh unsigned builds on this PC before; pyinstaller exiting 0 proves nothing.

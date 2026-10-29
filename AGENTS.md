@@ -44,7 +44,11 @@ The portable spec must include `a.binaries` and `a.datas` in the EXE constructor
 
 **Keep exactly two versions in `Aplicații/Windows Client Tool Share/`** (user, 2026-10-28): newest in the root, the immediately previous iteration in `old/`. Rotate on every build: demote the current share root copy to `old/WinClientTool-Portable.exe`, copy the new build into the share root, and delete anything older (`old/*.exe_old`, `*-new.exe` test copies). The tree must contain exactly `WinClientTool-Portable.exe` and `old/WinClientTool-Portable.exe`.
 
-**Code-signing** — the unsigned exe is blocked by SmartScreen/WDAC on many machines. After building, sign with `tools/sign_build.ps1` (a `.pfx` + password, or a SHA-1 thumbprint of a cert already in the user's store):
+**Code-signing** — the unsigned exe is blocked by Smart App Control/SmartScreen/WDAC on many machines. Sign every fresh build with the local cert workflow, then remove the previous cert (user, 2026-10-29):
+```
+powershell -ExecutionPolicy Bypass -File tools\sign_build_local.ps1
+```
+It creates a NEW self-signed code-signing cert, trusts it for the current user (`Root` + `TrustedPublisher`), signs and verifies the dist exes, then deletes the previous WinClientTool cert from `My`, `Root` and `TrustedPublisher`. One cert per build; never leave the old one. A real CA cert can still be used instead:
 ```
 powershell -ExecutionPolicy Bypass -File tools\sign_build.ps1 -Pfx C:\certs\wct.pfx -Password "secret"
 ```

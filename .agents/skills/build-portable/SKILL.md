@@ -28,6 +28,15 @@ in `Aplicații/` and `Aplicații/old/` before (cleaned up 2026-08-14).
 4. Sanity-check the output isn't a bootloader stub — `dist/WinClientTool-Portable.exe`
    should be ~50+ MB. A ~3MB result means `a.binaries`/`a.datas` got dropped
    from the EXE constructor in the spec (see AGENTS.md's Important Gotchas).
+4b. **Sign it - always** (user, 2026-10-29). Smart App Control blocks each new
+   unsigned hash:
+   ```
+   powershell -ExecutionPolicy Bypass -File tools\sign_build_local.ps1
+   ```
+   It creates a fresh self-signed code-signing cert, trusts it for the current
+   user (`Root` + `TrustedPublisher`), signs/verifies the dist exe, and removes
+   the previous WinClientTool cert from those stores. One cert per build; never
+   leave the old one.
 5. **Deploy it — always**, overwriting whatever's already there:
    ```
    cp "dist/WinClientTool-Portable.exe" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool-Portable.exe"

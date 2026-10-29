@@ -15,6 +15,9 @@ def test_normalize_stage_data_empty_input():
         "wu_deferred": {},
         "winget_results": [],
         "store_triggered": 0,
+        "store_changed": [],
+        "store_previous_at": None,
+        "store_read_refused": False,
         "cleanup_freed": 0,
         "cleanup_deleted": 0,
         "dism_output": None,
@@ -28,6 +31,16 @@ def test_normalize_stage_data_empty_input():
         "outstanding": None,
         "failures": [],
     }
+
+
+def test_normalize_stage_data_carries_store_snapshot_evidence():
+    result = normalize_stage_data({"store": {
+        "triggered": 2, "store_changed": ["A: 1 -> 2"],
+        "store_previous_at": "2026-10-28T10:00:00", "store_read_refused": True}})
+    assert result["store_triggered"] == 2
+    assert result["store_changed"] == ["A: 1 -> 2"]
+    assert result["store_previous_at"] == "2026-10-28T10:00:00"
+    assert result["store_read_refused"] is True
 
 
 def test_normalize_stage_data_carries_deferred_categories():

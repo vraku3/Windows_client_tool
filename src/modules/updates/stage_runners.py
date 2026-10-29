@@ -276,11 +276,38 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_al
 @maintenance_stage
 @_timeline_stage("store")
 def run_store_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
-    """Trigger a Microsoft Store update scan (fire-and-forget — Store downloads
-    updates itself once triggered, there's nothing further to wait for)."""
+    """Trigger a Store update scan and compare installed versions with last run.
+
+    The Store downloads updates itself once triggered. Rather than waiting,
+    this records the current versions and reports which apps changed since the
+    previous maintenance run; a refused enumeration leaves that unknown.
+    """
+    from core.appx_service import fetch_packages_or_none
     from core.mdm_store_trigger import trigger_store_scan
+    from modules.updates import store_verify
+
+    folder = getattr(app, "app_data_dir", None)
+    previous = store_verify.load_snapshot(folder)
+    packages = fetch_packages_or_none(use_cache=False)
+    current = store_verify.snapshot(packages) if packages is not None else None
     count = trigger_store_scan(output_cb=log)
-    return {"triggered": count}
+    changed = []
+    if current is None:
+        log("Store: installed app versions could not be read; changes since the "
+            "previous run are unknown.")
+    elif previous is not None:
+        changed = store_verify.changed_apps(previous.get("apps") or {}, current)
+        for line in changed:
+            log(f"Store: changed since previous run: {line}")
+        if not changed:
+            log("Store: no installed version changed since the previous run.")
+        store_verify.save_snapshot(folder, current)
+    else:
+        log("Store: first version snapshot recorded; the next run can report changes.")
+        store_verify.save_snapshot(folder, current)
+    return {"triggered": count, "store_changed": changed,
+            "store_previous_at": (previous or {}).get("at"),
+            "store_read_refused": current is None}
 
 
 @maintenance_stage
@@ -481,6 +508,9 @@ def normalize_stage_data(data: dict) -> dict:
         "wu_deferred": wu.get("deferred") or {},
         "winget_results": winget.get("results", []),
         "store_triggered": store.get("triggered", 0),
+        "store_changed": store.get("store_changed") or [],
+        "store_previous_at": store.get("store_previous_at"),
+        "store_read_refused": bool(store.get("store_read_refused", False)),
         "cleanup_freed": cleanup.get("freed", 0),
         "cleanup_deleted": cleanup.get("deleted", 0),
         "cleanup_left": cleanup.get("left", ""),

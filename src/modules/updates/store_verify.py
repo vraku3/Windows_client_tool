@@ -4,14 +4,25 @@ The Store offers no completion callback. This module records the installed
 versions, asks the Store to update, then re-reads them for a bounded window.
 A refused enumeration is reported as "nothing verified", never as "up to
 date", and a quiet window is not proof the Store has finished.
+
+It also persists a snapshot per run so the next Run All can say which Store
+apps changed since the previous one without waiting for the Store.
 """
 from __future__ import annotations
 
+import json
+import logging
+import os
 from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BUDGET_SECONDS = 90
 DEFAULT_INTERVAL_SECONDS = 10
+SNAPSHOT_FILE = "store_snapshot.json"
 
 
 def version_key(value: str) -> tuple:
@@ -46,6 +57,55 @@ def changed_apps(before: Dict[str, str], after: Dict[str, str]) -> List[str]:
         if new and new != before[name]:
             rows.append(f"{name}: {before[name]} -> {new}")
     return rows
+
+
+def snapshot_path(app_data_dir) -> Optional[Path]:
+    if not app_data_dir:
+        return None
+    return Path(app_data_dir) / "updates" / SNAPSHOT_FILE
+
+
+def load_snapshot(app_data_dir) -> Optional[dict]:
+    """The previous run's {"at", "apps"}; None when absent or corrupt."""
+    path = snapshot_path(app_data_dir)
+    if path is None:
+        return None
+    try:
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError) as exc:
+        logger.warning("Could not read the Store snapshot: %s", exc)
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("apps"), dict):
+        logger.warning("Ignoring a malformed Store snapshot at %s", path)
+        return None
+    return data
+
+
+def save_snapshot(app_data_dir, apps: Dict[str, str]) -> Optional[dict]:
+    """Atomically persist this run's versions for the next comparison."""
+    path = snapshot_path(app_data_dir)
+    if path is None:
+        return None
+    data = {"at": datetime.now().isoformat(timespec="seconds"),
+            "apps": dict(apps or {})}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=False)
+            handle.flush()
+        os.replace(temporary, path)
+    except OSError as exc:
+        logger.warning("Could not write the Store snapshot: %s", exc)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
+    return data
 
 
 @dataclass

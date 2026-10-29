@@ -1113,6 +1113,11 @@ Measured here (2026-10-15), each of which shaped the code:
 
 - `restore_before.ensure_restore_point()` is off by default (`updates.restore_point_before_app_updates`); when on, the App Updates batch, Store **Update Selected** and `run_winget_stage` create `Windows Client Tool - <purpose>` before the first install and refuse the batch if Windows cannot create it. The WU restore-point setting is separate and unchanged.
 
+**Store changes since the previous run** (2026-10-29, roadmap batch 16):
+
+- `store_verify` persists `updates/store_snapshot.json` (atomic, names/versions only). `run_store_stage` snapshots before triggering, reports versions moved since the previous snapshot, and saves the new one. A first run records a baseline; a refused enumeration is "changes unknown", never "no changes". Run All does not wait for the Store.
+- The maintenance report lists the changed Store apps or says versions were unreadable; `normalize_stage_data` forwards `store_changed`, `store_previous_at`, `store_read_refused`.
+
 **Unattended mode**: `python src/main.py --unattended --stages wu,winget,cleanup` — headless, no `QApplication`/`MainWindow`; calls `pythoncom.CoInitialize()` explicitly since there's no `COMWorker`/Qt event loop available. Requires admin — exits 1 immediately if not elevated. The Settings tab's "Create/Update Task" button wires this into Task Scheduler as `WinClientTool_UnattendedMaintenance` (`/rl HIGHEST`, `/sc DAILY /mo <N>`). The older winget-only `WinClientTool_UpdateCheck` task (`_save_legacy`) is kept as-is for existing users — don't merge it into the new one.
 
 **Worker tracking**: every tab here is a `QWidget` (not `BaseModule`) with its own `self._workers: list` and `_cancel_all()`, per the general widget-subclass rule below. `UpdatesModule.on_stop()` calls `_cancel_all()` on all four stateful tabs explicitly — `BaseModule.cancel_all_workers()` only covers workers created directly on the module itself, not on child tab widgets. **`on_deactivate()` cancels nothing** (2026-10-19): a cancel reached winget as `taskkill /T /F` mid-install. `install_update` never kills a running upgrade; Stop takes effect before the next package. Driver Manager's `on_deactivate` is the same, so a driver install's result (undo token, history) still lands.

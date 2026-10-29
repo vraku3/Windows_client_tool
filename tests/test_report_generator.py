@@ -77,3 +77,21 @@ def test_report_names_categories_deferred_by_settings():
 def test_report_omits_the_deferred_section_when_nothing_was_skipped():
     html = render_update_report_html({"wu_deferred": {}}, [])
     assert "Deferred by settings" not in html
+
+
+def test_report_names_store_apps_that_changed_since_the_previous_run():
+    html = render_update_report_html({
+        "store_triggered": 1,
+        "store_changed": ["Contoso.App: 1.0.0.0 -> 2.0.0.0"],
+        "store_previous_at": "2026-10-28T10:00:00",
+    }, [])
+    assert "Contoso.App: 1.0.0.0 -&gt; 2.0.0.0" in html
+    assert "1 app(s) changed since 2026-10-28T10:00:00" in html
+
+
+def test_report_does_not_claim_store_versions_when_they_were_unreadable():
+    html = render_update_report_html({
+        "store_triggered": 1, "store_read_refused": True,
+    }, [])
+    assert "installed versions unreadable" in html
+    assert "no version change" not in html

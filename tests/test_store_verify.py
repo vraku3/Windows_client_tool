@@ -86,3 +86,21 @@ def test_versions_that_can_never_be_reread_are_not_called_unchanged():
         budget_s=30, interval_s=10)
     assert result.read_refused
     assert "nothing is verified" in result.message
+
+
+def test_snapshot_persistence_round_trips(tmp_path):
+    from modules.updates.store_verify import load_snapshot, save_snapshot
+    assert load_snapshot(tmp_path) is None
+    saved = save_snapshot(tmp_path, {"App": "1.0", "Other": "2.0"})
+    assert saved and saved["apps"] == {"App": "1.0", "Other": "2.0"}
+    loaded = load_snapshot(tmp_path)
+    assert loaded["apps"] == {"App": "1.0", "Other": "2.0"}
+    assert loaded["at"]
+
+
+def test_a_corrupt_snapshot_is_ignored_not_crashing(tmp_path):
+    from modules.updates.store_verify import load_snapshot
+    path = tmp_path / "updates" / "store_snapshot.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{broken", encoding="utf-8")
+    assert load_snapshot(tmp_path) is None

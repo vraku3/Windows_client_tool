@@ -41,6 +41,9 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     wu_deferred = data.get("wu_deferred") or {}
     winget_results = data.get("winget_results") or []
     store_triggered = data.get("store_triggered")
+    store_changed = data.get("store_changed") or []
+    store_previous_at = data.get("store_previous_at")
+    store_read_refused = bool(data.get("store_read_refused"))
     cleanup_freed = data.get("cleanup_freed", 0)
     cleanup_deleted = data.get("cleanup_deleted", 0)
     dism_output = data.get("dism_output")
@@ -91,6 +94,21 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
                         + "</table><p>These offers were not installed because the category "
                           "gate is off in Updates - Settings.</p>") if deferred_total else ""
 
+    if store_read_refused:
+        store_text = "scan triggered; installed versions unreadable"
+    elif store_changed:
+        store_text = (f"{len(store_changed)} app(s) changed since "
+                      f"{store_previous_at or 'the previous run'}")
+    elif store_triggered and store_previous_at:
+        store_text = f"scan triggered; no version change since {store_previous_at}"
+    elif store_triggered:
+        store_text = "scan triggered; first version snapshot"
+    else:
+        store_text = "not run"
+    store_section = ("<h2>Microsoft Store changes since the previous run</h2><ul>"
+                     + "".join(f"<li>{_esc(line)}</li>" for line in store_changed)
+                     + "</ul>") if store_changed else ""
+
     held_suffix = f", {len(wu_held)} held" if wu_held else ""
     cards = f"""
       <div class="card"><div class="k">Windows Update</div>
@@ -101,7 +119,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
       <div class="card"><div class="k">Winget</div><div class="v">{_shown(data.get('apps_confirmed'))} confirmed updated; {_shown(data.get('apps_need_you'))} needing you / broken</div></div>
       <div class="card"><div class="k">Machine restart pending</div><div class="v">{_restart(data.get('machine_restart_pending'))}</div></div>
       <div class="card"><div class="k">Microsoft Store</div>
-        <div class="v">{'scan triggered' if store_triggered else 'not run'}</div></div>
+        <div class="v">{_esc(store_text)}</div></div>
       <div class="card"><div class="k">Cleanup freed</div>
         <div class="v ok">{_esc(_fmt_size(cleanup_freed))} ({_esc(cleanup_deleted)} items)</div></div>
     """
@@ -157,6 +175,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 
 <h2>Winget packages</h2>
 <table><tr><th>Package</th><th>Id</th><th>Before</th><th>After</th><th>Result</th></tr>{wg_rows}</table>
+{store_section}
 {dism_section}
 {cleanup_section}
 <h2>Run history (last 20)</h2>

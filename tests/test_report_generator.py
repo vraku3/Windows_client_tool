@@ -63,3 +63,17 @@ def test_write_report_creates_file(app_data_dir):
     assert path.endswith(".html")
     with open(path, "r", encoding="utf-8") as f:
         assert f.read() == html
+
+
+def test_report_names_categories_deferred_by_settings():
+    html = render_update_report_html(
+        {"wu_deferred": {"feature": 1, "driver": 2, "preview": 0}}, [])
+    assert "Deferred by settings" in html
+    assert "Feature upgrade 1" in html
+    assert "Driver 2" in html
+    assert "Preview" not in html
+
+
+def test_report_omits_the_deferred_section_when_nothing_was_skipped():
+    html = render_update_report_html({"wu_deferred": {}}, [])
+    assert "Deferred by settings" not in html

@@ -37,6 +37,8 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     wu_results = data.get("wu_results") or []
     #: AMD display drivers the hold kept back: listed as held, never installed.
     wu_held = data.get("wu_held") or []
+    #: Categories Run All skipped by policy (feature/optional/driver gates).
+    wu_deferred = data.get("wu_deferred") or {}
     winget_results = data.get("winget_results") or []
     store_triggered = data.get("store_triggered")
     cleanup_freed = data.get("cleanup_freed", 0)
@@ -70,12 +72,32 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
         for e in list(history)[-20:][::-1]
     ) or "<tr><td colspan=7>No prior runs recorded.</td></tr>"
 
+    try:
+        from modules.updates.wu_categories import LABELS
+    except Exception:
+        LABELS = {}
+    deferred_items = sorted(
+        ((LABELS.get(cat, cat), int(count)) for cat, count in wu_deferred.items() if count),
+        key=lambda item: (-item[1], item[0]))
+    deferred_total = sum(count for _label, count in deferred_items)
+    deferred_text = ", ".join(f"{label} {count}" for label, count in deferred_items)
+    deferred_card = (f'<div class="card"><div class="k">Deferred by settings</div>'
+                     f'<div class="v warn">{deferred_total} - {_esc(deferred_text)}</div></div>'
+                     if deferred_total else "")
+    deferred_section = ("<h2>Deferred by settings</h2>"
+                        "<table><tr><th>Category</th><th>Offers skipped</th></tr>"
+                        + "".join(f"<tr><td>{_esc(label)}</td><td>{count}</td></tr>"
+                                  for label, count in deferred_items)
+                        + "</table><p>These offers were not installed because the category "
+                          "gate is off in Updates - Settings.</p>") if deferred_total else ""
+
     held_suffix = f", {len(wu_held)} held" if wu_held else ""
     cards = f"""
       <div class="card"><div class="k">Windows Update</div>
         <div class="v {'ok' if all(r.get('success') for r in wu_results) or not wu_results else 'warn'}">
           {_shown(data.get('wu_installed'))}/{len(wu_results)} installed{held_suffix}; {_shown(pending_restart)} awaiting restart
           {f'; Restart required to finish {pending_restart} update(s)' if pending_restart else ''}</div></div>
+      {deferred_card}
       <div class="card"><div class="k">Winget</div><div class="v">{_shown(data.get('apps_confirmed'))} confirmed updated; {_shown(data.get('apps_need_you'))} needing you / broken</div></div>
       <div class="card"><div class="k">Machine restart pending</div><div class="v">{_restart(data.get('machine_restart_pending'))}</div></div>
       <div class="card"><div class="k">Microsoft Store</div>
@@ -131,6 +153,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 
 <h2>Windows Update</h2>
 <table><tr><th>Title</th><th>KB</th><th>Result</th></tr>{wu_rows}</table>
+{deferred_section}
 
 <h2>Winget packages</h2>
 <table><tr><th>Package</th><th>Id</th><th>Before</th><th>After</th><th>Result</th></tr>{wg_rows}</table>

@@ -117,6 +117,7 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
         allow_feature=bool(app.config.get("updates.allow_feature_updates", False)),
         allow_optional=bool(app.config.get("updates.allow_optional_updates", False)),
         allow_drivers=bool(app.config.get("updates.allow_auto_drivers", False)))
+    deferred = {cat: len(rows) for cat, rows in skipped.items()}
     if skipped:
         log(f"Windows Update: not installed — {wu_categories.skipped_text(skipped)}. "
             "Change this in Updates → Settings.")
@@ -128,7 +129,7 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
             log(f"Restart required to finish {len(waiting)} update(s)")
         return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
                 "pending_restart_count": len(waiting), "held": held,
-                "deferred": {cat: len(rows) for cat, rows in skipped.items()}}
+                "deferred": deferred}
     log(f"Windows Update: {len(updates)} update(s) found"
         + (f", {len(held)} held." if held else "."))
 
@@ -137,7 +138,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
     if reason:
         log(f"Windows Update: skipped — {reason}")
         return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
-                "pending_restart_count": len(waiting), "held": held}
+                "pending_restart_count": len(waiting), "held": held,
+                "deferred": deferred}
 
     if app.config.get("updates.restore_point_before_install", True):
         from core.system_restore import create_restore_point
@@ -150,6 +152,7 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
                 "for could not be created (System Restore off or blocked by policy?).")
             return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
                     "pending_restart_count": len(waiting), "held": held,
+                    "deferred": deferred,
                     "error": "restore point could not be created"}
         log("Restore point created.")
 
@@ -200,7 +203,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
         logger.warning("Could not check reboot-pending state", exc_info=True)
 
     return {"results": results_dicts, "reboot_required": reboot_required or bool(pending_count),
-            "installed_count": installed, "pending_restart_count": pending_count, "held": held}
+            "installed_count": installed, "pending_restart_count": pending_count, "held": held,
+            "deferred": deferred}
 
 
 @maintenance_stage
@@ -471,6 +475,7 @@ def normalize_stage_data(data: dict) -> dict:
                      for problem in stage_failures(stage, data[stage])],
         "reboot_required": bool(wu.get("reboot_required") or dism.get("reboot_required")),
         "wu_held": wu.get("held", []),
+        "wu_deferred": wu.get("deferred") or {},
         "winget_results": winget.get("results", []),
         "store_triggered": store.get("triggered", 0),
         "cleanup_freed": cleanup.get("freed", 0),

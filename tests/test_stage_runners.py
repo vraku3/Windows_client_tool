@@ -12,6 +12,7 @@ def test_normalize_stage_data_empty_input():
         "wu_results": [],
         "wu_installed": None,
         "wu_held": [],
+        "wu_deferred": {},
         "winget_results": [],
         "store_triggered": 0,
         "cleanup_freed": 0,
@@ -27,6 +28,11 @@ def test_normalize_stage_data_empty_input():
         "outstanding": None,
         "failures": [],
     }
+
+
+def test_normalize_stage_data_carries_deferred_categories():
+    result = normalize_stage_data({"wu": {"deferred": {"feature": 1, "driver": 2}}})
+    assert result["wu_deferred"] == {"feature": 1, "driver": 2}
 
 
 def test_normalize_stage_data_flattens_all_stages():

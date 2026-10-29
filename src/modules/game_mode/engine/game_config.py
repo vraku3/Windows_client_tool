@@ -29,6 +29,10 @@ class GameSettings:
     notifications: bool = True
     retention: int = 100
     bound_game: str = ""                  # exe path or name for auto-off/priority
+    affinity_mode: str = "off"            # off / ccd0 / ccd1
+    disable_power_throttling: bool = False
+    priority_separation: int = 0          # 0 = leave alone, else 26/38
+    system_responsiveness: int = 0        # 0 = leave alone, else 10/20
 
     def normalized(self) -> "GameSettings":
         data = asdict(self)
@@ -38,6 +42,12 @@ class GameSettings:
         data["retention"] = max(1, min(int(self.retention or 100), 1000))
         if data["priority_boost"] not in PRIORITY_MODES:
             data["priority_boost"] = "off"
+        if data["affinity_mode"] not in ("off", "ccd0", "ccd1"):
+            data["affinity_mode"] = "off"
+        if data["priority_separation"] not in (0, 26, 38):
+            data["priority_separation"] = 0
+        if data["system_responsiveness"] not in (0, 10, 20):
+            data["system_responsiveness"] = 0
         return GameSettings(**data)
 
 

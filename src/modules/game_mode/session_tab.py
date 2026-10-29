@@ -109,6 +109,29 @@ class SessionTab(QWidget):
             self._priority.addItem(label, value)
         self._priority.currentIndexChanged.connect(self._setting_changed)
         form.addRow("Bound game priority", self._priority)
+        self._affinity = QComboBox(controls)
+        for label, value in (("Leave affinity alone", "off"),
+                             ("CCD0 (V-Cache)", "ccd0"), ("CCD1", "ccd1")):
+            self._affinity.addItem(label, value)
+        self._affinity.currentIndexChanged.connect(self._setting_changed)
+        form.addRow("Bound game affinity", self._affinity)
+        self._throttle_cb = QCheckBox("Disable power throttling/EcoQoS for the bound game",
+                                      controls)
+        self._throttle_cb.toggled.connect(self._setting_changed)
+        form.addRow("", self._throttle_cb)
+        self._prio_sep = QComboBox(controls)
+        for label, value in (("Leave PrioritySeparation alone", 0),
+                             ("26 (short, fixed)", 26), ("38 (short, variable)", 38)):
+            self._prio_sep.addItem(label, value)
+        self._prio_sep.currentIndexChanged.connect(self._setting_changed)
+        form.addRow("Win32PrioritySeparation", self._prio_sep)
+        self._responsiveness = QComboBox(controls)
+        for label, value in (("Leave SystemResponsiveness alone", 0),
+                             ("10 (more CPU to foreground)", 10),
+                             ("20 (balanced)", 20)):
+            self._responsiveness.addItem(label, value)
+        self._responsiveness.currentIndexChanged.connect(self._setting_changed)
+        form.addRow("MMCSS responsiveness", self._responsiveness)
         self._ac_cb = QCheckBox("Warn before Maximum on battery", controls)
         self._ac_cb.toggled.connect(self._setting_changed)
         form.addRow("Power guard", self._ac_cb)
@@ -251,6 +274,11 @@ class SessionTab(QWidget):
         self._armed_cb.setChecked(bool(s.auto_on_armed))
         index = self._priority.findData(s.priority_boost)
         self._priority.setCurrentIndex(max(0, index))
+        self._affinity.setCurrentIndex(max(0, self._affinity.findData(s.affinity_mode)))
+        self._throttle_cb.setChecked(bool(s.disable_power_throttling))
+        self._prio_sep.setCurrentIndex(max(0, self._prio_sep.findData(s.priority_separation)))
+        self._responsiveness.setCurrentIndex(
+            max(0, self._responsiveness.findData(s.system_responsiveness)))
         self._bound.blockSignals(True)
         self._bound.setCurrentText(s.bound_game)
         self._bound.blockSignals(False)
@@ -290,6 +318,10 @@ class SessionTab(QWidget):
         s.retention = self._retention_spin.value()
         s.auto_on_armed = self._armed_cb.isChecked()
         s.priority_boost = self._priority.currentData() or "off"
+        s.affinity_mode = self._affinity.currentData() or "off"
+        s.disable_power_throttling = self._throttle_cb.isChecked()
+        s.priority_separation = int(self._prio_sep.currentData() or 0)
+        s.system_responsiveness = int(self._responsiveness.currentData() or 0)
         self.host._save_settings()
         self.host._show_state()
 

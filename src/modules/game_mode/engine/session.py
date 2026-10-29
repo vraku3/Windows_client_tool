@@ -112,6 +112,10 @@ class Choices:
     priority_boost: str = "off"
     force_close: bool = True
     close_grace_s: float = 8.0
+    affinity_mode: str = "off"
+    disable_power_throttling: bool = False
+    priority_separation: int = 0
+    system_responsiveness: int = 0
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
@@ -120,7 +124,11 @@ class Choices:
                    protected=sorted(self.protected),
                    protected_publishers=sorted(self.protected_publishers),
                    bound_game=self.bound_game, priority_boost=self.priority_boost,
-                   force_close=self.force_close, close_grace_s=self.close_grace_s)
+                   force_close=self.force_close, close_grace_s=self.close_grace_s,
+                   affinity_mode=self.affinity_mode,
+                   disable_power_throttling=self.disable_power_throttling,
+                   priority_separation=self.priority_separation,
+                   system_responsiveness=self.system_responsiveness)
         return out
 
 
@@ -171,6 +179,14 @@ def choices_from_config(data) -> Choices:
         c.force_close = data["force_close"]
     if isinstance(data.get("close_grace_s"), (int, float)):
         c.close_grace_s = max(0.0, min(float(data["close_grace_s"]), 120.0))
+    if data.get("affinity_mode") in ("off", "ccd0", "ccd1"):
+        c.affinity_mode = data["affinity_mode"]
+    if isinstance(data.get("disable_power_throttling"), bool):
+        c.disable_power_throttling = data["disable_power_throttling"]
+    if data.get("priority_separation") in (0, 26, 38):
+        c.priority_separation = data["priority_separation"]
+    if data.get("system_responsiveness") in (0, 10, 20):
+        c.system_responsiveness = data["system_responsiveness"]
     if isinstance(data.get("paused_tasks"), list):
         c.paused_tasks = {s for s in data["paused_tasks"] if isinstance(s, str)}
     elif c.preset == catalog.MAX:
@@ -541,6 +557,12 @@ class _On:
             if is_protected(g.exe, g.label, protected):
                 self.log(INFO, f"{g.label}: protected by the user -- left open")
                 continue
+            titles = getattr(self.s, "window_titles", lambda _pids: [])([p.pid for p in g.procs])
+            busy_words = ("recording", "in a call", "call with", "meeting",
+                          "screen share", "sharing your screen", "syncing", "uploading")
+            if any(word in (title or "").casefold() for title in titles for word in busy_words):
+                self.log(INFO, f"{g.label}: active call/recording/sync -- left open")
+                continue
             if g.spec and g.spec.when == "spareprocess":
                 if (not maximum or any("spareprocess" not in (self.s.details(p.pid)[1] or "").lower()
                                        for p in g.procs)
@@ -622,6 +644,53 @@ class _On:
             self.log(OK, f"{os.path.basename(bound_game)}: priority raised to {mode} "
                          f"({touched} process(es))")
 
+    def tune_game(self, bound_game: str, affinity_mode: str,
+                  disable_throttling: bool, total_threads: int) -> None:
+        """Affinity and EcoQoS for the user-bound game, each journaled."""
+        from .session_control import affinity_mask
+        mask = affinity_mask(affinity_mode, total_threads)
+        if not bound_game or (mask is None and not disable_throttling):
+            return
+        wanted_name = os.path.basename(bound_game).casefold()
+        wanted_path = os.path.normcase(os.path.abspath(bound_game)) if os.path.sep in bound_game else ""
+        for proc in self.s.processes():
+            path, _cmdline, _elevated = self.s.details(proc.pid)
+            name = proc.name.casefold()
+            if not (name == wanted_name or (wanted_path and path
+                                            and os.path.normcase(os.path.abspath(path)) == wanted_path)):
+                continue
+            if mask is not None:
+                before = getattr(self.s, "get_affinity", lambda _pid: None)(proc.pid)
+                if before is not None and before != mask:
+                    entry = self.j.record({"kind": "affinity", "pid": proc.pid,
+                                           "create_time": proc.create_time, "exe": proc.name,
+                                           "before": before, "after": mask})
+                    if getattr(self.s, "set_affinity", lambda _p, _m: "unsupported")(
+                            proc.pid, mask) is None:
+                        self.j.mark_done(entry)
+                        self.log(OK, f"{proc.name}: affinity set to {affinity_mode}")
+            if disable_throttling:
+                before = getattr(self.s, "power_throttling", lambda _pid: None)(proc.pid)
+                if before is True:
+                    entry = self.j.record({"kind": "power_throttling", "pid": proc.pid,
+                                           "create_time": proc.create_time, "exe": proc.name,
+                                           "before": True, "after": False})
+                    if getattr(self.s, "set_power_throttling", lambda _p, _e: "unsupported")(
+                            proc.pid, False) is None:
+                        self.j.mark_done(entry)
+                        self.log(OK, f"{proc.name}: power throttling disabled")
+
+    def multimedia(self, priority_separation: int, system_responsiveness: int) -> None:
+        if priority_separation:
+            self.registry("HKLM", r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+                          "Win32PrioritySeparation", int(priority_separation),
+                          "Win32PrioritySeparation")
+        if system_responsiveness:
+            self.registry("HKLM",
+                          r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
+                          "SystemResponsiveness", int(system_responsiveness),
+                          "MMCSS SystemResponsiveness")
+
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             session: int) -> dict:
@@ -687,6 +756,7 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
                   }.get(choices.preset, "Custom"))
     _history_start(journal, log)
     on = _On(system, journal, log)
+    on.multimedia(choices.priority_separation, choices.system_responsiveness)
     if choices.plan:
         on.plan(system.cpu_name())
     if choices.gamebar:
@@ -709,6 +779,8 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     if choices.lower:
         on.lower(groups, choices.close)
     on.boost_priority(choices.bound_game, choices.priority_boost)
+    on.tune_game(choices.bound_game, choices.affinity_mode,
+                 choices.disable_power_throttling, os.cpu_count() or 0)
     if choices.explorer:
         on.explorer(session)
     time.sleep(1.0)
@@ -922,6 +994,11 @@ def _valid_entry(system, e) -> bool:
                 and before in system.plans())
     if kind == "priority":
         return type(e.get("before")) is int and e["before"] in PRIORITY_NAMES
+    if kind == "affinity":
+        return (type(e.get("before")) is int and type(e.get("after")) is int
+                and 0 < e["before"] and 0 < e["after"])
+    if kind == "power_throttling":
+        return type(e.get("before")) is bool and type(e.get("after")) is bool
     if kind == "app_close":
         path, aumid = e.get("path", ""), e.get("aumid")
         return (isinstance(path, str) and (not path or os.path.isabs(path))
@@ -983,6 +1060,44 @@ def _restore_app(system, e, say, ctx) -> bool:
     ctx["reopened"].append((e["exe"], e["label"]))
     if quiet:
         ctx.setdefault("quiet", []).append(e["exe"])
+    return True
+
+
+def _restore_affinity(system, e, say, _ctx) -> bool:
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
+    current = getattr(system, "get_affinity", lambda _pid: None)(e["pid"])
+    if current is None:
+        say(BAD, f"{e['exe']} ({e['pid']}): affinity unreadable -- restore can be retried")
+        return False
+    if current != e.get("after"):
+        say(INFO, f"{e['exe']} ({e['pid']}): affinity changed since -- left as it is")
+        return True
+    error = getattr(system, "set_affinity", lambda _p, _m: "unsupported")(
+        e["pid"], e["before"])
+    if error:
+        say(BAD, f"{e['exe']} ({e['pid']}): affinity not restored ({error})")
+        return False
+    say(OK, f"{e['exe']}: affinity restored")
+    return True
+
+
+def _restore_power_throttling(system, e, say, _ctx) -> bool:
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
+    current = getattr(system, "power_throttling", lambda _pid: None)(e["pid"])
+    if current is None:
+        say(BAD, f"{e['exe']} ({e['pid']}): throttling state unreadable")
+        return False
+    if current != e.get("after"):
+        say(INFO, f"{e['exe']} ({e['pid']}): throttling changed since -- left as it is")
+        return True
+    error = getattr(system, "set_power_throttling", lambda _p, _e: "unsupported")(
+        e["pid"], bool(e["before"]))
+    if error:
+        say(BAD, f"{e['exe']} ({e['pid']}): throttling not restored ({error})")
+        return False
+    say(OK, f"{e['exe']}: power throttling restored")
     return True
 
 
@@ -1094,7 +1209,9 @@ _RESTORE = {"explorer_restart": _restore_explorer, "priority": _restore_priority
             "app_close": _restore_app,
             "service_stop": _restore_service_stop, "service_start": _restore_service_start,
             "registry": _restore_registry, "plan": _restore_plan, "task": _restore_task,
-            "animations": _restore_animations}
+            "animations": _restore_animations,
+            "affinity": _restore_affinity,
+            "power_throttling": _restore_power_throttling}
 
 
 def _verify_reopened(system, reopened, say, settle: float) -> Set[str]:

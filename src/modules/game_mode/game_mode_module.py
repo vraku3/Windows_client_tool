@@ -193,6 +193,10 @@ class GameModeModule(BaseModule):
         choices.priority_boost = settings.priority_boost
         choices.force_close = settings.force_close
         choices.close_grace_s = settings.close_grace_s
+        choices.affinity_mode = settings.affinity_mode
+        choices.disable_power_throttling = settings.disable_power_throttling
+        choices.priority_separation = settings.priority_separation
+        choices.system_responsiveness = settings.system_responsiveness
 
     def _apply_settings_to_choices(self) -> None:
         self._apply_settings_to(self._choices)

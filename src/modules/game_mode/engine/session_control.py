@@ -1,4 +1,4 @@
-﻿"""Decisions around an active Game Mode session (Qt-free, no Windows calls)."""
+"""Decisions around an active Game Mode session (Qt-free, no Windows calls)."""
 from __future__ import annotations
 
 import time
@@ -55,3 +55,13 @@ def schedule_for(now: Optional[datetime], schedules: Iterable[dict]) -> Optional
 
 def priority_value(mode: str) -> Optional[int]:
     return {"above": ABOVE_NORMAL, "high": HIGH}.get((mode or "").lower())
+
+
+def affinity_mask(mode: str, total_threads: int) -> Optional[int]:
+    """Low/high half mask for CCD0/CCD1 on a 2-CCD CPU; None when off/unknown."""
+    mode = (mode or "").lower()
+    if mode not in ("ccd0", "ccd1") or not total_threads or total_threads < 2:
+        return None
+    half = max(1, int(total_threads) // 2)
+    low = (1 << half) - 1
+    return low if mode == "ccd0" else low << half

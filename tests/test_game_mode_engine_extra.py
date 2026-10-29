@@ -154,3 +154,67 @@ def test_preflight_guard_names_every_conflict():
     assert "restart" in text and "Windows Update" in text
     assert "Another operation" in text and "Maintenance" in text
     assert preflight_guard.conflicts() == []
+
+
+def test_affinity_mask_splits_the_two_ccds():
+    assert session_control.affinity_mask("off", 32) is None
+    assert session_control.affinity_mask("ccd0", 32) == 0x0000FFFF
+    assert session_control.affinity_mask("ccd1", 32) == 0xFFFF0000
+
+
+def test_multimedia_and_game_tuning_are_journaled(tmp_path):
+    from modules.game_mode.engine import session
+    from modules.game_mode.engine.journal import Journal
+    from modules.game_mode.engine.system import Proc
+
+    class TuneSystem:
+        def __init__(self):
+            self.reg = {}
+            self.affinity = 0xFF
+            self.throttled = True
+            self.p = Proc(7, 1, "game.exe", 100, 1, 50)
+
+        def processes(self):
+            return [self.p]
+
+        def details(self, pid):
+            return (r"C:\Games\game.exe", r"C:\Games\game.exe", False)
+
+        def priority(self, pid):
+            return 0x20
+
+        def set_priority(self, pid, value):
+            return None
+
+        def get_affinity(self, pid):
+            return self.affinity
+
+        def set_affinity(self, pid, mask):
+            self.affinity = mask
+            return None
+
+        def power_throttling(self, pid):
+            return self.throttled
+
+        def set_power_throttling(self, pid, value):
+            self.throttled = value
+            return None
+
+        def reg_get(self, path, name, hive="HKCU"):
+            return (False, None, 4)
+
+        def reg_set(self, path, name, value, kind, hive="HKCU"):
+            self.reg[(path, name)] = value
+            return None
+
+    system = TuneSystem()
+    journal = Journal(str(tmp_path))
+    journal.begin()
+    on = session._On(system, journal, lambda _l, _t: None)
+    on.multimedia(26, 10)
+    on.tune_game(r"C:\Games\game.exe", "ccd0", True, 32)
+    kinds = [entry["kind"] for entry in journal.actions]
+    assert "registry" in kinds and "affinity" in kinds and "power_throttling" in kinds
+    assert system.affinity == 0xFFFF
+    assert system.throttled is False
+    assert system.reg

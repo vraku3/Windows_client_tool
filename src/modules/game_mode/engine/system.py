@@ -492,6 +492,108 @@ class WinSystem:
             return None
         return found
 
+    def foreground_pid(self) -> Optional[int]:
+        try:
+            import win32gui
+            import win32process
+            hwnd = win32gui.GetForegroundWindow()
+            return win32process.GetWindowThreadProcessId(hwnd)[1] if hwnd else None
+        except Exception:
+            return None
+
+    def window_titles(self, pids) -> List[str]:
+        try:
+            import win32gui
+            return [win32gui.GetWindowText(hwnd)
+                    for hwnd, _pid in self._main_windows(set(pids))]
+        except Exception as error:  # noqa: BLE001 -- window enumeration failures
+            logger.debug("game mode: window titles unreadable: %s", error)
+            return []
+
+    def power_throttling(self, pid: int) -> Optional[bool]:
+        """EcoQoS execution-speed throttling, or None when unreadable."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class State(ctypes.Structure):
+                _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG),
+                            ("StateMask", wintypes.ULONG)]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return None
+            try:
+                state = State(1, 1, 0)  # PROCESS_POWER_THROTTLING_EXECUTION_SPEED
+                if not kernel32.GetProcessInformation(handle, 4, ctypes.byref(state),
+                                                     ctypes.sizeof(state)):
+                    return None
+                return bool(state.StateMask & 1)
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+
+    def set_power_throttling(self, pid: int, enabled: bool) -> Optional[str]:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class State(ctypes.Structure):
+                _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG),
+                            ("StateMask", wintypes.ULONG)]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x0200, False, pid)
+            if not handle:
+                return f"OpenProcess refused (error {ctypes.get_last_error()})"
+            try:
+                state = State(1, 1, 1 if enabled else 0)
+                if not kernel32.SetProcessInformation(handle, 4, ctypes.byref(state),
+                                                      ctypes.sizeof(state)):
+                    return f"SetProcessInformation refused (error {ctypes.get_last_error()})"
+                return None
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception as error:
+            return str(error)
+
+    def get_affinity(self, pid: int) -> Optional[int]:
+        try:
+            import ctypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x0600, False, pid)
+            if not handle:
+                return None
+            try:
+                process_mask = ctypes.c_size_t()
+                system_mask = ctypes.c_size_t()
+                if not kernel32.GetProcessAffinityMask(handle, ctypes.byref(process_mask),
+                                                       ctypes.byref(system_mask)):
+                    return None
+                return int(process_mask.value)
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+
+    def set_affinity(self, pid: int, mask: int) -> Optional[str]:
+        try:
+            import ctypes
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = kernel32.OpenProcess(0x0600, False, pid)
+            if not handle:
+                return f"OpenProcess refused (error {ctypes.get_last_error()})"
+            try:
+                if not kernel32.SetProcessAffinityMask(handle, ctypes.c_size_t(mask)):
+                    return f"SetProcessAffinityMask refused (error {ctypes.get_last_error()})"
+                return None
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception as error:
+            return str(error)
+
     def window_state(self, pids) -> str:
         """How the program looked before it was closed: "normal" (a window on
         screen), "minimized" (only minimized windows) or "hidden" (tray only)."""

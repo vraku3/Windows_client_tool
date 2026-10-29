@@ -3,8 +3,9 @@
 CONTROLS = {'Refresh': 'Scan the update source again. This downloads update metadata, not installers, and can '
             'take a minute; no update is installed by Refresh.',
  'Update Selected': 'Start winget upgrades for the highlighted packages immediately, without an '
-                    'extra app confirmation. Installers can change apps or need elevation; there '
-                    'is no app rollback.',
+                    'extra app confirmation; on the Microsoft Store tab it upgrades the selected '
+                    'Store offers by exact id. Installers can change apps or need elevation; '
+                    'there is no app rollback.',
  'Update All': 'Start winget upgrades for every listed package, including rows hidden by the text '
                'filter, without an extra app confirmation. Installed versions are checked when '
                'verification is enabled; no app rollback is provided.',

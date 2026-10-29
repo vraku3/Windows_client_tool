@@ -1093,6 +1093,11 @@ Measured here (2026-10-15), each of which shaped the code:
 - The reboot banner has **Restart now**: confirmation first, refused while an install/download/scan runs, then `shutdown /r /t 60` plus a timeline event and a `shutdown /a` cancellation hint. Never scheduled automatically.
 - `activity_ledger.entries_to_csv()` + the Activity widget's **Export CSV** write the filtered ledger rows (not just the 20 displayed); missing versions stay empty.
 
+**Per-app Store updates** (2026-10-29, roadmap batch 13):
+
+- `store_update.update_apps()` upgrades selected msstore offers through the same `install_update` path as the App tab (EULA flags, verification, portable handling), records each outcome with `context="store"`, and returns `[(AppUpdate, UpdateOutcome)]`. Cancellation is between packages; a running installer is never killed.
+- The Store tab's **Update Selected** is gated on a selection and the operation lock, confirms the package list (no rollback), and re-scans the shared winget source on completion. The module passes app/finish callbacks and includes the tab in operation-owner polling.
+
 **Unattended mode**: `python src/main.py --unattended --stages wu,winget,cleanup` — headless, no `QApplication`/`MainWindow`; calls `pythoncom.CoInitialize()` explicitly since there's no `COMWorker`/Qt event loop available. Requires admin — exits 1 immediately if not elevated. The Settings tab's "Create/Update Task" button wires this into Task Scheduler as `WinClientTool_UnattendedMaintenance` (`/rl HIGHEST`, `/sc DAILY /mo <N>`). The older winget-only `WinClientTool_UpdateCheck` task (`_save_legacy`) is kept as-is for existing users — don't merge it into the new one.
 
 **Worker tracking**: every tab here is a `QWidget` (not `BaseModule`) with its own `self._workers: list` and `_cancel_all()`, per the general widget-subclass rule below. `UpdatesModule.on_stop()` calls `_cancel_all()` on all four stateful tabs explicitly — `BaseModule.cancel_all_workers()` only covers workers created directly on the module itself, not on child tab widgets. **`on_deactivate()` cancels nothing** (2026-10-19): a cancel reached winget as `taskkill /T /F` mid-install. `install_update` never kills a running upgrade; Stop takes effect before the next package. Driver Manager's `on_deactivate` is the same, so a driver install's result (undo token, history) still lands.

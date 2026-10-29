@@ -34,9 +34,30 @@ _widget_valid = widget_is_valid
 class _StoreUpdatesTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.app = None
         self._updates: List[AppUpdate] = []
         self._workers: list = []
+        self._busy_owner = ""
+        self._updating = False
+        self._finish_callback = None
         self._setup_ui()
+
+    def set_app(self, app) -> None:
+        self.app = app
+        self._sync_buttons()
+
+    def set_finish_callback(self, callback) -> None:
+        self._finish_callback = callback
+
+    def set_maintenance_busy(self, owner) -> None:
+        self._busy_owner = owner or ""
+        self._sync_buttons()
+
+    def _sync_buttons(self) -> None:
+        busy = bool(self._busy_owner) or self._updating
+        self._trigger_btn.setEnabled(not busy)
+        self._update_btn.setEnabled(
+            not busy and bool({i.row() for i in self._table.selectedIndexes()}))
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -47,11 +68,17 @@ class _StoreUpdatesTab(QWidget):
 
         toolbar = QHBoxLayout()
         self._trigger_btn = QPushButton("Verify Store Updates")
+        self._update_btn = QPushButton("Update Selected")
+        self._update_btn.setEnabled(False)
+        self._update_btn.setToolTip(
+            "Upgrade the selected Store offers through winget by exact id. "
+            "No rollback is provided; a restart may be needed.")
         self._open_btn = QPushButton("Open Store")
         self._reset_btn = QPushButton("Reset Store Cache")
         self._reset_btn.setToolTip("Runs wsreset.exe — clears the Store cache and closes the Store app.")
         self._status_lbl = QLabel("Refreshed together with the App Updates tab.")
         toolbar.addWidget(self._trigger_btn)
+        toolbar.addWidget(self._update_btn)
         toolbar.addWidget(self._open_btn)
         toolbar.addWidget(self._reset_btn)
         toolbar.addStretch()
@@ -65,6 +92,7 @@ class _StoreUpdatesTab(QWidget):
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.itemSelectionChanged.connect(self._sync_buttons)
 
         self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
@@ -77,6 +105,7 @@ class _StoreUpdatesTab(QWidget):
         layout.addWidget(splitter, 1)
 
         self._trigger_btn.clicked.connect(self._do_trigger)
+        self._update_btn.clicked.connect(self._do_update)
         self._open_btn.clicked.connect(self._do_open_store)
         self._reset_btn.clicked.connect(self._do_reset)
 
@@ -95,6 +124,60 @@ class _StoreUpdatesTab(QWidget):
             f"{len(self._updates)} Store app(s) with updates."
             if self._updates else "No Store app updates pending (via winget)."
         )
+        self._sync_buttons()
+
+    def _selected_updates(self) -> List[AppUpdate]:
+        rows = sorted({index.row() for index in self._table.selectedIndexes()})
+        return [self._updates[row] for row in rows if row < len(self._updates)]
+
+    def _do_update(self) -> None:
+        targets = self._selected_updates()
+        if not targets or self.app is None or self._updating:
+            return
+        names = "\n".join(f"* {u.name} ({u.winget_id})" for u in targets[:8])
+        if len(targets) > 8:
+            names += f"\n* and {len(targets) - 8} more"
+        answer = QMessageBox.question(
+            self, "Update Store apps",
+            f"Update {len(targets)} Microsoft Store app(s) through winget?\n\n"
+            + names
+            + "\n\nNo rollback is provided; a restart may be needed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._updating = True
+        self._sync_buttons()
+        self._log.clear()
+        app = self.app
+
+        @maintenance_worker("Updates install")
+        def _run(worker):
+            from modules.updates.store_update import update_apps
+            return update_apps(
+                app, targets,
+                log=lambda line: worker.signals.log_line.emit(line),
+                is_cancelled=lambda: worker.is_cancelled,
+                verify=bool(app.config.get("updates.verify_after_update", True)),
+            )
+
+        w = Worker(_run)
+        w.signals.log_line.connect(self._log.appendPlainText)
+        w.signals.result.connect(self._on_update_done)
+        w.signals.error.connect(self._on_error)
+        self._workers.append(w)
+        QThreadPool.globalInstance().start(w)
+
+    def _on_update_done(self, results) -> None:
+        self._updating = False
+        self._sync_buttons()
+        if not _widget_valid(self._status_lbl):
+            return
+        confirmed = sum(1 for _update, outcome in results if outcome)
+        self._status_lbl.setText(
+            f"{confirmed}/{len(results)} Store app(s) confirmed updated.")
+        if self._finish_callback is not None:
+            self._finish_callback()
 
     def _do_trigger(self):
         self._trigger_btn.setEnabled(False)
@@ -130,14 +213,15 @@ class _StoreUpdatesTab(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def _on_trigger_done(self, result) -> None:
+        self._sync_buttons()
         if not _widget_valid(self._status_lbl):
             return
-        self._trigger_btn.setEnabled(True)
         self._status_lbl.setText(result.message)
         self._log.appendPlainText(result.message)
 
     def _on_error(self, err: str):
-        self._trigger_btn.setEnabled(True)
+        self._updating = False
+        self._sync_buttons()
         self._reset_btn.setEnabled(True)
         self._log.appendPlainText(f"Error: {err}")
 

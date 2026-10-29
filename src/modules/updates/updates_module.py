@@ -2423,6 +2423,8 @@ class UpdatesModule(BaseModule):
         self._win_tab._overview = self._overview
 
         self._store_tab = _StoreUpdatesTab()
+        self._store_tab.set_app(self.app)
+        self._store_tab.set_finish_callback(self._refresh_apps)
         self._store_scan_status = _ScanStatusLabel("store", self._store_tab)
         self._store_scan_status.set_app(self.app)
         self._store_tab.layout().addWidget(self._store_scan_status)
@@ -2492,6 +2494,10 @@ class UpdatesModule(BaseModule):
             restart, reason = None, str(exc)
         return health, restart, reason
 
+    def _refresh_apps(self) -> None:
+        """Re-scan the shared winget source (also refreshes the Store view)."""
+        self._app_tab._do_refresh()
+
     def _on_app_updates(self, updates: List[AppUpdate]) -> None:
         if widget_is_valid(self._store_tab):
             self._store_tab.set_updates(updates)
@@ -2532,7 +2538,7 @@ class UpdatesModule(BaseModule):
                 f"Operation in progress: {owner}. Installing is disabled until it finishes.")
             self._busy_lbl.setStyleSheet(f"color: {semantic('warning')};")
         self._busy_lbl.setVisible(bool(owner))
-        for tab in (self._app_tab, self._win_tab, self._runall_tab):
+        for tab in (self._app_tab, self._win_tab, self._store_tab, self._runall_tab):
             setter = getattr(tab, "set_maintenance_busy", None)
             if setter is not None:
                 try:

@@ -201,6 +201,17 @@ class GameModeModule(BaseModule):
     def _apply_settings_to_choices(self) -> None:
         self._apply_settings_to(self._choices)
 
+    def _apply_profile_settings(self, data) -> None:
+        """Profiles carry their own tuning; adopt it before applying choices."""
+        for field in ("priority_boost", "force_close", "close_grace_s", "affinity_mode",
+                      "disable_power_throttling", "priority_separation",
+                      "system_responsiveness"):
+            if field in data:
+                setattr(self._settings, field, data[field])
+        self._settings = self._settings.normalized()
+        self._apply_settings_to_choices()
+        self._save_settings()
+
     def _save_settings(self) -> None:
         config = self._config()
         game_config.save_settings(config, self._settings)
@@ -249,8 +260,8 @@ class GameModeModule(BaseModule):
         if profile:
             saved = game_config.load_profiles(self._config()).get(profile)
             if saved:
+                self._apply_profile_settings(saved)
                 choices = session.choices_from_config(saved)
-                self._settings = game_config.load_settings(self._config())
                 self._apply_settings_to(choices)
         try:
             from core.operation_lock import active_owner

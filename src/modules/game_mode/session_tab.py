@@ -394,6 +394,7 @@ class SessionTab(QWidget):
         saved = game_config.load_profiles(self.host._config()).get(name)
         if not saved:
             return
+        self.host._apply_profile_settings(saved)
         self.host._choices = session.choices_from_config(saved)
         self.host._apply_settings_to_choices()
         self.host._save_choices()

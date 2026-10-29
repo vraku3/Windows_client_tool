@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, fields
 from typing import Dict, List, Optional
 
 SETTINGS_KEY = "modules.game_mode.settings"
+SCHEMA_VERSION = 2
 PROFILES_KEY = "modules.game_mode.profiles"
 PROTECTED_KEY = "modules.game_mode.protected_patterns"
 BINDINGS_KEY = "modules.game_mode.bindings"
@@ -46,15 +47,24 @@ def load_settings(config) -> GameSettings:
         return GameSettings()
     known = {f.name for f in fields(GameSettings)}
     try:
-        return GameSettings(**{key: value for key, value in raw.items()
-                               if key in known}).normalized()
+        settings = GameSettings(**{key: value for key, value in raw.items()
+                                   if key in known}).normalized()
     except (TypeError, ValueError):
         return GameSettings()
+    if int(raw.get("schema", 0) or 0) < SCHEMA_VERSION:
+        # The first Session-tab build wrote unchecked control defaults before
+        # loading the saved values. Restore the intended defaults once.
+        settings.force_close = True
+        settings.ac_guard = True
+        settings.retention = 100
+    return settings
 
 
 def save_settings(config, settings: GameSettings) -> None:
     if config is not None:
-        config.set(SETTINGS_KEY, asdict(settings.normalized()))
+        data = asdict(settings.normalized())
+        data["schema"] = SCHEMA_VERSION
+        config.set(SETTINGS_KEY, data)
 
 
 def normalize_protected(values) -> List[str]:

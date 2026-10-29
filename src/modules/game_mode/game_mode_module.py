@@ -114,6 +114,7 @@ class GameModeModule(BaseModule):
         config = getattr(app, "config", None)
         self._choices = session.choices_from_config(config.get(CONFIG_KEY, None) if config else None)
         self._settings = game_config.load_settings(config)
+        game_config.save_settings(config, self._settings)
         self._apply_settings_to_choices()
         bus = getattr(app, "event_bus", None)
         if bus is not None:

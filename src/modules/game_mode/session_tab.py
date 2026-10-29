@@ -65,6 +65,7 @@ class SessionTab(QWidget):
         super().__init__(parent)
         self.host = host
         self._games = []
+        self._loading = True
         layout = QVBoxLayout(self)
         self._error = ErrorBanner("", self)
         self._error.hide()
@@ -227,9 +228,12 @@ class SessionTab(QWidget):
         lower.addStretch()
         layout.addLayout(lower)
         layout.addStretch()
+        self._loading = False
+        self.refresh()
 
     # ---- refresh ------------------------------------------------------------------------------
     def refresh(self) -> None:
+        self._loading = True
         s = self.host._settings
         self._auto_spin.blockSignals(True)
         self._grace_spin.blockSignals(True)
@@ -271,8 +275,11 @@ class SessionTab(QWidget):
         self._repair_btn.setEnabled(active)
         self._render_journal()
         self._audit()
+        self._loading = False
 
     def _setting_changed(self, *_args) -> None:
+        if getattr(self, "_loading", False):
+            return
         s = self.host._settings
         s.auto_off_minutes = self._auto_spin.value()
         s.restore_point = self._restore_cb.isChecked()
@@ -290,6 +297,8 @@ class SessionTab(QWidget):
         self._setting_changed()
 
     def _bound_changed(self, text: str) -> None:
+        if getattr(self, "_loading", False):
+            return
         self.host._settings.bound_game = text.strip()
         self.host._save_settings()
 

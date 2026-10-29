@@ -773,6 +773,13 @@ class GameModeModule(BaseModule):
                 reasons.extend(preflight_guard.conflicts(owner=owner))
         except Exception:
             logger.warning("game mode: operation owner unreadable", exc_info=True)
+        try:
+            names = {getattr(proc, "name", "").casefold()
+                     for proc in self._system.processes()}
+            if names & {"tiworker.exe", "trustedinstaller.exe", "mousocoreworker.exe"}:
+                reasons.extend(preflight_guard.conflicts(wu_installing=True))
+        except Exception:
+            logger.warning("game mode: servicing process state unreadable", exc_info=True)
         if self._settings.ac_guard:
             try:
                 import psutil

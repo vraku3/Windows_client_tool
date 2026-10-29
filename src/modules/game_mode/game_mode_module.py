@@ -242,6 +242,9 @@ class GameModeModule(BaseModule):
     def _auto_on(self, profile: str = "") -> None:
         if self._journal.active or self._busy:
             return
+        if not profile and self._settings.bound_game:
+            profile = game_config.load_bindings(self._config()).get(
+                self._settings.bound_game, "")
         choices = self._choices
         if profile:
             saved = game_config.load_profiles(self._config()).get(profile)
@@ -877,6 +880,12 @@ class GameModeModule(BaseModule):
                      f"{data.get('handles_after', 0):,}, processes {data.get('processes_before')} -> "
                      f"{data.get('processes_after')}. Leave this app open to keep it tight.")
         self._show_state()
+        target = self._settings.handle_target
+        after = data.get("handles_after")
+        if target and isinstance(after, int) and after > target:
+            note = f"Handles are {after:,}, above the {target:,} session target."
+            self._append(f"{session.WARN}\t{note}")
+            self._notify("Game Mode", note, "warning")
         self._notify("Game Mode", "Game Mode is ON.")
         if self._session_tab is not None:
             self._session_tab.refresh()

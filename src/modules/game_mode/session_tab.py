@@ -140,6 +140,12 @@ class SessionTab(QWidget):
         self._retention_spin.setSuffix(" sessions kept")
         self._retention_spin.valueChanged.connect(self._setting_changed)
         form.addRow("History", self._retention_spin)
+        self._handle_target = QSpinBox(controls)
+        self._handle_target.setRange(0, 1000000)
+        self._handle_target.setSingleStep(5000)
+        self._handle_target.setSuffix(" handles target (0 = off)")
+        self._handle_target.valueChanged.connect(self._setting_changed)
+        form.addRow("Session target", self._handle_target)
         self._bound = QComboBox(controls)
         self._bound.setEditable(True)
         self._bound.currentTextChanged.connect(self._bound_changed)
@@ -168,8 +174,14 @@ class SessionTab(QWidget):
         self._resume_btn.setToolTip(
             "Load the last session's choices and run the normal ON preview.")
         self._resume_btn.clicked.connect(self._resume_last)
+        self._bind_btn = QPushButton("Bind to game", profiles)
+        self._bind_btn.setToolTip("Use this profile when the bound game starts.")
+        self._bind_btn.clicked.connect(self._bind_profile)
+        self._unbind_btn = QPushButton("Unbind", profiles)
+        self._unbind_btn.clicked.connect(self._unbind_profile)
         for widget in (self._profile_combo, self._profile_save, self._profile_load,
-                       self._profile_delete, self._resume_btn):
+                       self._profile_delete, self._resume_btn, self._bind_btn,
+                       self._unbind_btn):
             prow.addWidget(widget)
         layout.addWidget(profiles)
 
@@ -271,6 +283,9 @@ class SessionTab(QWidget):
         self._retention_spin.blockSignals(True)
         self._retention_spin.setValue(int(s.retention))
         self._retention_spin.blockSignals(False)
+        self._handle_target.blockSignals(True)
+        self._handle_target.setValue(int(s.handle_target))
+        self._handle_target.blockSignals(False)
         self._armed_cb.setChecked(bool(s.auto_on_armed))
         index = self._priority.findData(s.priority_boost)
         self._priority.setCurrentIndex(max(0, index))
@@ -316,6 +331,7 @@ class SessionTab(QWidget):
         s.close_grace_s = float(self._grace_spin.value())
         s.ac_guard = self._ac_cb.isChecked()
         s.retention = self._retention_spin.value()
+        s.handle_target = self._handle_target.value()
         s.auto_on_armed = self._armed_cb.isChecked()
         s.priority_boost = self._priority.currentData() or "off"
         s.affinity_mode = self._affinity.currentData() or "off"
@@ -405,6 +421,22 @@ class SessionTab(QWidget):
         self.host._refill_ticks()
         self.host._sync_flag_boxes()
         self.host._turn_on()
+
+    def _bind_profile(self) -> None:
+        profile = self._profile_combo.currentText().strip()
+        game = self._bound.currentData() or self._bound.currentText().strip()
+        if not profile or not game:
+            self._error.set_error("Choose a bound game and a profile first.")
+            return
+        game_config.save_binding(self.host._config(), game, profile)
+        self.host._config().save()
+        self._error.hide()
+
+    def _unbind_profile(self) -> None:
+        game = self._bound.currentData() or self._bound.currentText().strip()
+        if game:
+            game_config.save_binding(self.host._config(), game, "")
+            self.host._config().save()
 
     def _save_protection(self) -> None:
         patterns = [line.strip() for line in self._protected.toPlainText().splitlines()

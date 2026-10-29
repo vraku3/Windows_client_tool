@@ -33,6 +33,7 @@ class GameSettings:
     disable_power_throttling: bool = False
     priority_separation: int = 0          # 0 = leave alone, else 26/38
     system_responsiveness: int = 0        # 0 = leave alone, else 10/20
+    handle_target: int = 0                 # 0 = no target
 
     def normalized(self) -> "GameSettings":
         data = asdict(self)
@@ -48,6 +49,7 @@ class GameSettings:
             data["priority_separation"] = 0
         if data["system_responsiveness"] not in (0, 10, 20):
             data["system_responsiveness"] = 0
+        data["handle_target"] = max(0, min(int(self.handle_target or 0), 1000000))
         return GameSettings(**data)
 
 

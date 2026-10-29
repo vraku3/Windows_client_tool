@@ -44,14 +44,16 @@ function Get-Targets {
 
 function Remove-PreviousWctCerts {
     param([string]$KeepThumbprint)
-    $stores = @("Cert:\CurrentUser\My", "Cert:\CurrentUser\Root",
-                "Cert:\CurrentUser\TrustedPublisher")
-    foreach ($store in $stores) {
-        Get-ChildItem $store -ErrorAction SilentlyContinue |
-            Where-Object { $_.Subject -eq $Subject -and $_.Thumbprint -ne $KeepThumbprint } |
-            ForEach-Object {
-                Remove-Item -LiteralPath (Join-Path $store $_.Thumbprint) -Force -ErrorAction SilentlyContinue
-            }
+    foreach ($storeName in @("My", "Root", "TrustedPublisher")) {
+        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+            $storeName, "CurrentUser")
+        $store.Open("ReadWrite")
+        try {
+            $stale = @($store.Certificates | Where-Object {
+                $_.Subject -eq $Subject -and $_.Thumbprint -ne $KeepThumbprint
+            })
+            foreach ($old in $stale) { $store.Remove($old) }
+        } finally { $store.Close() }
     }
 }
 
@@ -72,24 +74,20 @@ $cert = New-SelfSignedCertificate `
     -KeyUsage DigitalSignature `
     -NotAfter (Get-Date).AddDays($ValidDays)
 
-$cer = Join-Path $env:TEMP ("wct-codesign-" + $cert.Thumbprint + ".cer")
-Export-Certificate -Cert $cert -FilePath $cer -Force | Out-Null
-Import-Certificate -FilePath $cer -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-Import-Certificate -FilePath $cer -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
-Remove-Item -LiteralPath $cer -Force -ErrorAction SilentlyContinue
+# Add the public certificate to the user's trust stores directly through .NET.
+# Import-Certificate can raise an interactive security prompt and hang a
+# non-interactive build; X509Store.Add does not.
+foreach ($storeName in @("Root", "TrustedPublisher")) {
+    $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+        $storeName, "CurrentUser")
+    $store.Open("ReadWrite")
+    try { $store.Add($cert) } finally { $store.Close() }
+}
 
 Write-Host "Signing $($targets.Count) target(s) with $($cert.Thumbprint)..."
 foreach ($target in $targets) {
-    $signed = $false
-    & $signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /sha1 $cert.Thumbprint "`"$target`"" 2>&1 | Out-Host
-    if ($LASTEXITCODE -eq 0) {
-        $signed = $true
-    } else {
-        Write-Host "Timestamp server failed; signing without a timestamp." -ForegroundColor Yellow
-        & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint "`"$target`"" 2>&1 | Out-Host
-        if ($LASTEXITCODE -eq 0) { $signed = $true }
-    }
-    if (-not $signed) { throw "signtool failed for $target" }
+    & $signtool sign /fd SHA256 /sha1 $cert.Thumbprint "`"$target`"" 2>&1 | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "signtool failed for $target" }
     & $signtool verify /pa /v "`"$target`"" 2>&1 |
         Select-String -Pattern "Verifying|Signing Certificate|OK|error" | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "signature verification failed for $target" }

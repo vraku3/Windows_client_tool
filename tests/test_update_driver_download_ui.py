@@ -120,3 +120,19 @@ def test_driver_manager_link_carries_the_manufacturer_filter(qapp, monkeypatch):
     tab._do_open_driver_manager()
     _topic, data = tab.app.event_bus.published[-1]
     assert data.payload == {"filter": "Intel Corporation"}
+
+
+def test_offer_export_uses_the_filtered_rows(qapp, monkeypatch):
+    monkeypatch.setattr("modules.updates.updates_module.is_reboot_pending", lambda: False)
+    tab = _WinUpdatesTab()
+    tab.set_app(owner())
+    one = WindowsUpdate("KB1", "Security A", "Security Updates", 10.0, "2026-10-01")
+    two = WindowsUpdate("KB2", "Security B", "Security Updates", 10.0, "2026-10-01")
+    tab._on_updates({"updates": [one, two], "held": [], "excluded": []})
+    tab._wu_search.setText("KB1")
+    captured = []
+    monkeypatch.setattr(
+        "modules.updates.updates_module._save_csv",
+        lambda parent, title, name, text: captured.append(text) or "offers.csv")
+    tab._do_export_offers()
+    assert captured and "KB1" in captured[0] and "KB2" not in captured[0]

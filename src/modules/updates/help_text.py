@@ -13,6 +13,14 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
  'Add to Blocklist': 'Save a matching package or title pattern to exclude it from future app scans '
                      'and installs. Remove the pattern in Settings to include it again; this does '
                      'not uninstall anything.',
+ 'Export CSV': 'Write the app offers left by the current filters to a CSV file, including '
+               'installed and available versions. This reads the scan results; it does not '
+               'change or install anything.',
+ 'Export visible offers CSV...': 'Write the Windows Update offers left by the current filters to '
+                                 'a CSV file, including category, severity, download bounds, '
+                                 'downloaded state, driver flag and published security '
+                                 'identifiers. This reads the last scan; it does not contact '
+                                 'Windows Update or install anything.',
  'Download Selected': 'Download the selected Windows updates into the Windows Update cache without '
                       'installing them. No restart is requested; Install Selected can then run '
                       'from the downloaded bytes. A download alone changes no installed software.',

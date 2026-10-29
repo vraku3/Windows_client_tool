@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFileDialog,
@@ -18,7 +19,7 @@ from core.worker import Worker
 from ui.error_banner import ErrorBanner
 from ui.table_style import apply_table_style
 
-from .engine import game_config, game_library, health_audit, session
+from .engine import frame_capture, game_config, game_library, health_audit, session
 
 logger = logging.getLogger(__name__)
 
@@ -257,9 +258,14 @@ class SessionTab(QWidget):
         self._import_btn.clicked.connect(self._import_settings)
         self._recover_btn = QPushButton("Recovery details", self)
         self._recover_btn.clicked.connect(self._show_recovery)
+        self._measure_btn = QPushButton("Measure 1% low", self)
+        self._measure_btn.setToolTip(
+            "Capture 30 seconds with PresentMon while the bound game runs.")
+        self._measure_btn.clicked.connect(self._measure)
         lower.addWidget(self._export_btn)
         lower.addWidget(self._import_btn)
         lower.addWidget(self._recover_btn)
+        lower.addWidget(self._measure_btn)
         lower.addStretch()
         layout.addLayout(lower)
         layout.addStretch()
@@ -534,6 +540,42 @@ class SessionTab(QWidget):
         self.host._apply_settings_to_choices()
         self.host._save_choices()
         self.refresh()
+
+    def _measure(self) -> None:
+        game = self.host._settings.bound_game
+        if not game:
+            self._error.set_error("Bind a game before measuring frame times.")
+            return
+        presentmon = frame_capture.find_presentmon()
+        if not presentmon:
+            self._error.set_error(
+                "PresentMon was not found. Install it or set REA_PRESENTMON, then retry.")
+            return
+        process_name = os.path.basename(game)
+        self._measure_btn.setEnabled(False)
+        self._error.hide()
+
+        def work(w):
+            output = str(Path(tempfile.gettempdir()) / "wct-presentmon.csv")
+            path = frame_capture.capture(presentmon, process_name, 30, output)
+            return frame_capture.summarize(Path(path).read_text(encoding="utf-8"))
+
+        def done(result):
+            self._measure_btn.setEnabled(True)
+            text = (f"{result['frames']} frames: {result['avg_fps']} avg FPS, "
+                    f"{result['one_percent_low_fps']} 1% low, "
+                    f"{result['point_one_percent_low_fps']} 0.1% low")
+            self._status.setText(text)
+            self.host._append(f"{session.INFO}\t{text}")
+
+        def failed(err):
+            self._measure_btn.setEnabled(True)
+            self._error.set_error(f"Frame capture failed: {err}")
+
+        w = Worker(work)
+        w.signals.result.connect(done)
+        w.signals.error.connect(failed)
+        self.host._start(w)
 
     def _show_recovery(self) -> None:
         if self.host._journal.active:

@@ -1,5 +1,7 @@
-﻿"""The WU tab exposes Download and routes driver offers to Driver Manager."""
+"""The WU tab exposes Download and routes driver offers to Driver Manager."""
 from types import SimpleNamespace
+
+from PyQt6.QtWidgets import QMessageBox
 
 from core.events import NAV_REQUEST_MODULE
 from modules.updates.updates_module import _WinUpdatesTab
@@ -136,3 +138,47 @@ def test_offer_export_uses_the_filtered_rows(qapp, monkeypatch):
         lambda parent, title, name, text: captured.append(text) or "offers.csv")
     tab._do_export_offers()
     assert captured and "KB1" in captured[0] and "KB2" not in captured[0]
+
+
+def test_hidden_selection_turns_the_hide_button_into_unhide(qapp, monkeypatch):
+    monkeypatch.setattr("modules.updates.updates_module.is_reboot_pending", lambda: False)
+    tab = _WinUpdatesTab()
+    tab.set_app(owner())
+    hidden = WindowsUpdate("KB1", "Hidden fix", "Security Updates", 10.0, "2026-10-01",
+                           is_hidden=True)
+    shown = WindowsUpdate("KB2", "Visible fix", "Security Updates", 10.0, "2026-10-01")
+    tab._on_updates({"updates": [hidden, shown], "held": [], "excluded": []})
+    tab._table.selectRow(0)
+    assert tab._hide_btn.text() == "Unhide Selected"
+    tab._table.selectRow(1)
+    assert tab._hide_btn.text() == "Hide Selected"
+
+
+def test_restart_asks_first_and_schedules_sixty_seconds(qapp, monkeypatch):
+    monkeypatch.setattr("modules.updates.updates_module.is_reboot_pending", lambda: True)
+    tab = _WinUpdatesTab()
+    tab.set_app(owner())
+    tab._installing = False
+    tab._downloading = False
+    tab._scan_worker = None
+    monkeypatch.setattr(QMessageBox, "warning",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    calls = []
+    monkeypatch.setattr("modules.updates.updates_module.subprocess.Popen",
+                        lambda args, **kwargs: calls.append(args))
+    tab._do_restart()
+    assert calls and calls[0][:4] == ["shutdown", "/r", "/t", "60"]
+    assert "60 seconds" in tab._status_lbl.text()
+
+
+def test_restart_is_refused_while_an_update_is_running(qapp, monkeypatch):
+    monkeypatch.setattr("modules.updates.updates_module.is_reboot_pending", lambda: True)
+    tab = _WinUpdatesTab()
+    tab.set_app(owner())
+    tab._downloading = True
+    calls = []
+    monkeypatch.setattr("modules.updates.updates_module.subprocess.Popen",
+                        lambda *a, **k: calls.append(a))
+    tab._do_restart()
+    assert calls == []
+    assert "Finish the current" in tab._status_lbl.text()

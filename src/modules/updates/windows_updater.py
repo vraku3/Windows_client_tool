@@ -506,6 +506,18 @@ def hide_update(update: WindowsUpdate) -> None:
     update.identity.IsHidden = True
 
 
+def unhide_update(update: WindowsUpdate) -> None:
+    """Offer a hidden update again (WUA IsHidden=False).
+
+    Same COM-thread requirement as `hide_update`: the identity must come from
+    a scan made in the current runspace.
+    """
+    if update.identity is None:
+        raise RuntimeError("Update has no live COM identity - re-scan first.")
+    update.identity.IsHidden = False
+    update.is_hidden = False
+
+
 def uninstall_update(kb: str, output_cb: Optional[Callable[[str], None]] = None,
                      is_cancelled: Optional[Callable[[], bool]] = None) -> InstallResult:
     """Remove one installed KB through WUA, after asking Windows if it can.

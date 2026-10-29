@@ -450,3 +450,19 @@ def test_install_order_puts_restart_offers_last_and_keeps_scan_order():
     c = WindowsUpdate("KB3", "C", "c", 1, "d", reboot="2")
     d = WindowsUpdate("KB4", "D", "c", 1, "d", reboot="")
     assert [u.kb for u in order_for_install([b, a, c, d])] == ["KB1", "KB2", "KB3", "KB4"]
+
+
+def test_unhide_clears_hidden_flag_on_the_live_identity():
+    from types import SimpleNamespace as NS
+    identity = NS(IsHidden=True)
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 1, "d", identity=identity,
+                                      is_hidden=True)
+    windows_updater.unhide_update(u)
+    assert identity.IsHidden is False
+    assert u.is_hidden is False
+
+
+def test_unhide_without_a_live_identity_refuses():
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 1, "d")
+    with pytest.raises(RuntimeError):
+        windows_updater.unhide_update(u)

@@ -7,7 +7,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.semantic_colors import semantic
-from .activity_ledger import load_activity
+from .activity_ledger import entries_to_csv, load_activity
+from .csv_io import save_csv
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,13 @@ class ActivityWidget(QGroupBox):
         self._status = QLabel("Select a package to view activity." if package else "No package activity recorded.")
         self._status.setWordWrap(True)
         layout.addWidget(self._status)
+        actions = QHBoxLayout()
+        self._export_btn = QPushButton("Export CSV")
+        self._export_btn.setToolTip("Write the activity rows currently shown to a CSV file.")
+        actions.addStretch()
+        actions.addWidget(self._export_btn)
+        layout.addLayout(actions)
+        self._export_btn.clicked.connect(self._export)
 
     def set_app(self, app):
         self.app = app
@@ -75,18 +83,31 @@ class ActivityWidget(QGroupBox):
             return
         self._render()
 
+    def _filtered_entries(self):
+        if self._package:
+            return list(self._entries)
+        query = self._search.text().casefold().strip()
+        selected = self._outcome.currentText()
+        return [entry for entry in self._entries
+                if query in f"{entry.get('name', '')} {entry.get('id', '')}".casefold()
+                and (selected == "All outcomes"
+                     or selected == "Success" and entry.get("outcome") == "UPDATED"
+                     or selected == "Failure" and entry.get("outcome") in ("FAILED", "BLOCKED")
+                     or selected == "Needs attention" and entry.get("outcome") in
+                     ("UPDATED_UNVERIFIED", "NEEDS_USER", "DIFF_TECH"))]
+
+    def _export(self) -> None:
+        entries = self._filtered_entries()
+        if not entries:
+            self._status.setText("Nothing to export.")
+            return
+        path = save_csv(self, "Export update activity", "update-activity.csv",
+                        entries_to_csv(entries))
+        if path:
+            self._status.setText(f"Exported {len(entries)} activity row(s) to {path}")
+
     def _render(self, *_args):
-        entries = self._entries
-        if not self._package:
-            query = self._search.text().casefold().strip()
-            selected = self._outcome.currentText()
-            entries = [entry for entry in entries
-                       if query in f"{entry.get('name', '')} {entry.get('id', '')}".casefold()
-                       and (selected == "All outcomes"
-                            or selected == "Success" and entry.get("outcome") == "UPDATED"
-                            or selected == "Failure" and entry.get("outcome") in ("FAILED", "BLOCKED")
-                            or selected == "Needs attention" and entry.get("outcome") in
-                            ("UPDATED_UNVERIFIED", "NEEDS_USER", "DIFF_TECH"))][:20]
+        entries = self._filtered_entries()[:20]
         self._table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
             outcome = str(entry.get("outcome", ""))

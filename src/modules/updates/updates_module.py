@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QHeaderView, QPlainTextEdit,
     QTableWidgetItem,
     QCheckBox, QTimeEdit, QComboBox, QProgressBar, QLineEdit, QMessageBox,
-    QGroupBox, QScrollArea, QSpinBox, QSplitter, QFileDialog, QMenu, QApplication,
+    QGroupBox, QScrollArea, QSpinBox, QSplitter, QMenu, QApplication,
 )
 from PyQt6.QtCore import Qt, QThreadPool, QTime, QElapsedTimer, QUrl, QTimer
 from PyQt6.QtGui import QFont, QColor, QDesktopServices
@@ -38,13 +38,14 @@ from core.events import (
 )
 from core.table_ui import centered_item, center_header, set_role
 from core.widget_life import widget_is_valid
+from modules.updates.csv_io import save_csv as _save_csv
 from modules.updates.export_csv import app_offers_to_csv, wu_offers_to_csv
 from modules.updates.winget_updater import (
     fetch_updates, install_update, show_package_details, AppUpdate, UpdateOutcome,
 )
 from modules.updates.windows_updater import (
     fetch_pending_updates, install_updates_iter, download_updates_iter, hide_update,
-    order_for_install,
+    unhide_update, order_for_install,
     WindowsUpdate, InstallResult, DownloadResult, size_text, severity_text, reboot_text,
     HELD_TEXT, wu_status_text, split_scan, update_status_text,
 )
@@ -196,21 +197,6 @@ def _start_scan(tab, worker, on_result=None):
     worker.signals.finished.connect(lambda: tab._workers.remove(worker) if worker in tab._workers else None)
     tab._workers.append(worker)
     QThreadPool.globalInstance().start(worker)
-
-
-def _save_csv(parent, title: str, default_name: str, text: str) -> str:
-    """Ask for a path and write `text` as UTF-8 with BOM; '' on cancel/error."""
-    path, _selected = QFileDialog.getSaveFileName(
-        parent, title, default_name, "CSV files (*.csv)")
-    if not path:
-        return ""
-    try:
-        with open(path, "w", encoding="utf-8-sig", newline="") as handle:
-            handle.write(text)
-    except OSError as exc:
-        QMessageBox.warning(parent, "Export failed", f"Could not write {path}:\n{exc}")
-        return ""
-    return path
 
 
 def _maybe_toast(app, timer: Optional[QElapsedTimer], title: str, message: str) -> None:
@@ -974,13 +960,23 @@ class _WinUpdatesTab(QWidget):
         self._error_banner.hide()
         layout.addWidget(self._error_banner)
 
-        # Reboot pending banner
+        # Reboot pending banner, with the one action it implies.
+        self._reboot_row = QWidget()
+        reboot_lay = QHBoxLayout(self._reboot_row)
+        reboot_lay.setContentsMargins(0, 0, 0, 0)
         self._reboot_banner = QLabel("A system reboot is pending.")
         self._reboot_banner.setStyleSheet(
             "background: #FF8800; color: white; padding: 4px; font-weight: bold;"
         )
-        self._reboot_banner.hide()
-        layout.addWidget(self._reboot_banner)
+        self._restart_btn = QPushButton("Restart now")
+        self._restart_btn.setToolTip(
+            "Ask Windows to restart in 60 seconds so a pending update can finish. "
+            "Save your work first; run 'shutdown /a' to cancel.")
+        self._restart_btn.clicked.connect(self._do_restart)
+        reboot_lay.addWidget(self._reboot_banner, 1)
+        reboot_lay.addWidget(self._restart_btn)
+        self._reboot_row.hide()
+        layout.addWidget(self._reboot_row)
 
         # Toolbar
         toolbar = QHBoxLayout()
@@ -1131,13 +1127,23 @@ class _WinUpdatesTab(QWidget):
         # Check reboot on init
         try:
             if is_reboot_pending():
-                self._reboot_banner.show()
+                self._reboot_row.show()
         except Exception:
             logger.warning("Ignored Exception", exc_info=True)
+
+    def _selected_updates_all(self) -> List[WindowsUpdate]:
+        return [self._updates[row] for row in self._selected_wu_rows()
+                if row < len(self._updates)]
+
+    def _selection_is_hidden(self) -> bool:
+        selected = self._selected_updates_all()
+        return bool(selected) and all(u.is_hidden for u in selected)
 
     def _on_selection_changed(self) -> None:
         has_sel = bool(self._table.selectedIndexes())
         self._hide_btn.setEnabled(has_sel)
+        self._hide_btn.setText("Unhide Selected" if self._selection_is_hidden()
+                               else "Hide Selected")
         self._block_btn.setEnabled(has_sel)
         self._details_btn.setEnabled(has_sel)
         self._sync_install_button()
@@ -1206,7 +1212,7 @@ class _WinUpdatesTab(QWidget):
                                  + (f"  â€”  {summary}" if summary else ""))
         self._sync_install_button()
         try:
-            self._reboot_banner.setVisible(is_reboot_pending())
+            self._reboot_row.setVisible(is_reboot_pending())
         except Exception:
             logger.warning("Ignored Exception", exc_info=True)
 
@@ -1619,7 +1625,7 @@ class _WinUpdatesTab(QWidget):
                        winget_count=0, pending_restart=pending)
 
         try:
-            self._reboot_banner.setVisible(bool(pending) or is_reboot_pending())
+            self._reboot_row.setVisible(bool(pending) or is_reboot_pending())
         except Exception:
             logger.warning("Ignored Exception", exc_info=True)
 
@@ -1692,14 +1698,16 @@ class _WinUpdatesTab(QWidget):
         self._sync_install_button()
 
     def _do_hide(self) -> None:
-        rows = sorted({i.row() for i in self._table.selectedIndexes()}, reverse=True)
-        targets = [self._updates[r] for r in rows if r < len(self._updates)]
+        targets = self._selected_updates_all()
         if not targets or self.app is None:
             return
+        unhide = all(u.is_hidden for u in targets)
+        verb = "Unhide" if unhide else "Hide"
+        extra = ("They will be offered again on the next scan."
+                 if unhide else "They won't be offered again unless \"Show hidden updates\" is checked.")
         reply = QMessageBox.question(
-            self, "Hide Updates",
-            f"Hide {len(targets)} update(s)? They won't be offered again unless "
-            "\"Show hidden updates\" is checked.",
+            self, f"{verb} Updates",
+            f"{verb} {len(targets)} update(s)? {extra}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
@@ -1709,10 +1717,10 @@ class _WinUpdatesTab(QWidget):
             done = 0
             for u in targets:
                 try:
-                    hide_update(u)
+                    (unhide_update if unhide else hide_update)(u)
                     done += 1
                 except Exception as e:
-                    worker.signals.log_line.emit(f"Could not hide {u.title}: {e}")
+                    worker.signals.log_line.emit(f"Could not {verb.lower()} {u.title}: {e}")
             return done
 
         w = COMWorker(_run)
@@ -1721,6 +1729,32 @@ class _WinUpdatesTab(QWidget):
         w.signals.error.connect(self._on_error)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
+
+    def _do_restart(self) -> None:
+        if (getattr(self, "_installing", False) or getattr(self, "_downloading", False)
+                or getattr(self, "_scan_worker", None) is not None):
+            self._status_lbl.setText("Finish the current update operation before restarting.")
+            return
+        reply = QMessageBox.warning(
+            self, "Restart now",
+            "Restart this PC in 60 seconds so the pending update can finish?\n\n"
+            "Save open work first. To cancel, run 'shutdown /a' from a command prompt.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            subprocess.Popen(
+                ["shutdown", "/r", "/t", "60", "/c",
+                 "Windows Client Tool: restarting to finish Windows updates"],
+                creationflags=subprocess.CREATE_NO_WINDOW)
+        except OSError as exc:
+            self._error_banner.set_error(f"Could not schedule the restart: {exc}")
+            return
+        self._status_lbl.setText("Restart scheduled in 60 seconds. Run 'shutdown /a' to cancel.")
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "reboot_requested",
+               "Restart scheduled in 60 seconds to finish updates", {})
 
     def _do_add_blocklist(self) -> None:
         rows = sorted({i.row() for i in self._table.selectedIndexes()})

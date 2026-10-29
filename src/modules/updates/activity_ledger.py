@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import logging
 import os
@@ -98,6 +100,33 @@ def load_activity(app_data_dir, package_id=None, limit=100) -> list[dict]:
 
 def package_history(app_data_dir, package_id) -> list[dict]:
     return load_activity(app_data_dir, package_id, limit=None)
+
+
+ACTIVITY_HEADERS = ["Timestamp", "Package", "ID", "Source", "Version before",
+                    "Version offered", "Version after", "Outcome", "Context",
+                    "Elevated", "Detail"]
+
+
+def entries_to_csv(entries) -> str:
+    """Activity records as CSV text, newest order preserved."""
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow(ACTIVITY_HEADERS)
+    for entry in entries:
+        writer.writerow([
+            entry.get("ts", ""),
+            entry.get("name", ""),
+            entry.get("id", ""),
+            entry.get("source", ""),
+            entry.get("version_before") or "",
+            entry.get("version_offered") or "",
+            entry.get("version_after") or "",
+            entry.get("outcome", ""),
+            entry.get("context", ""),
+            entry.get("elevated", ""),
+            entry.get("detail", ""),
+        ])
+    return output.getvalue()
 
 
 def recent_activity(app_data_dir, days=30) -> list[dict]:

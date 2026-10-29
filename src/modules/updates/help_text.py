@@ -34,8 +34,12 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
                      'without another app confirmation. Administrator rights are required; a '
                      'restart may be needed and there is no rollback here. Held AMD display '
                      'drivers are never installed.',
- 'Hide Selected': "Change the selected Windows Update offer's hidden flag after confirmation. It "
-                  'does not uninstall anything; use Show hidden updates to inspect hidden offers.',
+ 'Hide Selected': "Change the selected Windows Update offer's hidden flag after confirmation. "
+                  'With hidden offers selected the same button reads Unhide Selected. It does '
+                  'not uninstall anything; use Show hidden updates to inspect hidden offers.',
+ 'Restart now': 'Ask Windows to restart in 60 seconds so a pending update can finish, after '
+                'confirmation. This closes every app without saving it; run shutdown /a to '
+                'cancel. It does not install another update by itself.',
  'History': 'Read Windows Update installation history from Windows; this does not install or '
             'remove updates.',
  'Open Settings': 'Open Windows Update in Windows Settings. This button itself does not install '

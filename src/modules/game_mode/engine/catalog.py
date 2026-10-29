@@ -72,6 +72,8 @@ SERVICES = (
     ServiceSpec("AdobeARMservice", "Adobe Acrobat Update", _UPDATER, REC, True),
     ServiceSpec("OneDrive Updater Service", "OneDrive Updater", _UPDATER, REC, True),
     ServiceSpec("uhssvc", "Microsoft Update Health", "Update health checks.", REC),
+    ServiceSpec("WidgetService", "Widgets Service",
+                "Keeps the Widgets board and its feed alive in the background.", REC, True),
     ServiceSpec("InventorySvc", "Inventory and Compatibility Appraisal",
                 "Scans installed programs for telemetry and upgrade checks.", REC),
     ServiceSpec("DiagTrack", "Connected User Experiences and Telemetry",

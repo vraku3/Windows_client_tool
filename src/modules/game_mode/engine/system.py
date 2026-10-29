@@ -300,7 +300,14 @@ class WinSystem:
             if not self.alive(pid, created):
                 continue
             try:
-                psutil.Process(pid).kill()
+                process = psutil.Process(pid)
+                for child in process.children(recursive=True):
+                    try:
+                        child.kill()
+                    except (psutil.Error, OSError):
+                        logger.debug("game mode: child %s did not end", child.pid,
+                                     exc_info=True)
+                process.kill()
             except psutil.NoSuchProcess:
                 logger.debug("game mode: %s closed politely or exited on its own", pid)
             except (psutil.Error, OSError) as error:

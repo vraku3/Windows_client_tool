@@ -88,6 +88,14 @@ def _parse_args():
         "--result", metavar="RESULT_JSON",
         help="Where --apply-security-batch writes its report.",
     )
+    parser.add_argument(
+        "--game-mode", choices=("on", "off"),
+        help="Enter or leave the journaled Game Mode session and exit (no GUI).",
+    )
+    parser.add_argument(
+        "--game-profile", default="",
+        help="Saved Game Mode profile to use with --game-mode on.",
+    )
     # Ignore unknown args instead of erroring — PyInstaller/Qt may pass extras.
     args, _unknown = parser.parse_known_args()
     return args
@@ -178,6 +186,59 @@ def register_all_modules(app) -> None:
     app.module_registry.register(AboutModule())
 
 
+def _run_game_mode(command: str, profile: str) -> int:
+    """Headless Game Mode ON/OFF for launchers; same journaled session path."""
+    import ctypes
+    from app import App
+    from modules.game_mode.engine import game_config, session
+    from modules.game_mode.engine.journal import Journal
+    from modules.game_mode.engine.system import WinSystem
+
+    app = App.instance or App()
+    config = app.config
+    choices = session.choices_from_config(
+        config.get("modules.game_mode.choices", None))
+    if command == "on" and profile:
+        saved = game_config.load_profiles(config).get(profile)
+        if saved is None:
+            print(f"Game Mode profile not found: {profile}", file=sys.stderr)
+            return 2
+        choices = session.choices_from_config(saved)
+    settings = game_config.load_settings(config)
+    choices.protected = set(game_config.load_protected(config))
+    choices.protected_publishers = set(config.get(
+        "modules.game_mode.protected_publishers", []) or [])
+    choices.bound_game = settings.bound_game
+    choices.priority_boost = settings.priority_boost
+    choices.force_close = settings.force_close
+    choices.close_grace_s = settings.close_grace_s
+    sid = ctypes.c_uint(0)
+    ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(sid))
+    journal = Journal()
+    system = WinSystem()
+
+    def log(level, text):
+        print(f"[{level}] {text}", file=sys.stderr)
+
+    try:
+        if command == "on":
+            data = session.turn_on(system, choices, journal, log, os.getpid(), int(sid.value))
+            print(f"Game Mode ON: {data.get('handles_before')} -> "
+                  f"{data.get('handles_after')} handles")
+        else:
+            report = session.turn_off(system, journal, log)
+            print(f"Game Mode OFF: {len(report)} restoration message(s)")
+    except Exception as exc:
+        print(f"Game Mode {command} failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        try:
+            app.shutdown()
+        except Exception:
+            pass
+    return 0
+
+
 def main():
     args = _parse_args()
 
@@ -185,6 +246,9 @@ def main():
         _s("=== unattended mode ===")
         from modules.updates.unattended_runner import run_unattended
         sys.exit(run_unattended(args.stages.split(",")))
+
+    if args.game_mode:
+        sys.exit(_run_game_mode(args.game_mode, args.game_profile))
 
     if args.apply_security_batch:
         # Before any Qt object exists: this is the elevated helper, it has no

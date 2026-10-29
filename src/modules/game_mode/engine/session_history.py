@@ -120,6 +120,12 @@ def record_session_end(app_data_dir, report, handles, processes, *, started=None
         _write(_path(app_data_dir, folder), entries)
 
 
+def save_history(entries, *, folder=None, app_data_dir=None) -> None:
+    """Persist notes/edited summaries; bounded to MAX_ENTRIES."""
+    with _LOCK:
+        _write(_path(app_data_dir, folder), list(entries or []))
+
+
 def session_stats(history) -> dict:
     durations = [e["duration_s"] for e in history if e.get("ended") is not None
                  and isinstance(e.get("duration_s"), (int, float))]

@@ -29,6 +29,8 @@ PRIORITY_NAMES = {0x40: "Idle", 0x4000: "Below Normal", 0x20: "Normal", 0x8000: 
                   0x80: "High", 0x100: "Realtime"}
 BELOW_NORMAL = 0x4000
 NORMAL = 0x20
+ABOVE_NORMAL = 0x8000
+HIGH = 0x80
 
 
 @dataclass(frozen=True)
@@ -191,6 +193,23 @@ class WinSystem:
         d = resolve(pid)
         return d.path, d.cmdline, d.elevated
 
+    def publisher(self, path: Optional[str]) -> Optional[str]:
+        """The executable's CompanyName, or None when it cannot be read."""
+        if not path:
+            return None
+        try:
+            import win32api
+            translations = win32api.GetFileVersionInfo(
+                path, "\\VarFileInfo\\Translation")
+            for lang, codepage in translations:
+                info = win32api.GetFileVersionInfo(
+                    path, f"\\StringFileInfo\\{lang:04x}{codepage:04x}\\CompanyName")
+                if info:
+                    return str(info).strip() or None
+        except Exception as error:  # noqa: BLE001 -- version resource refusals
+            logger.debug("game mode: publisher of %s unreadable: %s", path, error)
+        return None
+
     def aumid(self, pid: int) -> Optional[str]:
         """A packaged app's AppUserModelID (how it is reopened), or None."""
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -227,7 +246,7 @@ class WinSystem:
         return self.close_many([(identities, exe_path)], grace)[0]
 
     def close_many(self, jobs: List[Tuple[List[Tuple[int, int]], Optional[str]]],
-                   grace: float = 8.0) -> List[Optional[str]]:
+                   grace: float = 8.0, force: bool = True) -> List[Optional[str]]:
         """Ask every recorded process to close together, then end matching survivors."""
         from . import shell_launch
         from . import catalog
@@ -249,10 +268,13 @@ class WinSystem:
         identities = [identity for group, _path in jobs for identity in group]
         self._post_close(self._matching(identities))
         self._wait_gone(identities, grace)
-        results = [self._end_left(group) for group, _path in jobs]
-        self._wait_gone(identities, 5.0)
-        return [err or ("still running after it was ended" if self._matching(group) else None)
-                for err, (group, _path) in zip(results, jobs)]
+        if force:
+            results = [self._end_left(group) for group, _path in jobs]
+            self._wait_gone(identities, 5.0)
+            return [err or ("still running after it was ended" if self._matching(group) else None)
+                    for err, (group, _path) in zip(results, jobs)]
+        return ["still running (force-close disabled)" if self._matching(group) else None
+                for group, _path in jobs]
 
     @staticmethod
     def _trusted_onedrive(path: Optional[str]) -> bool:
@@ -602,6 +624,17 @@ class WinSystem:
     def task_enabled(self, path: str) -> Optional[bool]:
         task = self._task(path)
         return None if task is None else bool(task.Enabled)
+
+    def task_owner(self, path: str) -> Optional[str]:
+        """The task principal's UserId, or None when it cannot be read."""
+        try:
+            task = self._task(path)
+            if task is None:
+                return None
+            return str(task.Definition.Principal.UserId or "").strip() or None
+        except Exception as error:  # noqa: BLE001 -- Task Scheduler COM refusals
+            logger.debug("game mode: task owner unreadable for %s: %s", path, error)
+            return None
 
     def task_running(self, path: str) -> Optional[bool]:
         try:

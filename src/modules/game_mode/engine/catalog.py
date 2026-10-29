@@ -26,6 +26,7 @@ from typing import Dict, Optional
 from core.game_folders import GAME_FOLDERS
 
 REC, MAX, OPT = "recommended", "maximum", "optional"
+STREAM, LOW = "streaming", "lowpower"
 
 
 @dataclass(frozen=True)

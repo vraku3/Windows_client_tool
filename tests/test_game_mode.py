@@ -112,7 +112,7 @@ class FakeSystem:
                 self.procs.remove(p)
                 self.procs.append(Proc(p.pid + 1000, 1, 'explorer.exe', 3000, 1, p.create_time + 1))
 
-    def close_many(self, jobs, grace=8.0):
+    def close_many(self, jobs, grace=8.0, force=True):
         self.close_batches.append(len(jobs))
         return [self.close(pids, path) for pids, path in jobs]
 

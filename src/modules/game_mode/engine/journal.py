@@ -109,7 +109,15 @@ class Journal:
                                              delete=False) as fh:
                 tmp = fh.name
                 json.dump(payload, fh, indent=1)
-            os.replace(tmp, path)
+            for attempt in range(6):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    # A scanner or the shell can briefly hold the destination.
+                    if attempt == 5:
+                        raise
+                    time.sleep(0.05 * (attempt + 1))
         finally:
             if tmp is not None and os.path.exists(tmp):
                 os.remove(tmp)

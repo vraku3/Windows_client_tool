@@ -1,19 +1,22 @@
-"""Lazy session history browser for Game Mode."""
+"""Searchable, exportable Game Mode session history."""
 from __future__ import annotations
 
 import datetime
 import logging
+from pathlib import Path
 
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QAbstractItemView, QHBoxLayout, QHeaderView, QLabel,
-                             QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout,
+                             QHeaderView, QLabel, QLineEdit, QMessageBox,
+                             QPlainTextEdit, QPushButton, QTableWidget,
+                             QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core.semantic_colors import semantic
 from ui.error_banner import ErrorBanner
 from ui.table_style import apply_table_style
 
-from .engine.session_history import load_history, session_stats
+from .engine import history_export
+from .engine.session_history import load_history, save_history
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +48,12 @@ def _restore_status(entry):
 
 
 class HistoryTab(QWidget):
-    def __init__(self, folder, parent=None):
+    def __init__(self, folder, parent=None, host=None):
         super().__init__(parent)
         self._folder = folder
+        self._host = host
         self._loaded = False
+        self._all = []
         self._history = []
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -59,11 +64,33 @@ class HistoryTab(QWidget):
         refresh.clicked.connect(lambda: self.activate(refresh=True))
         top.addWidget(refresh)
         layout.addLayout(top)
+
+        filters = QHBoxLayout()
+        self._search = QLineEdit(self)
+        self._search.setPlaceholderText("Search preset, note or restore issue...")
+        self._preset = QComboBox(self)
+        self._preset.addItem("Any preset", "")
+        self._restore = QComboBox(self)
+        for label, value in (("Any restore status", ""), ("Fully restored", "Fully restored"),
+                             ("Partial restore", "Partial"), ("Restore failed", "Failed"),
+                             ("Not restored", "Not restored")):
+            self._restore.addItem(label, value)
+        self._days = QComboBox(self)
+        for label, value in (("Any date", 0), ("Last 7 days", 7), ("Last 30 days", 30),
+                             ("Last 90 days", 90)):
+            self._days.addItem(label, value)
+        filters.addWidget(self._search, 1)
+        filters.addWidget(self._preset)
+        filters.addWidget(self._restore)
+        filters.addWidget(self._days)
+        layout.addLayout(filters)
+
         self._error = ErrorBanner("", self)
         self._error.hide()
         layout.addWidget(self._error)
         self._table = QTableWidget(0, 6, self)
-        self._table.setHorizontalHeaderLabels(["Date", "Duration", "Preset", "Actions", "Handles freed", "Restore status"])
+        self._table.setHorizontalHeaderLabels(
+            ["Date", "Duration", "Preset", "Actions", "Handles freed", "Restore status"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -76,6 +103,33 @@ class HistoryTab(QWidget):
         self._detail.setPlaceholderText("Select a session to see its actions and restoration issues.")
         layout.addWidget(self._detail, 2)
 
+        bottom = QHBoxLayout()
+        self._note = QLineEdit(self)
+        self._note.setPlaceholderText("Session note/tag")
+        self._note_save = QPushButton("Save note", self)
+        self._note_save.clicked.connect(self._save_note)
+        self._export_csv = QPushButton("Export CSV", self)
+        self._export_csv.clicked.connect(lambda: self._export("csv"))
+        self._export_json = QPushButton("Export JSON", self)
+        self._export_json.clicked.connect(lambda: self._export("json"))
+        self._retry = QPushButton("Retry restore", self)
+        self._retry.clicked.connect(self._retry_restore)
+        self._bench = QPushButton("Benchmarks", self)
+        self._bench.setToolTip("Open Dashboard benchmarks to compare this session window.")
+        self._bench.clicked.connect(
+            lambda: self._host._navigate_to("Dashboard") if self._host is not None else None)
+        bottom.addWidget(self._note, 1)
+        bottom.addWidget(self._note_save)
+        bottom.addWidget(self._export_csv)
+        bottom.addWidget(self._export_json)
+        bottom.addWidget(self._retry)
+        bottom.addWidget(self._bench)
+        layout.addLayout(bottom)
+
+        self._search.textChanged.connect(lambda _t: self._render())
+        for combo in (self._preset, self._restore, self._days):
+            combo.currentIndexChanged.connect(lambda _i: self._render())
+
     def invalidate(self):
         self._loaded = False
         if self.isVisible():
@@ -85,43 +139,67 @@ class HistoryTab(QWidget):
         if self._loaded and not refresh:
             return
         try:
-            self._history = list(reversed(load_history(None, folder=self._folder)))
-            stats = session_stats(self._history)
-            average = stats["average_duration_s"]
+            self._all = list(reversed(load_history(None, folder=self._folder)))
+            stats = history_export.aggregates(self._all)
+            average = stats["median_duration_s"]
             rate = stats["success_rate"]
             self._summary.setText(
-                f"{stats['total_sessions']} sessions, average "
+                f"{stats['sessions']} sessions, median "
                 + (f"{average / 3600:.1f} hours" if average is not None else "not available")
                 + (f", {rate:.0f}% restored" if rate is not None else ", no restoration attempts")
-                + (" — no sessions recorded yet" if not self._history else ""))
-            self._table.setRowCount(0)
-            self._detail.clear()
-            for row, entry in enumerate(self._history):
-                before, after = entry.get("handles_before"), entry.get("handles_after")
-                freed = f"{before - after:,}" if before is not None and after is not None else "Unknown"
-                status, color = _restore_status(entry)
-                cells = [_date(entry["started"]), _duration(entry.get("duration_s")),
-                         entry.get("preset", "Unknown"),
-                         f"{entry.get('actions_ok', 0)}/{entry.get('actions_total', 0)} OK", freed, status]
-                self._table.insertRow(row)
-                for column, value in enumerate(cells):
-                    item = QTableWidgetItem(str(value))
-                    if column == 5:
-                        item.setForeground(QColor(semantic(color)))
-                    self._table.setItem(row, column, item)
+                + (" - no sessions recorded yet" if not self._all else "")
+                + (" (small sample)" if stats["small_sample"] and self._all else ""))
+            presets = sorted({str(entry.get("preset", "Unknown")) for entry in self._all})
+            current = self._preset.currentData()
+            self._preset.blockSignals(True)
+            self._preset.clear()
+            self._preset.addItem("Any preset", "")
+            for preset in presets:
+                self._preset.addItem(preset, preset)
+            self._preset.setCurrentIndex(max(0, self._preset.findData(current)))
+            self._preset.blockSignals(False)
             self._error.hide()
             self._loaded = True
-            if self._history:
-                self._table.selectRow(0)
+            self._render()
         except (OSError, ValueError, TypeError) as error:
             logger.warning("game mode: could not load session history: %s", error)
             self._error.set_error(f"Session history could not be loaded: {error}")
 
-    def _show_detail(self):
+    def _filtered(self):
+        return history_export.filter_sessions(
+            self._all, query=self._search.text(), preset=self._preset.currentData() or "",
+            restore=self._restore.currentData() or "",
+            days=self._days.currentData() or None)
+
+    def _render(self):
+        self._history = self._filtered()
+        self._table.setRowCount(0)
+        self._detail.clear()
+        for row, entry in enumerate(self._history):
+            before, after = entry.get("handles_before"), entry.get("handles_after")
+            freed = f"{before - after:,}" if before is not None and after is not None else "Unknown"
+            status, color = _restore_status(entry)
+            cells = [_date(entry["started"]), _duration(entry.get("duration_s")),
+                     entry.get("preset", "Unknown"),
+                     f"{entry.get('actions_ok', 0)}/{entry.get('actions_total', 0)} OK", freed,
+                     status]
+            self._table.insertRow(row)
+            for column, value in enumerate(cells):
+                item = QTableWidgetItem(str(value))
+                if column == 5:
+                    item.setForeground(QColor(semantic(color)))
+                self._table.setItem(row, column, item)
+        if self._history:
+            self._table.selectRow(0)
+
+    def _selected(self):
         row = self._table.currentRow()
-        if not 0 <= row < len(self._history):
+        return self._history[row] if 0 <= row < len(self._history) else None
+
+    def _show_detail(self):
+        entry = self._selected()
+        if entry is None:
             return
-        entry = self._history[row]
         lines = [f"ON: {_date(entry['started'])}    OFF: {_date(entry.get('ended'))}",
                  f"Preset: {entry.get('preset', 'Unknown')}    Duration: {_duration(entry.get('duration_s'))}",
                  f"Restore: {_restore_status(entry)[0]}",
@@ -129,8 +207,9 @@ class HistoryTab(QWidget):
                  f"{entry.get('actions_skipped', 0)} skipped",
                  f"Services stopped: {entry.get('services_stopped', 0)}    Apps closed: {entry.get('apps_closed', 0)}"
                  f"    Tasks disabled: {entry.get('tasks_disabled', 0)}",
-                 f"Handles: {entry.get('handles_before')} → {entry.get('handles_after')}    "
-                 f"Processes: {entry.get('processes_before')} → {entry.get('processes_after')}", "", "Changes:"]
+                 f"Handles: {entry.get('handles_before')} -> {entry.get('handles_after')}    "
+                 f"Processes: {entry.get('processes_before')} -> {entry.get('processes_after')}",
+                 f"Note: {entry.get('note', '')}", "", "Changes:"]
         lines.extend(f"[{e['status']}] {e['label']} ({e['kind']})" for e in entry.get("actions", []))
         lines.extend(["", "ON report:"])
         lines.extend(f"[{r['level']}] {r['text']}" for r in entry.get("on_report", []))
@@ -138,3 +217,43 @@ class HistoryTab(QWidget):
         lines.extend(entry.get("restore_issues") or ["None reported" if entry.get("restore_ok") is not None
                                                    else "Restoration has not been recorded."])
         self._detail.setPlainText("\n".join(lines))
+        self._note.setText(entry.get("note", ""))
+
+    def _save_note(self):
+        entry = self._selected()
+        if entry is None:
+            return
+        self._all = history_export.set_note(self._all, entry["started"], self._note.text())
+        retention = (self._host._settings.retention if self._host is not None else 100)
+        self._all = history_export.trim(self._all, retention)
+        save_history(self._all, folder=self._folder)
+        self._render()
+
+    def _export(self, kind: str):
+        if not self._history:
+            self._error.set_error("Nothing to export with the current filters.")
+            return
+        default = f"game-mode-history.{kind}"
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export Game Mode history", default,
+            "CSV files (*.csv)" if kind == "csv" else "JSON files (*.json)")
+        if not path:
+            return
+        text = (history_export.to_csv(self._history) if kind == "csv"
+                else history_export.to_json(self._history))
+        try:
+            Path(path).write_text(text, encoding="utf-8-sig" if kind == "csv" else "utf-8")
+        except OSError as exc:
+            self._error.set_error(f"Export failed: {exc}")
+            return
+        self._summary.setText(f"Exported {len(self._history)} session(s) to {path}")
+
+    def _retry_restore(self):
+        if self._host is not None and getattr(self._host, "_journal", None) is not None \
+                and self._host._journal.active:
+            self._host._turn_off()
+            return
+        QMessageBox.information(
+            self, "Retry restore",
+            "There is no active Game Mode journal to retry. The last restore report is "
+            "shown in the session detail / Session tab.")

@@ -2441,6 +2441,38 @@ REFUSED while Game Mode is ON (or its journal is unreadable).
   every Maximum registry/service/power item incl. T5, T6, M3, M4; it does NOT
   touch the capability removals or the one-way cleanups, and says so.
 
+### Game Mode upgrade (2026-10-29)
+
+The 29-wave Game Mode upgrade lives in new Qt-free engines plus a Session tab:
+
+- `engine/game_config.py` owns `modules.game_mode.settings`, profiles,
+  `game_mode.protected_patterns`, `protected_publishers`, bindings and weekly
+  schedules; `export_settings`/`import_settings` validate before replacing.
+- `engine/game_library.py` scans Steam/Epic/user game paths; binding is explicit,
+  never inferred. `engine/session_control.py` owns auto-OFF decisions (session
+  limit + bound-game grace), pause state, weekly windows and priority values.
+- `engine/health_audit.py` compares journal entries with live services/tasks/
+  plan/registry and repairs only drift; `engine/history_export.py` provides
+  filters, aggregates, notes, CSV/JSON and retention trimming; `metrics.py` is a
+  failure-tolerant snapshot; `preflight_guard.py` names reboot/owner/battery
+  conflicts.
+- `session_tab.py` is the Session tab: session banner, auto-OFF, restore-point
+  toggle, notifications, close grace/force, bound-game priority, AC guard,
+  profiles, protection, schedules, health audit, selective undo, settings
+  export/import, recovery details and Resume last.
+- `session.py`: protected patterns/publishers, configurable close grace and
+  force-close, bound-game priority boost (journaled with `after` so OFF restores
+  only its own change), selective `undo_action`, task-owner guard, STREAM/LOW
+  presets, registry `after` evidence and a small journal-write retry for
+  transient Windows locks.
+- `main.py --game-mode on|off [--game-profile NAME]` runs the same journaled
+  session headlessly. Tray Game Mode actions and Ctrl+Alt+G publish
+  `GAME_MODE_COMMAND`; the module owns the state change.
+- `history_tab.py` adds filters, analytics, notes, CSV/JSON export, retry and a
+  Benchmarks shortcut. Deliberate limits: benchmark hook opens Dashboard, retry
+  restarts the journal path rather than per-row, and no background enforcement
+  or heuristic auto-ON exists.
+
 ### Whole-app review fixes (2026-10-17)
 
 Leads from a `/gpt` whole-app review (six Codex workers stopped at the

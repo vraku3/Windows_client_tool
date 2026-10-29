@@ -109,6 +109,21 @@ class SystemTrayManager:
         menu.addAction(exit_action)
         self._tray.setContextMenu(menu)
 
+    def add_game_mode_menu(self, publish) -> None:
+        menu = self._tray.contextMenu()
+        if menu is None:
+            return
+        submenu = menu.addMenu("Game Mode")
+        for label, command, minutes in (
+            ("ON", "on", 0), ("OFF", "off", 0),
+            ("Pause enforcement 15 min", "pause", 15),
+            ("Pause enforcement 30 min", "pause", 30),
+            ("Pause enforcement 60 min", "pause", 60),
+        ):
+            action = submenu.addAction(label)
+            action.triggered.connect(
+                lambda _checked=False, c=command, m=minutes: publish(c, m))
+
     def show(self) -> None:
         self._tray.show()
 

@@ -187,9 +187,11 @@ def test_stage_reuses_only_current_thread_lock(monkeypatch):
         called.append(True)
         return 2
     monkeypatch.setattr(mdm_store_trigger, "trigger_store_scan", trigger)
-    assert stages.run_store_stage(None, lambda _: None, lambda: False) == {"triggered": 2}
+    result = stages.run_store_stage(None, lambda _: None, lambda: False)
+    assert result["triggered"] == 2
     with operations.operation_lock("Unattended maintenance"):
-        assert stages.run_store_stage(None, lambda _: None, lambda: False) == {"triggered": 2}
+        result = stages.run_store_stage(None, lambda _: None, lambda: False)
+        assert result["triggered"] == 2
         errors = []
         def other_thread():
             try:

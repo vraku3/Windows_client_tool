@@ -106,16 +106,37 @@ class Choices:
     #: the catalog later is included without pressing the button again.
     #: "custom" once anything is ticked by hand.
     preset: str = catalog.REC
+    protected: Set[str] = field(default_factory=set)
+    protected_publishers: Set[str] = field(default_factory=set)
+    bound_game: str = ""
+    priority_boost: str = "off"
+    force_close: bool = True
+    close_grace_s: float = 8.0
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
         out.update(services=sorted(self.services), close=sorted(self.close), preset=self.preset,
-                   paused_tasks=sorted(self.paused_tasks))
+                   paused_tasks=sorted(self.paused_tasks),
+                   protected=sorted(self.protected),
+                   protected_publishers=sorted(self.protected_publishers),
+                   bound_game=self.bound_game, priority_boost=self.priority_boost,
+                   force_close=self.force_close, close_grace_s=self.close_grace_s)
         return out
 
 
 def preset(level: str, groups: List["AppGroup"]) -> Choices:
     """Presets select catalogued programs; Explorer always requires opt-in."""
+    if level == catalog.STREAM:
+        return Choices(services={s.name for s in catalog.SERVICES if s.level == catalog.REC},
+                       paused_tasks={t.pattern for t in catalog.TASKS if t.level == catalog.REC},
+                       close=set(), lower=True, visuals=False, explorer=False,
+                       preset=catalog.STREAM)
+    if level == catalog.LOW:
+        return Choices(services={s.name for s in catalog.SERVICES
+                                 if s.name in ("dosvc", "bits")},
+                       paused_tasks=set(), close=set(), lower=False, visuals=False,
+                       plan=False, gamebar=True, vcache=False, tasks=False,
+                       maintenance=False, explorer=False, preset=catalog.LOW)
     wanted = {catalog.REC} if level == catalog.REC else {catalog.REC, catalog.MAX}
     # A program an AI agent runs inside is never ticked by a preset.
     hosting = {g.exe for g in groups if g.hosts}
@@ -136,7 +157,20 @@ def choices_from_config(data) -> Choices:
         c.services = {s for s in data["services"] if isinstance(s, str)}
     if isinstance(data.get("close"), list):
         c.close = {s.lower() for s in data["close"] if isinstance(s, str)}
-    c.preset = data.get("preset") if data.get("preset") in (catalog.REC, catalog.MAX) else "custom"
+    c.preset = data.get("preset") if data.get("preset") in (
+        catalog.REC, catalog.MAX, catalog.STREAM, catalog.LOW) else "custom"
+    if isinstance(data.get("protected"), list):
+        c.protected = {str(s) for s in data["protected"] if str(s).strip()}
+    if isinstance(data.get("protected_publishers"), list):
+        c.protected_publishers = {str(s) for s in data["protected_publishers"] if str(s).strip()}
+    if isinstance(data.get("bound_game"), str):
+        c.bound_game = data["bound_game"]
+    if data.get("priority_boost") in ("off", "above", "high"):
+        c.priority_boost = data["priority_boost"]
+    if isinstance(data.get("force_close"), bool):
+        c.force_close = data["force_close"]
+    if isinstance(data.get("close_grace_s"), (int, float)):
+        c.close_grace_s = max(0.0, min(float(data["close_grace_s"]), 120.0))
     if isinstance(data.get("paused_tasks"), list):
         c.paused_tasks = {s for s in data["paused_tasks"] if isinstance(s, str)}
     elif c.preset == catalog.MAX:
@@ -334,8 +368,8 @@ class _On:
         if exists and before == value:
             return False
         entry = self.j.record({"kind": "registry", "hive": hive, "path": path, "name": name,
-                               "label": label, "existed": exists, "value": before, "type": kind,
-                               "broadcast": broadcast})
+                               "label": label, "existed": exists, "value": before,
+                               "after": value, "type": kind, "broadcast": broadcast})
         error = self.s.reg_set(path, name, value, REG_DWORD, hive)
         if error:
             self.log(BAD, f"{label}: not set ({error})")
@@ -401,6 +435,11 @@ class _On:
         for path, enabled in found:
             spec = catalog.task_spec(path)
             if spec is None or spec.pattern not in wanted or not enabled:
+                continue
+            owner = getattr(self.s, "task_owner", lambda _p: None)(path)
+            if owner and any(marker in owner.casefold()
+                             for marker in ("trustedinstaller", "window manager")):
+                refused.append(f"{spec.label} (OS-protected owner {owner})")
                 continue
             running = choices.preset == catalog.MAX and self.s.task_running(path) is True
             entry = self.j.record({"kind": "task", "path": path, "label": spec.label})
@@ -491,11 +530,17 @@ class _On:
         self.j.mark_done(entry)
         self.log(OK, f"{spec.label}: stopped")
 
-    def close_apps(self, groups: List[AppGroup], wanted: Set[str], maximum: bool = False) -> None:
+    def close_apps(self, groups: List[AppGroup], wanted: Set[str], maximum: bool = False,
+                   protected=(), protected_publishers=(), grace: float = 8.0,
+                   force: bool = True) -> None:
         """Every program is journaled first, then all are closed together."""
         chosen = [g for g in groups if g.exe in wanted]
         entries, jobs, closing = [], [], []
+        from .game_config import is_protected
         for g in chosen:
+            if is_protected(g.exe, g.label, protected):
+                self.log(INFO, f"{g.label}: protected by the user -- left open")
+                continue
             if g.spec and g.spec.when == "spareprocess":
                 if (not maximum or any("spareprocess" not in (self.s.details(p.pid)[1] or "").lower()
                                        for p in g.procs)
@@ -503,6 +548,11 @@ class _On:
                     self.log(INFO, f"{g.label}: left open -- not a hidden spare process in Maximum")
                     continue
             path, cmdline, elevated = self.s.details(g.roots[0].pid)
+            publisher = getattr(self.s, "publisher", lambda _path: None)(path)
+            if publisher and any(str(want).casefold() in publisher.casefold()
+                                 for want in (protected_publishers or ())):
+                self.log(INFO, f"{g.label}: protected publisher {publisher} -- left open")
+                continue
             program, args = split_command_line(cmdline or "")
             extra = g.spec.reopen_args if g.spec else ""
             if extra and extra not in args:
@@ -519,7 +569,8 @@ class _On:
         if not jobs:
             return
         self.log(INFO, f"Closing {len(jobs)} program(s) together...")
-        for g, entry, error in zip(closing, entries, self.s.close_many(jobs)):
+        for g, entry, error in zip(closing, entries,
+                                    self.s.close_many(jobs, grace=grace, force=force)):
             if error:
                 self.log(BAD, f"{g.label}: not closed ({error})")
                 continue
@@ -535,12 +586,41 @@ class _On:
                 if self.s.priority(p.pid) != NORMAL:       # only Normal is lowered
                     continue
                 entry = self.j.record({"kind": "priority", "pid": p.pid, "create_time": p.create_time,
-                                       "exe": g.exe, "before": NORMAL})
+                                       "exe": g.exe, "before": NORMAL,
+                                       "after": BELOW_NORMAL})
                 if self.s.alive(p.pid, p.create_time) and self.s.set_priority(p.pid, BELOW_NORMAL) is None:
                     self.j.mark_done(entry)
                     lowered += 1
             if lowered:
                 self.log(OK, f"{g.label}: left open, {lowered} process(es) at Below Normal priority")
+
+    def boost_priority(self, bound_game: str, mode: str) -> None:
+        """Raise the user's bound game to Above Normal/High, journaled."""
+        from .session_control import priority_value
+        target = priority_value(mode)
+        if not bound_game or target is None:
+            return
+        wanted_name = os.path.basename(bound_game).casefold()
+        wanted_path = os.path.normcase(os.path.abspath(bound_game)) if os.path.sep in bound_game else ""
+        touched = 0
+        for proc in self.s.processes():
+            path, _cmdline, _elevated = self.s.details(proc.pid)
+            name = proc.name.casefold()
+            if not (name == wanted_name or (wanted_path and path
+                                            and os.path.normcase(os.path.abspath(path)) == wanted_path)):
+                continue
+            before = self.s.priority(proc.pid)
+            if before is None or before == target:
+                continue
+            entry = self.j.record({"kind": "priority", "pid": proc.pid,
+                                   "create_time": proc.create_time, "exe": proc.name,
+                                   "before": before, "after": target})
+            if self.s.set_priority(proc.pid, target) is None:
+                self.j.mark_done(entry)
+                touched += 1
+        if touched:
+            self.log(OK, f"{os.path.basename(bound_game)}: priority raised to {mode} "
+                         f"({touched} process(es))")
 
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
@@ -601,8 +681,10 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     elevated = system.is_admin()
     procs = system.processes()
     journal.begin(handles_before=total_handles(procs), processes_before=len(procs),
-                  elevated=elevated, preset={catalog.REC: "Recommended", catalog.MAX: "Maximum"}.get(
-                      choices.preset, "Custom"))
+                  elevated=elevated, preset={
+                      catalog.REC: "Recommended", catalog.MAX: "Maximum",
+                      catalog.STREAM: "Streaming", catalog.LOW: "Low power",
+                  }.get(choices.preset, "Custom"))
     _history_start(journal, log)
     on = _On(system, journal, log)
     if choices.plan:
@@ -620,9 +702,13 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     on.services(choices.services, elevated)
     groups = running_apps(procs, session, own_pid, lambda pid: system.details(pid)[0],
                           system.fullscreen_pids())
-    on.close_apps(groups, choices.close, choices.preset == catalog.MAX)
+    on.close_apps(groups, choices.close, choices.preset == catalog.MAX,
+                  protected=choices.protected,
+                  protected_publishers=choices.protected_publishers,
+                  grace=choices.close_grace_s, force=choices.force_close)
     if choices.lower:
         on.lower(groups, choices.close)
+    on.boost_priority(choices.bound_game, choices.priority_boost)
     if choices.explorer:
         on.explorer(session)
     time.sleep(1.0)
@@ -703,6 +789,35 @@ def _enforce(system, journal: Journal, log: Log) -> int:
     return count
 
 
+def undo_action(system, journal: Journal, index: int, log: Log) -> tuple:
+    """Put one journaled change back while Game Mode stays ON."""
+    actions = journal.actions
+    if not 0 <= index < len(actions):
+        return False, "change not found"
+    entry = actions[index]
+    if entry.get("undone"):
+        return False, "already undone"
+    handler = _RESTORE.get(entry.get("kind"))
+    if handler is None:
+        return False, "this change cannot be undone on its own"
+    messages: List[dict] = []
+
+    def say(level, text):
+        messages.append({"level": level, "text": text})
+        log(level, text)
+
+    try:
+        ok = handler(system, entry, say, {"reopened": [], "priority": {}, "tasks": 0})
+    except Exception as error:  # noqa: BLE001 -- keep the journal recoverable
+        logger.exception("game mode: selective undo failed for %r", entry)
+        return False, str(error)
+    if not ok:
+        return False, messages[-1]["text"] if messages else "restore was refused"
+    entry["undone"] = True
+    journal.save()
+    return True, messages[-1]["text"] if messages else "change undone"
+
+
 # ==== OFF =======================================================================================
 def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[dict]:
     """Serialize OFF after ON/enforce, retaining every unresolved change."""
@@ -736,6 +851,8 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
     ctx: dict = {"reopened": [], "priority": {}, "tasks": 0}
     failed, validated = [], []
     for entry in reversed(journal.actions):
+        if entry.get("undone"):
+            continue
         try:
             if not _valid_entry(system, entry):
                 say(BAD, f"Rejected journal entry {entry!r}: not something Game Mode changes")
@@ -821,7 +938,7 @@ def _restore_priority(system, e, say, ctx) -> bool:
     if current is None:
         say(BAD, f"{e['exe']} ({e['pid']}): priority unreadable -- restore can be retried")
         return False
-    if current != BELOW_NORMAL:
+    if current != e.get("after", BELOW_NORMAL):
         say(INFO, f"{e['exe']} ({e['pid']}): priority changed since -- left as it is")
         return True
     if not system.alive(e["pid"], e["create_time"]):

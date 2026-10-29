@@ -528,6 +528,16 @@ class MainWindow(QMainWindow):
         self._tray_manager = SystemTrayManager(self, icon)
         self._tray_manager.show()
         self._tray_manager.connect_activated(self._on_tray_activated)
+        self._tray_manager.add_game_mode_menu(self._publish_game_mode)
+        from PyQt6.QtGui import QKeySequence, QShortcut
+        self._gm_shortcut = QShortcut(QKeySequence("Ctrl+Alt+G"), self)
+        self._gm_shortcut.activated.connect(
+            lambda: self._publish_game_mode("toggle", 0))
+
+    def _publish_game_mode(self, command: str, minutes: int = 0) -> None:
+        from core.events import GAME_MODE_COMMAND, GameModeCommandData
+        self._app.event_bus.publish(
+            GAME_MODE_COMMAND, GameModeCommandData(command=command, minutes=minutes or 30))
 
     def _on_tray_activated(self, reason) -> None:
         from PyQt6.QtWidgets import QSystemTrayIcon

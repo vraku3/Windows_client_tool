@@ -18,13 +18,14 @@ import datetime
 import logging
 import os
 import textwrap
+import time
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLabel,
-                             QPlainTextEdit, QPushButton, QTabWidget, QTreeWidget, QTreeWidgetItem,
-                             QVBoxLayout, QWidget)
+                             QLineEdit, QPlainTextEdit, QPushButton, QTabWidget,
+                             QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
@@ -34,7 +35,8 @@ from core.widget_life import widget_is_valid
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
 
-from .engine import advice, catalog, session
+from .engine import (advice, catalog, game_config, game_library,
+                     metrics, preflight_guard, session, session_control)
 from .engine.journal import Journal
 from .engine.system import WinSystem
 
@@ -97,14 +99,32 @@ class GameModeModule(BaseModule):
         self._pending_log: List[str] = []
         self._optimise_tab = None
         self._history_tab = None
+        self._session_tab = None
+        self._settings = game_config.GameSettings()
+        self._pause = session_control.PauseState()
+        self._saw_game = False
+        self._last_game_seen = None
+        self._schedule_active = False
+        self._auto_started = False
+        self._monitor_timer: Optional[QTimer] = None
 
     # ---- lifecycle ----------------------------------------------------------------------------
     def on_start(self, app) -> None:
         self.app = app
         config = getattr(app, "config", None)
         self._choices = session.choices_from_config(config.get(CONFIG_KEY, None) if config else None)
+        self._settings = game_config.load_settings(config)
+        self._apply_settings_to_choices()
+        bus = getattr(app, "event_bus", None)
+        if bus is not None:
+            from core.events import GAME_MODE_COMMAND
+            bus.subscribe(GAME_MODE_COMMAND, self._on_command)
         if self._journal.load():
             self._start_enforcing()
+        if self._monitor_timer is None:
+            self._monitor_timer = QTimer()
+            self._monitor_timer.timeout.connect(self._monitor_tick)
+        self._monitor_timer.start(60_000)
 
     def get_refresh_interval(self):
         return None
@@ -134,6 +154,17 @@ class GameModeModule(BaseModule):
             logger.warning("game mode: live count unreadable: %s", error)
             return
         self._show_state(session.total_handles(procs), len(procs))
+        try:
+            snap = metrics.snapshot(self._system)
+            parts = []
+            if snap.get("ram_percent") is not None:
+                parts.append(f"RAM {snap['ram_percent']:.0f}%")
+            if snap.get("cpu_percent") is not None:
+                parts.append(f"CPU {snap['cpu_percent']:.0f}%")
+            if parts and widget_is_valid(self._metrics_lbl):
+                self._metrics_lbl.setText("   ".join(parts))
+        except Exception:
+            logger.debug("game mode: metrics snapshot unreadable", exc_info=True)
 
     def on_stop(self) -> None:
         self._cancel_preflight()
@@ -143,8 +174,107 @@ class GameModeModule(BaseModule):
             self._live_timer.stop()
         if self._enforce_timer is not None:
             self._enforce_timer.stop()
+        if self._monitor_timer is not None:
+            self._monitor_timer.stop()
         _keep_awake(False)
         self.cancel_all_workers()
+
+    def _config(self):
+        return getattr(getattr(self, "app", None), "config", None)
+
+    def _apply_settings_to(self, choices) -> None:
+        settings = self._settings
+        choices.protected = set(game_config.load_protected(self._config()))
+        choices.protected_publishers = set(
+            self._config().get("modules.game_mode.protected_publishers", [])
+            if self._config() is not None else [])
+        choices.bound_game = settings.bound_game
+        choices.priority_boost = settings.priority_boost
+        choices.force_close = settings.force_close
+        choices.close_grace_s = settings.close_grace_s
+
+    def _apply_settings_to_choices(self) -> None:
+        self._apply_settings_to(self._choices)
+
+    def _save_settings(self) -> None:
+        config = self._config()
+        game_config.save_settings(config, self._settings)
+        self._apply_settings_to_choices()
+        self._save_choices()
+        if config is not None:
+            config.save()
+
+    def _notify(self, title: str, message: str, icon: str = "info") -> None:
+        if not self._settings.notifications:
+            return
+        bus = getattr(getattr(self, "app", None), "event_bus", None)
+        if bus is None:
+            return
+        from core.events import NOTIFY_BALLOON, BalloonNotifyData
+        bus.publish(NOTIFY_BALLOON, BalloonNotifyData(title, message, icon))
+
+    def _on_command(self, data) -> None:
+        command = getattr(data, "command", data)
+        if command == "on":
+            self._turn_on()
+        elif command == "off":
+            self._turn_off()
+        elif command == "toggle":
+            if self._journal.active:
+                self._turn_off()
+            else:
+                self._turn_on()
+        elif command == "pause":
+            minutes = int(getattr(data, "minutes", 30) or 30)
+            self._pause_enforcement(minutes)
+
+    def _pause_enforcement(self, minutes: int) -> None:
+        self._pause = session_control.PauseState(until=time.time() + max(1, minutes) * 60)
+        if self._session_tab is not None:
+            self._session_tab.refresh()
+        self._append(f"{session.INFO}\tEnforcement paused for {minutes} minute(s).")
+
+    def _auto_on(self, profile: str = "") -> None:
+        if self._journal.active or self._busy:
+            return
+        choices = self._choices
+        if profile:
+            saved = game_config.load_profiles(self._config()).get(profile)
+            if saved:
+                choices = session.choices_from_config(saved)
+                self._settings = game_config.load_settings(self._config())
+                self._apply_settings_to(choices)
+        try:
+            from core.operation_lock import active_owner
+            owner = active_owner()
+        except Exception:
+            owner = None
+        if owner:
+            self._append(f"{session.WARN}\tAuto-ON skipped: {owner} is running.")
+            return
+        system, journal, own, sid = self._system, self._journal, os.getpid(), _session_id()
+        settings = self._settings
+
+        def work(w):
+            if settings.restore_point:
+                from core.system_restore import create_restore_point
+                w.signals.log_line.emit(f"{session.INFO}\tCreating a restore point before auto-ON...")
+                ok, _out = create_restore_point("Windows Client Tool - Game Mode auto-ON")
+                if not ok:
+                    raise RuntimeError("Game Mode auto-ON refused: the restore point could not be created.")
+            def log(level, text):
+                w.signals.log_line.emit(f"{level}\t{text}")
+
+            return session.turn_on(system, choices, journal, log, own, sid)
+
+        self._append(f"{session.INFO}\tAuto-ON starting ({profile or 'current choices'}).")
+        self._auto_started = True
+        self._saw_game = False
+        self._last_game_seen = None
+        self._busy = True
+        self._show_state()
+        self._run(work, self._on_done)
+        self._notify("Game Mode", "Game Mode turned ON automatically.")
 
     def _navigate_to(self, module_name: str) -> None:
         """Optimise OS's "Open in App Buster": App Buster does the removal."""
@@ -181,12 +311,15 @@ class GameModeModule(BaseModule):
         log_layout = QVBoxLayout(log_page)
         log_layout.addWidget(self._log)
         self._tabs.addTab(log_page, "Log")
+        from .session_tab import SessionTab
+        self._session_tab = SessionTab(self, w)
+        self._tabs.addTab(self._session_tab, "Session")
         from .optimise_tab import OptimiseTab
         self._optimise_tab = OptimiseTab(lambda: self.app.thread_pool, w, host_busy=lambda: self._busy,
                                          busy_changed=self._show_state, navigate=self._navigate_to)
         self._tabs.addTab(self._optimise_tab, "Optimise OS")
         from .history_tab import HistoryTab
-        self._history_tab = HistoryTab(self._journal.folder, w)
+        self._history_tab = HistoryTab(self._journal.folder, w, host=self)
         self._tabs.addTab(self._history_tab, "History")
         self._tabs.currentChanged.connect(self._tab_changed)
         lay.addWidget(self._tabs, 1)
@@ -205,6 +338,8 @@ class GameModeModule(BaseModule):
     def _tab_changed(self, index: int) -> None:
         if self._history_tab is not None and self._tabs.widget(index) is self._history_tab:
             self._history_tab.activate()
+        if self._session_tab is not None and self._tabs.widget(index) is self._session_tab:
+            self._session_tab.refresh()
 
     def _build_header(self, parent: QWidget) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -309,6 +444,20 @@ class GameModeModule(BaseModule):
         self._app_tree = self._checked_tree(page, ["Close", "Program", "Handles", "While playing"])
         self._app_tree.itemChanged.connect(self._app_toggled)
         lay.addWidget(QLabel("Programs running now", page))
+        tools = QHBoxLayout()
+        self._app_filter = QLineEdit(page)
+        self._app_filter.setPlaceholderText("Filter programs...")
+        self._app_filter.textChanged.connect(lambda _t: self._filter_apps())
+        self._only_unknown = QCheckBox("Only unknown", page)
+        self._only_unknown.toggled.connect(lambda _s: self._filter_apps())
+        self._protect_btn = QPushButton("Protect selected", page)
+        self._protect_btn.setToolTip(
+            "Never close or reopen these programs in any Game Mode session.")
+        self._protect_btn.clicked.connect(self._protect_selected)
+        tools.addWidget(self._app_filter, 1)
+        tools.addWidget(self._only_unknown)
+        tools.addWidget(self._protect_btn)
+        lay.addLayout(tools)
         lay.addWidget(self._app_tree, 2)
         return page
 
@@ -411,8 +560,34 @@ class GameModeModule(BaseModule):
             self._app_tree.addTopLevelItem(row)
         self._app_tree.blockSignals(False)
 
+    def _filter_apps(self) -> None:
+        text = self._app_filter.text().strip().casefold() if hasattr(self, "_app_filter") else ""
+        only_unknown = self._only_unknown.isChecked() if hasattr(self, "_only_unknown") else False
+        for index in range(self._app_tree.topLevelItemCount()):
+            item = self._app_tree.topLevelItem(index)
+            exe = str(item.data(0, Qt.ItemDataRole.UserRole) or "")
+            known = any(group.exe == exe and group.spec is not None for group in self._groups)
+            hide = bool(text and text not in f"{item.text(1)} {exe}".casefold())
+            hide = hide or (only_unknown and known)
+            item.setHidden(hide)
+
+    def _protect_selected(self) -> None:
+        patterns = list(game_config.load_protected(self._config()))
+        for item in self._app_tree.selectedItems():
+            exe = str(item.data(0, Qt.ItemDataRole.UserRole) or "").strip()
+            if exe and exe.casefold() not in {p.casefold() for p in patterns}:
+                patterns.append(exe)
+        if not patterns:
+            return
+        game_config.save_protected(self._config(), patterns)
+        self._config().save()
+        self._choices.protected = set(patterns)
+        self._save_choices()
+        self._append(f"{session.INFO}\tProtected {len(patterns)} pattern(s) from closing.")
+
     def _apply_preset(self, level: str) -> None:
         self._choices = session.preset(level, self._groups)
+        self._apply_settings_to_choices()
         self._sync_flag_boxes()
         self._save_choices()
         self._refill_ticks()
@@ -563,7 +738,50 @@ class GameModeModule(BaseModule):
         if (self._busy or self._journal.active
                 or (self._optimise_tab is not None and self._optimise_tab.busy)):
             return
+        reasons = []
+        try:
+            from core.pending_reboot import check as pending_check
+            state = pending_check()
+            if state.needed:
+                reasons.extend(preflight_guard.conflicts(
+                    pending_reboot=True, reboot_reasons=state.reasons))
+        except Exception:
+            logger.warning("game mode: pending reboot unreadable", exc_info=True)
+        try:
+            from core.operation_lock import active_owner
+            owner = active_owner()
+            if owner:
+                reasons.extend(preflight_guard.conflicts(owner=owner))
+        except Exception:
+            logger.warning("game mode: operation owner unreadable", exc_info=True)
+        if self._settings.ac_guard:
+            try:
+                import psutil
+                battery = psutil.sensors_battery()
+                if (battery is not None and battery.power_plugged is False
+                        and self._choices.preset == catalog.MAX):
+                    reasons.append("This PC is on battery; Maximum is more likely to "
+                                   "drain it and change the power plan.")
+            except Exception:
+                logger.debug("game mode: battery state unreadable", exc_info=True)
+        if reasons:
+            from PyQt6.QtWidgets import QMessageBox
+            answer = QMessageBox.warning(
+                self._widget, "Game Mode conflicts",
+                "\n".join(f"* {reason}" for reason in reasons)
+                + "\n\nContinue anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        config = self._config()
+        if config is not None:
+            config.set("modules.game_mode.last_choices", self._choices.to_config())
+            config.save()
         self._busy = True
+        self._auto_started = False
+        self._saw_game = False
+        self._last_game_seen = None
         self._show_state()
         choices = session.choices_from_config(self._choices.to_config())
         own, sid, system = os.getpid(), _session_id(), self._system
@@ -604,6 +822,16 @@ class GameModeModule(BaseModule):
         def work(w):
             def log(level, text):
                 w.signals.log_line.emit(f"{level}\t{text}")
+            if self._settings.restore_point:
+                from core.system_restore import create_restore_point
+                log(session.INFO, "Creating a System Restore point before Game Mode ON...")
+                ok, _out = create_restore_point("Windows Client Tool - before Game Mode")
+                if not ok:
+                    raise RuntimeError(
+                        "Nothing was applied: the System Restore point could not be "
+                        "created (System Restore off or blocked by policy?). Turn off "
+                        "'Create a restore point before ON' in the Session tab to continue.")
+                log(session.INFO, "Restore point created.")
             return session.turn_on(system, choices, journal, log, own, sid)
         self._run(work, self._on_done)
 
@@ -644,9 +872,14 @@ class GameModeModule(BaseModule):
                      f"{data.get('handles_after', 0):,}, processes {data.get('processes_before')} -> "
                      f"{data.get('processes_after')}. Leave this app open to keep it tight.")
         self._show_state()
+        self._notify("Game Mode", "Game Mode is ON.")
+        if self._session_tab is not None:
+            self._session_tab.refresh()
 
     def _off_done(self, report: List[dict]) -> None:
         self._busy = False
+        self._saw_game = False
+        self._last_game_seen = None
         if self._history_tab is not None:
             self._history_tab.invalidate()
         if self._enforce_timer is not None:
@@ -672,6 +905,12 @@ class GameModeModule(BaseModule):
             elif widget_is_valid(self._banner):
                 self._banner.hide()
         self._refresh_all()
+        if self._journal.active:
+            self._notify("Game Mode", self._recovery_message, "error")
+        else:
+            self._notify("Game Mode", "Game Mode is OFF.", "info")
+        if self._session_tab is not None:
+            self._session_tab.refresh()
 
     def _failed(self, err) -> None:
         self._busy = False
@@ -690,9 +929,35 @@ class GameModeModule(BaseModule):
         self._enforce_timer.start(ENFORCE_MS)
 
     def _enforce(self) -> None:
-        if self._busy or self._enforce_worker is not None or not self._journal.active:
+        if self._busy or self._enforce_worker is not None:
+            return
+        if not self._journal.active:
+            self._maybe_auto_on()
+            return
+        if self._pause.paused():
             return
         system, journal = self._system, self._journal
+        bound = self._settings.bound_game
+        alive = None
+        if bound:
+            try:
+                alive = game_library.running_game(bound, system.processes())
+            except Exception:
+                alive = None
+            if alive:
+                self._saw_game = True
+                self._last_game_seen = time.time()
+        should_off, reason = session_control.should_auto_off(
+            started=journal.data.get("started"), now=time.time(),
+            minutes=self._settings.auto_off_minutes,
+            game_alive=alive if self._saw_game else True,
+            last_alive=self._last_game_seen,
+            grace_s=self._settings.auto_off_grace_s)
+        if should_off:
+            self._append(f"{session.INFO}\tAuto-OFF: {reason}.")
+            self._notify("Game Mode", f"Turning Game Mode OFF: {reason}.")
+            self._turn_off()
+            return
 
         def work(w):
             return session.enforce(system, journal,
@@ -703,6 +968,48 @@ class GameModeModule(BaseModule):
         self._enforce_worker = w
         w.signals.finished.connect(self._enforce_finished)
         self._start(w)
+
+    def _monitor_tick(self) -> None:
+        if self._busy:
+            return
+        if not self._journal.active:
+            self._maybe_auto_on()
+            return
+        schedule = session_control.schedule_for(
+            datetime.datetime.now(), game_config.load_schedules(self._config()))
+        if not schedule and self._schedule_active:
+            self._schedule_active = False
+            if self._auto_started:
+                self._auto_started = False
+                self._turn_off()
+
+    def _maybe_auto_on(self) -> None:
+        if self._busy or self._journal.active:
+            return
+        config = self._config()
+        schedule = session_control.schedule_for(datetime.datetime.now(),
+                                                game_config.load_schedules(config))
+        if schedule and not self._schedule_active:
+            self._schedule_active = True
+            self._auto_on(schedule.get("profile", ""))
+            return
+        if not schedule and self._schedule_active:
+            self._schedule_active = False
+            if self._auto_started and self._journal.active:
+                self._auto_started = False
+                self._turn_off()
+            return
+        if self._settings.auto_on_armed and self._settings.bound_game:
+            try:
+                running = game_library.running_game(
+                    self._settings.bound_game, self._system.processes())
+            except Exception:
+                return
+            if running and not self._auto_started:
+                self._auto_started = True
+                self._auto_on()
+            elif not running:
+                self._auto_started = False
 
     def _enforce_finished(self) -> None:
         self._enforce_worker = None

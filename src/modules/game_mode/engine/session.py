@@ -554,6 +554,9 @@ class _On:
         entries, jobs, closing = [], [], []
         from .game_config import is_protected
         for g in chosen:
+            if catalog.is_never_close(g.exe):
+                self.log(INFO, f"{g.label}: agent runner/host -- never closed by Game Mode")
+                continue
             if is_protected(g.exe, g.label, protected):
                 self.log(INFO, f"{g.label}: protected by the user -- left open")
                 continue

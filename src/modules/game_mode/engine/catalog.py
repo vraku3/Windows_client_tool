@@ -428,6 +428,7 @@ NEVER_CLOSE = LAUNCHERS + ANTIVIRUS_PATTERNS + (
     "claude.exe", "node.exe", "codex.exe", "python.exe", "pythonw.exe", "windowsterminal.exe",
     "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "wsl*.exe",
     "bash.exe", "sh.exe", "mintty.exe", "git.exe", "ssh.exe",
+    "codex-command-runner*.exe", "opencode*.exe", "chatgpt.exe", "node_repl.exe",
     "winclienttool*.exe",
 )
 
@@ -449,7 +450,7 @@ LAUNCHER_HELPERS = (
 #: running Claude Code, the ChatGPT app running Codex) ends it too, so such a
 #: program is offered but never ticked by a preset, and is labelled with what
 #: runs inside it.
-WORK_IN_PROGRESS = ("claude.exe", "codex.exe")
+WORK_IN_PROGRESS = ("claude.exe", "codex.exe", "chatgpt.exe")
 
 #: A clean quit for programs that only hide on WM_CLOSE: (argument), run from
 #: the program's own path, unelevated through the shell.
@@ -468,6 +469,11 @@ def is_launcher_helper(exe: str) -> bool:
 def is_work_in_progress(exe: str) -> bool:
     low = exe.lower()
     return any(fnmatch.fnmatch(low, pattern) for pattern in WORK_IN_PROGRESS)
+
+
+def is_never_close(exe: str) -> bool:
+    low = exe.lower()
+    return any(fnmatch.fnmatch(low, pattern) for pattern in NEVER_CLOSE)
 
 
 def is_launcher(exe: str) -> bool:

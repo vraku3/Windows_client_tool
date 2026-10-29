@@ -927,3 +927,9 @@ def test_unreadable_plan_list_retains_recovery_entry(journal, monkeypatch, retur
     report = session.turn_off(WinSystem(), journal, _quiet, settle=0)
     assert journal.active and journal.actions == [entry]
     assert any("Recovery incomplete" in r["text"] for r in report)
+
+def test_agent_runners_are_never_closed_even_if_a_selection_names_them():
+    for name in ("codex-command-runner-0.163.0.exe", "opencode.exe",
+                 "ChatGPT.exe", "claude.exe", "node_repl.exe"):
+        assert catalog.is_never_close(name), name
+    assert not catalog.is_never_close("game.exe")

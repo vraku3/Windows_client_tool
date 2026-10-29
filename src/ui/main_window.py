@@ -1,9 +1,11 @@
 # src/ui/main_window.py
+import ctypes
 import datetime
 import logging
+from ctypes import wintypes
 from typing import Dict, Optional
 
-from PyQt6.QtCore import QByteArray, Qt, QTimer
+from PyQt6.QtCore import QAbstractNativeEventFilter, QByteArray, Qt, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
@@ -20,6 +22,30 @@ from ui.search_bar import SearchBar
 from ui.filter_panel import FilterPanel
 from ui.search_results import SearchResultsTable
 from ui.notification_tray import SystemTrayManager
+
+WM_HOTKEY = 0x0312
+GAME_MODE_HOTKEY_ID = 0x4A21
+
+
+class _GlobalHotkeyFilter(QAbstractNativeEventFilter):
+    """Turn the registered Ctrl+Alt+G WM_HOTKEY into the Game Mode command."""
+
+    def __init__(self, hotkey_id: int, callback) -> None:
+        super().__init__()
+        self._id = hotkey_id
+        self._callback = callback
+
+    def nativeEventFilter(self, event_type, message):
+        if event_type in ("windows_generic_MSG", "windows_dispatcher_MSG"):
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+                if msg.message == WM_HOTKEY and int(msg.wParam) == self._id:
+                    self._callback()
+                    return True, 0
+            except Exception:
+                pass
+        return False, 0
+
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +533,23 @@ class MainWindow(QMainWindow):
         for digit in range(10):
             QShortcut(QKeySequence(f"Ctrl+{digit}"), self).activated.connect(
                 lambda d=digit: self._switch_audio_output(d))
+        # Global Ctrl+Alt+G: works while a game has focus, not only in this
+        # window. If another app owns the combination, keep the local fallback.
+        self._global_hotkey_registered = False
+        self._hotkey_filter = None
+        try:
+            if ctypes.windll.user32.RegisterHotKey(
+                    int(self.winId()), GAME_MODE_HOTKEY_ID, 0x0003, ord("G")):
+                self._hotkey_filter = _GlobalHotkeyFilter(
+                    GAME_MODE_HOTKEY_ID, lambda: self._publish_game_mode("toggle", 0))
+                QApplication.instance().installNativeEventFilter(self._hotkey_filter)
+                self._global_hotkey_registered = True
+        except Exception:
+            logger.warning("global Game Mode hotkey could not be registered", exc_info=True)
+        if not self._global_hotkey_registered:
+            self._gm_shortcut = QShortcut(QKeySequence("Ctrl+Alt+G"), self)
+            self._gm_shortcut.activated.connect(
+                lambda: self._publish_game_mode("toggle", 0))
 
     def _switch_audio_output(self, digit: int) -> None:
         from core import audio_switch
@@ -529,10 +572,6 @@ class MainWindow(QMainWindow):
         self._tray_manager.show()
         self._tray_manager.connect_activated(self._on_tray_activated)
         self._tray_manager.add_game_mode_menu(self._publish_game_mode)
-        from PyQt6.QtGui import QKeySequence, QShortcut
-        self._gm_shortcut = QShortcut(QKeySequence("Ctrl+Alt+G"), self)
-        self._gm_shortcut.activated.connect(
-            lambda: self._publish_game_mode("toggle", 0))
 
     def _publish_game_mode(self, command: str, minutes: int = 0) -> None:
         from core.events import GAME_MODE_COMMAND, GameModeCommandData
@@ -805,6 +844,14 @@ class MainWindow(QMainWindow):
         if update_worker is not None:
             update_worker.cancel()
 
+        try:
+            if getattr(self, "_global_hotkey_registered", False):
+                ctypes.windll.user32.UnregisterHotKey(
+                    int(self.winId()), GAME_MODE_HOTKEY_ID)
+            if getattr(self, "_hotkey_filter", None) is not None:
+                QApplication.instance().removeNativeEventFilter(self._hotkey_filter)
+        except Exception:
+            logger.warning("global Game Mode hotkey cleanup failed", exc_info=True)
         self._save_window_geometry()
         self._app.shutdown()
         event.accept()

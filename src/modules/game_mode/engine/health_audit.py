@@ -25,6 +25,16 @@ def audit(system, actions: List[dict]) -> List[dict]:
         elif kind == "plan":
             actual = system.active_plan()
             expected = entry.get("after")
+        elif kind in ("affinity", "power_throttling"):
+            alive = getattr(system, "alive", lambda _pid, _ct: True)(
+                entry.get("pid"), entry.get("create_time"))
+            expected = entry.get("after")
+            if not alive:
+                actual = expected          # process exited: nothing left to drift
+            elif kind == "affinity":
+                actual = getattr(system, "get_affinity", lambda _pid: None)(entry.get("pid"))
+            else:
+                actual = getattr(system, "power_throttling", lambda _pid: None)(entry.get("pid"))
         elif kind == "registry":
             if "after" not in entry:
                 rows.append({"kind": kind, "label": label, "expected": "",
@@ -67,6 +77,12 @@ def repair(system, rows: List[dict]) -> List[dict]:
             error = system.reg_set(entry.get("path", ""), entry.get("name", ""),
                                    entry.get("after"), entry.get("type", 4),
                                    entry.get("hive", "HKCU"))
+        elif kind == "affinity":
+            error = getattr(system, "set_affinity", lambda _p, _m: "unsupported")(
+                entry.get("pid"), entry.get("after"))
+        elif kind == "power_throttling":
+            error = getattr(system, "set_power_throttling", lambda _p, _v: "unsupported")(
+                entry.get("pid"), bool(entry.get("after")))
         row["repaired"] = not error
         row["repair_error"] = error or ""
     return rows

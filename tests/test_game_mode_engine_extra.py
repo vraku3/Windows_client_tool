@@ -218,3 +218,28 @@ def test_multimedia_and_game_tuning_are_journaled(tmp_path):
     assert system.affinity == 0xFFFF
     assert system.throttled is False
     assert system.reg
+
+
+def test_health_audit_checks_affinity_and_power_throttling():
+    class S:
+        def alive(self, pid, created):
+            return True
+
+        def get_affinity(self, pid):
+            return 0xFFFF
+
+        def power_throttling(self, pid):
+            return False
+
+        def set_affinity(self, pid, mask):
+            return None
+
+        def set_power_throttling(self, pid, value):
+            return None
+
+    actions = [
+        {"kind": "affinity", "pid": 1, "create_time": 2, "after": 0xFFFF, "done": True},
+        {"kind": "power_throttling", "pid": 1, "create_time": 2, "after": False, "done": True},
+    ]
+    rows = health_audit.audit(S(), actions)
+    assert [row["status"] for row in rows] == ["ok", "ok"]

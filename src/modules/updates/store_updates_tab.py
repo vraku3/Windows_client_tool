@@ -10,6 +10,7 @@ import logging
 import subprocess
 import time
 from typing import List
+from urllib.parse import quote
 
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QFont
@@ -21,6 +22,8 @@ from PyQt6.QtWidgets import (
 from core.table_ui import centered_item, center_header
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
+from modules.updates.csv_io import save_csv
+from modules.updates.export_csv import app_offers_to_csv
 from modules.updates.operation_guard import maintenance_worker
 from modules.updates.winget_updater import AppUpdate
 from ui.error_banner import ErrorBanner
@@ -56,8 +59,11 @@ class _StoreUpdatesTab(QWidget):
     def _sync_buttons(self) -> None:
         busy = bool(self._busy_owner) or self._updating
         self._trigger_btn.setEnabled(not busy)
-        self._update_btn.setEnabled(
-            not busy and bool({i.row() for i in self._table.selectedIndexes()}))
+        selected = bool({i.row() for i in self._table.selectedIndexes()})
+        self._update_btn.setEnabled(not busy and selected)
+        self._update_all_btn.setEnabled(not busy and bool(self._updates))
+        self._export_btn.setEnabled(not busy and bool(self._updates))
+        self._open_app_btn.setEnabled(not busy and selected)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -73,12 +79,26 @@ class _StoreUpdatesTab(QWidget):
         self._update_btn.setToolTip(
             "Upgrade the selected Store offers through winget by exact id. "
             "No rollback is provided; a restart may be needed.")
+        self._update_all_btn = QPushButton("Update All")
+        self._update_all_btn.setEnabled(False)
+        self._update_all_btn.setToolTip(
+            "Upgrade every listed Store offer through winget. No rollback is "
+            "provided; a restart may be needed.")
+        self._export_btn = QPushButton("Export CSV")
+        self._export_btn.setEnabled(False)
+        self._export_btn.setToolTip("Write the listed Store offers to a CSV file.")
+        self._open_app_btn = QPushButton("Open in Store")
+        self._open_app_btn.setEnabled(False)
+        self._open_app_btn.setToolTip("Search the Microsoft Store for the selected app.")
         self._open_btn = QPushButton("Open Store")
         self._reset_btn = QPushButton("Reset Store Cache")
         self._reset_btn.setToolTip("Runs wsreset.exe — clears the Store cache and closes the Store app.")
         self._status_lbl = QLabel("Refreshed together with the App Updates tab.")
         toolbar.addWidget(self._trigger_btn)
         toolbar.addWidget(self._update_btn)
+        toolbar.addWidget(self._update_all_btn)
+        toolbar.addWidget(self._export_btn)
+        toolbar.addWidget(self._open_app_btn)
         toolbar.addWidget(self._open_btn)
         toolbar.addWidget(self._reset_btn)
         toolbar.addStretch()
@@ -106,6 +126,9 @@ class _StoreUpdatesTab(QWidget):
 
         self._trigger_btn.clicked.connect(self._do_trigger)
         self._update_btn.clicked.connect(self._do_update)
+        self._update_all_btn.clicked.connect(self._do_update_all)
+        self._export_btn.clicked.connect(self._do_export)
+        self._open_app_btn.clicked.connect(self._do_open_app)
         self._open_btn.clicked.connect(self._do_open_store)
         self._reset_btn.clicked.connect(self._do_reset)
 
@@ -131,7 +154,33 @@ class _StoreUpdatesTab(QWidget):
         return [self._updates[row] for row in rows if row < len(self._updates)]
 
     def _do_update(self) -> None:
-        targets = self._selected_updates()
+        self._update(self._selected_updates())
+
+    def _do_update_all(self) -> None:
+        self._update(list(self._updates))
+
+    def _do_export(self) -> None:
+        if not self._updates:
+            self._status_lbl.setText("Nothing to export.")
+            return
+        path = save_csv(self, "Export Store offers", "store-update-offers.csv",
+                        app_offers_to_csv(self._updates))
+        if path:
+            self._status_lbl.setText(
+                f"Exported {len(self._updates)} Store offer(s) to {path}")
+
+    def _do_open_app(self) -> None:
+        selected = self._selected_updates()
+        if not selected:
+            return
+        name = selected[0].name
+        try:
+            subprocess.Popen(
+                ["explorer.exe", f"ms-windows-store://search/?query={quote(name)}"])
+        except OSError as exc:
+            self._error_banner.set_error(f"Could not open the Store: {exc}")
+
+    def _update(self, targets) -> None:
         if not targets or self.app is None or self._updating:
             return
         names = "\n".join(f"* {u.name} ({u.winget_id})" for u in targets[:8])

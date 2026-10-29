@@ -11,8 +11,11 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
                     'Store offers by exact id. Installers can change apps or need elevation; '
                     'there is no app rollback.',
  'Update All': 'Start winget upgrades for every listed package, including rows hidden by the text '
-               'filter, without an extra app confirmation. Installed versions are checked when '
-               'verification is enabled; no app rollback is provided.',
+               'filter, without an extra app confirmation; on the Microsoft Store tab it upgrades '
+               'every listed Store offer. Installed versions are checked when verification is '
+               'enabled; no app rollback is provided.',
+ 'Open in Store': 'Search the Microsoft Store for the selected app in your browser-style Store '
+                  'client. This opens Store search; it does not confirm or install an update.',
  'Package Details': 'Read package information using winget show. This does not install or change '
                     'the selected application.',
  'Add to Blocklist': 'Save a matching package or title pattern to exclude it from future app scans '

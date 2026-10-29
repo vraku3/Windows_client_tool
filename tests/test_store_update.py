@@ -74,3 +74,40 @@ def test_store_tab_only_lists_msstore_rows_and_gates_update(qapp):
     tab._sync_buttons()
     assert tab._update_btn.isEnabled()
     assert [u.winget_id for u in tab._selected_updates()] == ["Acme.Store.App"]
+
+
+def test_store_tab_offers_update_all_and_export(qapp, monkeypatch):
+    from modules.updates.store_updates_tab import _StoreUpdatesTab
+    class Config:
+        def get(self, key, default=None):
+            return default
+    tab = _StoreUpdatesTab()
+    tab.set_app(SimpleNamespace(config=Config()))
+    tab.set_updates([AppUpdate("Store App", "Acme.Store.App", "1", "2", "msstore")])
+    tab._sync_buttons()
+    assert tab._update_all_btn.isEnabled()
+    assert tab._export_btn.isEnabled()
+    captured = []
+    monkeypatch.setattr("modules.updates.store_updates_tab.save_csv",
+                        lambda parent, title, name, text: captured.append(text) or "x.csv")
+    tab._do_export()
+    assert captured and "Acme.Store.App" in captured[0]
+
+
+def test_open_in_store_searches_for_the_selected_app(qapp, monkeypatch):
+    from modules.updates.store_updates_tab import _StoreUpdatesTab
+    class Config:
+        def get(self, key, default=None):
+            return default
+    tab = _StoreUpdatesTab()
+    tab.set_app(SimpleNamespace(config=Config()))
+    tab.set_updates([AppUpdate("Store App", "Acme.Store.App", "1", "2", "msstore")])
+    tab._table.selectRow(0)
+    tab._sync_buttons()
+    assert tab._open_app_btn.isEnabled()
+    calls = []
+    monkeypatch.setattr("modules.updates.store_updates_tab.subprocess.Popen",
+                        lambda args: calls.append(args))
+    tab._do_open_app()
+    assert calls and calls[0][0] == "explorer.exe"
+    assert "ms-windows-store://search/?query=Store%20App" in calls[0][1]

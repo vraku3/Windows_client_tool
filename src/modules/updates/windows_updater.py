@@ -257,6 +257,20 @@ class InstallResult:
         return self.reboot_required and self.result_code in (None, 2)
 
 
+def order_for_install(updates: List[WindowsUpdate]) -> List[WindowsUpdate]:
+    """Stable order that puts restart-requiring offers last.
+
+    Installing a reboot-required update first can force Windows to restart
+    before the remaining updates are applied. Within each group the scan's
+    order is preserved; an unreadable reboot field is treated as "may need a
+    restart" and goes last rather than first.
+    """
+    def needs_restart(update) -> bool:
+        return str(getattr(update, "reboot", "") or "") != "0"
+
+    return sorted(updates, key=needs_restart)
+
+
 def download_size_mb(updates: List[WindowsUpdate], warn: Callable[[str], None]) -> float:
     """Estimate download space, keeping WUA's enormous bundle bounds out.
 

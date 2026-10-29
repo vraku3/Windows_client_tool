@@ -1,13 +1,13 @@
 """Searchable, date-filtered Windows Update history (dialect: dark theme)."""
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
-    QTableWidget, QTableWidgetItem, QVBoxLayout,
+    QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
 from ui.table_style import apply_table_style
 
-from .history_model import (detail_text, filter_entries, kb_of_title, operation_label,
-                            paginate, result_label, uninstallable)
+from .history_model import (detail_text, entries_to_csv, filter_entries, kb_of_title,
+                            operation_label, paginate, result_label, uninstallable)
 
 PAGE_SIZE = 100
 RANGES = (("All entries", None), ("Last 7 days", 7), ("Last 30 days", 30), ("Last 90 days", 90))
@@ -55,12 +55,16 @@ class UpdateHistoryDialog(QDialog):
             "Remove the selected KB through Windows Update, after confirmation "
             "and a restore point. Only succeeded installations are offered.")
         self._page_lbl = QLabel()
+        self._export_btn = QPushButton("Export CSV...")
+        self._export_btn.setToolTip(
+            "Write the filtered history to a CSV file, including decoded errors.")
         close = QPushButton("Close")
         close.clicked.connect(self.accept)
         pager.addWidget(self._prev)
         pager.addWidget(self._next)
         pager.addWidget(self._page_lbl)
         pager.addStretch()
+        pager.addWidget(self._export_btn)
         pager.addWidget(self._uninstall_btn)
         pager.addWidget(close)
         layout.addLayout(pager)
@@ -70,6 +74,7 @@ class UpdateHistoryDialog(QDialog):
         self._prev.clicked.connect(lambda: self._go(-1))
         self._next.clicked.connect(lambda: self._go(1))
         self._uninstall_btn.clicked.connect(self._ask_uninstall)
+        self._export_btn.clicked.connect(self._export_csv)
         self._table.itemSelectionChanged.connect(self._update_uninstall_button)
         self._render()
 
@@ -108,6 +113,20 @@ class UpdateHistoryDialog(QDialog):
         self._prev.setEnabled(self._page > 0)
         self._next.setEnabled(self._page + 1 < pages)
         self._update_uninstall_button()
+
+    def _export_csv(self) -> None:
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export Windows Update history", "windows-update-history.csv",
+            "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8-sig", newline="") as handle:
+                handle.write(entries_to_csv(self._rows))
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", f"Could not write {path}:\n{exc}")
+            return
+        self._count.setText(f"Exported {len(self._rows)} entries to {path}")
 
     def _selected_entry(self):
         row = self._table.currentRow()

@@ -16,6 +16,9 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
  'Download Selected': 'Download the selected Windows updates into the Windows Update cache without '
                       'installing them. No restart is requested; Install Selected can then run '
                       'from the downloaded bytes. A download alone changes no installed software.',
+ 'Download Visible': 'Download only the Windows updates the current filters leave visible, '
+                     'without installing them. No restart is requested; Install Visible can then '
+                     'run from the downloaded bytes.',
  'Driver Manager': 'Open Driver Manager, where a driver is approved and installed for a specific '
                    'device. Windows Update cannot reliably match one driver package to one device '
                    'from this list.',
@@ -31,9 +34,10 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
                   'anything.',
  'Show hidden updates': 'Include hidden offers in the Windows Update scan. Changing this view does '
                         'not unhide or install an update.',
- 'Verify Store Updates': 'Ask Windows to trigger Microsoft Store app updates through its '
-                         'management interface. This can change installed Store apps, needs '
-                         'administrator rights, and provides no app rollback.',
+ 'Verify Store Updates': 'Record installed Store app versions, ask Windows to trigger Store '
+                         'updates, then re-read the versions for up to 90 seconds. A version that '
+                         'moved is reported; no change in that window is not proof the Store is '
+                         'finished, and there is no app rollback.',
  'Open Store': 'Open Microsoft Store so you can manage apps there. Opening the Store does not '
                'itself confirm an update in this app.',
  'Verify versions after updating and report confirmed/unchanged': 'Save this setting immediately. '
@@ -105,8 +109,9 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
  'Run All': 'Start the checked maintenance stages in sequence immediately, without another '
             'confirmation. Stages can install software or permanently remove caches and superseded '
             'components with administrator rights; there is no combined rollback.',
- 'Stop': 'Request stopping before the next package or stage. A running installer is allowed to '
-         'finish; completed changes remain.',
+ 'Stop': 'Request stopping before the next package, update or stage. A download or installer '
+         'already in flight is allowed to finish; completed changes remain and there is no '
+         'rollback here.',
  'Generate Maintenance Report': 'Write an HTML maintenance report from the run results and open it '
                                 'in your browser. This does not run maintenance again.',
  'App Updates': 'Review application upgrades offered by winget, the Windows package manager. '

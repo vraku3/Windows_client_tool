@@ -8,6 +8,7 @@ Store's Downloads & updates page, and reset the Store cache (wsreset.exe).
 """
 import logging
 import subprocess
+import time
 from typing import List
 
 from PyQt6.QtCore import Qt, QThreadPool
@@ -97,19 +98,43 @@ class _StoreUpdatesTab(QWidget):
 
     def _do_trigger(self):
         self._trigger_btn.setEnabled(False)
+        self._status_lbl.setText("Verifying Store updates (up to 90s)...")
         self._log.clear()
+        self._log.appendPlainText(
+            "Recording installed versions, then asking the Store to update. "
+            "This watches for up to 90 seconds.")
 
         @maintenance_worker("Updates install")
         def _run(worker):
+            from core.appx_service import fetch_packages_or_none
             from core.mdm_store_trigger import trigger_store_scan
-            return trigger_store_scan(output_cb=lambda line: worker.signals.log_line.emit(line))
+            from modules.updates.store_verify import verify_store_update
+
+            def log(line: str) -> None:
+                worker.signals.log_line.emit(line)
+
+            return verify_store_update(
+                fetch=fetch_packages_or_none,
+                trigger=lambda emit: trigger_store_scan(output_cb=emit),
+                sleep=time.sleep,
+                clock=time.monotonic,
+                log=log,
+                should_stop=lambda: worker.is_cancelled,
+            )
 
         w = COMWorker(_run)
         w.signals.log_line.connect(self._log.appendPlainText)
-        w.signals.result.connect(lambda _r: self._trigger_btn.setEnabled(True))
+        w.signals.result.connect(self._on_trigger_done)
         w.signals.error.connect(self._on_error)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
+
+    def _on_trigger_done(self, result) -> None:
+        if not _widget_valid(self._status_lbl):
+            return
+        self._trigger_btn.setEnabled(True)
+        self._status_lbl.setText(result.message)
+        self._log.appendPlainText(result.message)
 
     def _on_error(self, err: str):
         self._trigger_btn.setEnabled(True)

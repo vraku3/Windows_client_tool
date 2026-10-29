@@ -158,7 +158,8 @@ class MainWindow(QMainWindow):
         self._tray_manager.show_balloon(data.title, data.message, icon)
 
     def _on_nav_request(self, data) -> None:
-        self._navigate_to_module(data.module_name, getattr(data, "path", None))
+        self._navigate_to_module(data.module_name, getattr(data, "path", None),
+                                 getattr(data, "payload", None))
 
     def _restore_window_geometry(self) -> None:
         """Put the window back where it was, on the screen it was on.
@@ -550,7 +551,8 @@ class MainWindow(QMainWindow):
         palette.move(x, y)
         palette.exec()
 
-    def _navigate_to_module(self, name: str, path: Optional[str] = None) -> None:
+    def _navigate_to_module(self, name: str, path: Optional[str] = None,
+                            payload: Optional[dict] = None) -> None:
         """Select the module called `name` — or whatever now contains it.
 
         A module that became a tab of a composite has no sidebar entry of its
@@ -579,6 +581,10 @@ class MainWindow(QMainWindow):
             select_child = getattr(module, "select_child", None)
             if callable(select_child):
                 select_child(name)
+        if payload and module is not None:
+            receive = getattr(module, "receive_navigation", None)
+            if callable(receive):
+                receive(payload)
         if path and module is not None:
             open_path = getattr(module, "open_path", None)
             if callable(open_path):

@@ -52,3 +52,6 @@ class NavRequestData:
     #: Optional: a module that understands `open_path(path)` (TreeSize) jumps
     #: straight to it instead of landing on whatever it last showed.
     path: Optional[str] = None
+    #: Optional module-specific context for `receive_navigation(payload)`,
+    #: e.g. Updates routing a driver offer as {"filter": "Intel Corporation"}.
+    payload: Optional[dict] = None

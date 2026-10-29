@@ -28,7 +28,9 @@ from core.table_ui import (
 )
 from core.widget_life import widget_is_valid
 from core.worker import COMWorker, Worker
+from modules.diagnose.help_ui import explain, explain_menu
 from modules.driver_manager.driver_grouping import DriverGroup, group_drivers
+from modules.driver_manager.help_text import INTRO, CONTROLS, HEADERS, TABS
 from modules.driver_manager.driver_reader import (
     DriverInfo, classify_provider, fetch_drivers, list_restore_points,
     published_name_for, _dedup_key, _PSEUDO_CLASSES,
@@ -104,7 +106,7 @@ def _update_status_text(driver: DriverInfo, history_by_id: Dict[str, "update_his
     if is_held_driver(driver):
         return HELD_STATUS
     if provider_for(driver) is None:
-        return "—"
+        return "â€”"
     return update_history.status_label(driver.version, history_by_id.get(driver.device_id))
 
 
@@ -177,13 +179,9 @@ def _choose_baseline(parent, metas: list) -> Optional[str]:
     return choice if ok else None
 
 
-from modules.diagnose.help_ui import explain
-from modules.driver_manager.help_text import INTRO, CONTROLS, HEADERS, TABS
-from modules.diagnose.help_ui import explain_menu
-
 class DriverModule(BaseModule):
     name = "Driver Manager"
-    icon = "🖨️"
+    icon = "ðŸ–¨ï¸"
     description = "View and manage installed drivers"
     #: Reading and browsing is always available with no elevation; the one
     #: destructive action (uninstalling a driver package) calls
@@ -237,6 +235,9 @@ class DriverModule(BaseModule):
         self._columns_fitted_this_session = False
         self._inventory_loading = False
         self._inventory_loaded = False
+        #: A filter requested before this module's widget existed, applied
+        #: once `_filter_edit` is built (Updates routes a driver offer here).
+        self._pending_nav_filter: str = ""
 
     def create_widget(self) -> QWidget:
         self._widget = QWidget()
@@ -250,6 +251,9 @@ class DriverModule(BaseModule):
 
         toolbar = self._build_toolbar()
         layout.addLayout(toolbar)
+        if self._pending_nav_filter:
+            self._filter_edit.setText(self._pending_nav_filter)
+            self._pending_nav_filter = ""
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
@@ -337,7 +341,7 @@ class DriverModule(BaseModule):
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
         self._export_inventory_btn = QPushButton("Export Inventory")
-        snapshots_btn = QPushButton("Snapshots ▾")
+        snapshots_btn = QPushButton("Snapshots â–¾")
         snapshots_menu = QMenu(snapshots_btn)
         snapshots_menu.addAction("Save Baseline...", self._save_baseline_action)
         snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
@@ -349,7 +353,7 @@ class DriverModule(BaseModule):
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
-            "Opens Windows Update settings — this app does not match a "
+            "Opens Windows Update settings â€” this app does not match a "
             "specific device to a specific driver update.")
         self._backup_btn = QPushButton("Backup Drivers")
         self._cancel_backup_btn = QPushButton("Cancel (stops after current file)")
@@ -431,6 +435,23 @@ class DriverModule(BaseModule):
         if not self._inventory_loaded:
             self._do_refresh()
 
+    def receive_navigation(self, payload) -> None:
+        """Apply a filter requested by another module (Updates driver routing).
+
+        The filter is a device name, class or manufacturer. If the widget does
+        not exist yet it is stored and applied when `create_widget` builds the
+        toolbar; never call this from a worker thread.
+        """
+        text = str((payload or {}).get("filter", "") or "").strip()
+        if not text:
+            return
+        if self._filter_edit is None:
+            self._pending_nav_filter = text
+            return
+        self._filter_edit.setText(text)
+        if self._status_lbl is not None:
+            self._status_lbl.setText(f"Filtered to {text} from Updates.")
+
     def get_refresh_interval(self) -> Optional[int]:
         return 60_000
 
@@ -492,7 +513,8 @@ class DriverModule(BaseModule):
         flag = self._flag_filter_combo.currentText() if self._flag_filter_combo else "All"
         visible = [
             d for d in drivers
-            if (not ft or ft in d.device_name.lower() or ft in d.driver_class.lower())
+            if (not ft or ft in d.device_name.lower() or ft in d.driver_class.lower()
+                or ft in (d.publisher or "").lower())
             and not (hide_pseudo and d.driver_class in _PSEUDO_CLASSES)
             and (flag == "All"
                  or (flag == "Signed only" and d.signed)
@@ -2027,7 +2049,7 @@ class DriverModule(BaseModule):
         # call, no WMI/COM involved (core/worker.py's own guidance).
         if self._restore_points_btn:
             self._restore_points_btn.setEnabled(False)
-            self._restore_points_btn.setText("Loading…")
+            self._restore_points_btn.setText("Loadingâ€¦")
 
         worker = Worker(lambda _w: list_restore_points())
 
@@ -2052,7 +2074,7 @@ class DriverModule(BaseModule):
             # unconditionally on module switch, and list_restore_points()
             # can legitimately still be running (up to its own 30s
             # subprocess timeout) when that happens. Without this handler
-            # the button stayed stuck on "Loading…"/disabled forever --
+            # the button stayed stuck on "Loadingâ€¦"/disabled forever --
             # the same class of bug _backup_drivers's
             # `signals.cancelled.connect(self._on_backup_cancelled)`
             # exists to prevent. No message box here, just recovery: a
@@ -2186,15 +2208,15 @@ class DriverModule(BaseModule):
             act_instances.triggered.connect(
                 lambda: self._show_group_instances(group))
         menu.addSeparator()
-        act_uninstall = menu.addAction("Uninstall driver package…")
+        act_uninstall = menu.addAction("Uninstall driver packageâ€¦")
         act_uninstall.setEnabled(bool(published))
         act_uninstall.setToolTip(
             "" if published else
             "This is a driver Windows ships inline, not an installed "
-            "OEM package — remove it from Device Manager instead.")
+            "OEM package â€” remove it from Device Manager instead.")
         act_uninstall.triggered.connect(
             lambda: self._do_uninstall_driver(published, device_name))
-        act_export_one = menu.addAction("Export this driver…")
+        act_export_one = menu.addAction("Export this driverâ€¦")
         act_export_one.setEnabled(bool(published))
         act_export_one.triggered.connect(
             lambda: self._export_one_driver(published))
@@ -2202,7 +2224,7 @@ class DriverModule(BaseModule):
         act_copy_hwid.setEnabled(bool(driver and driver.hardware_id))
         act_copy_hwid.triggered.connect(
             lambda: self._copy_hardware_id(driver.hardware_id if driver else ""))
-        act_rollback = menu.addAction("Roll back to previous version…")
+        act_rollback = menu.addAction("Roll back to previous versionâ€¦")
         act_rollback.setToolTip(
             "Checks whether Windows still has an older version of this "
             "driver cached in the driver store, then offers to open "
@@ -2361,14 +2383,14 @@ class DriverModule(BaseModule):
 
     def _on_backup_error_line(self, stderr: str) -> str:
         if "access" in stderr.lower() and "denied" in stderr.lower():
-            return "denied — this driver package needs administrator"
+            return "denied â€” this driver package needs administrator"
         return stderr.strip() or "failed for an unreported reason"
 
     def _on_backup_done(self, result) -> None:
         output, returncode = result
         self._reset_backup_controls()
         if returncode == 0:
-            msg = "Driver backup complete — exported to selected folder."
+            msg = "Driver backup complete â€” exported to selected folder."
         else:
             msg = f"Driver backup finished: {self._on_backup_error_line(output)}"
         logger.info(msg)

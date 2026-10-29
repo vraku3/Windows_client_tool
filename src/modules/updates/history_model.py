@@ -1,6 +1,8 @@
 """Searchable Windows Update history model (Qt-free)."""
 from __future__ import annotations
 
+import csv
+import io
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, List, Optional
@@ -68,6 +70,38 @@ def filter_entries(entries: Iterable, query: str = "", days: Optional[int] = Non
         rows.append(entry)
     return sorted(rows, key=lambda e: getattr(e, "when", datetime.min.replace(tzinfo=timezone.utc)),
                   reverse=True)
+
+
+CSV_HEADERS = ["Date", "Operation", "Update", "KB", "Result", "HRESULT", "Detail"]
+
+
+def _csv_row(entry) -> List[str]:
+    when = getattr(entry, "when", None)
+    hresult = int(getattr(entry, "hresult", 0) or 0)
+    return [
+        when.astimezone().strftime("%Y-%m-%d %H:%M:%S") if when else "",
+        operation_label(getattr(entry, "operation", 1)),
+        str(getattr(entry, "title", "") or ""),
+        kb_of_title(getattr(entry, "title", "")),
+        result_label(getattr(entry, "result_code", 0)),
+        f"0x{hresult & 0xFFFFFFFF:08X}" if hresult else "",
+        detail_text(entry),
+    ]
+
+
+def entries_to_csv(entries: Iterable) -> str:
+    """The filtered history as CSV text (header row included).
+
+    `csv` owns quoting, so an update title with a comma or quote exports
+    intact instead of shifting columns. Callers write it as UTF-8 with BOM so
+    Excel opens non-ASCII titles correctly.
+    """
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\r\n")
+    writer.writerow(CSV_HEADERS)
+    for entry in entries:
+        writer.writerow(_csv_row(entry))
+    return output.getvalue()
 
 
 def paginate(rows: List, page: int, page_size: int = 100):

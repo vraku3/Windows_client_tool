@@ -416,3 +416,37 @@ def test_scan_without_published_security_identifiers_says_nothing(monkeypatch):
     update = windows_updater.fetch_pending_updates()[0]
     assert update.security_bulletins == [] and update.cve_ids == []
     assert update.driver is False
+
+
+def test_download_stops_between_items(monkeypatch):
+    """Stop is checked before each item; the one in flight finishes."""
+    import win32com.client
+    from types import SimpleNamespace as NS
+    calls = []
+
+    def _identity():
+        identity = _Update()
+        identity.IsDownloaded = False
+        identity.EulaAccepted = True
+        return identity
+
+    downloader = NS(Download=lambda: calls.append("download") or NS(ResultCode=2, HResult=0))
+    session = NS(CreateUpdateDownloader=lambda: downloader)
+    monkeypatch.setattr(
+        win32com.client, "Dispatch",
+        lambda name: NS(Add=lambda u: None) if name.endswith("UpdateColl") else session)
+    updates = [windows_updater.WindowsUpdate(f"KB{i}", f"T{i}", "c", 10.0, "d",
+                                             identity=_identity()) for i in (1, 2)]
+    results = windows_updater.download_updates_iter(
+        updates, is_cancelled=lambda: len(calls) >= 1)
+    assert len(calls) == 1
+    assert len(results) == 1 and results[0].success
+
+
+def test_install_order_puts_restart_offers_last_and_keeps_scan_order():
+    from modules.updates.windows_updater import WindowsUpdate, order_for_install
+    a = WindowsUpdate("KB1", "A", "c", 1, "d", reboot="0")
+    b = WindowsUpdate("KB2", "B", "c", 1, "d", reboot="1")
+    c = WindowsUpdate("KB3", "C", "c", 1, "d", reboot="2")
+    d = WindowsUpdate("KB4", "D", "c", 1, "d", reboot="")
+    assert [u.kb for u in order_for_install([b, a, c, d])] == ["KB1", "KB2", "KB3", "KB4"]

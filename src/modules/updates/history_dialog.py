@@ -23,6 +23,7 @@ class UpdateHistoryDialog(QDialog):
         self._rows = []
         self._page_rows = []
         self.uninstall_kb = ""
+        self.uninstall_kbs = []
 
         layout = QVBoxLayout(self)
         filters = QHBoxLayout()
@@ -42,6 +43,7 @@ class UpdateHistoryDialog(QDialog):
         self._table.setHorizontalHeaderLabels(["Date", "Operation", "Update", "Result", "Detail"])
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self._table.horizontalHeader().setStretchLastSection(True)
         apply_table_style(self._table, date_columns=(0,))
         layout.addWidget(self._table, 1)
@@ -128,33 +130,38 @@ class UpdateHistoryDialog(QDialog):
             return
         self._count.setText(f"Exported {len(self._rows)} entries to {path}")
 
-    def _selected_entry(self):
-        row = self._table.currentRow()
-        if 0 <= row < len(self._page_rows):
-            return self._page_rows[row]
-        return None
+    def _selected_entries(self):
+        rows = sorted({index.row() for index in self._table.selectedIndexes()})
+        return [self._page_rows[row] for row in rows
+                if 0 <= row < len(self._page_rows)]
 
     def _update_uninstall_button(self) -> None:
-        entry = self._selected_entry()
-        self._uninstall_btn.setEnabled(bool(entry is not None and uninstallable(entry)))
+        entries = self._selected_entries()
+        self._uninstall_btn.setEnabled(any(uninstallable(entry) for entry in entries))
 
     def _ask_uninstall(self) -> None:
-        entry = self._selected_entry()
-        if entry is None:
+        entries = [entry for entry in self._selected_entries() if uninstallable(entry)]
+        kbs = []
+        for entry in entries:
+            kb = kb_of_title(getattr(entry, "title", ""))
+            if kb and kb not in kbs:
+                kbs.append(kb)
+        if not kbs:
             return
-        kb = kb_of_title(getattr(entry, "title", ""))
-        if not kb:
-            return
+        shown = "\n".join(f"* {kb}" for kb in kbs[:10])
+        if len(kbs) > 10:
+            shown += f"\n* and {len(kbs) - 10} more"
         answer = QMessageBox.warning(
-            self, "Uninstall update",
-            f"Remove {kb} from this PC?\n\n"
+            self, "Uninstall updates",
+            f"Remove {len(kbs)} update(s) from this PC?\n\n{shown}\n\n"
             "Windows may require a restart, and an update that is superseded or "
-            "serviced by another channel cannot be removed. A System Restore "
-            "point is created first if that setting is on.\n\n"
-            "Uninstall it?",
+            "serviced by another channel cannot be removed. One System Restore "
+            "point is created before the batch if that setting is on.\n\n"
+            "Uninstall them?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.uninstall_kb = kb
+        self.uninstall_kbs = kbs
+        self.uninstall_kb = kbs[0] if len(kbs) == 1 else ""
         self.accept()

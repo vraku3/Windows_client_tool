@@ -1805,8 +1805,11 @@ class _WinUpdatesTab(QWidget):
             from .history_dialog import UpdateHistoryDialog
             dialog = UpdateHistoryDialog(entries, self)
             dialog.exec()
-            if dialog.uninstall_kb:
-                self._do_uninstall(dialog.uninstall_kb)
+            kbs = list(getattr(dialog, "uninstall_kbs", []) or [])
+            if not kbs and getattr(dialog, "uninstall_kb", ""):
+                kbs = [dialog.uninstall_kb]
+            if kbs:
+                self._do_uninstall_many(kbs)
 
         def _failed(message):
             self._history_btn.setEnabled(True)
@@ -1819,59 +1822,73 @@ class _WinUpdatesTab(QWidget):
         QThreadPool.globalInstance().start(w)
 
     def _do_uninstall(self, kb: str) -> None:
-        """Remove one installed KB, after the history dialog's confirmation."""
-        if self.app is None or getattr(self, "_installing", False):
+        self._do_uninstall_many([kb])
+
+    def _do_uninstall_many(self, kbs) -> None:
+        """Remove installed KBs, after the history dialog's confirmation."""
+        kbs = [kb for kb in kbs if kb]
+        if self.app is None or getattr(self, "_installing", False) or not kbs:
             return
         app = self.app
         from core.timeline import record
         record(getattr(app, "app_data_dir", None), "updates", "uninstall_start",
-               f"Uninstalling Windows update {kb}", {"kb": kb})
+               f"Uninstalling {len(kbs)} Windows update(s)",
+               {"kbs": kbs})
         self._installing = True
         self._install_btn.setEnabled(False)
         self._install_visible_btn.setEnabled(False)
         self._refresh_btn.setEnabled(False)
-        self._log.appendPlainText(f"Uninstalling {kb}...")
+        self._log.appendPlainText(f"Uninstalling {len(kbs)} update(s)...")
 
         @maintenance_worker("Updates uninstall")
         def _run(worker):
             from modules.updates.activity_ledger import record_wu_uninstall_activity
-            from modules.updates.windows_updater import uninstall_update
+            from modules.updates.windows_updater import uninstall_updates
             if app.config.get("updates.restore_point_before_install", True):
                 from core.system_restore import create_restore_point
                 worker.signals.log_line.emit(
                     "Creating a System Restore point before uninstalling...")
-                ok, _out = create_restore_point(f"Windows Client Tool — before uninstalling {kb}")
+                ok, _out = create_restore_point(
+                    f"Windows Client Tool - before uninstalling {len(kbs)} update(s)")
                 if not ok:
                     raise RuntimeError(
                         "Nothing was uninstalled: the System Restore point could not be "
                         "created (System Restore off or blocked by policy?).")
                 worker.signals.log_line.emit("Restore point created.")
-            result = uninstall_update(
-                kb,
+            return uninstall_updates(
+                kbs,
                 output_cb=lambda line: worker.signals.log_line.emit(line),
-                is_cancelled=lambda: worker.is_cancelled)
-            record_wu_uninstall_activity(
-                app, result, "manual", worker.signals.log_line.emit)
-            return result
+                is_cancelled=lambda: worker.is_cancelled,
+                result_cb=lambda result: record_wu_uninstall_activity(
+                    app, result, "manual", worker.signals.log_line.emit),
+            )
 
-        def _done(result):
+        def _done(results):
             self._installing = False
             self._refresh_btn.setEnabled(True)
             self._sync_install_button()
-            note = " A restart is required to finish." if result.reboot_required else ""
-            text = f"{result.message}: {kb}.{note}"
+            successful = [r for r in results if r.success]
+            failed = [r for r in results if not r.success]
+            restart = any(r.reboot_required for r in results)
+            note = " A restart is required to finish." if restart else ""
+            text = f"{len(successful)}/{len(results)} uninstalled.{note}"
             self._status_lbl.setText(text)
             self._log.appendPlainText(text)
             from core.timeline import record
-            record(getattr(app, "app_data_dir", None), "updates",
-                   "update_uninstalled" if result.success else "uninstall_failed",
-                   text, {"kb": kb, "result_code": result.result_code},
-                   "info" if result.success else "error")
+            for result in results:
+                record(getattr(app, "app_data_dir", None), "updates",
+                       "update_uninstalled" if result.success else "uninstall_failed",
+                       f"{result.message}: {result.kb}", {"kb": result.kb,
+                       "result_code": result.result_code},
+                       "info" if result.success else "error")
+            details = ""
+            if failed:
+                details = "\n\n" + "\n".join(
+                    f"{r.kb}: {r.message}" for r in failed[:8])
             QMessageBox.information(
-                self, "Uninstall update",
-                ("Uninstalled {0}.{1}" if result.success else "Could not uninstall {0}.{1}\n\n{2}")
-                .format(kb, note, result.message))
-            if result.success:
+                self, "Uninstall updates",
+                text + details)
+            if successful:
                 self._do_refresh()
 
         w = COMWorker(_run)
@@ -1880,7 +1897,6 @@ class _WinUpdatesTab(QWidget):
         w.signals.error.connect(self._on_error)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
-
     def _do_open_settings(self) -> None:
         try:
             subprocess.Popen(["explorer.exe", "ms-settings:windowsupdate"])

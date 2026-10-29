@@ -466,3 +466,23 @@ def test_unhide_without_a_live_identity_refuses():
     u = windows_updater.WindowsUpdate("KB1", "T", "c", 1, "d")
     with pytest.raises(RuntimeError):
         windows_updater.unhide_update(u)
+
+
+def test_uninstall_many_keeps_each_outcome_and_stops_on_cancel(monkeypatch):
+    seen = []
+
+    def fake_uninstall(kb, output_cb=None, is_cancelled=None):
+        seen.append(kb)
+        return windows_updater.InstallResult(kb, kb, kb.startswith("KB1"), None,
+                                             "ok" if kb.startswith("KB1") else "failed")
+
+    monkeypatch.setattr(windows_updater, "uninstall_update", fake_uninstall)
+    results = windows_updater.uninstall_updates(["KB1", "KB2", "KB3"])
+    assert seen == ["KB1", "KB2", "KB3"]
+    assert [r.success for r in results] == [True, False, False]
+
+    seen.clear()
+    checks = iter([False, True])
+    results = windows_updater.uninstall_updates(
+        ["KB1", "KB2", "KB3"], is_cancelled=lambda: next(checks))
+    assert seen == ["KB1"] and len(results) == 1

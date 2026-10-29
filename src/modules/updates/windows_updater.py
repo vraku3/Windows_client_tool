@@ -576,6 +576,36 @@ def uninstall_update(kb: str, output_cb: Optional[Callable[[str], None]] = None,
                          message, bool(outcome.RebootRequired), code)
 
 
+def uninstall_updates(
+    kbs: List[str],
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+    output_cb: Optional[Callable[[str], None]] = None,
+    is_cancelled: Optional[Callable[[], bool]] = None,
+    result_cb: Optional[Callable[[InstallResult], None]] = None,
+) -> List[InstallResult]:
+    """Uninstall several KBs one at a time, keeping every outcome.
+
+    Cancellation is checked between KBs; Windows' own uninstaller in flight is
+    never interrupted. A failure for one KB does not discard the others.
+    """
+    results: List[InstallResult] = []
+    total = len(kbs)
+    for index, kb in enumerate(kbs):
+        if is_cancelled and is_cancelled():
+            if output_cb:
+                output_cb("Cancelled.")
+            break
+        if progress_cb:
+            progress_cb(index, total, kb)
+        result = uninstall_update(kb, output_cb=output_cb, is_cancelled=is_cancelled)
+        results.append(result)
+        if result_cb:
+            result_cb(result)
+    if progress_cb:
+        progress_cb(total, total, "")
+    return results
+
+
 def install_updates_iter(
     updates: List[WindowsUpdate],
     progress_cb: Optional[Callable[[int, int, str], None]] = None,

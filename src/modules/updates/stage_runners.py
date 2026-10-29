@@ -2,7 +2,7 @@
 All" tab (run_all_tab.py) and the headless --unattended runner
 (unattended_runner.py), so the two entry points can't drift apart. Each stage
 function takes an `app` (for config), a `log(line)` callback, and an
-`is_cancelled()` callable â€” the threaded caller passes `worker.is_cancelled`,
+`is_cancelled()` callable — the threaded caller passes `worker.is_cancelled`,
 the headless caller passes `lambda: False`.
 
 WU/Store stages use win32com and must be invoked from a COM-initialized
@@ -118,8 +118,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
         allow_optional=bool(app.config.get("updates.allow_optional_updates", False)),
         allow_drivers=bool(app.config.get("updates.allow_auto_drivers", False)))
     if skipped:
-        log(f"Windows Update: not installed â€” {wu_categories.skipped_text(skipped)}. "
-            "Change this in Updates â†’ Settings.")
+        log(f"Windows Update: not installed — {wu_categories.skipped_text(skipped)}. "
+            "Change this in Updates → Settings.")
     updates = order_for_install(runnable)
     if not updates:
         log("Windows Update: nothing to install." if held or waiting or skipped
@@ -135,14 +135,14 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
     from core.disk_space import check_wu_preflight
     reason = check_wu_preflight(download_size_mb(updates, log))
     if reason:
-        log(f"Windows Update: skipped â€” {reason}")
+        log(f"Windows Update: skipped — {reason}")
         return {"results": waiting, "reboot_required": bool(waiting), "installed_count": 0,
                 "pending_restart_count": len(waiting), "held": held}
 
     if app.config.get("updates.restore_point_before_install", True):
         from core.system_restore import create_restore_point
         log("Creating a System Restore point before installing updates...")
-        ok, _out = create_restore_point("Windows Client Tool â€” before WU install")
+        ok, _out = create_restore_point("Windows Client Tool — before WU install")
         if not ok:
             # The safeguard was asked for and is missing: installing anyway
             # would leave no way back. Turn the setting off to proceed without.
@@ -269,7 +269,7 @@ def run_winget_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_al
 @maintenance_stage
 @_timeline_stage("store")
 def run_store_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
-    """Trigger a Microsoft Store update scan (fire-and-forget â€” Store downloads
+    """Trigger a Microsoft Store update scan (fire-and-forget — Store downloads
     updates itself once triggered, there's nothing further to wait for)."""
     from core.mdm_store_trigger import trigger_store_scan
     count = trigger_store_scan(output_cb=log)
@@ -332,7 +332,7 @@ def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     log(
         f"Cleanup: {deleted} file(s) deleted"
         + f", {cleanup_left_text(report, refused)}"
-        + f" â€” {_fmt_size(report.freed)} freed."
+        + f" — {_fmt_size(report.freed)} freed."
         + (" Cancelled before it finished." if report.cancelled else "")
     )
     from modules.cleanup.cleanup_scanner.deleter import DeleteReport
@@ -365,7 +365,7 @@ def cleanup_left_text(report, refused) -> str:
 @maintenance_stage
 @_timeline_stage("dism")
 def run_dism_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
-    """DISM /StartComponentCleanup â€” the slow WinSxS cleanup, not the fast
+    """DISM /StartComponentCleanup — the slow WinSxS cleanup, not the fast
     /AnalyzeComponentStore preview (that one lives in the Cleanup module)."""
     import subprocess
     from core import pending_reboot

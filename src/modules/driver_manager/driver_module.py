@@ -106,7 +106,7 @@ def _update_status_text(driver: DriverInfo, history_by_id: Dict[str, "update_his
     if is_held_driver(driver):
         return HELD_STATUS
     if provider_for(driver) is None:
-        return "â€”"
+        return "—"
     return update_history.status_label(driver.version, history_by_id.get(driver.device_id))
 
 
@@ -181,7 +181,7 @@ def _choose_baseline(parent, metas: list) -> Optional[str]:
 
 class DriverModule(BaseModule):
     name = "Driver Manager"
-    icon = "ðŸ–¨ï¸"
+    icon = "🖨️"
     description = "View and manage installed drivers"
     #: Reading and browsing is always available with no elevation; the one
     #: destructive action (uninstalling a driver package) calls
@@ -353,7 +353,7 @@ class DriverModule(BaseModule):
         devmgr_btn = QPushButton("Open Device Manager")
         wu_btn = QPushButton("Check Windows Update")
         wu_btn.setToolTip(
-            "Opens Windows Update settings â€” this app does not match a "
+            "Opens Windows Update settings — this app does not match a "
             "specific device to a specific driver update.")
         self._backup_btn = QPushButton("Backup Drivers")
         self._cancel_backup_btn = QPushButton("Cancel (stops after current file)")
@@ -2213,7 +2213,7 @@ class DriverModule(BaseModule):
         act_uninstall.setToolTip(
             "" if published else
             "This is a driver Windows ships inline, not an installed "
-            "OEM package â€” remove it from Device Manager instead.")
+            "OEM package — remove it from Device Manager instead.")
         act_uninstall.triggered.connect(
             lambda: self._do_uninstall_driver(published, device_name))
         act_export_one = menu.addAction("Export this driverâ€¦")
@@ -2383,14 +2383,14 @@ class DriverModule(BaseModule):
 
     def _on_backup_error_line(self, stderr: str) -> str:
         if "access" in stderr.lower() and "denied" in stderr.lower():
-            return "denied â€” this driver package needs administrator"
+            return "denied — this driver package needs administrator"
         return stderr.strip() or "failed for an unreported reason"
 
     def _on_backup_done(self, result) -> None:
         output, returncode = result
         self._reset_backup_controls()
         if returncode == 0:
-            msg = "Driver backup complete â€” exported to selected folder."
+            msg = "Driver backup complete — exported to selected folder."
         else:
             msg = f"Driver backup finished: {self._on_backup_error_line(output)}"
         logger.info(msg)

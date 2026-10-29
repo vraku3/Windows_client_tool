@@ -143,7 +143,7 @@ class _ScanChanges(QGroupBox):
         for row in (result or {}).get("new", []):
             rows.append((row["name"], "New", f"offered {row.get('offered') or 'unknown'}"))
         for row in (result or {}).get("changed", []):
-            rows.append((row["name"], "Changed", f"{row.get('was')} â†’ {row.get('offered')}"))
+            rows.append((row["name"], "Changed", f"{row.get('was')} → {row.get('offered')}"))
         for row in (result or {}).get("gone", []):
             rows.append((row["name"], "No longer offered", row.get("offered") or ""))
         first = bool((result or {}).get("first"))
@@ -212,7 +212,7 @@ def _maybe_toast(app, timer: Optional[QElapsedTimer], title: str, message: str) 
 
 
 # ---------------------------------------------------------------------------
-# Tab 1 â€” Application Updates (winget)
+# Tab 1 — Application Updates (winget)
 # ---------------------------------------------------------------------------
 
 class _AppUpdatesTab(QWidget):
@@ -236,7 +236,7 @@ class _AppUpdatesTab(QWidget):
         self._restore_sort()
 
     def set_updates_listener(self, cb) -> None:
-        """cb(updates: List[AppUpdate]) â€” called whenever the fetched list
+        """cb(updates: List[AppUpdate]) — called whenever the fetched list
         changes, so UpdatesModule can dispatch the msstore subset to the
         Store tab without a second winget call."""
         self._updates_listener = cb
@@ -363,7 +363,7 @@ class _AppUpdatesTab(QWidget):
         return load_exclusions(self.app) if self.app else []
 
     # ------------------------------------------------------------------
-    # Worker functions â€” Worker passes itself as first argument, so all
+    # Worker functions — Worker passes itself as first argument, so all
     # callables passed to Worker() must accept a leading `worker` param.
     # ------------------------------------------------------------------
 
@@ -689,14 +689,14 @@ class _AppUpdatesTab(QWidget):
         from core.winget_list import DIFF_TECH, UPDATED_UNVERIFIED
         reasons = {
             DIFF_TECH: "not updatable via winget",
-            UPDATED_UNVERIFIED: "version unverifiable â€” would always re-appear",
+            UPDATED_UNVERIFIED: "version unverifiable — would always re-appear",
         }
         for wid, o in outcomes.items():
             reason = reasons.get(o.state)
             if reason and self.app:
                 add_exclusion(self.app, wid, reason, origin="auto")
                 self._log.appendPlainText(
-                    f"  â†’ {wid} added to blocklist ({reason})."
+                    f"  → {wid} added to blocklist ({reason})."
                 )
 
     def _verify_after(self, outcomes: dict) -> None:
@@ -725,7 +725,7 @@ class _AppUpdatesTab(QWidget):
         self._render_table(results)
         confirmed = sum(1 for o in outcomes.values() if o)
         not_confirmed = [f"{wid}: {o.detail}" for wid, o in outcomes.items() if not o]
-        self._status_lbl.setText(f"Verified â€” {confirmed}/{len(outcomes)} confirmed updated.")
+        self._status_lbl.setText(f"Verified — {confirmed}/{len(outcomes)} confirmed updated.")
         if not_confirmed:
             self._log.appendPlainText("\nNot confirmed:\n  " + "\n  ".join(not_confirmed))
         self._sync_action_buttons()
@@ -796,7 +796,7 @@ class _AppUpdatesTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Tab 2 â€” Windows Updates (COM)
+# Tab 2 — Windows Updates (COM)
 # ---------------------------------------------------------------------------
 
 class _WinUpdatesTab(QWidget):
@@ -879,7 +879,7 @@ class _WinUpdatesTab(QWidget):
                 show = query in haystack
             if show and severity:
                 current = (severity_text(update) or "").casefold()
-                show = current in ("", "â€”") if severity == "unspecified" else severity in current
+                show = current in ("", "—") if severity == "unspecified" else severity in current
             if show and classification:
                 show = (update.classification or "").casefold() == classification.casefold()
             if show and restart:
@@ -1209,7 +1209,7 @@ class _WinUpdatesTab(QWidget):
         self._render_table()
         summary = wu_categories.summary_line(list(updates) + list(held))
         self._status_lbl.setText(wu_status_text(updates, held)
-                                 + (f"  â€”  {summary}" if summary else ""))
+                                 + (f"  —  {summary}" if summary else ""))
         self._sync_install_button()
         try:
             self._reboot_row.setVisible(is_reboot_pending())
@@ -1475,7 +1475,7 @@ class _WinUpdatesTab(QWidget):
             return
         feature = [u for u in selected if wu_categories.category_of(u) == wu_categories.FEATURE]
         if feature:
-            names = "\n".join(f"â€¢ {u.title}" for u in feature[:6])
+            names = "\n".join(f"• {u.title}" for u in feature[:6])
             if len(feature) > 6:
                 names += f"\nâ€¦ and {len(feature) - 6} more"
             answer = QMessageBox.warning(
@@ -1552,7 +1552,7 @@ class _WinUpdatesTab(QWidget):
             if app is not None and app.config.get("updates.restore_point_before_install", True):
                 from core.system_restore import create_restore_point
                 worker.signals.log_line.emit("Creating a System Restore point before installingâ€¦")
-                ok, _out = create_restore_point("Windows Client Tool â€” before WU install")
+                ok, _out = create_restore_point("Windows Client Tool — before WU install")
                 if not ok:
                     raise RuntimeError(
                         "Nothing was installed: the System Restore point could not be created "
@@ -1683,18 +1683,18 @@ class _WinUpdatesTab(QWidget):
         for r in results:
             key = r.kb or r.title
             if r.result_code in (0, 1, 3, 4, 5):
-                verify_map[key] = f"FAILED â€” {r.message}"
+                verify_map[key] = f"FAILED — {r.message}"
             elif r.pending_restart:
                 verify_map[key] = "Installed -- restart to finish"
             elif not r.success:
-                verify_map[key] = f"FAILED â€” {r.message}"
+                verify_map[key] = f"FAILED — {r.message}"
             elif r.title in still_pending_titles:
-                verify_map[key] = "UNCHANGED â€” still pending"
+                verify_map[key] = "UNCHANGED — still pending"
             else:
-                verify_map[key] = "OK â€” CONFIRMED"
+                verify_map[key] = "OK — CONFIRMED"
         self._updates = after_updates
         self._render_table(verify_map)
-        self._status_lbl.setText("Verified â€” " + wu_status_text(after_updates, held))
+        self._status_lbl.setText("Verified — " + wu_status_text(after_updates, held))
         self._sync_install_button()
 
     def _do_hide(self) -> None:
@@ -1829,7 +1829,7 @@ class _WinUpdatesTab(QWidget):
                 from core.system_restore import create_restore_point
                 worker.signals.log_line.emit(
                     "Creating a System Restore point before uninstalling...")
-                ok, _out = create_restore_point(f"Windows Client Tool â€” before uninstalling {kb}")
+                ok, _out = create_restore_point(f"Windows Client Tool — before uninstalling {kb}")
                 if not ok:
                     raise RuntimeError(
                         "Nothing was uninstalled: the System Restore point could not be "
@@ -1883,7 +1883,7 @@ class _WinUpdatesTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# Tab 5 â€” Settings (blocklist, general options, scheduled maintenance)
+# Tab 5 — Settings (blocklist, general options, scheduled maintenance)
 # ---------------------------------------------------------------------------
 
 class _UpdateSettingsTab(QWidget):
@@ -2051,7 +2051,7 @@ class _UpdateSettingsTab(QWidget):
         # Distinct from _sched_status_lbl above, which only ever echoes the
         # result of the button just clicked here (Task saved / removed /
         # started) and says nothing about whether a PAST scheduled run
-        # actually succeeded. This is read fresh from `schtasks` itself â€”
+        # actually succeeded. This is read fresh from `schtasks` itself —
         # see task_health.py for why that matters.
         self._task_health_lbl = QLabel("Task health: not checked yet.")
         self._task_health_lbl.setWordWrap(True)
@@ -2118,7 +2118,7 @@ class _UpdateSettingsTab(QWidget):
     def _set_cfg(self, key: str, value) -> None:
         if self.app is not None:
             self.app.config.set(key, value)
-            # Explicit flush (not just the debounced autosave) â€” these settings
+            # Explicit flush (not just the debounced autosave) — these settings
             # can be read moments later by a separate --unattended process
             # (via "Run Now" or the scheduled task itself), which loads
             # config.json fresh from disk and would otherwise race the
@@ -2169,7 +2169,7 @@ class _UpdateSettingsTab(QWidget):
             if entry.note:
                 value.setToolTip(entry.note)
             table.setItem(row, 1, value)
-            table.setItem(row, 2, QTableWidgetItem(entry.source or "â€”"))
+            table.setItem(row, 2, QTableWidgetItem(entry.source or "—"))
 
     def _load_ownership(self) -> None:
         from modules.updates.update_ownership import read_ownership
@@ -2220,13 +2220,13 @@ class _UpdateSettingsTab(QWidget):
         if health.exists is None:
             set_role(self._task_health_lbl, "statusWarning")
             self._task_health_lbl.setText(
-                f"Task health: could not be checked â€” {health.error}"
+                f"Task health: could not be checked — {health.error}"
             )
             return
         if not health.exists:
             set_role(self._task_health_lbl, "statusInfo")
             self._task_health_lbl.setText(
-                "Task health: no scheduled task exists yet â€” click Create / Update Task."
+                "Task health: no scheduled task exists yet — click Create / Update Task."
             )
             return
 
@@ -2234,7 +2234,7 @@ class _UpdateSettingsTab(QWidget):
             "Enabled" if health.enabled else "Disabled" if health.enabled is False else "unknown state"
         )
         if health.last_run:
-            run_text = f"last ran {health.last_run} â€” {health.last_result_text or 'unknown result'}"
+            run_text = f"last ran {health.last_run} — {health.last_result_text or 'unknown result'}"
         else:
             run_text = "has never run"
         next_text = f"next run {health.next_run}" if health.next_run else "no next run scheduled"
@@ -2278,7 +2278,7 @@ class _UpdateSettingsTab(QWidget):
         self.app.config.set("updates.unattended_stages", stages)
         self.app.config.set("updates.unattended_interval_days", days)
         self.app.config.set("updates.unattended_time", time_str)
-        # Flush now, before we create/run the task below â€” schtasks may invoke
+        # Flush now, before we create/run the task below — schtasks may invoke
         # --unattended (a separate process reading config.json from disk)
         # well before the 2s autosave debounce would otherwise fire.
         self.app.config.save()
@@ -2302,7 +2302,7 @@ class _UpdateSettingsTab(QWidget):
                 timeout=30,
             )
             if result.returncode == 0:
-                self._sched_status_lbl.setText(f"Task saved â€” every {days} day(s) at {time_str}.")
+                self._sched_status_lbl.setText(f"Task saved — every {days} day(s) at {time_str}.")
             else:
                 self._sched_status_lbl.setText(f"Error: {result.stderr.strip()}")
         except Exception as e:
@@ -2378,12 +2378,12 @@ class _UpdateSettingsTab(QWidget):
 
 
 # ---------------------------------------------------------------------------
-# UpdatesModule â€” BaseModule entry point
+# UpdatesModule — BaseModule entry point
 # ---------------------------------------------------------------------------
 
 class UpdatesModule(BaseModule):
     name = "Updates"
-    icon = "ðŸ”„"
+    icon = "🔄"
     description = "Windows Update, winget, and Microsoft Store update management"
     requires_admin = True
     group = ModuleGroup.TOOLS
@@ -2633,7 +2633,7 @@ class UpdatesModule(BaseModule):
         elif index == 1:
             self._win_tab.auto_scan()
         elif index == 2:
-            # Store tab piggybacks on the shared winget scan â€” no separate call.
+            # Store tab piggybacks on the shared winget scan — no separate call.
             self._app_tab.auto_scan()
         elif index == 3:
             self._runall_tab._activity.refresh()
@@ -2641,7 +2641,7 @@ class UpdatesModule(BaseModule):
         elif index == 4:
             self._settings_tab._exclusions_editor.set_offers(self._current_offers())
             self._settings_tab._exclusions_editor.load(self.app)
-            # Settings' task-health line is a live read, not a cache â€” refresh
+            # Settings' task-health line is a live read, not a cache — refresh
             # it every time the tab becomes visible, not just at module build.
             self._settings_tab._refresh_task_health()
 

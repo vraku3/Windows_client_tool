@@ -354,6 +354,11 @@ def freed_estimate(procs: List[Proc], groups: List[AppGroup], close: Set[str]) -
 class _On:
     def __init__(self, system, journal: Journal, log: Log) -> None:
         self.s, self.j, self.log = system, journal, log
+        self.skipped: List[dict] = []
+
+    def _skip(self, label: str, reason: str) -> None:
+        self.skipped.append({"label": label, "reason": reason})
+        self.log(INFO, f"{label}: {reason}")
 
     def plan(self, cpu: str) -> None:
         plans = self.s.plans()
@@ -564,28 +569,32 @@ class _On:
         from .game_config import is_protected
         for g in chosen:
             if catalog.is_never_close(g.exe):
-                self.log(INFO, f"{g.label}: agent runner/host -- never closed by Game Mode")
+                self._skip(g.label, "agent runner/host -- never closed by Game Mode")
                 continue
             if is_protected(g.exe, g.label, protected):
-                self.log(INFO, f"{g.label}: protected by the user -- left open")
+                self._skip(g.label, "protected by the user")
                 continue
             titles = getattr(self.s, "window_titles", lambda _pids: [])([p.pid for p in g.procs])
             busy_words = ("recording", "in a call", "call with", "meeting",
                           "screen share", "sharing your screen", "syncing", "uploading")
             if any(word in (title or "").casefold() for title in titles for word in busy_words):
-                self.log(INFO, f"{g.label}: active call/recording/sync -- left open")
+                self._skip(g.label, "active call/recording/sync")
+                continue
+            if g.exe == "snippingtool.exe" and any(
+                    (title or "").strip().casefold() == "snipping tool" for title in titles):
+                self._skip(g.label, "capture overlay is open")
                 continue
             if g.spec and g.spec.when == "spareprocess":
                 if (not maximum or any("spareprocess" not in (self.s.details(p.pid)[1] or "").lower()
                                        for p in g.procs)
                         or self.s.has_visible_window([p.pid for p in g.procs]) is not False):
-                    self.log(INFO, f"{g.label}: left open -- not a hidden spare process in Maximum")
+                    self._skip(g.label, "not a hidden spare process in Maximum")
                     continue
             path, cmdline, elevated = self.s.details(g.roots[0].pid)
             publisher = getattr(self.s, "publisher", lambda _path: None)(path)
             if publisher and any(str(want).casefold() in publisher.casefold()
                                  for want in (protected_publishers or ())):
-                self.log(INFO, f"{g.label}: protected publisher {publisher} -- left open")
+                self._skip(g.label, f"protected publisher {publisher}")
                 continue
             program, args = split_command_line(cmdline or "")
             extra = g.spec.reopen_args if g.spec else ""
@@ -806,6 +815,7 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
                   protected=choices.protected,
                   protected_publishers=choices.protected_publishers,
                   grace=choices.close_grace_s, force=choices.force_close)
+    journal.data["skipped"] = list(on.skipped)
     if choices.lower:
         on.lower(groups, choices.close)
     on.boost_priority(choices.bound_game, choices.priority_boost)

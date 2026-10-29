@@ -262,10 +262,13 @@ class SessionTab(QWidget):
         self._measure_btn.setToolTip(
             "Capture 30 seconds with PresentMon while the bound game runs.")
         self._measure_btn.clicked.connect(self._measure)
+        self._survived_btn = QPushButton("What survived", self)
+        self._survived_btn.clicked.connect(self._show_survived)
         lower.addWidget(self._export_btn)
         lower.addWidget(self._import_btn)
         lower.addWidget(self._recover_btn)
         lower.addWidget(self._measure_btn)
+        lower.addWidget(self._survived_btn)
         lower.addStretch()
         layout.addLayout(lower)
         layout.addStretch()
@@ -540,6 +543,16 @@ class SessionTab(QWidget):
         self.host._apply_settings_to_choices()
         self.host._save_choices()
         self.refresh()
+
+    def _show_survived(self) -> None:
+        rows = self.host._journal.data.get("skipped") or []
+        if not isinstance(rows, list) or not rows:
+            QMessageBox.information(self, "What survived",
+                                    "No apps were deliberately left open by this session.")
+            return
+        text = "\n".join(f"{r.get('label', 'App')}: {r.get('reason', 'left open')}"
+                         for r in rows if isinstance(r, dict))
+        QMessageBox.information(self, "What survived", text or "No reasons recorded.")
 
     def _measure(self) -> None:
         game = self.host._settings.bound_game

@@ -70,7 +70,7 @@ def _write(path: Path, entries: list[dict]) -> None:
 
 def record_session_start(app_data_dir, preset, actions_total, handles, processes, *,
                          started=None, actions=None, report=None, handles_after=None,
-                         processes_after=None, folder=None) -> None:
+                         processes_after=None, metrics=None, folder=None) -> None:
     with _LOCK:
         entries = load_history(app_data_dir, folder=folder)
         started = time.time() if started is None else started
@@ -94,12 +94,13 @@ def record_session_start(app_data_dir, preset, actions_total, handles, processes
                      tasks_disabled=sum(e["kind"] == "task" and e["status"] == "ok" for e in summary),
                      handles_before=handles, processes_before=processes,
                      handles_after=handles_after, processes_after=processes_after,
+                     metrics_before=metrics,
                      actions=summary, on_report=messages)
         _write(_path(app_data_dir, folder), entries)
 
 
 def record_session_end(app_data_dir, report, handles, processes, *, started=None,
-                       complete=True, restored=0, folder=None) -> None:
+                       complete=True, restored=0, metrics=None, folder=None) -> None:
     with _LOCK:
         entries = load_history(app_data_dir, folder=folder)
         entry = next((e for e in reversed(entries) if
@@ -117,6 +118,8 @@ def record_session_end(app_data_dir, report, handles, processes, *, started=None
             entry["handles_after"] = handles
         if entry.get("processes_after") is None:
             entry["processes_after"] = processes
+        if metrics is not None:
+            entry["metrics_after"] = metrics
         _write(_path(app_data_dir, folder), entries)
 
 

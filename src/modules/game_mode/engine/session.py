@@ -727,7 +727,7 @@ def _history_start(journal: Journal, log: Log, only_missing=False) -> None:
             data.get("handles_before"), data.get("processes_before"),
             started=data.get("started"), actions=journal.actions, report=data.get("on_report", []),
             handles_after=data.get("handles_after"), processes_after=data.get("processes_after"),
-            folder=journal.folder)
+            metrics=data.get("metrics_before"), folder=journal.folder)
     except (OSError, ValueError, TypeError) as error:
         logger.warning("game mode: could not save session history: %s", error)
         log(WARN, f"Session history could not be saved: {error}")
@@ -738,7 +738,8 @@ def _history_end(journal: Journal, data: dict, report: list, log: Log,
     try:
         session_history.record_session_end(
             None, report, data.get("handles_after"), data.get("processes_after"),
-            started=data.get("started"), complete=complete, restored=restored, folder=journal.folder)
+            started=data.get("started"), complete=complete, restored=restored,
+            metrics=data.get("metrics_after"), folder=journal.folder)
     except (OSError, ValueError, TypeError) as error:
         logger.warning("game mode: could not save restore history: %s", error)
         log(WARN, f"Restore history could not be saved: {error}")
@@ -754,6 +755,12 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
                       catalog.REC: "Recommended", catalog.MAX: "Maximum",
                       catalog.STREAM: "Streaming", catalog.LOW: "Low power",
                   }.get(choices.preset, "Custom"))
+    try:
+        from .metrics import snapshot
+        journal.data["metrics_before"] = snapshot(system)
+        journal.save()
+    except Exception:
+        logger.debug("game mode: metrics snapshot failed", exc_info=True)
     _history_start(journal, log)
     on = _On(system, journal, log)
     on.multimedia(choices.priority_separation, choices.system_responsiveness)
@@ -786,6 +793,11 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     time.sleep(1.0)
     after = system.processes()
     journal.data.update(handles_after=total_handles(after), processes_after=len(after))
+    try:
+        from .metrics import snapshot
+        journal.data["metrics_after"] = snapshot(system)
+    except Exception:
+        logger.debug("game mode: metrics snapshot failed", exc_info=True)
     journal.save()
     return dict(journal.data)
 
@@ -946,6 +958,14 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
     pending = _verify_reopened(system, ctx["reopened"], say, settle)
     failed.extend(e for e in validated if e.get("kind") == "app_close"
                   and e.get("exe") in pending and e not in failed)
+    try:
+        from .metrics import snapshot
+        snap = snapshot(system)
+        journal.data["metrics_after"] = snap
+        history_data["metrics_after"] = snap
+        journal.save()
+    except Exception:
+        logger.debug("game mode: metrics snapshot failed", exc_info=True)
     if failed:
         journal.data["actions"] = [e for e in journal.actions if e in failed]
         journal.save()

@@ -209,6 +209,10 @@ class HistoryTab(QWidget):
                  f"    Tasks disabled: {entry.get('tasks_disabled', 0)}",
                  f"Handles: {entry.get('handles_before')} -> {entry.get('handles_after')}    "
                  f"Processes: {entry.get('processes_before')} -> {entry.get('processes_after')}",
+                 f"RAM: {(entry.get('metrics_before') or {}).get('ram_percent')}% -> "
+                 f"{(entry.get('metrics_after') or {}).get('ram_percent')}%    "
+                 f"CPU: {(entry.get('metrics_before') or {}).get('cpu_percent')}% -> "
+                 f"{(entry.get('metrics_after') or {}).get('cpu_percent')}%",
                  f"Note: {entry.get('note', '')}", "", "Changes:"]
         lines.extend(f"[{e['status']}] {e['label']} ({e['kind']})" for e in entry.get("actions", []))
         lines.extend(["", "ON report:"])

@@ -76,7 +76,8 @@ class Journal:
         try:
             record_session_end(None, report, self.data.get("handles_after"),
                                self.data.get("processes_after"), started=self.data.get("started"),
-                               restored=restored, folder=self.folder)
+                               restored=restored, folder=self.folder,
+                               metrics=self.data.get("metrics_after"))
         except (OSError, ValueError, TypeError) as error:
             logger.warning("game mode: could not save restore history: %s", error)
             history_error = f"Restore history could not be saved: {error}"

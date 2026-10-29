@@ -18,6 +18,7 @@ from PyQt6.QtGui import QFont, QColor, QDesktopServices
 
 from ui.app_facts import bind_row
 
+from core.admin_utils import is_admin
 from core.app_facts import AppFactsIndex
 from core.base_module import BaseModule
 from ui.empty_state import EmptyState
@@ -1997,6 +1998,33 @@ class _UpdateSettingsTab(QWidget):
         policy_lay.addLayout(policy_row)
         layout.addWidget(policy_box)
 
+        # -- Pause Windows Update --
+        pause_box = QGroupBox("Pause Windows Update")
+        pause_lay = QVBoxLayout(pause_box)
+        pause_desc = QLabel(
+            "Writes the same UX pause values Windows Settings uses. Pausing is "
+            "reversible with Resume; Windows enforces a 35-day maximum. It needs "
+            "administrator rights.")
+        pause_desc.setWordWrap(True)
+        self._pause_status = QLabel("")
+        self._pause_status.setWordWrap(True)
+        pause_row = QHBoxLayout()
+        pause_row.addWidget(QLabel("Pause for"))
+        self._pause_days = QSpinBox()
+        self._pause_days.setRange(1, 35)
+        self._pause_days.setSuffix(" days")
+        self._pause_days.setValue(7)
+        self._pause_btn = QPushButton("Pause updates")
+        self._resume_btn = QPushButton("Resume updates")
+        pause_row.addWidget(self._pause_days)
+        pause_row.addWidget(self._pause_btn)
+        pause_row.addWidget(self._resume_btn)
+        pause_row.addStretch()
+        pause_lay.addWidget(pause_desc)
+        pause_lay.addWidget(self._pause_status)
+        pause_lay.addLayout(pause_row)
+        layout.addWidget(pause_box)
+
         # -- Blocklist --
         block_box = QGroupBox("Blocklist")
         block_lay = QVBoxLayout(block_box)
@@ -2119,6 +2147,8 @@ class _UpdateSettingsTab(QWidget):
             lambda v: self._set_cfg("updates.allow_optional_updates", v))
         self._chk_allow_drivers.toggled.connect(
             lambda v: self._set_cfg("updates.allow_auto_drivers", v))
+        self._pause_btn.clicked.connect(self._do_pause)
+        self._resume_btn.clicked.connect(self._do_resume)
         self._sched_save_btn.clicked.connect(self._save_schedule)
         self._sched_remove_btn.clicked.connect(self._remove_schedule)
         self._sched_run_btn.clicked.connect(self._run_schedule_now)
@@ -2172,6 +2202,55 @@ class _UpdateSettingsTab(QWidget):
 
         self._refresh_task_health()
         self._load_ownership()
+        self._load_policy()
+        self._refresh_pause_label()
+
+    def _refresh_pause_label(self) -> None:
+        from modules.updates.update_pause import read_pause
+        expiry, reason = read_pause()
+        if reason:
+            self._pause_status.setText(reason)
+        elif expiry:
+            self._pause_status.setText(f"Updates are paused until {expiry}.")
+        else:
+            self._pause_status.setText("Updates are not paused by these settings.")
+
+    def _do_pause(self) -> None:
+        if not is_admin():
+            QMessageBox.information(
+                self, "Pause Windows Update",
+                "Pausing Windows Update needs administrator rights. Restart this "
+                "app as administrator.")
+            return
+        days = self._pause_days.value()
+        reply = QMessageBox.question(
+            self, "Pause Windows Update",
+            f"Pause feature and quality updates for {days} day(s)?\n\n"
+            "Windows will not install updates until the pause expires or you "
+            "press Resume. Security updates may still be delivered by policy.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        from modules.updates.update_pause import pause_updates
+        ok, message = pause_updates(days)
+        self._pause_status.setText(message)
+        if not ok:
+            QMessageBox.warning(self, "Pause Windows Update", message)
+        self._load_policy()
+
+    def _do_resume(self) -> None:
+        if not is_admin():
+            QMessageBox.information(
+                self, "Resume Windows Update",
+                "Changing the pause needs administrator rights. Restart this app "
+                "as administrator.")
+            return
+        from modules.updates.update_pause import resume_updates
+        ok, message = resume_updates()
+        self._pause_status.setText(message)
+        if not ok:
+            QMessageBox.warning(self, "Resume Windows Update", message)
         self._load_policy()
 
     def _render_readonly_rows(self, table, rows) -> None:

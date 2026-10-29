@@ -959,6 +959,12 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
     failed.extend(e for e in validated if e.get("kind") == "app_close"
                   and e.get("exe") in pending and e not in failed)
     try:
+        from .health_audit import verify_restored
+        for issue in verify_restored(system, validated):
+            say(BAD, f"Restore verification: {issue}")
+    except Exception:
+        logger.warning("game mode: restore verification failed", exc_info=True)
+    try:
         from .metrics import snapshot
         snap = snapshot(system)
         journal.data["metrics_after"] = snap

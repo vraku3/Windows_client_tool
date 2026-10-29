@@ -1,4 +1,4 @@
-"""Check and repair drift from an active Game Mode journal (Qt-free)."""
+﻿"""Check and repair drift from an active Game Mode journal (Qt-free)."""
 from __future__ import annotations
 
 from typing import List
@@ -57,6 +57,54 @@ def audit(system, actions: List[dict]) -> List[dict]:
         rows.append({"kind": kind, "label": label, "expected": expected,
                      "actual": actual, "status": status, "entry": entry})
     return rows
+
+
+def verify_restored(system, actions: List[dict]) -> List[str]:
+    """Problems left after OFF, checking each journaled BEFORE value."""
+    issues = []
+    for entry in actions or []:
+        if not entry.get("done") or entry.get("undone"):
+            continue
+        kind = entry.get("kind")
+        label = entry.get("label") or entry.get("exe") or entry.get("name") or kind
+        if kind == "service_stop":
+            state = system.service(entry.get("name", ""))
+            if state is None:
+                issues.append(f"{label}: service is no longer installed")
+            elif state.running is None:
+                issues.append(f"{label}: service state unreadable after restore")
+            elif state.running is False:
+                issues.append(f"{label}: still stopped after restore")
+        elif kind == "task":
+            enabled = system.task_enabled(entry.get("path", ""))
+            if enabled is False:
+                issues.append(f"{label}: task still disabled after restore")
+            elif enabled is None:
+                issues.append(f"{label}: task state unreadable after restore")
+        elif kind == "plan":
+            if system.active_plan() != entry.get("before"):
+                issues.append(f"{label}: power plan was not restored")
+        elif kind == "registry":
+            if "value" not in entry:
+                continue
+            exists, value, _kind = system.reg_get(entry.get("path", ""), entry.get("name", ""),
+                                                  entry.get("hive", "HKCU"))
+            if exists is None:
+                issues.append(f"{label}: registry state unreadable after restore")
+            elif entry.get("existed") and (not exists or value != entry.get("value")):
+                issues.append(f"{label}: registry value was not restored")
+            elif entry.get("existed") is False and exists:
+                issues.append(f"{label}: registry value should have been removed")
+        elif kind in ("affinity", "power_throttling", "priority"):
+            if not getattr(system, "alive", lambda _pid, _ct: True)(
+                    entry.get("pid"), entry.get("create_time")):
+                continue
+            getter = {"affinity": "get_affinity", "power_throttling": "power_throttling",
+                      "priority": "priority"}[kind]
+            current = getattr(system, getter, lambda _pid: None)(entry.get("pid"))
+            if current is not None and current != entry.get("before"):
+                issues.append(f"{label}: {kind} was not restored")
+    return issues
 
 
 def repair(system, rows: List[dict]) -> List[dict]:

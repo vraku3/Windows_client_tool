@@ -243,3 +243,10 @@ def test_health_audit_checks_affinity_and_power_throttling():
     ]
     rows = health_audit.audit(S(), actions)
     assert [row["status"] for row in rows] == ["ok", "ok"]
+
+
+def test_verify_restored_reports_a_service_left_stopped():
+    system = _AuditSystem()
+    issues = health_audit.verify_restored(
+        system, [{"kind": "service_stop", "name": "svc", "label": "Svc", "done": True}])
+    assert issues and "still stopped" in issues[0]

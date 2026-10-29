@@ -59,6 +59,10 @@ def classify(classification: str, title: str) -> str:
 
 
 def category_of(update) -> str:
+    # `IUpdate.Type == utDriver` is certain where a title may not be: a driver
+    # with a generic title must not be mistaken for a quality update.
+    if getattr(update, "driver", False):
+        return DRIVER
     return classify(getattr(update, "classification", ""), getattr(update, "title", ""))
 
 
@@ -78,13 +82,20 @@ def summary_line(updates: Iterable) -> str:
 
 
 def split_for_automatic(updates: List, allow_feature: bool = False,
-                        allow_optional: bool = False) -> Tuple[List, Dict[str, List]]:
-    """(installable, skipped-by-category) for Run All / unattended."""
+                        allow_optional: bool = False,
+                        allow_drivers: bool = False) -> Tuple[List, Dict[str, List]]:
+    """(installable, skipped-by-category) for Run All / unattended.
+
+    Drivers have their own gate, `allow_drivers`, and are skipped by default
+    even when `allow_optional` is on: a driver is approved per offer (or in
+    Driver Manager), not swept in with preview/.NET packages.
+    """
     run, skipped = [], {}
     for update in updates:
         cat = category_of(update)
         blocked = ((cat == FEATURE and not allow_feature)
-                   or (cat in (DRIVER, PREVIEW, DOTNET) and not allow_optional))
+                   or (cat == DRIVER and not allow_drivers)
+                   or (cat in (PREVIEW, DOTNET) and not allow_optional))
         if blocked:
             skipped.setdefault(cat, []).append(update)
         else:
@@ -99,6 +110,11 @@ def skipped_text(skipped: Dict[str, List]) -> str:
     for cat in (FEATURE, DRIVER, PREVIEW, DOTNET):
         rows = skipped.get(cat) or []
         if rows:
-            parts.append(f"{len(rows)} {LABELS[cat].lower()}"
-                         + (" (needs explicit approval)" if cat == FEATURE else " (optional)"))
+            if cat == FEATURE:
+                suffix = " (needs explicit approval)"
+            elif cat == DRIVER:
+                suffix = " (review and approve in Driver Manager)"
+            else:
+                suffix = " (optional)"
+            parts.append(f"{len(rows)} {LABELS[cat].lower()}" + suffix)
     return "; ".join(parts)

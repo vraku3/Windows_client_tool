@@ -332,3 +332,87 @@ def test_unreadable_or_preboot_history_does_not_block_current_offer(monkeypatch)
                      NS(Title="KB2", ResultCode=1, Date=datetime(2020, 1, 1, tzinfo=timezone.utc))])
     searcher = NS(GetTotalHistoryCount=lambda: 3, QueryHistory=lambda start, count: history)
     assert windows_updater._pending_restart_ids(searcher) == set()
+
+
+def test_download_fetches_without_installing_and_marks_the_offer(monkeypatch):
+    """#14: Download is a real step of its own -- bytes land in WUA's cache,
+    no installer is created, and Install can reuse them later."""
+    import win32com.client
+    from types import SimpleNamespace as NS
+    identity = _Update()
+    identity.IsDownloaded = False
+    identity.EulaAccepted = True
+    calls = []
+    downloader = NS(Download=lambda: calls.append("download") or NS(ResultCode=2, HResult=0))
+    session = NS(CreateUpdateDownloader=lambda: downloader)
+    monkeypatch.setattr(
+        win32com.client, "Dispatch",
+        lambda name: NS(Add=lambda u: None) if name.endswith("UpdateColl") else session)
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 10.0, "d", identity=identity)
+    results = windows_updater.download_updates_iter([u])
+    assert calls == ["download"]
+    assert results[0].success and results[0].message == "downloaded"
+    assert u.downloaded is True
+
+
+def test_download_skips_an_already_downloaded_offer(monkeypatch):
+    import win32com.client
+    from types import SimpleNamespace as NS
+    identity = _Update()
+    identity.IsDownloaded = True
+    session = NS(CreateUpdateDownloader=lambda: NS(
+        Download=lambda: pytest.fail("must not download again")))
+    monkeypatch.setattr(
+        win32com.client, "Dispatch",
+        lambda name: NS(Add=lambda u: None) if name.endswith("UpdateColl") else session)
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 10.0, "d", identity=identity)
+    results = windows_updater.download_updates_iter([u])
+    assert results[0].success and results[0].message == "already downloaded"
+    assert u.downloaded is True
+
+
+def test_a_refused_download_is_reported_and_not_marked_downloaded(monkeypatch):
+    import win32com.client
+    from types import SimpleNamespace as NS
+    identity = _Update()
+    identity.IsDownloaded = False
+    identity.EulaAccepted = True
+    downloader = NS(Download=lambda: NS(ResultCode=4, HResult=-2145124322))
+    session = NS(CreateUpdateDownloader=lambda: downloader)
+    monkeypatch.setattr(
+        win32com.client, "Dispatch",
+        lambda name: NS(Add=lambda u: None) if name.endswith("UpdateColl") else session)
+    u = windows_updater.WindowsUpdate("KB1", "T", "c", 10.0, "d", identity=identity)
+    results = windows_updater.download_updates_iter([u])
+    assert not results[0].success
+    assert "FAILED" in results[0].message
+    assert u.downloaded is False
+
+
+def test_scan_captures_driver_identity_and_security_identifiers(monkeypatch):
+    class _Driver(_Update):
+        def __init__(self):
+            super().__init__(title="Intel Corporation - Display - 31.0")
+            self.Type = 2
+            self.DriverClass = "Display"
+            self.DriverManufacturer = "Intel Corporation"
+            self.SecurityBulletinIDs = _Coll(["MS17-010"])
+            self.CveIds = _Coll(["CVE-2026-1234"])
+
+    _install_fake_session(monkeypatch, [_Driver()])
+    updates = windows_updater.fetch_pending_updates(include_drivers=True)
+    update = updates[0]
+    assert update.driver is True
+    assert update.driver_class == "Display"
+    assert update.driver_manufacturer == "Intel Corporation"
+    assert update.security_bulletins == ["MS17-010"]
+    assert update.cve_ids == ["CVE-2026-1234"]
+
+
+def test_scan_without_published_security_identifiers_says_nothing(monkeypatch):
+    """A build that does not expose CveIds, or publishes no bulletins, must
+    leave both lists empty -- never invent an identifier."""
+    _install_fake_session(monkeypatch, [_Update()])
+    update = windows_updater.fetch_pending_updates()[0]
+    assert update.security_bulletins == [] and update.cve_ids == []
+    assert update.driver is False

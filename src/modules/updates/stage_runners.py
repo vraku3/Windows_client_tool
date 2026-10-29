@@ -115,7 +115,8 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
     runnable, skipped = wu_categories.split_for_automatic(
         updates,
         allow_feature=bool(app.config.get("updates.allow_feature_updates", False)),
-        allow_optional=bool(app.config.get("updates.allow_optional_updates", False)))
+        allow_optional=bool(app.config.get("updates.allow_optional_updates", False)),
+        allow_drivers=bool(app.config.get("updates.allow_auto_drivers", False)))
     if skipped:
         log(f"Windows Update: not installed — {wu_categories.skipped_text(skipped)}. "
             "Change this in Updates → Settings.")

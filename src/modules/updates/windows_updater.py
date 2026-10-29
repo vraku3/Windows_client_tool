@@ -44,6 +44,17 @@ class WindowsUpdate:
     support_url: str = ""
     more_info_urls: List[str] = field(default_factory=list)
     description: str = ""
+    #: `IUpdate.Type` is `utDriver` (2). A driver is never installed by an
+    #: automatic run; it is reviewed and approved explicitly (Driver Manager
+    #: routing), even when optional updates are otherwise allowed.
+    driver: bool = False
+    driver_class: str = ""
+    driver_manufacturer: str = ""
+    #: `IUpdate.SecurityBulletinIDs` (e.g. "MS17-010"). WUA may publish none.
+    security_bulletins: List[str] = field(default_factory=list)
+    #: `IUpdate.CveIds` when the WUA build exposes it. Usually absent: WUA
+    #: publishes bulletin IDs, not CVEs, for most updates.
+    cve_ids: List[str] = field(default_factory=list)
 
 
 #: What every surface says for a held update instead of hiding it.
@@ -168,6 +179,22 @@ def _com_urls(obj) -> List[str]:
                 if str(collection.Item(i)).strip()]
     except Exception:
         logger.debug("MoreInfoUrls is unreadable", exc_info=True)
+        return []
+
+
+def _com_strings(obj, attr: str) -> List[str]:
+    """One COM string collection as a plain list; empty when refused/absent.
+
+    Used for `SecurityBulletinIDs` / `CveIds`: a build that does not expose
+    the property, or refuses it, must read as "not published", never as a
+    fabricated identifier.
+    """
+    try:
+        collection = getattr(obj, attr)
+        return [str(collection.Item(i)).strip() for i in range(collection.Count)
+                if str(collection.Item(i)).strip()]
+    except Exception:
+        logger.debug("update attribute %s is unreadable", attr, exc_info=True)
         return []
 
 
@@ -329,6 +356,12 @@ def fetch_pending_updates(
             support_url = _com_str(u, "SupportUrl")
             more_info = _com_urls(u)
             description = _com_str(u, "Description")
+            kind = _update_type(u)
+            driver = kind == 2                              # utDriver
+            driver_class = _com_str(u, "DriverClass") if driver else ""
+            driver_manufacturer = _com_str(u, "DriverManufacturer") if driver else ""
+            security_bulletins = _com_strings(u, "SecurityBulletinIDs")
+            cve_ids = _com_strings(u, "CveIds")
 
             if is_blocked(u.Title, kb, patterns):
                 if excluded_out is not None:
@@ -339,10 +372,12 @@ def fetch_pending_updates(
                         release_date=release_date, identity=None, is_hidden=hidden,
                         kb_ids=kb_ids, support_url=support_url,
                         more_info_urls=more_info, description=description,
+                        driver=driver, driver_class=driver_class,
+                        driver_manufacturer=driver_manufacturer,
+                        security_bulletins=security_bulletins, cve_ids=cve_ids,
                     ))
                 continue
             if drop_drivers and not is_held_amd_display_driver(u):
-                kind = _update_type(u)
                 if kind != 1:     # utSoftware; a driver, or a type we could not read
                     if kind is None:
                         logger.warning("Windows Update: %r left out -- its update type "
@@ -362,6 +397,9 @@ def fetch_pending_updates(
                         is_hidden=hidden, held=True,
                         kb_ids=kb_ids, support_url=support_url,
                         more_info_urls=more_info, description=description,
+                        driver=driver, driver_class=driver_class,
+                        driver_manufacturer=driver_manufacturer,
+                        security_bulletins=security_bulletins, cve_ids=cve_ids,
                     ))
                 continue
 
@@ -374,6 +412,9 @@ def fetch_pending_updates(
                 downloaded=_com_bool(u, "IsDownloaded") is True,
                 kb_ids=kb_ids, support_url=support_url,
                 more_info_urls=more_info, description=description,
+                driver=driver, driver_class=driver_class,
+                driver_manufacturer=driver_manufacturer,
+                security_bulletins=security_bulletins, cve_ids=cve_ids,
             ))
     except Exception as e:
         raise RuntimeError(f"Failed to query Windows Updates: {_explain(e)}") from e
@@ -630,6 +671,102 @@ def install_updates_iter(
             _log(f"  error: {detail}")
             _result(InstallResult(u.kb, u.title, False,
                                          hresult_from_com_error(e), detail))
+
+    if progress_cb:
+        progress_cb(total, total, "")
+    return results
+
+
+@dataclass
+class DownloadResult:
+    kb: str
+    title: str
+    success: bool
+    message: str
+
+
+def download_updates_iter(
+    updates: List[WindowsUpdate],
+    progress_cb: Optional[Callable[[int, int, str], None]] = None,
+    output_cb: Optional[Callable[[str], None]] = None,
+    is_cancelled: Optional[Callable[[], bool]] = None,
+    result_cb: Optional[Callable[[DownloadResult], None]] = None,
+) -> List[DownloadResult]:
+    """Download updates now and leave installation for a later, explicit step.
+
+    This is the split the WU tab exposes as "Download": bytes are fetched into
+    WUA's own cache (nothing is installed, no restart is requested), then
+    `install_updates_iter` reuses them because `IsDownloaded` is true. Must run
+    in a COMWorker. Cancellation is checked between items; a download already
+    in flight is allowed to finish, matching install semantics.
+    """
+    import win32com.client
+    from core.wu_error_codes import decode_wu_error
+
+    def _log(line: str) -> None:
+        if output_cb:
+            output_cb(line)
+
+    session = win32com.client.Dispatch("Microsoft.Update.Session")
+    downloader = session.CreateUpdateDownloader()
+    total = len(updates)
+    results: List[DownloadResult] = []
+
+    def _result(result: DownloadResult) -> None:
+        results.append(result)
+        if result_cb:
+            result_cb(result)
+
+    for i, u in enumerate(updates):
+        if is_cancelled and is_cancelled():
+            _log("Cancelled.")
+            break
+        if progress_cb:
+            progress_cb(i, total, u.title)
+        _log(f"[{i + 1}/{total}] {u.title}  ({size_text(u)})")
+
+        if u.held:
+            _log(f"  {HELD_TEXT}")
+            _result(DownloadResult(u.kb, u.title, False, HELD_TEXT))
+            continue
+        if u.identity is None:
+            message = "stale scan - no COM identity, re-scan first"
+            _result(DownloadResult(u.kb, u.title, False, message))
+            continue
+        try:
+            if _com_bool(u.identity, "IsDownloaded") is True:
+                u.downloaded = True
+                _log("  already downloaded")
+                _result(DownloadResult(u.kb, u.title, True, "already downloaded"))
+                continue
+        except Exception:
+            logger.debug("IsDownloaded is unreadable for %s", u.title, exc_info=True)
+
+        coll = win32com.client.Dispatch("Microsoft.Update.UpdateColl")
+        coll.Add(u.identity)
+        try:
+            if not u.identity.EulaAccepted:
+                u.identity.AcceptEula()
+        except Exception:
+            logger.warning("Could not check/accept EULA for %s", u.title, exc_info=True)
+
+        try:
+            downloader.Updates = coll
+            dl_result = downloader.Download()
+            code = int(dl_result.ResultCode)
+            if code == 2:
+                u.downloaded = True
+                _log("  download: success")
+                _result(DownloadResult(u.kb, u.title, True, "downloaded"))
+            else:
+                message = (f"download {_RESULT_TEXT.get(code, code)} - "
+                           f"{decode_wu_error(dl_result.HResult)}")
+                _log(f"  {message}")
+                _result(DownloadResult(u.kb, u.title, False, message))
+        except Exception as e:
+            detail = _explain(e)
+            _log(f"  error: {detail}")
+            _result(DownloadResult(u.kb, u.title, False, detail))
 
     if progress_cb:
         progress_cb(total, total, "")

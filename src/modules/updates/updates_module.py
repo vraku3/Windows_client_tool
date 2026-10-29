@@ -33,15 +33,17 @@ from modules.updates.operation_guard import maintenance_worker
 from core.windows_utils import is_reboot_pending
 from core.blocklist import add_pattern, add_exclusion, load_exclusions, is_blocked
 from .exclusions_ui import ExclusionsEditor, ExcludedOffers
-from core.events import NOTIFY_BALLOON, BalloonNotifyData
+from core.events import (
+    NOTIFY_BALLOON, NAV_REQUEST_MODULE, BalloonNotifyData, NavRequestData,
+)
 from core.table_ui import centered_item, center_header, set_role
 from core.widget_life import widget_is_valid
 from modules.updates.winget_updater import (
     fetch_updates, install_update, show_package_details, AppUpdate, UpdateOutcome,
 )
 from modules.updates.windows_updater import (
-    fetch_pending_updates, install_updates_iter, hide_update,
-    WindowsUpdate, InstallResult, size_text, severity_text, reboot_text,
+    fetch_pending_updates, install_updates_iter, download_updates_iter, hide_update,
+    WindowsUpdate, InstallResult, DownloadResult, size_text, severity_text, reboot_text,
     HELD_TEXT, wu_status_text, split_scan, update_status_text,
 )
 from modules.updates.store_updates_tab import _StoreUpdatesTab
@@ -508,7 +510,8 @@ class _AppUpdatesTab(QWidget):
         return key
 
     def _saved_sort(self):
-        saved = self.app.config.get("updates.sort_apps", {}) if self.app else {}
+        config = getattr(self.app, "config", None) if self.app else None
+        saved = config.get("updates.sort_apps", {}) if config else {}
         section = saved.get("section") if isinstance(saved, dict) else None
         if isinstance(section, int) and 0 <= section <= 5:
             return section, bool(saved.get("asc", True))
@@ -768,6 +771,8 @@ class _WinUpdatesTab(QWidget):
         self._workers: List = []
         self._op_timer: Optional[QElapsedTimer] = None
         self._busy_owner = ""
+        #: A download is in flight: buttons stay disabled but no install runs.
+        self._downloading = False
         self._setup_ui()
 
     def set_app(self, app) -> None:
@@ -783,11 +788,27 @@ class _WinUpdatesTab(QWidget):
 
     def _sync_install_button(self) -> None:
         busy = bool(getattr(self, "_busy_owner", ""))
-        idle = not getattr(self, "_installing", False)
+        idle = not getattr(self, "_installing", False) and not getattr(self, "_downloading", False)
         can = any(not u.pending_restart for u in getattr(self, "_updates", []))
         self._install_btn.setEnabled(can and not busy and idle)
         visible = any(not u.pending_restart for u in self._visible_wu_updates())
         self._install_visible_btn.setEnabled(visible and not busy and idle)
+        selected = self._selected_wu_updates()
+        self._download_btn.setEnabled(bool(selected) and not busy and idle)
+        self._drivers_btn.setEnabled(
+            any(self._is_driver(u) for u in (selected or self._updates)) and idle)
+
+    @staticmethod
+    def _is_driver(update) -> bool:
+        return bool(getattr(update, "driver", False)
+                    or wu_categories.category_of(update) == wu_categories.DRIVER)
+
+    def _selected_wu_rows(self) -> list:
+        return sorted({i.row() for i in self._table.selectedIndexes()})
+
+    def _selected_wu_updates(self) -> List[WindowsUpdate]:
+        return [self._updates[r] for r in self._selected_wu_rows()
+                if r < len(self._updates) and not self._updates[r].pending_restart]
 
     def _visible_wu_rows(self) -> list:
         return [row for row in range(self._table.rowCount())
@@ -806,8 +827,11 @@ class _WinUpdatesTab(QWidget):
         for row, update in enumerate(self._updates):
             show = True
             if query:
-                haystack = " ".join((update.kb or "", update.title or "",
-                                     update.classification or "")).casefold()
+                haystack = " ".join((
+                    update.kb or "", update.title or "", update.classification or "",
+                    " ".join(getattr(update, "security_bulletins", None) or []),
+                    " ".join(getattr(update, "cve_ids", None) or []),
+                )).casefold()
                 show = query in haystack
             if show and severity:
                 current = (severity_text(update) or "").casefold()
@@ -859,7 +883,8 @@ class _WinUpdatesTab(QWidget):
         return key
 
     def _saved_wu_sort(self):
-        saved = self.app.config.get("updates.sort_wu", {}) if self.app else {}
+        config = getattr(self.app, "config", None) if self.app else None
+        saved = config.get("updates.sort_wu", {}) if config else {}
         section = saved.get("section") if isinstance(saved, dict) else None
         if isinstance(section, int) and 0 <= section <= 7:
             return section, bool(saved.get("asc", True))
@@ -899,22 +924,31 @@ class _WinUpdatesTab(QWidget):
         # Toolbar
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
+        self._download_btn = QPushButton("Download Selected")
         self._install_btn = QPushButton("Install Selected")
         self._install_visible_btn = QPushButton("Install Visible")
+        self._drivers_btn = QPushButton("Driver Manager")
         self._details_btn = QPushButton("Details")
         self._hide_btn = QPushButton("Hide Selected")
         self._block_btn = QPushButton("Add to Blocklist")
         self._history_btn = QPushButton("History")
         self._open_btn = QPushButton("Open Settings")
+        self._download_btn.setEnabled(False)
         self._install_btn.setEnabled(False)
         self._install_visible_btn.setEnabled(False)
+        self._drivers_btn.setEnabled(False)
+        self._drivers_btn.setToolTip(
+            "Driver-class Windows Update offers are approved and installed per "
+            "device in Driver Manager, not swept into an automatic run.")
         self._details_btn.setEnabled(False)
         self._hide_btn.setEnabled(False)
         self._block_btn.setEnabled(False)
         self._status_lbl = QLabel("Click Refresh to check for Windows Updates.")
         toolbar.addWidget(self._refresh_btn)
+        toolbar.addWidget(self._download_btn)
         toolbar.addWidget(self._install_btn)
         toolbar.addWidget(self._install_visible_btn)
+        toolbar.addWidget(self._drivers_btn)
         toolbar.addWidget(self._details_btn)
         toolbar.addWidget(self._hide_btn)
         toolbar.addWidget(self._block_btn)
@@ -992,6 +1026,8 @@ class _WinUpdatesTab(QWidget):
         layout.addWidget(self._scan_changes)
 
         self._refresh_btn.clicked.connect(self._do_refresh)
+        self._download_btn.clicked.connect(self._do_download)
+        self._drivers_btn.clicked.connect(self._do_open_driver_manager)
         self._scan_status = _ScanStatusLabel("wu", self)
         layout.addWidget(self._scan_status)
         self._install_btn.clicked.connect(self._do_install)
@@ -1026,12 +1062,15 @@ class _WinUpdatesTab(QWidget):
         self._hide_btn.setEnabled(has_sel)
         self._block_btn.setEnabled(has_sel)
         self._details_btn.setEnabled(has_sel)
+        self._sync_install_button()
 
     def _patterns(self) -> list[dict]:
         return load_exclusions(self.app) if self.app else []
 
     def _do_refresh(self):
-        if getattr(self, "_scan_worker", None) is not None or getattr(self, "_installing", False):
+        if (getattr(self, "_scan_worker", None) is not None
+                or getattr(self, "_installing", False)
+                or getattr(self, "_downloading", False)):
             return
         self._empty_state.action_button.setEnabled(False)
         self._empty_state.title_label.setText("Checking for updates")
@@ -1149,6 +1188,7 @@ class _WinUpdatesTab(QWidget):
         from core.timeline import record
         record(getattr(self.app, "app_data_dir", None), "updates", "install_failed" if getattr(self, "_installing", False) else "scan_failed", "Windows Update operation failed", {"error": err_str[:500]}, "error")
         self._installing = False
+        self._downloading = False
         self._empty_state.action_button.setEnabled(True)
         self._empty_state.title_label.setText("Could not check updates")
         self._empty_state.set_variant("error", reason=err_str)
@@ -1173,8 +1213,94 @@ class _WinUpdatesTab(QWidget):
     def _do_install_visible(self):
         self._install(self._visible_wu_updates())
 
+    def _do_download(self):
+        selected = self._selected_wu_updates()
+        if selected:
+            self._download(selected)
+
+    def _do_open_driver_manager(self) -> None:
+        """Driver offers are approved per device in Driver Manager."""
+        if self.app is None:
+            return
+        try:
+            self.app.event_bus.publish(
+                NAV_REQUEST_MODULE, NavRequestData(module_name="Driver Manager"))
+        except Exception:
+            logger.warning("Could not open Driver Manager", exc_info=True)
+
+    def _download(self, selected):
+        if (getattr(self, "_installing", False) or getattr(self, "_downloading", False)
+                or getattr(self, "_scan_worker", None) is not None):
+            return
+        if not selected:
+            return
+        from core.disk_space import check_wu_preflight
+        from modules.updates.windows_updater import download_size_mb
+        warnings = []
+        reason = check_wu_preflight(download_size_mb(selected, warnings.append))
+        if reason:
+            self._status_lbl.setText(f"Blocked: {reason}")
+            return
+
+        self._downloading = True
+        self._refresh_btn.setEnabled(False)
+        self._sync_install_button()
+        self._log.clear()
+        for warning in warnings:
+            self._log.appendPlainText(warning)
+        self._progress.setRange(0, len(selected))
+        self._progress.setValue(0)
+        self._progress.show()
+        self._op_timer = QElapsedTimer()
+        self._op_timer.start()
+        self._status_lbl.setText(f"Downloading {len(selected)} update(s)...")
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "download_start",
+               f"Downloading {len(selected)} Windows update(s)", {"selected": len(selected)})
+
+        def _run(worker):
+            return download_updates_iter(
+                selected,
+                progress_cb=lambda done, total, title: worker.signals.progress.emit(done),
+                output_cb=lambda line: worker.signals.log_line.emit(line),
+                is_cancelled=lambda: worker.is_cancelled,
+            )
+
+        w = COMWorker(_run)
+        w.signals.log_line.connect(self._log.appendPlainText)
+        w.signals.progress.connect(self._progress.setValue)
+        w.signals.result.connect(self._on_download_done)
+        w.signals.error.connect(self._on_error)
+        self._workers.append(w)
+        QThreadPool.globalInstance().start(w)
+
+    def _on_download_done(self, results: List[DownloadResult]):
+        self._downloading = False
+        self._refresh_btn.setEnabled(True)
+        self._progress.hide()
+        done = sum(1 for r in results if r.success)
+        failed = len(results) - done
+        self._status_lbl.setText(f"{done}/{len(results)} downloaded."
+                                 + (f" {failed} failed." if failed else ""))
+        status = {(r.kb or r.title): ("OK - downloaded" if r.success
+                                      else f"FAILED - {r.message}")
+                  for r in results}
+        self._render_table(status)
+        self._sync_install_button()
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates",
+               "download_failed" if failed else "download_complete",
+               f"Windows Update download: {done}/{len(results)}",
+               {"downloaded": done, "failed": failed},
+               "error" if failed else "info")
+        _maybe_toast(
+            self.app, self._op_timer, "Windows Update download finished",
+            f"{done}/{len(results)} update(s) downloaded. Installation has not started.",
+        )
+
     def _install(self, selected):
-        if getattr(self, "_installing", False) or getattr(self, "_scan_worker", None) is not None:
+        if (getattr(self, "_installing", False) or getattr(self, "_downloading", False)
+                or getattr(self, "_scan_worker", None) is not None):
             return
         if not selected:
             return
@@ -1189,6 +1315,23 @@ class _WinUpdatesTab(QWidget):
                 + names
                 + "\n\nIt can take a long time, may change the build, and cannot always "
                   "be rolled back.\n\nInstall it anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
+        drivers = [u for u in selected if self._is_driver(u)]
+        if drivers:
+            names = "\n".join(f"* {u.title}" for u in drivers[:6])
+            if len(drivers) > 6:
+                names += f"\n* and {len(drivers) - 6} more"
+            answer = QMessageBox.warning(
+                self, "Driver update selected",
+                "Windows Update driver packages cannot be matched reliably to one "
+                "device from this list:\n\n" + names
+                + "\n\nDriver Manager checks a specific device, installs only what it "
+                  "finds there, and keeps an undo path. Install these driver packages "
+                  "directly from Windows Update anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
             if answer != QMessageBox.StandardButton.Yes:
@@ -1566,12 +1709,18 @@ class _UpdateSettingsTab(QWidget):
         self._chk_allow_feature = QCheckBox(
             "Let Run All and unattended runs install feature upgrades (Windows 11 versions)")
         self._chk_allow_optional = QCheckBox(
-            "Let Run All and unattended runs install optional updates (drivers, previews, .NET)")
+            "Let Run All and unattended runs install optional updates (previews, .NET)")
+        self._chk_allow_drivers = QCheckBox(
+            "Let Run All and unattended runs install driver updates (not recommended)")
+        self._chk_allow_drivers.setToolTip(
+            "Off by default. Driver offers are approved per device in Driver "
+            "Manager instead; this opts automated runs into installing them anyway.")
         general_lay.addWidget(self._chk_verify)
         general_lay.addWidget(self._chk_restore)
         general_lay.addWidget(self._chk_drivers)
         general_lay.addWidget(self._chk_allow_feature)
         general_lay.addWidget(self._chk_allow_optional)
+        general_lay.addWidget(self._chk_allow_drivers)
         stale_row = QHBoxLayout()
         stale_label = QLabel("Flag results as stale after")
         self._stale_hours = QSpinBox()
@@ -1754,6 +1903,8 @@ class _UpdateSettingsTab(QWidget):
             lambda v: self._set_cfg("updates.allow_feature_updates", v))
         self._chk_allow_optional.toggled.connect(
             lambda v: self._set_cfg("updates.allow_optional_updates", v))
+        self._chk_allow_drivers.toggled.connect(
+            lambda v: self._set_cfg("updates.allow_auto_drivers", v))
         self._sched_save_btn.clicked.connect(self._save_schedule)
         self._sched_remove_btn.clicked.connect(self._remove_schedule)
         self._sched_run_btn.clicked.connect(self._run_schedule_now)
@@ -1784,6 +1935,8 @@ class _UpdateSettingsTab(QWidget):
             self.app.config.get("updates.allow_feature_updates", False))
         self._chk_allow_optional.setChecked(
             self.app.config.get("updates.allow_optional_updates", False))
+        self._chk_allow_drivers.setChecked(
+            self.app.config.get("updates.allow_auto_drivers", False))
 
         self._exclusions_editor.load(self.app)
 

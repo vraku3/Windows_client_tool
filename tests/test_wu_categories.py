@@ -46,4 +46,20 @@ def test_automatic_runs_can_opt_in_per_group():
     assert [x.title for x in run] == ["Windows 11, version 25H2"]
     assert len(skipped[wc.DRIVER]) == 1
     run, skipped = wc.split_for_automatic(updates, allow_feature=True, allow_optional=True)
+    assert [x.title for x in run] == ["Windows 11, version 25H2"]
+    assert len(skipped[wc.DRIVER]) == 1
+    run, skipped = wc.split_for_automatic(
+        updates, allow_feature=True, allow_optional=True, allow_drivers=True)
     assert len(run) == 2 and skipped == {}
+
+
+def test_a_com_driver_type_outranks_a_quality_looking_title():
+    """`IUpdate.Type == utDriver` is certain; a title can read like a quality
+    update. The driver gate must win so an automated run cannot sweep it in."""
+    from types import SimpleNamespace
+    driver = SimpleNamespace(classification="Updates", title="Cumulative fix",
+                             driver=True)
+    assert wc.category_of(driver) == wc.DRIVER
+    run, skipped = wc.split_for_automatic([driver], allow_optional=True)
+    assert run == [] and len(skipped[wc.DRIVER]) == 1
+    assert "Driver Manager" in wc.skipped_text(skipped)

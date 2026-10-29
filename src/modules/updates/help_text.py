@@ -13,6 +13,12 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
  'Add to Blocklist': 'Save a matching package or title pattern to exclude it from future app scans '
                      'and installs. Remove the pattern in Settings to include it again; this does '
                      'not uninstall anything.',
+ 'Download Selected': 'Download the selected Windows updates into the Windows Update cache without '
+                      'installing them. No restart is requested; Install Selected can then run '
+                      'from the downloaded bytes. A download alone changes no installed software.',
+ 'Driver Manager': 'Open Driver Manager, where a driver is approved and installed for a specific '
+                   'device. Windows Update cannot reliably match one driver package to one device '
+                   'from this list.',
  'Install Selected': 'Start downloading and installing the selected Windows updates immediately '
                      'without another app confirmation. Administrator rights are required; a '
                      'restart may be needed and there is no rollback here. Held AMD display '
@@ -46,8 +52,16 @@ CONTROLS = {'Refresh': 'Scan the update source again. This downloads update meta
                                                                     'being available.',
  'Include driver updates from Windows Update': 'Save this setting immediately to include eligible '
                                                'driver offers in scans. This does not install them '
-                                               'by itself; held AMD display drivers remain '
-                                               'excluded from installation.',
+                                               'by itself and does not let an automated run install '
+                                               'them; approve a driver per device in Driver Manager '
+                                               'or with Install Selected. Held AMD display drivers '
+                                               'remain excluded from installation.',
+ 'Let Run All and unattended runs install driver updates (not recommended)': 'Save this setting '
+                                               'immediately. Off by default: driver offers are '
+                                               'skipped by automated runs and reviewed per device '
+                                               'in Driver Manager instead. Turning it on lets an '
+                                               'unattended run install driver packages with no '
+                                               'per-device approval.',
  'Save Blocklist': 'Save one exclusion pattern per line to the app configuration. Matching future '
                    'update offers are omitted; remove a pattern and save again to reverse the '
                    'exclusion.',

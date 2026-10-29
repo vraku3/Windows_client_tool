@@ -1132,6 +1132,11 @@ Measured here (2026-10-15), each of which shaped the code:
 
 - `windows_updater.uninstall_updates()` loops KBs, keeps every `InstallResult`, checks cancellation between items, and never interrupts an uninstaller in flight. The History table is ExtendedSelection; only succeeded KB installations are offered. One confirmation, ONE restore point for the batch, per-result ledger/timeline entries, a summary with up to eight failure reasons, and a re-scan when anything succeeded.
 
+**Exclusion import/export** (2026-10-29, roadmap batch 20):
+
+- `core.blocklist.export_json()` / `import_json()` move the full exclusion entries (pattern, reason, origin, dates, author) as a versioned JSON file. Malformed JSON, non-lists and all-invalid payloads raise a readable `ValueError`; a bare list is accepted.
+- The exclusions editor has Export... and Import...; import asks merge (case-insensitive pattern update) / replace / cancel, persists, and records a timeline event.
+
 **Unattended mode**: `python src/main.py --unattended --stages wu,winget,cleanup` — headless, no `QApplication`/`MainWindow`; calls `pythoncom.CoInitialize()` explicitly since there's no `COMWorker`/Qt event loop available. Requires admin — exits 1 immediately if not elevated. The Settings tab's "Create/Update Task" button wires this into Task Scheduler as `WinClientTool_UnattendedMaintenance` (`/rl HIGHEST`, `/sc DAILY /mo <N>`). The older winget-only `WinClientTool_UpdateCheck` task (`_save_legacy`) is kept as-is for existing users — don't merge it into the new one.
 
 **Worker tracking**: every tab here is a `QWidget` (not `BaseModule`) with its own `self._workers: list` and `_cancel_all()`, per the general widget-subclass rule below. `UpdatesModule.on_stop()` calls `_cancel_all()` on all four stateful tabs explicitly — `BaseModule.cancel_all_workers()` only covers workers created directly on the module itself, not on child tab widgets. **`on_deactivate()` cancels nothing** (2026-10-19): a cancel reached winget as `taskkill /T /F` mid-install. `install_update` never kills a running upgrade; Stop takes effect before the next package. Driver Manager's `on_deactivate` is the same, so a driver install's result (undo token, history) still lands.

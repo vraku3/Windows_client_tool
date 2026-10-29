@@ -112,3 +112,29 @@ def test_expiry_boundary_and_structured_matching():
     assert not is_blocked("Foo", "", [old])
     assert is_blocked("Bar", "", [today])
     assert is_blocked("Baz", "", [{"pattern": "Baz", "expires": "invalid"}])
+
+
+def test_export_import_round_trips_reasons_and_dates():
+    from core.blocklist import export_json, import_json
+    entries = [{"pattern": "Radeon", "reason": "pinned", "origin": "manual",
+                "expires": "2026-12-01", "review_by": "2026-11-01",
+                "added_by": "iorda"}]
+    text = export_json(entries)
+    assert '"version": 1' in text
+    loaded = import_json(text)
+    assert loaded[0]["pattern"] == "Radeon"
+    assert loaded[0]["reason"] == "pinned"
+    assert loaded[0]["expires"] == "2026-12-01"
+
+
+def test_import_accepts_a_bare_list_too():
+    from core.blocklist import import_json
+    assert import_json('["Foo", {"pattern": "Bar"}]')[0]["pattern"] == "Foo"
+
+
+def test_import_rejects_malformed_or_empty_payloads():
+    import pytest
+    from core.blocklist import import_json
+    for text in ("{broken", '{"version": 1}', '[1, 2]', '[{"pattern": ""}]'):
+        with pytest.raises(ValueError):
+            import_json(text)

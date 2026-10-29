@@ -6,6 +6,7 @@ a bare pattern with no '*' is auto-wrapped as '*pattern*' (substring match).
 Blank lines and lines starting with '#' are treated as comments and ignored.
 """
 import fnmatch
+import json
 from datetime import date
 from typing import List
 
@@ -94,6 +95,35 @@ def expired_exclusions(exclusions) -> list[dict]:
 def is_blocked(name: str, id_: str, patterns: List[str | dict]) -> bool:
     """Return True if `name` or `id_` matches any pattern in `patterns`."""
     return bool(_matching_pattern(name, id_, patterns))
+
+
+def export_json(exclusions) -> str:
+    """Portable JSON text for the current exclusions (PATTERN, reason, dates)."""
+    return json.dumps({"version": 1, "exclusions": _normalize_exclusions(exclusions)},
+                      indent=2, ensure_ascii=False)
+
+
+def import_json(text: str) -> list[dict]:
+    """Parse an exported file into normalized entries.
+
+    Accepts the versioned wrapper or a bare list. Raises ValueError with a
+    readable reason for malformed JSON or a non-list payload; never silently
+    imports nothing.
+    """
+    try:
+        payload = json.loads(text or "")
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Not valid JSON: {exc}") from exc
+    if isinstance(payload, dict):
+        payload = payload.get("exclusions")
+    if not isinstance(payload, list):
+        raise ValueError("The file must contain an 'exclusions' list.")
+    if any(not isinstance(item, (dict, str)) for item in payload):
+        raise ValueError("Every exclusion must be an object or a pattern string.")
+    entries = _normalize_exclusions(payload)
+    if not entries and payload:
+        raise ValueError("No usable exclusions were found in the file.")
+    return entries
 
 
 def matching_offers(pattern, offers) -> list[tuple[str, str]]:

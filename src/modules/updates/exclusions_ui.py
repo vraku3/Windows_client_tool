@@ -1,13 +1,13 @@
 from PyQt6.QtCore import QDate, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QCheckBox, QDateEdit, QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
+    QCheckBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from core.blocklist import (add_exclusion, expired_exclusions, is_blocked, load_exclusions,
-                            matching_offers, save_exclusions)
+from core.blocklist import (add_exclusion, expired_exclusions, export_json, import_json,
+                            is_blocked, load_exclusions, matching_offers, save_exclusions)
 from core.semantic_colors import chrome, semantic
 from ui.table_style import apply_table_style
 
@@ -114,6 +114,16 @@ class ExclusionsEditor(QWidget):
             button.setToolTip(tip)
             button.clicked.connect(callback)
             row.addWidget(button)
+        for text, callback, tip in (
+            ("Export...", self.export_file,
+             "Write these exclusions to a JSON file, including reasons and dates."),
+            ("Import...", self.import_file,
+             "Merge or replace exclusions from a JSON file exported here or from another PC."),
+        ):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.clicked.connect(callback)
+            row.addWidget(button)
         row.addStretch()
         layout.addLayout(row)
         self.status = QLabel()
@@ -174,6 +184,68 @@ class ExclusionsEditor(QWidget):
             entries = load_exclusions(self.app)
             entries[-1].update(dialog.entry)
         self.persist(entries)
+
+    def export_file(self):
+        if self.app is None:
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export update exclusions", "update-exclusions.json",
+            "JSON files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(export_json(load_exclusions(self.app)))
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", f"Could not write {path}:\n{exc}")
+            return
+        entries = load_exclusions(self.app)
+        self.status.setText(f"Exported {len(entries)} exclusion(s) to {path}")
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "blocklist_export",
+               f"Exported {len(entries)} update exclusion(s)", {"count": len(entries)})
+
+    def import_file(self):
+        if self.app is None:
+            return
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Import update exclusions", "", "JSON files (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as handle:
+                incoming = import_json(handle.read())
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "Import failed", str(exc))
+            return
+        if not incoming:
+            self.status.setText("That file contained no exclusions.")
+            return
+        answer = QMessageBox.question(
+            self, "Import exclusions",
+            f"Import {len(incoming)} exclusion(s) from {path}?\n\n"
+            "Yes merges them with the current list; No replaces the current list.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes)
+        if answer == QMessageBox.StandardButton.Cancel:
+            return
+        if answer == QMessageBox.StandardButton.Yes:
+            merged = {entry["pattern"].casefold(): entry
+                      for entry in load_exclusions(self.app)}
+            for entry in incoming:
+                key = entry["pattern"].casefold()
+                merged[key] = {**merged.get(key, {}), **entry}
+            entries = list(merged.values())
+        else:
+            entries = incoming
+        self.persist(entries)
+        self.status.setText(f"Imported {len(incoming)} exclusion(s).")
+        from core.timeline import record
+        record(getattr(self.app, "app_data_dir", None), "updates", "blocklist_import",
+               f"Imported {len(incoming)} update exclusion(s)",
+               {"count": len(incoming),
+                "mode": "merge" if answer == QMessageBox.StandardButton.Yes else "replace"})
 
     def remove(self):
         if self.app is None:

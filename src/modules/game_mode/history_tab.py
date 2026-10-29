@@ -214,7 +214,9 @@ class HistoryTab(QWidget):
                  f"CPU: {(entry.get('metrics_before') or {}).get('cpu_percent')}% -> "
                  f"{(entry.get('metrics_after') or {}).get('cpu_percent')}%",
                  f"Note: {entry.get('note', '')}", "", "Changes:"]
-        lines.extend(f"[{e['status']}] {e['label']} ({e['kind']})" for e in entry.get("actions", []))
+        lines.extend(f"[{e['status']}] {e['label']} ({e['kind']}"
+                     + (f", {e['method']}" if e.get("method") else "") + ")"
+                     for e in entry.get("actions", []))
         lines.extend(["", "ON report:"])
         lines.extend(f"[{r['level']}] {r['text']}" for r in entry.get("on_report", []))
         lines.extend(["", "Restoration issues:"])

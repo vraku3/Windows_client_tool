@@ -269,6 +269,10 @@ class WinSystem:
         self._post_close(self._matching(identities))
         self._wait_gone(identities, grace)
         if force:
+            left = self._matching(identities)
+            if left:
+                self._post_close(left)
+                self._wait_gone(identities, min(4.0, max(1.0, grace / 2)))
             results = [self._end_left(group) for group, _path in jobs]
             self._wait_gone(identities, 5.0)
             return [err or ("still running after it was ended" if self._matching(group) else None)

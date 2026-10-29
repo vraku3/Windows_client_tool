@@ -510,6 +510,15 @@ class _On:
         """Last step of ON. Nothing to put back: Windows restarts the shell
         itself (AutoRestartShell), and `restart_explorer` falls back to
         starting it as the signed-in user if it does not."""
+        shell = [p.pid for p in self.s.processes()
+                 if p.name.lower() == "explorer.exe" and p.session == session]
+        titles = [t.casefold() for t in getattr(self.s, "window_titles", lambda _pids: [])(shell)]
+        if any(word in t for t in titles for word in ("copying", "moving", "deleting")):
+            self.log(WARN, "Explorer: a file operation is open -- not restarting the shell")
+            return
+        if self.s.fullscreen_pids():
+            self.log(WARN, "Explorer: a fullscreen app is foreground -- not restarting the shell")
+            return
         before = sum(p.handles for p in self.s.processes()
                      if p.name.lower() == "explorer.exe" and p.session == session)
         entry = self.j.record({"kind": "explorer_restart", "handles_before": before})
@@ -583,10 +592,21 @@ class _On:
             if extra and extra not in args:
                 args = f"{args} {extra}".strip()
             reopen = g.spec.reopen if g.spec else True
+            aumid = self.s.aumid(g.roots[0].pid)
+            base = os.path.basename(path or program).lower()
+            if base == "onedrive.exe":
+                method = "shutdown"
+            elif base in catalog.QUIT_ARGS:
+                method = "quit-args"
+            elif aumid:
+                method = "uwp-tree"
+            else:
+                method = "polite+terminate" if force else "polite"
             state = getattr(self.s, "window_state", lambda _pids: "normal")([p.pid for p in g.procs])
             entries.append(self.j.record({
                 "kind": "app_close", "exe": g.exe, "label": g.label, "path": path or program,
-                "args": args, "cwd": os.path.dirname(path or program), "aumid": self.s.aumid(g.roots[0].pid),
+                "args": args, "cwd": os.path.dirname(path or program), "aumid": aumid,
+                "method": method,
                 "reopen": reopen and elevated is not True, "was_elevated": elevated,
                 "handles": g.handles, "processes": len(g.procs), "window": state}))
             jobs.append(([(p.pid, p.create_time) for p in g.procs], path))

@@ -81,7 +81,8 @@ def record_session_start(app_data_dir, preset, actions_total, handles, processes
             entries.append(entry)
         summary = [{"kind": e.get("kind", ""),
                     "label": e.get("label") or e.get("name") or e.get("exe") or e.get("path") or e.get("kind", "Change"),
-                    "status": "ok" if e.get("done") else "failed"} for e in (actions or [])]
+                    "status": "ok" if e.get("done") else "failed",
+                    "method": e.get("method", "")} for e in (actions or [])]
         messages = [{"level": r["level"], "text": r["text"]} for r in (report or [])]
         ok = sum(e["status"] == "ok" for e in summary)
         failed = max(sum(e["status"] == "failed" for e in summary),

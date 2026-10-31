@@ -1,0 +1,5 @@
+{
+  "thumbprint": "REPLACE_WITH_ISSUED_CERTIFICATE_SHA1_THUMBPRINT",
+  "expectedSubject": "REPLACE_WITH_EXACT_ISSUED_CERTIFICATE_SUBJECT",
+  "timestampUrl": "http://time.certum.pl"
+}

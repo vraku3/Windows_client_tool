@@ -78,9 +78,9 @@
   {
     "id": "visual_effects_best_performance",
     "name": "Adjust Visual Effects for Best Performance",
-    "description": "Disables animations and shadows for maximum UI responsiveness.",
+    "description": "Sets the visual-effects preset preference. This single registry value does not atomically apply every animation and shadow setting. Prefer Windows Performance Options; it is not a blanket speed recommendation for modern hardware.",
     "category": "Performance",
-    "risk": "low",
+    "risk": "medium",
     "requires_admin": false,
     "steps": [
       {

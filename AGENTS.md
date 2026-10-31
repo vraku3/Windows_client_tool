@@ -18,6 +18,18 @@ Windows desktop optimization and diagnostics utility — a PyQt6 GUI application
 python src/main.py
 ```
 
+**Always launch elevated when testing the running app** (user, 2026-10-31):
+use an Administrator process for source runs and built executables. An
+unelevated launch disables Tweaks and other admin-gated modules, so it is not a
+valid end-to-end test. Syntax checks and read-only unit tests need no elevation.
+
+**Keep one app instance during runtime tests** (user, 2026-10-31): before
+opening a source run or new build, identify any running WinClientTool instance
+(including source runs through Python), close it, and verify that it exited.
+Then launch the new version elevated and verify its window and process. Never
+close unrelated Python processes. This avoids testing an old window alongside
+the new build.
+
 **Install dependencies**:
 ```
 pip install -r requirements.txt
@@ -44,13 +56,22 @@ The portable spec must include `a.binaries` and `a.datas` in the EXE constructor
 
 **Keep exactly two versions in `Aplicații/Windows Client Tool Share/`** (user, 2026-10-28): newest in the root, the immediately previous iteration in `old/`. Rotate on every build: demote the current share root copy to `old/WinClientTool-Portable.exe`, copy the new build into the share root, and delete anything older (`old/*.exe_old`, `*-new.exe` test copies). The tree must contain exactly `WinClientTool-Portable.exe` and `old/WinClientTool-Portable.exe`.
 
-**Code-signing** — the unsigned exe is blocked by Smart App Control/SmartScreen/WDAC on many machines. Sign every fresh build with the local cert workflow, then remove the previous cert (user, 2026-10-29):
+**Distribution preference (user, 2026-10-31): no spending.** Paid public-certificate enrollment is canceled. Do not buy certificates/subscriptions or submit identity documents. `tools/sign_build.ps1` is optional store-backed signing tooling for a certificate already available, configured through ignored `tools/signing.local.json`; see `docs/release-signing.md`. Its former PFX/password arguments are no longer supported. No production certificate is currently provisioned. Public signing must not be claimed complete. Company policy still requires IT approval; never weaken Windows protections to make a build run.
+
+**Development code-signing** — the unsigned exe is blocked by Smart App Control/SmartScreen/WDAC on many machines. The previous local workflow (user, 2026-10-29) remains development-only; it cannot resolve the verified App Control block:
 ```
 powershell -ExecutionPolicy Bypass -File tools\sign_build_local.ps1
 ```
-It creates a NEW self-signed code-signing cert, trusts it for the current user (`Root` + `TrustedPublisher`), signs and verifies the dist exes, then deletes the previous WinClientTool cert from `My`, `Root` and `TrustedPublisher`. One cert per build; never leave the old one. A real CA cert can still be used instead:
+**Trust limitation verified 2026-10-31:** the local self-signed workflow is
+development signing, not Smart App Control compliance. A fresh protective
+build had Authenticode `Valid` but was blocked by Code Integrity event 3077
+(policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`). Microsoft requires a trusted
+provider certificate for SAC. Do not equate a valid signature with a runnable
+release, disable Windows protections to test it, or describe the local cert
+as solving this requirement. Check the actual launch and report a block.
+It creates a NEW self-signed code-signing cert, trusts it for the current user (`Root` + `TrustedPublisher`), signs and verifies the dist exes, then deletes the previous WinClientTool cert from `My`, `Root` and `TrustedPublisher`. One cert per development build; never leave the old one. If a suitable CA certificate is already available, the optional release command is:
 ```
-powershell -ExecutionPolicy Bypass -File tools\sign_build.ps1 -Pfx C:\certs\wct.pfx -Password "secret"
+powershell -NoProfile -File tools\sign_build.ps1 -Profile tools\signing.local.json
 ```
 
 **Syntax check** (without running):
@@ -261,6 +282,20 @@ The single home for one-click repair/maintenance actions (SFC/DISM moved OUT to 
 - `QuickFixModule._workers` (plural) tracks all workers; individual `_FixCard`s track `self._worker` (singular). `_on_done`/`_on_error` compare worker IDENTITY, not just None-ness, against `self._worker` before recording an outcome — a cancelled-then-rerun card must not let the old worker's late result clobber the new run
 
 ### Tweak System (`src/modules/tweaks/`)
+
+**Apply safety** (2026-10-31): `safety_policy.py` protects core Windows services,
+Store licensing, contacts indexing and the AMD X3D optimizer from disabling,
+including structured registry aliases. `TweakEngine.apply_tweak()` evaluates
+the entire tweak before any write. Machine-scoped recovery blocks are stored
+in `%APPDATA%/WindowsTweaker/tweak_safety.json` and match IDs and equivalent
+structured operations. A malformed policy refuses application. UI buttons,
+presets and bulk selection must respect the same policy; detection and backup
+undo must remain available. Do not bypass policy to make a preset apply.
+
+Eight changes were restored after the 2026-10-31 stability incident and are
+quarantined on this PC. Improvement followed grouped recovery without a reboot;
+no individual tweak was proven causal. See `docs/incidents/2026-10-31-stutter-recovery.md`.
+Do not reapply incident changes as a real-machine regression test.
 
 JSON definition files in `src/modules/tweaks/definitions/` (20 category files, ~700 tweaks) define registry/script tweaks. Each entry has `steps[]` with one of: `registry`, `registry_delete`, `service`, `command`, `script`, `appx`, `scheduled_task`.
 

@@ -4,7 +4,7 @@ STATUS_HELP = {
     "applied": "Applied: the detectable settings match this tweak; this does not prove this app applied them.",
     "not_applied": "Not applied: the checked settings do not match, including a missing registry value at its Windows default.",
     "partial": "Partial: only some settings match, or the checks cannot establish that every step matches. Read the reason.",
-    "not_applicable": "Not applicable: the target service, task, package or required Windows version is absent on this PC.",
+    "not_applicable": "Not applicable: a required target is absent on this PC, or Windows denies write access to its registry key.",
     "unknown": "Unknown: no reliable verdict is available, for example because detection has not run, a read was refused or no detection rule exists.",
 }
 
@@ -27,7 +27,7 @@ APPS_INTRO = (
 )
 
 SELECTION_HELP = {
-    "Select All": "Check every tweak in this category, including filtered-out rows; changes nothing until Apply Selected.",
+    "Select All": "Check eligible tweaks in this category, including filtered-out rows; blocked and not-applicable tweaks are skipped. Changes nothing until Apply Selected.",
     "Deselect All": "Clear all checkboxes in this category, including filtered-out rows; this does not undo applied tweaks.",
     "Select Applied": "Select rows detected as Applied and clear the others, including filtered-out rows; selection changes no Windows settings.",
     "Select Not Applied": "Select rows detected as Not applied and clear the others, including filtered-out rows; selection changes no Windows settings.",

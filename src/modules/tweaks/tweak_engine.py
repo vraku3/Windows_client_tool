@@ -2,6 +2,7 @@ from core.system_paths import powershell_exe, cmd_exe
 # src/modules/tweaks/tweak_engine.py
 import json
 import logging
+import os
 import subprocess
 import winreg
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from typing import Any, Callable, Dict, List, Optional
 from core.backup_service import BackupService, StepRecord
 from core.windows_utils import ps_quote
 from modules.tweaks.os_context import get_os_context
+from modules.tweaks.safety_policy import SafetyPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +157,12 @@ class TweakEngine:
     def __init__(self, backup_service: BackupService):
         self._backup = backup_service
         self._os = get_os_context()
+        data_dir = getattr(backup_service, "_data_dir", None)
+        self._safety = (SafetyPolicy.from_file(os.path.join(data_dir, "tweak_safety.json"))
+                        if isinstance(data_dir, (str, os.PathLike)) else SafetyPolicy())
+
+    def safety_reason(self, tweak: Dict) -> str:
+        return self._safety.reason(tweak)
 
     # ==================================================================
     # Apply
@@ -168,6 +176,13 @@ class TweakEngine:
     ) -> bool:
         """Apply all steps. Backs up state first, records steps on success.
         Returns True if all steps succeeded."""
+        refusal = self.safety_reason(tweak)
+        if refusal:
+            msg = f"{tweak.get('name', tweak.get('id'))}: blocked for safety — {refusal}"
+            logger.warning(msg)
+            if on_error:
+                on_error(msg)
+            return False
         applicable = self.check_applicable(tweak)
         if not applicable.applicable:
             msg = f"{tweak.get('name', tweak.get('id'))}: not applicable — {applicable.reason}"
@@ -245,11 +260,39 @@ class TweakEngine:
                 if self._os.appx_installed(pkg) is False:
                     reasons.append(f"'{pkg}' is not installed")
                     continue
+            elif stype in ("registry", "registry_delete"):
+                refusal = self._registry_write_refusal(step)
+                if refusal:
+                    reasons.append(refusal)
+                    continue
             # Any step that is not provably moot makes the tweak applicable.
             return verdict
 
         from modules.tweaks.os_context import Applicability
         return Applicability(False, "; ".join(dict.fromkeys(reasons)))
+
+    @staticmethod
+    def _registry_write_refusal(step: Dict) -> str:
+        """Check write access without changing the key or its ACL.
+
+        The Communications key on this PC is readable but owned by
+        TrustedInstaller. A read-only status check alone therefore reports a
+        tweak as selectable even though the actual write always fails.
+        """
+        full_key = step["key"]
+        hive, sub = _parse_key(full_key)
+        try:
+            with winreg.OpenKey(hive, sub, 0, winreg.KEY_SET_VALUE):
+                return ""
+        except FileNotFoundError:
+            # A missing key may be creatable; do not call that a refusal.
+            return ""
+        except OSError as exc:
+            if isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 5:
+                return (f"no write access to {full_key} with this app's current "
+                        "permissions; Windows may protect this key")
+            logger.warning("Registry write preflight failed for %s: %s", full_key, exc)
+            return ""
 
     def _apply_step(self, step: Dict, rp_id: str) -> Optional[StepRecord]:
         step_type = step["type"]
@@ -589,7 +632,16 @@ class TweakEngine:
                     UNKNOWN, "this tweak defines no steps to check")
             results = [self._detect_probe(s) for s in steps]
 
-        return self._aggregate(results)
+        result = self._aggregate(results)
+        # An absent target app is not a successful removal; there was nothing
+        # installed to remove. Likewise, a read-only registry key is not a
+        # selectable operation merely because its value could be read.
+        has_appx = any(s.get("type") == "appx" for s in tweak.get("steps", []))
+        if result.status in (NOT_APPLIED, PARTIAL) or (result.status == APPLIED and has_appx):
+            applicable = self.check_applicable(tweak)
+            if not applicable.applicable:
+                return DetectionResult(NOT_APPLICABLE, applicable.reason, result.steps)
+        return result
 
     # -- aggregation -------------------------------------------------------
 

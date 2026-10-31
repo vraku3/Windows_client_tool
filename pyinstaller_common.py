@@ -12,6 +12,21 @@ package) before importing this module — see any of the three for the pattern.
 import os
 
 
+def exclude_ambient_icu(analysis) -> None:
+    """Use Windows' ICU for Qt instead of an unrelated DLL found on PATH.
+
+    PyInstaller can collect ``icuuc.dll`` from an ambient tool installation
+    (for example Poppler) while Qt's Windows build expects the OS copy.
+    That unrelated DLL shadows System32 and makes QtWidgets fail with
+    WinError 127 before the application can display its own error handling.
+    """
+    excluded = {"icuuc.dll", "icudt78.dll"}
+    analysis.binaries = type(analysis.binaries)(
+        entry for entry in analysis.binaries
+        if os.path.basename(entry[0]).lower() not in excluded
+    )
+
+
 def get_main_script(project_root: str) -> str:
     return os.path.join(project_root, "src", "main.py")
 

@@ -6,12 +6,13 @@
     Creates a new self-signed code-signing certificate, trusts it for the
     current user (Root + TrustedPublisher), signs dist\WinClientTool-Portable.exe
     and dist\WinClientTool\WinClientTool.exe when present, verifies the result,
-    then removes the previous WinClientTool code-signing certificate from the
-    CurrentUser stores. One certificate per build; the old one is deleted.
+    then removes previous WinClientTool certificates from their owning user
+    or machine stores. One certificate per build; the old ones are deleted.
 
-    This exists because Smart App Control blocks each new unsigned onefile
-    build by hash. A locally trusted signer can satisfy the policy without
-    turning Smart App Control off.
+    This is a local development signing workflow. A valid locally trusted
+    self-signed signature does not meet Smart App Control's requirement for
+    a certificate issued by a trusted provider. Check actual launch results;
+    do not treat Authenticode Valid as proof that App Control permits the app.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools\sign_build_local.ps1
@@ -44,16 +45,28 @@ function Get-Targets {
 
 function Remove-PreviousWctCerts {
     param([string]$KeepThumbprint)
-    foreach ($storeName in @("My", "Root", "TrustedPublisher")) {
-        $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
-            $storeName, "CurrentUser")
-        $store.Open("ReadWrite")
-        try {
-            $stale = @($store.Certificates | Where-Object {
-                $_.Subject -eq $Subject -and $_.Thumbprint -ne $KeepThumbprint
-            })
-            foreach ($old in $stale) { $store.Remove($old) }
-        } finally { $store.Close() }
+    # Stale certificates in LocalMachine require an elevated run; ordinary
+    # fresh builds with only CurrentUser certificates need no machine writes.
+    # CurrentUser Root/TrustedPublisher also enumerate inherited machine
+    # certificates. Removing those through CurrentUser fails with access
+    # denied even in an elevated process. Clean the owning machine store
+    # first, and request write access only when stale certificates exist.
+    foreach ($scope in @("LocalMachine", "CurrentUser")) {
+        foreach ($storeName in @("My", "Root", "TrustedPublisher")) {
+            $store = New-Object System.Security.Cryptography.X509Certificates.X509Store(
+                $storeName, $scope)
+            $store.Open("ReadOnly")
+            try {
+                $stale = @($store.Certificates | Where-Object {
+                    $_.Subject -eq $Subject -and $_.Thumbprint -ne $KeepThumbprint
+                })
+            } finally { $store.Close() }
+            if ($stale.Count -eq 0) { continue }
+            $store.Open("ReadWrite")
+            try {
+                foreach ($old in $stale) { $store.Remove($old) }
+            } finally { $store.Close() }
+        }
     }
 }
 
@@ -95,3 +108,4 @@ foreach ($target in $targets) {
 
 Remove-PreviousWctCerts -KeepThumbprint $cert.Thumbprint
 Write-Host "Signed and verified. Certificate $($cert.Thumbprint) is trusted for this user." -ForegroundColor Green
+Write-Warning "Local development signature only: Smart App Control may still require a certificate issued by a trusted provider. Verify application launch separately."

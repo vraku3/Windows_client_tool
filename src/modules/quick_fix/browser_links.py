@@ -17,11 +17,27 @@ import time
 from dataclasses import dataclass, field
 from urllib.parse import quote
 import winreg
-import win32crypt
 
 from core import shell_launch
 
 logger = logging.getLogger(__name__)
+
+
+try:
+    import win32crypt
+except ImportError as error:
+    logger.warning('Browser links: win32crypt unavailable: %s', error)
+
+    class _UnavailableDPAPI:
+        def CryptUnprotectData(self, *args):
+            raise RuntimeError('Windows DPAPI (win32crypt) is unavailable; repair pywin32')
+
+        def CryptProtectData(self, *args):
+            raise RuntimeError('Windows DPAPI (win32crypt) is unavailable; repair pywin32')
+
+    win32crypt = _UnavailableDPAPI()
+
+
 OFFICE = r'Software\Microsoft\Office\16.0\Common\Links'
 POLICY = r'Software\Policies\Microsoft\office\16.0\common\links'
 CLIENTS = r'SOFTWARE\Clients\StartMenuInternet'

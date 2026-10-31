@@ -8,7 +8,8 @@ description = "Windows 11 optimization and system diagnostics utility"
 requires-python = ">=3.12"
 dynamic = ["version"]
 dependencies = [
-    "PyQt6>=6.6",
+    "PyQt6==6.11.0",
+    "PyQt6-Qt6==6.11.0",
     "psutil>=5.9",
     "pywin32>=306",
     "WMI>=1.5.1",

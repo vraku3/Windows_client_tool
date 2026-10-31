@@ -1,5 +1,6 @@
 # tests/test_tweak_engine.py
 import pytest
+import winreg
 from unittest.mock import patch, MagicMock
 from core.backup_service import BackupService
 
@@ -123,6 +124,44 @@ def test_access_denied_is_the_only_registry_unknown(engine):
         result = engine.detect(_reg_tweak())
     assert result.status == "unknown"
     assert "permission" in result.reason.lower()
+
+
+def test_readable_but_write_locked_registry_tweak_is_unavailable(engine):
+    """This PC's Communications key is readable but owned by TrustedInstaller."""
+    tweak = _reg_tweak()
+    tweak["steps"][0]["key"] = (
+        r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Communications")
+    key = MagicMock()
+    key.__enter__ = lambda s: s
+    key.__exit__ = MagicMock(return_value=False)
+
+    def open_key(hive, sub, reserved=0, access=winreg.KEY_READ):
+        if access == winreg.KEY_SET_VALUE:
+            raise _oserror(5)
+        return key
+
+    with patch("winreg.OpenKey", side_effect=open_key), \
+         patch("winreg.QueryValueEx", side_effect=FileNotFoundError(2, "not found")), \
+         patch("winreg.CreateKeyEx") as create:
+        result = engine.detect(tweak)
+        errors = []
+        applied = engine.apply_tweak(tweak, "rp1", on_error=errors.append)
+
+    assert result.status == "not_applicable"
+    assert "write" in result.reason.lower()
+    assert applied is False
+    assert "write" in errors[0].lower()
+    create.assert_not_called()
+
+
+def test_missing_tips_app_is_unavailable_before_selection(engine, monkeypatch):
+    tweak = {"id": "disable_windows_tips_app", "name": "Disable Windows Tips App",
+             "steps": [{"type": "appx", "package": "Microsoft.GetTip",
+                        "action": "remove"}]}
+    monkeypatch.setattr(engine._os, "appx_installed", lambda name: False)
+    result = engine.detect(tweak)
+    assert result.status == "not_applicable"
+    assert "not installed" in result.reason
 
 
 def test_absent_means_applied_flips_the_default_reading(engine):

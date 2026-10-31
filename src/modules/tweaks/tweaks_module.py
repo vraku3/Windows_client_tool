@@ -47,7 +47,7 @@ _CATEGORY_FILES = CATEGORY_FILES
 
 #: How each verdict reads in the Status column, and which semantic colour it
 #: takes. "Not Applicable" is deliberately grey rather than red — it is not a
-#: failure, it is a tweak that has nothing to do on this machine.
+#: failure; the target may be absent or Windows may refuse the write.
 _STATUS_DISPLAY = {
     APPLIED:        ("✅ Applied",     "success"),
     NOT_APPLIED:    ("— Not Applied", None),
@@ -135,6 +135,7 @@ class _DetailsPanel(QFrame):
 
         self._tweak = None
         self._status_cache: Dict[str, tuple] = {}
+        self._safety_reasons: Dict[str, str] = {}
         self._policy_managed: Dict[str, List[str]] = {}
         self._apply_btn.clicked.connect(self._on_apply_clicked)
 
@@ -150,6 +151,11 @@ class _DetailsPanel(QFrame):
         if self._tweak is not None:
             self.set_tweak(self._tweak)
 
+    def set_safety_reasons(self, reasons: Dict[str, str]) -> None:
+        self._safety_reasons = reasons
+        if self._tweak is not None:
+            self._render_status(self._tweak["id"])
+
     def update_status(self, tweak_id: str, status: str, reason: str) -> None:
         """Remember every verdict, and repaint if it is the one on screen.
 
@@ -162,19 +168,25 @@ class _DetailsPanel(QFrame):
 
     def _render_status(self, tweak_id: str) -> None:
         status, reason = self._status_cache.get(tweak_id, (UNKNOWN, ""))
+        safety_reason = self._safety_reasons.get(tweak_id, "")
         text, colour = _STATUS_DISPLAY.get(status, (status, None))
         label = text.split(" ", 1)[-1]
         shade = semantic(colour) if colour else "#aaaaaa"
         detail = f"<br><span style='color:#999999'>{_escape(reason)}</span>" if reason else ""
+        if safety_reason:
+            detail += "<br><b>Blocked for safety</b><br>" + _escape(safety_reason)
         self._status.setToolTip(STATUS_HELP.get(status, STATUS_HELP[UNKNOWN]) + ("\n" + reason if reason else ""))
         self._status.setText(
             f"<span style='color:{shade}'><b>STATUS: {label.upper()}</b></span>{detail}")
 
-        applicable = status != NOT_APPLICABLE
+        applicable = status != NOT_APPLICABLE and not safety_reason
         self._apply_btn.setEnabled(applicable)
         if self._tweak:
             self._apply_btn.setToolTip("Apply this tweak; high risk asks first, low/medium runs immediately.\n\n" + row_help(self._tweak, status, reason))
+        if safety_reason:
+            self._apply_btn.setToolTip(safety_reason)
         self._apply_btn.setText(
+            "Blocked For Safety" if safety_reason else
             "Apply This Tweak" if applicable else "Not Applicable On This PC")
 
     def set_tweak(self, tweak: Optional[Dict]) -> None:
@@ -262,6 +274,7 @@ class TweakRow(QWidget):
                  policy_keys: Optional[List[str]] = None):
         super().__init__(parent)
         self.tweak = tweak
+        self._safety_reason = ""
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 3, 4, 3)
@@ -341,12 +354,16 @@ class TweakRow(QWidget):
 
     def _update_help(self) -> None:
         tooltip = row_help(self.tweak, self.status, self.status_reason)
+        if self._safety_reason:
+            tooltip += "\n\nBlocked for safety: " + self._safety_reason
         if self.policy_keys:
             tooltip += "\n\nWrites into a Group Policy managed branch:\n" + "\n".join(self.policy_keys) + "\nA future local or domain Group Policy can overwrite these settings."
         self.setToolTip(tooltip)
         self._name_label.setToolTip(tooltip)
         self.checkbox.setToolTip("Select this tweak for Apply Selected; checking alone changes nothing.\n\n" + tooltip)
         self.apply_btn.setToolTip("Apply this tweak now; high risk asks first, low/medium runs immediately.\n\n" + tooltip)
+        if self._safety_reason:
+            self.apply_btn.setToolTip("Blocked for safety: " + self._safety_reason)
         self.disable_btn.setToolTip("Disable reverts the latest recorded apply for this tweak without confirmation.\n\n" + tooltip)
         self.status_label.setToolTip(STATUS_HELP.get(self.status, STATUS_HELP[UNKNOWN]) + ("\nReason: " + self.status_reason if self.status_reason else ""))
 
@@ -367,7 +384,7 @@ class TweakRow(QWidget):
 
         # A tweak with nothing to do here must not sit in a bulk selection and
         # then report a failure the user has to go and interpret.
-        applicable = status != NOT_APPLICABLE
+        applicable = status != NOT_APPLICABLE and not self._safety_reason
         self.checkbox.setEnabled(applicable)
         self.apply_btn.setEnabled(applicable)
         if not applicable:
@@ -385,7 +402,12 @@ class TweakRow(QWidget):
         return self.checkbox.isChecked()
 
     def set_checked(self, checked: bool) -> None:
-        self.checkbox.setChecked(checked)
+        self.checkbox.setChecked(checked and self.checkbox.isEnabled())
+
+    def set_safety_reason(self, reason: str) -> None:
+        self._safety_reason = reason
+        self.apply_btn.setText("Blocked" if reason else "Apply")
+        self.set_status(self.status, self.status_reason)
 
 
 # ---------------------------------------------------------------------------
@@ -394,10 +416,12 @@ class TweakRow(QWidget):
 
 class TweakTab(QWidget):
     def __init__(self, tweaks: List[Dict], parent: Optional[QWidget] = None,
-                 policy_managed: Optional[Dict[str, List[str]]] = None):
+                 policy_managed: Optional[Dict[str, List[str]]] = None,
+                 safety_reasons: Optional[Dict[str, str]] = None):
         super().__init__(parent)
         self._tweaks = tweaks
         policy_managed = policy_managed or {}
+        safety_reasons = safety_reasons or {}
         self._rows: Dict[str, TweakRow] = {}
         self._filter_text = ""
         self._filter_risk = "all"
@@ -470,6 +494,7 @@ class TweakTab(QWidget):
 
         for tweak in tweaks:
             row = TweakRow(tweak, policy_keys=policy_managed.get(tweak["id"]))
+            row.set_safety_reason(safety_reasons.get(tweak["id"], ""))
             self._rows[tweak["id"]] = row
             self._container_layout.addWidget(row)
 
@@ -949,7 +974,9 @@ class TweaksModule(BaseModule):
 
         self._tabs = QTabWidget()
         for category, tweaks in category_tweaks.items():
-            tab = TweakTab(tweaks, policy_managed=policy_managed)
+            safety_reasons = {t["id"]: self._engine.safety_reason(t) for t in tweaks}
+            tab = TweakTab(tweaks, policy_managed=policy_managed,
+                           safety_reasons=safety_reasons)
             tab._category_name = category
             self._tab_widgets[category] = tab
             index = self._tabs.addTab(tab, category)
@@ -970,6 +997,8 @@ class TweaksModule(BaseModule):
 
         self._details_panel = _DetailsPanel()
         self._details_panel.set_policy_managed_map(policy_managed)
+        self._details_panel.set_safety_reasons(
+            {t["id"]: self._engine.safety_reason(t) for t in all_tweaks})
         self._details_panel.apply_requested.connect(self._on_apply_single_tweak)
         main_splitter.addWidget(self._details_panel)
         main_splitter.setSizes([700, 300])
@@ -1016,12 +1045,14 @@ class TweaksModule(BaseModule):
         self._status_filter.addItems([
             "All", "Applicable", "Applied", "Not Applied", "Partial",
             "Not Applicable", "Unknown",
+            "Blocked for Safety",
         ])
         self._status_filter.setToolTip(
-            "Applicable — everything except tweaks that have nothing to do on "
-            "this PC\nPartial — some of the tweak's steps are in place\n"
+            "Applicable — compatible tweaks that are not blocked for safety\n"
+            "Blocked for Safety — protected services or recovered changes\n"
+            "Partial — some of the tweak's steps are in place\n"
             "Not Applicable — the target service, task, app or Windows version "
-            "isn't on this PC")
+            "isn't on this PC, or Windows denies write access to its registry key")
         self._status_filter.currentTextChanged.connect(self._on_filter_changed)
         layout.addWidget(self._status_filter)
 
@@ -1149,7 +1180,8 @@ class TweaksModule(BaseModule):
                 name_match = not search_text or (
                     search_text in tweak["name"].lower() or
                     search_text in tweak.get("description", "").lower() or
-                    search_text in row.status_reason.lower()
+                    search_text in row.status_reason.lower() or
+                    search_text in row._safety_reason.lower()
                 )
 
                 # Risk match
@@ -1159,7 +1191,9 @@ class TweaksModule(BaseModule):
                 if status_filter == "All":
                     status_match = True
                 elif status_filter == "Applicable":
-                    status_match = row.status != NOT_APPLICABLE
+                    status_match = row.status != NOT_APPLICABLE and not row._safety_reason
+                elif status_filter == "Blocked for Safety":
+                    status_match = bool(row._safety_reason)
                 else:
                     status_match = row.status == _FILTER_TO_STATUS.get(status_filter)
 
@@ -1178,6 +1212,11 @@ class TweaksModule(BaseModule):
 
     def _on_apply_single_tweak(self, tweak: Dict) -> None:
         if not self.app:
+            return
+
+        refusal = self._engine.safety_reason(tweak)
+        if refusal:
+            QMessageBox.warning(self._widget, "Tweak blocked for safety", refusal)
             return
 
         risk = tweak.get("risk", "low")
@@ -1391,6 +1430,24 @@ class TweaksModule(BaseModule):
             QMessageBox.StandardButton.No)
         return answer == QMessageBox.StandardButton.Yes
 
+    def _confirm_high_risk_tweaks(self, tweaks: List[Dict]) -> bool:
+        """Give bulk apply the same high-risk guard as a single row."""
+        high_risk = [t for t in tweaks if t.get("risk") == "high"]
+        if not high_risk:
+            return True
+        names = [f"  • {t.get('name', t.get('id', 'Unnamed tweak'))}"
+                 for t in high_risk[:12]]
+        if len(high_risk) > 12:
+            names.append(f"  • ...and {len(high_risk) - 12} more")
+        reply = QMessageBox.question(
+            self._widget, "Confirm High-Risk Tweaks",
+            f"{len(high_risk)} selected tweak(s) are marked HIGH RISK:\n\n"
+            + "\n".join(names)
+            + "\n\nThese changes can reduce security or stability. Apply them?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
+
     def _on_apply(self) -> None:
         """Apply everything that is checked -- tweaks AND apps.
 
@@ -1424,7 +1481,17 @@ class TweaksModule(BaseModule):
             self._warn_nothing_selected()
             return
 
+        blocked = [(t, self._engine.safety_reason(t)) for t in tweaks_to_apply]
+        blocked = [(t, reason) for t, reason in blocked if reason]
+        if blocked:
+            QMessageBox.warning(self._widget, "Tweaks blocked for safety",
+                                "\n\n".join(f"{t['name']}: {reason}" for t, reason in blocked))
+            return
+
         if has_apps and not self._confirm_app_changes(app_changes):
+            return
+
+        if not self._confirm_high_risk_tweaks(tweaks_to_apply):
             return
 
         if not self.app:

@@ -5,7 +5,7 @@ import sys
 
 project_root = os.path.dirname(os.path.abspath(SPEC))
 sys.path.insert(0, project_root)
-from pyinstaller_common import get_main_script, get_datas, HIDDEN_IMPORTS
+from pyinstaller_common import get_main_script, get_datas, HIDDEN_IMPORTS, exclude_ambient_icu
 
 a = Analysis(
     [get_main_script(project_root)],
@@ -20,6 +20,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+exclude_ambient_icu(a)
 pyz = PYZ(a.pure)
 
 exe = EXE(

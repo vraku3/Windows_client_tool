@@ -18,6 +18,7 @@ import os
 import re
 
 import importlib.util
+import importlib.metadata
 
 import pytest
 
@@ -53,6 +54,11 @@ def test_requirements_file_lists_some_hard_dependencies():
 
 @pytest.mark.parametrize("distribution", _hard_requirements())
 def test_hard_requirement_is_importable(distribution):
+    if distribution == "PyQt6-Qt6":
+        from PyQt6.QtCore import QT_VERSION_STR
+
+        assert importlib.metadata.version(distribution) == QT_VERSION_STR
+        return
     module = IMPORT_NAME.get(distribution, distribution)
     assert importlib.util.find_spec(module) is not None, (
         f"requirements.txt declares {distribution} but `import {module}` "

@@ -306,9 +306,9 @@
   {
     "id": "disable_smartscreen_app",
     "name": "Disable SmartScreen for Apps & Files",
-    "description": "Disables the SmartScreen reputation filter for downloaded apps. Medium risk — removes a security layer.",
+    "description": "Removes SmartScreen reputation checks for downloaded apps and files. This weakens security and is not a performance recommendation.",
     "category": "Privacy",
-    "risk": "medium",
+    "risk": "high",
     "requires_admin": true,
     "steps": [
       {
@@ -600,9 +600,9 @@
   {
     "id": "win11_dynamic_lighting",
     "name": "Disable Dynamic Lighting",
-    "description": "Disables Windows 11 Dynamic Lighting RGB sync feature that communicates with connected devices. Restart may be required.",
+    "description": "Changes Windows Dynamic Lighting device integration through the registry. This is not a validated performance optimization; prefer the Windows Settings toggle. Restart may be required.",
     "category": "Privacy",
-    "risk": "low",
+    "risk": "medium",
     "requires_admin": true,
     "steps": [
       {
@@ -943,10 +943,10 @@
   },
   {
     "id": "disable_calendar_contacts_sync",
-    "name": "Disable Calendar and Contacts Cloud Sync",
-    "description": "Stops the Windows People app from syncing contacts and calendar with Microsoft cloud services.",
+    "name": "Disable Contacts Indexing Service (Protected)",
+    "description": "PimIndexMaintenanceSvc maintains contacts indexing; it is not a telemetry-only service or a general cloud-sync switch. Disabling it is blocked to preserve Windows app functionality.",
     "category": "Privacy",
-    "risk": "medium",
+    "risk": "high",
     "requires_admin": true,
     "steps": [
       {
@@ -1144,10 +1144,10 @@
   },
   {
     "id": "disable_license_manager_telemetry",
-    "name": "Disable License Manager Telemetry",
-    "description": "Stops the Windows License Manager service from sending licensing and hardware telemetry.",
+    "name": "Disable Windows App Licensing (Protected)",
+    "description": "LicenseManager supports Windows app licensing; it is not a telemetry-only service. Disabling it can break licensed apps and is blocked for safety.",
     "category": "Privacy",
-    "risk": "low",
+    "risk": "high",
     "requires_admin": true,
     "steps": [
       {

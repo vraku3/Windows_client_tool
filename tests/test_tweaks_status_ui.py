@@ -5,11 +5,13 @@ filters by searching the label text (so "Applied" matched "Not Applied"), and
 never showed why. These tests pin the replacement.
 """
 import pytest
+from unittest.mock import MagicMock
+from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from modules.tweaks.tweak_engine import (
     APPLIED, NOT_APPLIED, NOT_APPLICABLE, PARTIAL, UNKNOWN,
 )
-from modules.tweaks.tweaks_module import _FILTER_TO_STATUS, _STATUS_DISPLAY, TweakRow, TweakTab
+from modules.tweaks.tweaks_module import _FILTER_TO_STATUS, _STATUS_DISPLAY, TweakRow, TweakTab, TweaksModule
 
 
 def _tweak(tid, name="A Tweak", risk="low"):
@@ -128,3 +130,20 @@ def test_filter_names_map_onto_real_status_codes():
 def test_filter_offers_every_status():
     assert set(_FILTER_TO_STATUS.values()) == {
         APPLIED, NOT_APPLIED, PARTIAL, NOT_APPLICABLE, UNKNOWN}
+
+
+def test_bulk_apply_high_risk_needs_confirmation_before_restore_point(qapp, monkeypatch):
+    module = TweaksModule()
+    module._engine = MagicMock()
+    module._engine.safety_reason.return_value = ""
+    module._widget = QWidget()
+    module._tab_widgets = {"Test": MagicMock(selected_tweaks=lambda: [
+        _tweak("danger", name="Disable a Windows protection", risk="high")])}
+    module.app = MagicMock()
+    calls = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *args: calls.append(args) or QMessageBox.StandardButton.No)
+
+    module._on_apply()
+
+    assert calls and "Disable a Windows protection" in calls[0][2]
+    module.app.backup.create_restore_point.assert_not_called()

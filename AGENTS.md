@@ -56,23 +56,15 @@ The portable spec must include `a.binaries` and `a.datas` in the EXE constructor
 
 **Keep exactly two versions in `Aplicații/Windows Client Tool Share/`** (user, 2026-10-28): newest in the root, the immediately previous iteration in `old/`. Rotate on every build: demote the current share root copy to `old/WinClientTool-Portable.exe`, copy the new build into the share root, and delete anything older (`old/*.exe_old`, `*-new.exe` test copies). The tree must contain exactly `WinClientTool-Portable.exe` and `old/WinClientTool-Portable.exe`.
 
-**Distribution preference (user, 2026-10-31): no spending.** Paid public-certificate enrollment is canceled. Do not buy certificates/subscriptions or submit identity documents. `tools/sign_build.ps1` is optional store-backed signing tooling for a certificate already available, configured through ignored `tools/signing.local.json`; see `docs/release-signing.md`. Its former PFX/password arguments are no longer supported. No production certificate is currently provisioned. Public signing must not be claimed complete. Company policy still requires IT approval; never weaken Windows protections to make a build run.
-
-**Development code-signing** — the unsigned exe is blocked by Smart App Control/SmartScreen/WDAC on many machines. The previous local workflow (user, 2026-10-29) remains development-only; it cannot resolve the verified App Control block:
-```
-powershell -ExecutionPolicy Bypass -File tools\sign_build_local.ps1
-```
-**Trust limitation verified 2026-10-31:** the local self-signed workflow is
-development signing, not Smart App Control compliance. A fresh protective
-build had Authenticode `Valid` but was blocked by Code Integrity event 3077
-(policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`). Microsoft requires a trusted
-provider certificate for SAC. Do not equate a valid signature with a runnable
-release, disable Windows protections to test it, or describe the local cert
-as solving this requirement. Check the actual launch and report a block.
-It creates a NEW self-signed code-signing cert, trusts it for the current user (`Root` + `TrustedPublisher`), signs and verifies the dist exes, then deletes the previous WinClientTool cert from `My`, `Root` and `TrustedPublisher`. One cert per development build; never leave the old one. If a suitable CA certificate is already available, the optional release command is:
-```
-powershell -NoProfile -File tools\sign_build.ps1 -Profile tools\signing.local.json
-```
+**Code signing removed (user, 2026-11-03).** The self-signed local cert workflow
+has been retired — Smart App Control blocks self-signed certs anyway, and the
+extracted `.pyd` files inside the PyInstaller onefile were never signed, causing
+a burst of block popups on every launch. All WinClientTool signing certs have
+been removed from the machine. `tools/sign_build_local.ps1` and
+`tools/sign_build.ps1` remain in the repo as reference but are no longer part
+of the build. Smart App Control learns new unsigned hashes after a few days of
+use on the same machine. Do not re-introduce signing unless a real CA cert is
+obtained.
 
 **Syntax check** (without running):
 ```

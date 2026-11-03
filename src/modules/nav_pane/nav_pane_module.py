@@ -155,6 +155,7 @@ class NavPane(QWidget):
     def refresh(self):
         if self._busy:
             return
+        self._action_message = ""
         self.run(partial(read_context, self.engine), self.set_context)
 
     def set_context(self, context):

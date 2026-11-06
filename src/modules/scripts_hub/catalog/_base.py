@@ -13,6 +13,10 @@ from ..library import CMD, LIST, WIDE, Script, need_admin, need_cmd, ps
 __all__ = ["CMD", "LIST", "WIDE", "Script", "need_admin", "need_cmd", "maker", "CHK", "T", "L",
            "EV", "ADM", "REG"]
 
+#: Standard tag vocabulary (see the plan for definitions):
+#: diagnostic, inventory, security, health, performance, network, storage,
+#: hardware, triage, baseline, compliance, fleet
+
 #: `Chk $condition 'label' 'detail'` prints an [OK]/[WARN]/[INFO] line.
 #: $null means "could not tell" and is INFO, never OK.
 CHK = ("function Chk($ok, $label, $detail) { if ($null -eq $ok) { \"[INFO] $label -- $detail\" } "

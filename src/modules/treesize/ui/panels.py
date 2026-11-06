@@ -113,10 +113,38 @@ class DriveList(QTreeWidget):
                                       | Qt.AlignmentFlag.AlignVCenter)
             self.addTopLevelItem(item)
 
+        # MTP devices (phones, cameras) — discovered via Shell namespace
+        try:
+            from ..scan.mtp_scanner import list_mtp_devices
+            for device in list_mtp_devices():
+                total = device.capacity
+                free = device.free_space
+                percent_free = (free * 100.0 / total) if total else 0.0
+                mtp_item = QTreeWidgetItem([
+                    device.name,
+                    format_bytes(total) if total else "—",
+                    format_bytes(free) if total else "—",
+                    f"{percent_free:.1f}%" if total else "—",
+                ])
+                mtp_item.setData(0, Qt.ItemDataRole.UserRole, device.shell_path)
+                mtp_item.setData(3, BarFractionRole,
+                                 (percent_free / 100.0) if total else 0.0)
+                for column in (1, 2, 3):
+                    mtp_item.setTextAlignment(
+                        column, Qt.AlignmentFlag.AlignRight
+                        | Qt.AlignmentFlag.AlignVCenter)
+                self.addTopLevelItem(mtp_item)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug("MTP discovery skipped", exc_info=True)
+
     def _on_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
-        letter = item.data(0, Qt.ItemDataRole.UserRole)
-        if letter:
-            self.drive_activated.emit(f"{letter}:\\")
+        value = item.data(0, Qt.ItemDataRole.UserRole)
+        if value:
+            if str(value).startswith("::{"):
+                self.drive_activated.emit(str(value))
+            else:
+                self.drive_activated.emit(f"{value}:\\")
 
 
 class ScanOverview(QWidget):
@@ -297,6 +325,8 @@ class TreeSizeStatusBar(QWidget):
             first = result.errors[0][0] if result.errors else ""
             return (f"INCOMPLETE — {format_count(result.error_count)} location(s) "
                     f"unreadable{f': {first}' if first else ''}")
+        if result.engine == "mtp":
+            return "MTP device — sizes from device metadata"
         if result.engine == "walk":
             return "Fast MFT scan unavailable — run elevated on an NTFS drive for exact allocated sizes"
         return ""

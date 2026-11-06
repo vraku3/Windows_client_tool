@@ -172,6 +172,9 @@ HIDDEN_IMPORTS = [
     "win32com.server", "win32com.server.util", "win32com.server.policy",
     "win32com.shell", "win32com.shell.shell", "win32com.shell.shellcon",
     "pythoncom", "pywintypes", "win32security",
+    # TreeSize MTP scanning — Shell COM enumeration of phones/cameras.
+    "modules.treesize.scan.mtp_scanner",
+    "modules.treesize.ui.mtp_worker",
     # The Dashboard's GPU panel. Imported inside GpuSampler._open(), so
     # static analysis never sees it, and the failure is the quiet kind
     # this list exists for: the panel opens, logs "win32pdh is

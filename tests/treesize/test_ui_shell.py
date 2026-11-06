@@ -122,7 +122,9 @@ def test_switching_tabs_switches_pages(qapp):
 
 # ---- panels -------------------------------------------------------------
 
-def test_drive_list_renders_supplied_drives(qapp):
+def test_drive_list_renders_supplied_drives(qapp, monkeypatch):
+    monkeypatch.setattr(
+        "modules.treesize.scan.mtp_scanner.list_mtp_devices", lambda: [])
     drives = DriveList()
     drives.refresh([("C", 1000, 250), ("D", 2000, 1000)])
     assert drives.topLevelItemCount() == 2
@@ -393,7 +395,7 @@ def test_quick_access_buttons_show_glyphs_not_labels(shell):
     from PyQt6.QtWidgets import QToolButton
     glyphs = [b.text() for b in shell.title_row.findChildren(QToolButton)]
     assert glyphs == ["⟳", "■", "⇪"]
-    tips = [b.toolTip() for b in shell.title_row.findChildren(QToolButton)]
+    tips = [b.toolTip().split("\n")[0] for b in shell.title_row.findChildren(QToolButton)]
     assert tips == ["Refresh scan", "Stop", "Export"]
 
 

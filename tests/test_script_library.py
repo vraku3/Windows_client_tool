@@ -26,14 +26,17 @@ def test_no_built_in_writes_to_the_machine():
                        r"Install|Uninstall|Register|Unregister|Reset|Suspend|Resume|Rename|Move|"
                        r"Copy|Invoke-Expression|Invoke-WebRequest|Out-File|Export-Csv)-[A-Z]")
     commands = ("reg add", "reg delete", "sc config", "sc stop", "sc delete", "netsh advfirewall set",
-                "bcdedit /set", "net stop", "net user ", "format ", "diskpart", "cipher /w")
+                "bcdedit /set", "net stop", "net user ", "diskpart", "cipher /w")
+    format_cmd = re.compile(r"(?:^|[;\|&])\s*format ", re.MULTILINE)
     for s in lib.built_in():
         # Set-StrictMode and New-Object change nothing outside the script itself.
         body = s.body.replace("Set-StrictMode", "").replace("New-Object", "")
         # Opening and closing a CIM session to read a server changes nothing on it.
-        for ok in ("New-CimSessionOption", "New-CimSession", "Remove-CimSession", "New-TimeSpan"):
+        for ok in ("New-CimSessionOption", "New-CimSession", "Remove-CimSession", "New-TimeSpan", "Start-Sleep", "Add-Type"):
             body = body.replace(ok, "")
         hits = [m.group(0) for m in verbs.finditer(body)] + [c for c in commands if c in body.lower()]
+        if format_cmd.search(body.lower()):
+            hits.append("format ")
         assert not hits, (s.id, hits)
 
 

@@ -22,15 +22,91 @@ def G(id, title, desc, body, **kw):
 
 def _users(id, title, desc, filt, props="", select="SamAccountName, Name, Enabled"):
     extra = f" -Properties {props}" if props else ""
-    return A(id, title, desc, T(f"Get-ADUser -Filter {filt}{extra} | Sort-Object SamAccountName | Select-Object {select}"))
+    return A(id, title, desc, T(f"Get-ADUser -Filter {filt}{extra} | Sort-Object SamAccountName | Select-Object {select}"), tags=('inventory', 'security'))
 
 
 def _computers(id, title, desc, filt, props="OperatingSystem, LastLogonDate",
                select="Name, OperatingSystem, LastLogonDate, Enabled"):
-    return A(id, title, desc, T(f"Get-ADComputer -Filter {filt} -Properties {props} | Sort-Object Name | Select-Object {select}"))
+    return A(id, title, desc, T(f"Get-ADComputer -Filter {filt} -Properties {props} | Sort-Object Name | Select-Object {select}"), tags=('inventory', 'baseline'))
 
 
 SCRIPTS = [
+    A("ad-disabled-privileged-members", "Disabled users retaining privileged membership",
+      "Finds disabled users nested in core privileged groups by SID; dormant accounts retain access if re-enabled.",
+      CHK + r"""try {
+  $d = Get-ADDomain -ErrorAction Stop; $f = Get-ADForest -ErrorAction Stop
+  $root = Get-ADDomain -Identity $f.RootDomain -ErrorAction Stop
+  $ids = @("$($d.DomainSID)-512",'S-1-5-32-544',"$($root.DomainSID)-518","$($root.DomainSID)-519")
+  foreach ($id in $ids) {
+    $server = if ($id -eq "$($root.DomainSID)-518" -or $id -eq "$($root.DomainSID)-519") { $root.PDCEmulator } else { $d.PDCEmulator }
+    try {
+      $group = Get-ADGroup -Identity $id -Server $server -ErrorAction Stop
+      $disabled = @(Get-ADGroupMember $group -Server $server -Recursive -ErrorAction Stop |
+        Where-Object objectClass -eq 'user' | ForEach-Object {
+          Get-ADUser -Identity $_.DistinguishedName -Server $server -ErrorAction Stop
+        } | Where-Object { -not $_.Enabled })
+      Chk ($disabled.Count -eq 0) $group.Name "$($disabled.Count) disabled user(s)"
+      $disabled | Select-Object SamAccountName, DistinguishedName | Format-Table -AutoSize -Wrap | Out-String -Width 220
+    } catch { "ERROR: Group ${id}: $($_.Exception.Message)" }
+  }
+} catch { "ERROR: Cannot read privileged membership: $($_.Exception.Message)" }""",
+      timeout=300, tags=('diagnostic', 'security', 'compliance')),
+    A("ad-spn-nonexpiring-passwords", "SPN accounts with non-expiring passwords",
+      "Isolates enabled user service accounts with SPNs and non-expiring passwords for credential rotation review.",
+      CHK + r"""try {
+  $users = @(Get-ADUser -Filter 'Enabled -eq $true -and PasswordNeverExpires -eq $true -and ServicePrincipalName -like "*"' -Properties ServicePrincipalName, PasswordLastSet -ErrorAction Stop)
+  Chk ($users.Count -eq 0) 'SPN users with non-expiring passwords' "$($users.Count) account(s); managed service accounts are separate objects"
+  $users | Sort-Object PasswordLastSet | Select-Object SamAccountName, PasswordLastSet, @{n='SPNs';e={$_.ServicePrincipalName -join '; '}} | Format-Table -AutoSize -Wrap | Out-String -Width 220
+} catch { "ERROR: Cannot read service accounts: $($_.Exception.Message)" }""",
+      tags=('diagnostic', 'security')),
+    A("ad-deleted-object-totals", "Deleted object counts and retention attributes",
+      "Counts visible deleted objects by class and reads explicit tombstone/recycle retention attributes for recovery planning.",
+      r"""try {
+  $r = Get-ADRootDSE -ErrorAction Stop
+  $policy = Get-ADObject "CN=Directory Service,CN=Windows NT,CN=Services,$($r.configurationNamingContext)" -Properties tombstoneLifetime,'msDS-DeletedObjectLifetime' -ErrorAction Stop
+  $policy | Select-Object tombstoneLifetime, msDS-DeletedObjectLifetime | Format-List | Out-String -Width 220
+  $deleted = @(Get-ADObject -SearchBase $r.defaultNamingContext -IncludeDeletedObjects -LDAPFilter '(isDeleted=TRUE)' -Properties isRecycled -ErrorAction Stop)
+  "Visible deleted objects in current domain: $($deleted.Count)"
+  $deleted | Group-Object ObjectClass, isRecycled | Select-Object Name, Count | Format-Table -AutoSize | Out-String -Width 220
+  '[INFO] Unset retention attributes use directory defaults; counts depend on read permissions and include the Deleted Objects container.'
+} catch { "ERROR: Cannot read deleted objects: $($_.Exception.Message)" }""",
+      tags=('inventory', 'triage')),
+    A("ad-replication-freshness", "Replication freshness per naming context",
+      "Checks inbound last-success timestamps and failures per DC partition, flagging a 24-hour triage threshold.",
+      CHK + r"""try { $dcs = @(Get-ADDomainController -Filter * -ErrorAction Stop) }
+catch { "ERROR: Cannot enumerate DCs: $($_.Exception.Message)"; return }
+foreach ($dc in $dcs) {
+  try {
+    $partners = @(Get-ADReplicationPartnerMetadata -Target $dc.HostName -PartnerType Inbound -ErrorAction Stop)
+    if (-not $partners.Count) { Chk $null $dc.HostName 'no inbound metadata; may be a single-DC domain'; continue }
+    foreach ($p in $partners) {
+      $known = $p.LastReplicationSuccess -and $p.LastReplicationSuccess -gt [datetime]'1601-01-01'
+      $ok = if ($known) { $p.LastReplicationSuccess -ge (Get-Date).AddHours(-24) -and $p.LastReplicationResult -eq 0 -and $p.ConsecutiveReplicationFailures -eq 0 } else { $null }
+      Chk $ok "$($dc.HostName) / $($p.Partition)" "partner=$($p.Partner); last=$($p.LastReplicationSuccess); result=$($p.LastReplicationResult); failures=$($p.ConsecutiveReplicationFailures)"
+    }
+  } catch { "ERROR: DC $($dc.HostName): $($_.Exception.Message)" }
+}""", timeout=600, tags=('diagnostic', 'health', 'triage')),
+    A("ad-dc-machine-password-age", "Domain controller machine password age",
+      "Reports DC computer-account password ages to investigate broken machine credentials without resetting them.",
+      r"""try {
+  Get-ADDomainController -Filter * -ErrorAction Stop | ForEach-Object {
+    $dc = $_; $c = Get-ADComputer -Identity $dc.ComputerObjectDN -Properties PasswordLastSet -ErrorAction Stop
+    [pscustomobject]@{ DC=$dc.HostName; ReadOnly=$dc.IsReadOnly; PasswordLastSet=$c.PasswordLastSet; AgeDays=$(if ($c.PasswordLastSet) { [math]::Floor(((Get-Date)-$c.PasswordLastSet).TotalDays) }) }
+  } | Sort-Object AgeDays -Descending | Format-Table -AutoSize | Out-String -Width 220
+} catch { "ERROR: Cannot read DC password ages: $($_.Exception.Message)" }""",
+      tags=('inventory', 'security', 'triage')),
+    A("ad-trust-dns-discovery", "Trust partner DC discovery records",
+      "Resolves LDAP SRV records for each trusted domain to separate DNS discovery failures from trust authentication problems.",
+      CHK + r"""try { $trusts = @(Get-ADTrust -Filter * -ErrorAction Stop) }
+catch { "ERROR: Cannot enumerate trusts: $($_.Exception.Message)"; return }
+if (-not $trusts.Count) { '[INFO] No trust relationships returned.' }
+foreach ($trust in $trusts) {
+  try {
+    $records = @(Resolve-DnsName "_ldap._tcp.dc._msdcs.$($trust.Target)" -Type SRV -DnsOnly -ErrorAction Stop | Where-Object Type -eq 'SRV')
+    Chk ($records.Count -gt 0) $trust.Target "$($records.Count) LDAP SRV records; DNS discovery does not verify trust credentials"
+    $records | Select-Object NameTarget, Port, Priority, Weight | Format-Table -AutoSize | Out-String -Width 220
+  } catch { Chk $null $trust.Target "DNS discovery failed: $($_.Exception.Message)" }
+}""", tags=('diagnostic', 'network', 'triage')),
     # ---- users -------------------------------------------------------------------------------
     _users("ad_users_disabled", "Disabled user accounts",
            "Every disabled user account -- candidates for removal after the retention period.",
@@ -97,17 +173,17 @@ SCRIPTS = [
 [pscustomobject]@{ Total=$u.Count; Enabled=@($u | Where-Object Enabled).Count; Disabled=@($u | Where-Object { -not $_.Enabled }).Count
   Locked=@($u | Where-Object LockedOut).Count; PasswordNeverExpires=@($u | Where-Object PasswordNeverExpires).Count
   NeverLoggedOn=@($u | Where-Object { $_.Enabled -and -not $_.LastLogonDate }).Count
-  Stale90=@($u | Where-Object { $_.Enabled -and $_.LastLogonDate -and $_.LastLogonDate -lt (Get-Date).AddDays(-90) }).Count }""")),
+  Stale90=@($u | Where-Object { $_.Enabled -and $_.LastLogonDate -and $_.LastLogonDate -lt (Get-Date).AddDays(-90) }).Count }"""), tags=('inventory', 'baseline')),
     A("ad_service_accounts", "Managed service accounts (gMSA / MSA)",
       "Group and standalone managed service accounts with who may retrieve their password.",
-      T("Get-ADServiceAccount -Filter * -Properties PrincipalsAllowedToRetrieveManagedPassword, Enabled | Select-Object Name, ObjectClass, Enabled, @{n='Retrievers';e={$_.PrincipalsAllowedToRetrieveManagedPassword -join '; '}}")),
+      T("Get-ADServiceAccount -Filter * -Properties PrincipalsAllowedToRetrieveManagedPassword, Enabled | Select-Object Name, ObjectClass, Enabled, @{n='Retrievers';e={$_.PrincipalsAllowedToRetrieveManagedPassword -join '; '}}"), tags=('inventory', 'security')),
     # ---- computers ---------------------------------------------------------------------------
     _computers("ad_computers_os", "Computers by operating system",
                "Every computer account grouped by OS -- the migration plan in one table.",
                "*", select="Name, OperatingSystem, LastLogonDate, Enabled"),
     A("ad_computers_os_counts", "Operating system counts",
       "How many enabled computers run each OS version -- Windows 10 still around? Server 2012?",
-      T("Get-ADComputer -Filter 'Enabled -eq $true' -Properties OperatingSystem, OperatingSystemVersion | Group-Object OperatingSystem, OperatingSystemVersion | Sort-Object Count -Descending | Select-Object Count, Name")),
+      T("Get-ADComputer -Filter 'Enabled -eq $true' -Properties OperatingSystem, OperatingSystemVersion | Group-Object OperatingSystem, OperatingSystemVersion | Sort-Object Count -Descending | Select-Object Count, Name"), tags=('inventory', 'baseline')),
     _computers("ad_computers_eol", "Computers on end-of-support Windows",
                "Enabled computers running Windows 7, 8.x, Windows 10, Server 2008/2012 or older.",
                "'Enabled -eq $true'", select="Name, OperatingSystem, LastLogonDate | Where-Object { $_.OperatingSystem -match 'Windows (7|8|XP|Vista|10)|Server 200|Server 2012' }"),
@@ -127,186 +203,188 @@ SCRIPTS = [
       "when it expires -- computers without one share a password.",
       T(r"""Get-ADComputer -Filter 'Enabled -eq $true' -Properties 'msLAPS-PasswordExpirationTime','ms-Mcs-AdmPwdExpirationTime',OperatingSystem -ErrorAction SilentlyContinue | ForEach-Object {
   $e = if ($_.'msLAPS-PasswordExpirationTime') { [DateTime]::FromFileTime($_.'msLAPS-PasswordExpirationTime') } elseif ($_.'ms-Mcs-AdmPwdExpirationTime') { [DateTime]::FromFileTime($_.'ms-Mcs-AdmPwdExpirationTime') } else { $null }
-  [pscustomobject]@{ Name=$_.Name; OS=$_.OperatingSystem; LAPS=$(if ($e) {'yes'} else {'NO'}); Expires=$e } } | Sort-Object LAPS, Name""")),
+  [pscustomobject]@{ Name=$_.Name; OS=$_.OperatingSystem; LAPS=$(if ($e) {'yes'} else {'NO'}); Expires=$e } } | Sort-Object LAPS, Name"""), tags=('inventory', 'security')),
     A("ad_computers_by_ou", "Computers per OU",
       "How many computer accounts live in each OU -- computers left in the default Computers "
       "container get no OU-linked policy.",
-      T("Get-ADComputer -Filter * | ForEach-Object { ($_.DistinguishedName -split ',', 2)[1] } | Group-Object | Sort-Object Count -Descending | Select-Object Count, Name")),
+      T("Get-ADComputer -Filter * | ForEach-Object { ($_.DistinguishedName -split ',', 2)[1] } | Group-Object | Sort-Object Count -Descending | Select-Object Count, Name"), tags=('inventory',)),
     # ---- groups ------------------------------------------------------------------------------
     A("ad_groups_empty", "Empty groups",
       "Groups with no members -- clutter, or a group someone emptied by mistake.",
-      T("Get-ADGroup -Filter * -Properties Members, WhenCreated | Where-Object { -not $_.Members } | Sort-Object Name | Select-Object Name, GroupScope, GroupCategory, WhenCreated")),
+      T("Get-ADGroup -Filter * -Properties Members, WhenCreated | Where-Object { -not $_.Members } | Sort-Object Name | Select-Object Name, GroupScope, GroupCategory, WhenCreated"), tags=('inventory',)),
     A("ad_groups_largest", "Largest groups",
       "The 25 groups with the most direct members.",
-      T("Get-ADGroup -Filter * -Properties Members | Sort-Object { $_.Members.Count } -Descending | Select-Object -First 25 Name, GroupScope, @{n='Members';e={$_.Members.Count}}")),
+      T("Get-ADGroup -Filter * -Properties Members | Sort-Object { $_.Members.Count } -Descending | Select-Object -First 25 Name, GroupScope, @{n='Members';e={$_.Members.Count}}"), tags=('inventory',)),
     A("ad_groups_nested_admins", "Nested membership in Domain Admins",
       "Groups nested inside Domain Admins and Administrators -- the path to admin hidden two "
       "levels deep.",
       r"""foreach ($g in 'Domain Admins','Administrators','Enterprise Admins') { Get-ADGroupMember $g -ErrorAction SilentlyContinue | Where-Object objectClass -eq 'group' | ForEach-Object { "[WARN] group '$($_.Name)' is nested in $g" } }
-'(nothing above = no nested groups)'"""),
+'(nothing above = no nested groups)'""", tags=('diagnostic', 'health', 'security')),
     A("ad_protected_users", "Protected Users group",
       "Members of Protected Users -- privileged accounts should be there (no NTLM, no "
       "delegation, short TGTs).",
       r"""$m = Get-ADGroupMember 'Protected Users' -ErrorAction SilentlyContinue
-if (-not $m) { '[WARN] Protected Users is empty -- privileged accounts are not in it.' } else { $m | ForEach-Object { "[OK]   $($_.SamAccountName)" } }"""),
+if (-not $m) { '[WARN] Protected Users is empty -- privileged accounts are not in it.' } else { $m | ForEach-Object { "[OK]   $($_.SamAccountName)" } }""", tags=('diagnostic', 'health', 'security')),
     A("ad_group_changes", "Groups changed recently",
       "Groups whose membership or attributes changed in the last 14 days.",
-      T("Get-ADGroup -Filter * -Properties WhenChanged | Where-Object WhenChanged -gt (Get-Date).AddDays(-14) | Sort-Object WhenChanged -Descending | Select-Object Name, WhenChanged, GroupScope")),
+      T("Get-ADGroup -Filter * -Properties WhenChanged | Where-Object WhenChanged -gt (Get-Date).AddDays(-14) | Sort-Object WhenChanged -Descending | Select-Object Name, WhenChanged, GroupScope"), tags=('diagnostic', 'triage')),
     A("ad_operators_groups", "Operator groups membership",
       "Members of Account, Server, Backup and Print Operators -- these groups should be empty "
       "in a modern domain.",
-      CHK + r"""foreach ($g in 'Account Operators','Server Operators','Backup Operators','Print Operators') { $m = @(Get-ADGroupMember $g -ErrorAction SilentlyContinue); Chk ($m.Count -eq 0) $g $(if ($m) { ($m.SamAccountName) -join ', ' } else { 'empty' }) }"""),
+      CHK + r"""foreach ($g in 'Account Operators','Server Operators','Backup Operators','Print Operators') { $m = @(Get-ADGroupMember $g -ErrorAction SilentlyContinue); Chk ($m.Count -eq 0) $g $(if ($m) { ($m.SamAccountName) -join ', ' } else { 'empty' }) }""", tags=('diagnostic', 'health', 'security')),
     # ---- domain, DCs, replication ------------------------------------------------------------
     A("ad_dc_details", "Domain controller details",
       "Each DC's OS build, roles, LDAP/SSL ports, enabled state and whether it is a global "
       "catalog or read-only.",
-      T("Get-ADDomainController -Filter * | Select-Object HostName, Site, OperatingSystem, OperatingSystemVersion, IsGlobalCatalog, IsReadOnly, @{n='Roles';e={$_.OperationMasterRoles -join ','}}")),
+      T("Get-ADDomainController -Filter * | Select-Object HostName, Site, OperatingSystem, OperatingSystemVersion, IsGlobalCatalog, IsReadOnly, @{n='Roles';e={$_.OperationMasterRoles -join ','}}"), tags=('inventory', 'baseline')),
     A("ad_dc_reachability", "Domain controllers reachable",
       "Pings each DC and tests LDAP (389), Kerberos (88), SMB (445) and DNS (53).",
       r"""Get-ADDomainController -Filter * | ForEach-Object { $h = $_.HostName
   foreach ($p in 389, 88, 445, 53) { $ok = Test-NetConnection $h -Port $p -InformationLevel Quiet -WarningAction SilentlyContinue; '{0} {1,-40} port {2}' -f $(if ($ok) {'[OK]  '} else {'[BAD] '}), $h, $p } }""",
-      timeout=600),
+      timeout=600, tags=('diagnostic', 'health', 'network')),
     A("ad_repl_partner_metadata", "Replication partners and last success",
       "Each DC's inbound replication partners with the last successful replication time.",
       T("Get-ADDomainController -Filter * | ForEach-Object { Get-ADReplicationPartnerMetadata -Target $_.HostName -ErrorAction SilentlyContinue } | Select-Object Server, Partner, LastReplicationSuccess, LastReplicationResult, ConsecutiveReplicationFailures"),
-      timeout=600),
+      timeout=600, tags=('diagnostic', 'triage')),
     A("ad_repl_showrepl", "Replication status (repadmin /showrepl)",
       "repadmin /showrepl for every DC, errors only.",
-      need_cmd("repadmin.exe", "repadmin") + "repadmin.exe /showrepl * /errorsonly", timeout=600),
+      need_cmd("repadmin.exe", "repadmin") + "repadmin.exe /showrepl * /errorsonly", timeout=600, tags=('diagnostic', 'triage')),
     A("ad_repl_queue", "Replication queue",
       "Pending inbound replication requests per DC (repadmin /queue).",
-      need_cmd("repadmin.exe", "repadmin") + "repadmin.exe /queue *", timeout=300),
+      need_cmd("repadmin.exe", "repadmin") + "repadmin.exe /queue *", timeout=300, tags=('diagnostic', 'triage')),
     A("ad_tombstone", "Tombstone lifetime and backup age",
       "The forest tombstone lifetime and each partition's last backup -- a DC not backed up "
       "within it cannot be restored.",
       r"""$cfg = (Get-ADRootDSE).configurationNamingContext
 $t = (Get-ADObject "CN=Directory Service,CN=Windows NT,CN=Services,$cfg" -Properties tombstoneLifetime).tombstoneLifetime
 "Tombstone lifetime: $(if ($t) { "$t days" } else { '180 days (default)' })"
-""" + "\n" + r"""if (Get-Command repadmin.exe -ErrorAction SilentlyContinue) { repadmin.exe /showbackup }"""),
+""" + "\n" + r"""if (Get-Command repadmin.exe -ErrorAction SilentlyContinue) { repadmin.exe /showbackup }""", tags=('inventory',)),
     A("ad_sysvol_replication", "SYSVOL replication mode",
       "Whether SYSVOL replicates with DFS-R or the deprecated FRS, and the migration state.",
       r"""$s = dfsrmig /getglobalstate 2>&1; $s
-$f = Get-Service NtFrs -ErrorAction SilentlyContinue; if ($f) { "[WARN] FRS service present: $($f.Status)" } else { '[OK]   FRS service not present' }"""),
+$f = Get-Service NtFrs -ErrorAction SilentlyContinue; if ($f) { "[WARN] FRS service present: $($f.Status)" } else { '[OK]   FRS service not present' }""", tags=('diagnostic', 'health')),
     A("ad_trusts", "Domain and forest trusts",
       "Every trust with direction, type, transitivity and SID filtering.",
-      T("Get-ADTrust -Filter * | Select-Object Name, Direction, TrustType, ForestTransitive, SIDFilteringQuarantined, SelectiveAuthentication")),
+      T("Get-ADTrust -Filter * | Select-Object Name, Direction, TrustType, ForestTransitive, SIDFilteringQuarantined, SelectiveAuthentication"), tags=('inventory', 'security')),
     A("ad_upn_suffixes", "UPN suffixes and SPN duplicates",
       "Alternative UPN suffixes in the forest, and duplicate SPNs (which break Kerberos).",
       r"""'UPN suffixes: ' + ((Get-ADForest).UPNSuffixes -join ', ')
-''; if (Get-Command setspn.exe -ErrorAction SilentlyContinue) { setspn.exe -X -F }""", timeout=600),
+''; if (Get-Command setspn.exe -ErrorAction SilentlyContinue) { setspn.exe -X -F }""", timeout=600, tags=('inventory', 'security')),
     A("ad_schema", "Schema version",
       "The schema version (objectVersion) and what Windows Server level it corresponds to.",
       r"""$v = (Get-ADObject (Get-ADRootDSE).schemaNamingContext -Properties objectVersion).objectVersion
 $m = @{ 47='2008 R2'; 56='2012'; 69='2012 R2'; 87='2016'; 88='2019 / 2022'; 90='2025' }
-"Schema objectVersion $v -- $($m[[int]$v])" """),
+"Schema objectVersion $v -- $($m[[int]$v])" """, tags=('inventory', 'baseline')),
     A("ad_ou_tree", "OU structure",
       "Every organizational unit with whether it is protected from accidental deletion and "
       "how many objects it holds.",
-      T("Get-ADOrganizationalUnit -Filter * -Properties ProtectedFromAccidentalDeletion | Sort-Object DistinguishedName | Select-Object DistinguishedName, ProtectedFromAccidentalDeletion, @{n='Objects';e={@(Get-ADObject -SearchBase $_.DistinguishedName -SearchScope OneLevel -Filter *).Count}}")),
+      T("Get-ADOrganizationalUnit -Filter * -Properties ProtectedFromAccidentalDeletion | Sort-Object DistinguishedName | Select-Object DistinguishedName, ProtectedFromAccidentalDeletion, @{n='Objects';e={@(Get-ADObject -SearchBase $_.DistinguishedName -SearchScope OneLevel -Filter *).Count}}"), tags=('inventory', 'baseline')),
     A("ad_ou_unprotected", "OUs not protected from deletion",
       "OUs an admin could delete with one click.",
-      T("Get-ADOrganizationalUnit -Filter * -Properties ProtectedFromAccidentalDeletion | Where-Object { -not $_.ProtectedFromAccidentalDeletion } | Select-Object DistinguishedName")),
+      T("Get-ADOrganizationalUnit -Filter * -Properties ProtectedFromAccidentalDeletion | Where-Object { -not $_.ProtectedFromAccidentalDeletion } | Select-Object DistinguishedName"), tags=('inventory',)),
     A("ad_default_containers", "Objects in default containers",
       "Users and computers left in CN=Users and CN=Computers, where no OU policy applies.",
       r"""$d = (Get-ADDomain).DistinguishedName
-foreach ($c in "CN=Users,$d", "CN=Computers,$d") { $o = Get-ADObject -SearchBase $c -SearchScope OneLevel -Filter "objectClass -eq 'user' -or objectClass -eq 'computer'"; "== $c ($(@($o).Count))"; $o | Select-Object -First 50 | ForEach-Object { "   $($_.Name) [$($_.ObjectClass)]" } }"""),
+foreach ($c in "CN=Users,$d", "CN=Computers,$d") { $o = Get-ADObject -SearchBase $c -SearchScope OneLevel -Filter "objectClass -eq 'user' -or objectClass -eq 'computer'"; "== $c ($(@($o).Count))"; $o | Select-Object -First 50 | ForEach-Object { "   $($_.Name) [$($_.ObjectClass)]" } }""", tags=('inventory',)),
     A("ad_machine_account_quota", "Machine account quota",
       "ms-DS-MachineAccountQuota -- by default any user may join 10 computers to the domain.",
       CHK + r"""$q = (Get-ADObject (Get-ADDomain).DistinguishedName -Properties 'ms-DS-MachineAccountQuota').'ms-DS-MachineAccountQuota'
-Chk ($q -eq 0) 'ms-DS-MachineAccountQuota' "$q (default 10)" """),
+Chk ($q -eq 0) 'ms-DS-MachineAccountQuota' "$q (default 10)" """, tags=('diagnostic', 'health', 'security')),
     A("ad_dns_zones_ad", "AD-integrated DNS zones",
       "DNS zones stored in AD application partitions (DomainDnsZones / ForestDnsZones).",
-      T("Get-ADObject -SearchBase \"DC=DomainDnsZones,$((Get-ADDomain).DistinguishedName)\" -Filter \"objectClass -eq 'dnsZone'\" | Select-Object Name")),
+      T("Get-ADObject -SearchBase \"DC=DomainDnsZones,$((Get-ADDomain).DistinguishedName)\" -Filter \"objectClass -eq 'dnsZone'\" | Select-Object Name"), tags=('inventory',)),
     A("ad_fgpp_applied", "Fine-grained password policy per user",
       "Which password policy actually applies to each privileged user (resultant set).",
-      r"""foreach ($u in Get-ADGroupMember 'Domain Admins' -Recursive -ErrorAction SilentlyContinue | Where-Object objectClass -eq 'user') { $p = Get-ADUserResultantPasswordPolicy $u -ErrorAction SilentlyContinue; '{0,-25} {1}' -f $u.SamAccountName, $(if ($p) { "$($p.Name) (min length $($p.MinPasswordLength))" } else { 'default domain policy' }) }"""),
+      r"""foreach ($u in Get-ADGroupMember 'Domain Admins' -Recursive -ErrorAction SilentlyContinue | Where-Object objectClass -eq 'user') { $p = Get-ADUserResultantPasswordPolicy $u -ErrorAction SilentlyContinue; '{0,-25} {1}' -f $u.SamAccountName, $(if ($p) { "$($p.Name) (min length $($p.MinPasswordLength))" } else { 'default domain policy' }) }""", tags=('inventory', 'security')),
     A("ad_recent_changes", "Objects changed in the last 24 hours",
       "Every AD object modified in the last day -- what changed overnight.",
-      T("Get-ADObject -Filter \"whenChanged -gt '$((Get-Date).AddDays(-1).ToString('yyyyMMddHHmmss.0Z'))'\" -Properties whenChanged | Sort-Object whenChanged -Descending | Select-Object -First 100 Name, ObjectClass, whenChanged")),
+      T("Get-ADObject -Filter \"whenChanged -gt '$((Get-Date).AddDays(-1).ToString('yyyyMMddHHmmss.0Z'))'\" -Properties whenChanged | Sort-Object whenChanged -Descending | Select-Object -First 100 Name, ObjectClass, whenChanged"), tags=('diagnostic', 'triage')),
     A("ad_deleted_objects", "Recently deleted objects",
       "Objects deleted in the last 30 days (needs the AD Recycle Bin) -- what can still be "
       "restored.",
-      T("Get-ADObject -Filter 'isDeleted -eq $true' -IncludeDeletedObjects -Properties whenChanged, lastKnownParent | Where-Object whenChanged -gt (Get-Date).AddDays(-30) | Select-Object -First 100 Name, ObjectClass, whenChanged, lastKnownParent")),
+      T("Get-ADObject -Filter 'isDeleted -eq $true' -IncludeDeletedObjects -Properties whenChanged, lastKnownParent | Where-Object whenChanged -gt (Get-Date).AddDays(-30) | Select-Object -First 100 Name, ObjectClass, whenChanged, lastKnownParent"), tags=('diagnostic', 'triage')),
     A("ad_ldap_signing", "LDAP signing and channel binding",
       "The DC's LDAP server signing requirement and channel binding token setting.",
       r"""$k = 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
 $p = Get-ItemProperty $k -ErrorAction SilentlyContinue
 if (-not $p) { 'NOT AVAILABLE: this PC is not a domain controller.'; return }
 "LDAPServerIntegrity (2 = signing required): $($p.LDAPServerIntegrity)"
-"LdapEnforceChannelBinding (2 = always): $($p.LdapEnforceChannelBinding)" """),
+"LdapEnforceChannelBinding (2 = always): $($p.LdapEnforceChannelBinding)" """, tags=('inventory', 'security')),
     A("ad_dc_time", "Domain time hierarchy",
       "Which DC is the authoritative time source (PDC) and each DC's offset against it.",
       r"""$pdc = (Get-ADDomain).PDCEmulator; "PDC emulator: $pdc"
-w32tm /monitor /domain:(Get-ADDomain).DNSRoot 2>&1 | Select-Object -First 40""", timeout=300),
+w32tm /monitor /domain:(Get-ADDomain).DNSRoot 2>&1 | Select-Object -First 40""", timeout=300, tags=('inventory', 'network')),
     A("ad_kerberos_policy", "Kerberos policy",
       "Maximum ticket lifetimes and clock skew from the default domain policy.",
       r"""$d = Get-ADDomain; $gpo = Get-ADObject "CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=Policies,CN=System,$($d.DistinguishedName)" -Properties gPCFileSysPath
 $inf = Join-Path $gpo.gPCFileSysPath 'MACHINE\Microsoft\Windows NT\SecEdit\GptTmpl.inf'
-if (Test-Path $inf) { Get-Content $inf | Select-String -Pattern 'MaxTicketAge|MaxRenewAge|MaxServiceAge|MaxClockSkew|TicketValidateClient' | ForEach-Object { $_.Line } } else { "Could not read $inf" }"""),
+if (Test-Path $inf) { Get-Content $inf | Select-String -Pattern 'MaxTicketAge|MaxRenewAge|MaxServiceAge|MaxClockSkew|TicketValidateClient' | ForEach-Object { $_.Line } } else { "Could not read $inf" }""", tags=('inventory', 'security')),
     # ---- domain Group Policy -----------------------------------------------------------------
     G("gpo_all_status", "GPOs with status and versions",
       "Every GPO, its status (some settings disabled), and user/computer AD vs SYSVOL versions "
       "-- a mismatch means SYSVOL replication is behind.",
-      T("Get-GPO -All | Sort-Object DisplayName | Select-Object DisplayName, GpoStatus, @{n='UserAD';e={$_.User.DSVersion}}, @{n='UserSysvol';e={$_.User.SysvolVersion}}, @{n='CompAD';e={$_.Computer.DSVersion}}, @{n='CompSysvol';e={$_.Computer.SysvolVersion}}, ModificationTime")),
+      T("Get-GPO -All | Sort-Object DisplayName | Select-Object DisplayName, GpoStatus, @{n='UserAD';e={$_.User.DSVersion}}, @{n='UserSysvol';e={$_.User.SysvolVersion}}, @{n='CompAD';e={$_.Computer.DSVersion}}, @{n='CompSysvol';e={$_.Computer.SysvolVersion}}, ModificationTime"), tags=('inventory', 'baseline')),
     G("gpo_version_mismatch", "GPOs whose AD and SYSVOL versions disagree",
       "GPOs where the AD and SYSVOL version numbers differ -- clients may apply a stale copy.",
       r"""Get-GPO -All | Where-Object { $_.User.DSVersion -ne $_.User.SysvolVersion -or $_.Computer.DSVersion -ne $_.Computer.SysvolVersion } | ForEach-Object { "[WARN] $($_.DisplayName): user $($_.User.DSVersion)/$($_.User.SysvolVersion)  computer $($_.Computer.DSVersion)/$($_.Computer.SysvolVersion)" }
-'(nothing above = all consistent)'"""),
+'(nothing above = all consistent)'""", tags=('diagnostic', 'health')),
     G("gpo_links", "Where each GPO is linked",
       "Every GPO link with its target, enabled and enforced flags, and link order.",
       r"""Get-GPO -All | Sort-Object DisplayName | ForEach-Object { [xml]$x = Get-GPOReport -Guid $_.Id -ReportType Xml
   foreach ($l in $x.GPO.LinksTo) { '{0,-40} -> {1,-50} enabled={2} enforced={3}' -f $_.DisplayName, $l.SOMPath, $l.Enabled, $l.NoOverride } }""",
-      timeout=900),
+      timeout=900, tags=('inventory',)),
     G("gpo_enforced", "Enforced GPO links",
       "GPO links set to Enforced (they override blocked inheritance below).",
       r"""Get-GPO -All | ForEach-Object { [xml]$x = Get-GPOReport -Guid $_.Id -ReportType Xml; foreach ($l in $x.GPO.LinksTo) { if ($l.NoOverride -eq 'true') { "[INFO] $($_.DisplayName) -> $($l.SOMPath)" } } }""",
-      timeout=900),
+      timeout=900, tags=('inventory',)),
     G("gpo_blocked_inheritance", "OUs that block inheritance",
       "OUs with 'Block inheritance' -- domain-level policy does not reach them.",
       need_cmd("Get-ADOrganizationalUnit", "the ActiveDirectory module") +
-      r"""Get-ADOrganizationalUnit -Filter * | ForEach-Object { $i = Get-GPInheritance -Target $_.DistinguishedName -ErrorAction SilentlyContinue; if ($i.GpoInheritanceBlocked) { "[WARN] $($_.DistinguishedName)" } }"""),
+      r"""Get-ADOrganizationalUnit -Filter * | ForEach-Object { $i = Get-GPInheritance -Target $_.DistinguishedName -ErrorAction SilentlyContinue; if ($i.GpoInheritanceBlocked) { "[WARN] $($_.DistinguishedName)" } }""", tags=('diagnostic', 'health')),
     G("gpo_empty", "GPOs with no settings",
       "GPOs that configure nothing (both halves empty) -- leftovers.",
       r"""Get-GPO -All | ForEach-Object { [xml]$x = Get-GPOReport -Guid $_.Id -ReportType Xml; if (-not $x.GPO.Computer.ExtensionData -and -not $x.GPO.User.ExtensionData) { "[INFO] $($_.DisplayName)" } }""",
-      timeout=900),
+      timeout=900, tags=('inventory',)),
     G("gpo_disabled_halves", "GPOs with a disabled half",
       "GPOs whose user or computer half is disabled -- intended, or why a setting 'does not "
       "apply'.",
-      T("Get-GPO -All | Where-Object GpoStatus -ne 'AllSettingsEnabled' | Select-Object DisplayName, GpoStatus")),
+      T("Get-GPO -All | Where-Object GpoStatus -ne 'AllSettingsEnabled' | Select-Object DisplayName, GpoStatus"), tags=('inventory',)),
     G("gpo_wmi_filters", "WMI filters",
       "WMI filters and the GPOs that use them -- a slow WMI filter delays every logon.",
       r"""Get-GPO -All | Where-Object WmiFilter | ForEach-Object { '{0,-40} filter: {1}  ({2})' -f $_.DisplayName, $_.WmiFilter.Name, $_.WmiFilter.Description }
-'(nothing above = no GPO uses a WMI filter)'"""),
+'(nothing above = no GPO uses a WMI filter)'""", tags=('inventory',)),
     G("gpo_permissions_odd", "GPOs editable by non-admins",
       "GPO permissions that let accounts outside Domain/Enterprise Admins edit a GPO -- a "
       "direct path to domain compromise.",
       r"""Get-GPO -All | ForEach-Object { $g = $_; Get-GPPermission -Guid $g.Id -All | Where-Object { $_.Permission -match 'GpoEdit|GpoEditDeleteModifySecurity' -and $_.Trustee.Name -notmatch 'Domain Admins|Enterprise Admins|SYSTEM|ENTERPRISE DOMAIN CONTROLLERS' } | ForEach-Object { "[WARN] $($g.DisplayName): $($_.Trustee.Name) has $($_.Permission)" } }""",
-      timeout=600),
+      timeout=600, tags=('diagnostic', 'health', 'security')),
     G("gpo_recent", "GPOs changed in the last 30 days",
       "Recently modified GPOs, newest first.",
-      T("Get-GPO -All | Where-Object ModificationTime -gt (Get-Date).AddDays(-30) | Sort-Object ModificationTime -Descending | Select-Object DisplayName, ModificationTime, Owner")),
+      T("Get-GPO -All | Where-Object ModificationTime -gt (Get-Date).AddDays(-30) | Sort-Object ModificationTime -Descending | Select-Object DisplayName, ModificationTime, Owner"), tags=('diagnostic', 'triage')),
     G("gpo_default_policies", "Default Domain and DC policies",
-      "Version and last change of the two default GPOs, which should hold only password/"
+      "Status and last change of the two default GPOs, which should hold only password/"
       "Kerberos and user-rights settings respectively.",
-      T("Get-GPO -Guid '31B2F340-016D-11D2-945F-00C04FB984F9','6AC1786C-016F-11D2-945F-00C04FB984F9' | Select-Object DisplayName, ModificationTime, @{n='CompVer';e={$_.Computer.DSVersion}}, @{n='UserVer';e={$_.User.DSVersion}}")),
+      r"""foreach ($g in '{31B2F340-016D-11D2-945F-00C04FB984F9}','{6AC1786C-016F-11D2-945F-00C04FB984F9}') {
+  Get-GPO -Guid $g -ErrorAction Stop | Format-List DisplayName, GpoStatus, ModificationTime, WmiFilter | Out-String -Width 220
+}""", tags=('inventory', 'baseline')),
     G("gpo_central_store", "ADMX central store",
       "Whether the SYSVOL PolicyDefinitions central store exists and how current its ADMX "
       "files are.",
       r"""$p = "\\$((Get-ADDomain).DNSRoot)\SYSVOL\$((Get-ADDomain).DNSRoot)\Policies\PolicyDefinitions"
-if (Test-Path $p) { $f = Get-ChildItem $p -Filter *.admx; "[OK]   Central store: $($f.Count) ADMX files, newest $(($f | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime)" } else { "[WARN] No central store at $p" }"""),
+if (Test-Path $p) { $f = Get-ChildItem $p -Filter *.admx; "[OK]   Central store: $($f.Count) ADMX files, newest $(($f | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime)" } else { "[WARN] No central store at $p" }""", tags=('diagnostic', 'health')),
     G("gpo_sysvol_size", "SYSVOL size and largest GPO folders",
       "The size of each GPO's SYSVOL folder -- installers stored in SYSVOL bloat replication.",
       r"""$p = "\\$((Get-ADDomain).DNSRoot)\SYSVOL\$((Get-ADDomain).DNSRoot)\Policies"
 Get-ChildItem $p -Directory -ErrorAction SilentlyContinue | ForEach-Object { $s = (Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum; [pscustomobject]@{ Folder=$_.Name; MB=[math]::Round($s/1MB,1); GPO=(Get-GPO -Guid ($_.Name.Trim('{}')) -ErrorAction SilentlyContinue).DisplayName } } | Sort-Object MB -Descending | Select-Object -First 20 | Format-Table -AutoSize | Out-String -Width 220""",
-      timeout=600),
+      timeout=600, tags=('inventory', 'storage')),
     G("gpo_orphaned_sysvol", "Orphaned SYSVOL policy folders",
       "SYSVOL policy folders with no matching GPO in AD (and the reverse).",
       r"""$dom = (Get-ADDomain).DNSRoot; $ids = (Get-GPO -All).Id | ForEach-Object { "{$_}".ToUpper() }
 Get-ChildItem "\\$dom\SYSVOL\$dom\Policies" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\{' -and $_.Name.ToUpper() -notin $ids } | ForEach-Object { "[WARN] SYSVOL folder without a GPO: $($_.Name)" }
-'(nothing above = none)'"""),
+'(nothing above = none)'""", tags=('diagnostic', 'health')),
     G("gpo_scripts", "Startup, shutdown, logon and logoff scripts in GPOs",
       "Script files referenced by GPOs -- and whether each still exists.",
       r"""$dom = (Get-ADDomain).DNSRoot
 Get-GPO -All | ForEach-Object { $g = $_; foreach ($half in 'Machine','User') { $ini = "\\$dom\SYSVOL\$dom\Policies\{$($g.Id)}\$half\Scripts\scripts.ini"
-  if (Test-Path $ini) { Get-Content $ini | Select-String 'CmdLine=' | ForEach-Object { "$($g.DisplayName) [$half]: $(($_.Line -split '=',2)[1])" } } } }"""),
+  if (Test-Path $ini) { Get-Content $ini | Select-String 'CmdLine=' | ForEach-Object { "$($g.DisplayName) [$half]: $(($_.Line -split '=',2)[1])" } } } }""", tags=('inventory',)),
 ]

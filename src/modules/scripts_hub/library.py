@@ -33,6 +33,7 @@ POWERSHELL, CMD = "powershell", "cmd"
 #: PowerShell's own formatter truncates at the console width; a pipe has none,
 #: so every table is formatted wide on purpose.
 _WIDE = "| Format-Table -AutoSize -Wrap | Out-String -Width 220"
+_MAX_HISTORY = 25_000   # slightly above _MAX_OUTPUT_LINES to keep spare
 _ADMIN_NOTE = ("if (-not ([Security.Principal.WindowsPrincipal][Security.Principal."
                "WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal."
                "WindowsBuiltInRole]::Administrator)) { 'NOTE: not running as "
@@ -61,6 +62,8 @@ class Script:
     #: module", "Hyper-V role"). Non-empty means it could only be syntax-checked
     #: here; the script prints NOT AVAILABLE instead of failing when it is absent.
     requires: str = ""
+    tags: tuple = ()               # e.g. ("security", "health", "triage")
+    keywords: str = ""             # extra search terms (space-separated)
 
 
 def _ps(body: str, admin_note: str = "") -> str:
@@ -129,7 +132,7 @@ $events | ForEach-Object {
     $detail = "by $($p[6].Value) via $($p[0].Value) -- $($p[4].Value) ($($p[2].Value))"
   }
   [pscustomobject]@{ Time = $_.TimeCreated; Event = $_.Id; What = $what; Detail = $detail }
-} """ + _WIDE)),
+} """ + _WIDE), tags=("diagnostic", "triage")),
     Script("uptime", "Uptime, last boot and Fast Startup", "Troubleshooting",
            "When Windows last really booted and how long it has been up. With Fast Startup "
            "on, 'Shut down' is a hibernation of the kernel, so uptime keeps growing and "
@@ -144,7 +147,7 @@ $fs = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\
   'Uptime' = '{0}d {1}h {2}m' -f $up.Days, $up.Hours, $up.Minutes
   'Fast Startup' = $(if ($fs -eq 1) { 'ON -- Shut down does not reset the kernel; use Restart' } elseif ($fs -eq 0) { 'off' } else { 'not set (Windows default: on where hibernation is available)' })
   'Installed' = $os.InstallDate
-} | Format-List | Out-String -Width 220""")),
+} | Format-List | Out-String -Width 220"""), tags=("diagnostic", "health")),
     Script("auto_stopped", "Automatic services that are not running", "Troubleshooting",
            "Services set to start automatically that are stopped right now, with their last "
            "exit code. Trigger-start and delayed services stop on their own by design, so "
@@ -157,7 +160,7 @@ Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyCon
 $rows = Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" | ForEach-Object {
   [pscustomobject]@{ Name = $_.Name; 'Display name' = $_.DisplayName; 'Exit code' = $_.ExitCode
     Kind = $(if ($trigger[$_.Name.ToLower()]) { 'trigger-start (stops by design)' } elseif ($_.DelayedAutoStart) { 'delayed' } else { 'automatic' }) } }
-if (-not $rows) { 'Every automatic service is running.' } else { $rows | Sort-Object Kind, Name """ + _WIDE + "}")),
+if (-not $rows) { 'Every automatic service is running.' } else { $rows | Sort-Object Kind, Name """ + _WIDE + "}"), tags=("diagnostic", "triage", "health")),
     Script("recent_software", "Software installed in the last 14 days", "Troubleshooting",
            "Programs whose install date is in the last two weeks (both registry views and "
            "per-user installs). 'It broke after I installed something' starts here.",
@@ -170,13 +173,14 @@ $rows = Get-ItemProperty $keys -ErrorAction SilentlyContinue |
   Where-Object { $_.DisplayName -and $_.InstallDate -match '^\d{8}$' -and $_.InstallDate -ge $cut } |
   Sort-Object InstallDate -Descending |
   Select-Object @{n='Installed';e={$_.InstallDate}}, DisplayName, DisplayVersion, Publisher
-if (-not $rows) { 'Nothing recorded an install date in the last 14 days.' } else { $rows """ + _WIDE + "}")),
+if (-not $rows) { 'Nothing recorded an install date in the last 14 days.' } else { $rows """ + _WIDE + "}"), tags=("inventory", "triage")),
     Script("hotfixes", "Installed Windows updates", "Troubleshooting",
            "Every installed update (KB) with its install date, newest first -- for 'which "
            "update came in before this started'. Cumulative updates replace each other, so "
            "only the latest few appear.",
            _ps("Get-HotFix | Sort-Object InstalledOn -Descending | "
-               "Select-Object HotFixID, Description, InstalledOn, InstalledBy " + _WIDE)),
+               "Select-Object HotFixID, Description, InstalledOn, InstalledBy " + _WIDE),
+           tags=("inventory", "baseline")),
     # ---- Network --------------------------------------------------------------------------
     Script("listening", "Listening ports and the program behind each", "Network",
            "Every TCP port waiting for connections and every UDP endpoint, with the process "
@@ -195,10 +199,10 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
     Process=$(if ($p) { $p.ProcessName } else { '?' }); Path=$(if ($p) { $p.Path } else { '' }) } }
 @($tcp) + @($udp) | Sort-Object Proto, Port """ + _WIDE,
                "the paths of system and other users' processes are blank"),
-           admin=True),
+           admin=True, tags=("security", "network", "triage")),
     Script("ipconfig", "Full network configuration", "Network",
            "ipconfig /all: every adapter, its addresses, DNS servers, DHCP lease and MAC.",
-           "ipconfig /all", kind=CMD),
+           "ipconfig /all", kind=CMD, tags=("network", "diagnostic")),
     Script("dns_cache", "DNS client cache", "Network",
            "Names this PC resolved recently and what they resolved to. Useful when one app "
            "reaches a site and another does not, and for spotting an unexpected domain. "
@@ -212,24 +216,24 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
                "$c = Get-DnsClientCache -ErrorAction SilentlyContinue\n"
                "if (-not $c) { 'The DNS cache is empty.' } else { $c | Sort-Object Entry | "
                "Select-Object Entry, RecordName, Data, TimeToLive " + _WIDE + " }"),
-           admin=True),
+           admin=True, tags=("network", "diagnostic", "triage")),
     Script("routes", "Routing table", "Network",
            "IPv4 and IPv6 routes with their interface and metric. A VPN's 0.0.0.0/1 + "
            "128.0.0.0/1 pair, or a second default route, explains most 'traffic goes the "
            "wrong way' problems.",
            _ps("Get-NetRoute -ErrorAction SilentlyContinue | Sort-Object AddressFamily, "
                "RouteMetric | Select-Object AddressFamily, DestinationPrefix, NextHop, "
-               "InterfaceAlias, RouteMetric " + _WIDE)),
+               "InterfaceAlias, RouteMetric " + _WIDE), tags=("network", "diagnostic")),
     Script("wifi_profiles", "Saved Wi-Fi networks", "Network",
            "The Wi-Fi networks this PC remembers and will join automatically. Names only -- "
            "this never prints a password.",
-           "netsh wlan show profiles", kind=CMD),
+           "netsh wlan show profiles", kind=CMD, tags=("network", "inventory")),
     # ---- Security -------------------------------------------------------------------------
     Script("local_admins", "Members of the local Administrators group", "Security",
            "Who has full control of this PC. Looked up by the group's well-known SID "
            "(S-1-5-32-544), so it works on any Windows language.",
            _ps("Get-LocalGroupMember -SID S-1-5-32-544 | Select-Object Name, ObjectClass, "
-               "PrincipalSource " + _WIDE)),
+               "PrincipalSource " + _WIDE), tags=("security", "inventory", "compliance")),
     Script("third_party_tasks", "Scheduled tasks not shipped by Microsoft", "Security",
            "Every scheduled task outside \\Microsoft\\, with what it runs and as whom. Updaters "
            "live here -- and so does malware that wants to come back after a reboot.",
@@ -238,7 +242,8 @@ $rows = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.Task
   [pscustomobject]@{ Task = $_.TaskPath + $_.TaskName; State = $_.State; 'Runs as' = $_.Principal.UserId
     Action = (($_.Actions | ForEach-Object { ($_.Execute + ' ' + $_.Arguments).Trim() }) -join ' ; ') } }
 if (-not $rows) { 'No scheduled tasks outside \Microsoft\.' } else { $rows | Sort-Object Task | Format-List | Out-String -Width 220 }""",
-               "tasks registered by other users may be missing"), admin=True),
+               "tasks registered by other users may be missing"), admin=True,
+           tags=("security", "triage")),
     Script("expiring_certs", "Certificates expiring within 60 days", "Security",
            "Personal certificates (this user and the computer) that expire in the next 60 days "
            "or already have -- VPN, Wi-Fi (802.1X) and code-signing breakage, before it happens.",
@@ -247,7 +252,7 @@ $limit = (Get-Date).AddDays(60)
 $rows = 'Cert:\CurrentUser\My','Cert:\LocalMachine\My' | ForEach-Object {
   $store = $_; Get-ChildItem $_ -ErrorAction SilentlyContinue | Where-Object { $_.NotAfter -lt $limit } |
   ForEach-Object { [pscustomobject]@{ Store=$store; Subject=$_.Subject; Expires=$_.NotAfter; Issuer=$_.Issuer; Thumbprint=$_.Thumbprint } } }
-if (-not $rows) { 'No personal certificate expires in the next 60 days.' } else { $rows | Sort-Object Expires """ + _WIDE + "}")),
+if (-not $rows) { 'No personal certificate expires in the next 60 days.' } else { $rows | Sort-Object Expires """ + _WIDE + "}"), tags=("security", "health")),
     Script("firewall_profiles", "Firewall profiles", "Security",
            "Whether the Domain, Private and Public firewall profiles are on, their default "
            "inbound/outbound actions, and which profile each network is in right now. A "
@@ -256,11 +261,12 @@ if (-not $rows) { 'No personal certificate expires in the next 60 days.' } else 
            _ps("Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, "
                "DefaultOutboundAction, LogBlocked " + _WIDE + "\n"
                "Get-NetConnectionProfile | Select-Object InterfaceAlias, Name, "
-               "NetworkCategory " + _WIDE)),
+               "NetworkCategory " + _WIDE), tags=("security", "network", "compliance")),
     Script("shares", "Shared folders", "Security",
            "Every SMB share this PC offers, including the hidden administrative ones (C$, "
            "ADMIN$), with path and description.",
-           _ps("Get-SmbShare | Select-Object Name, Path, Description, CurrentUsers " + _WIDE)),
+           _ps("Get-SmbShare | Select-Object Name, Path, Description, CurrentUsers " + _WIDE),
+           tags=("security", "inventory")),
     # ---- Inventory ------------------------------------------------------------------------
     Script("system_summary", "System summary", "Inventory",
            "Edition, version and build, computer name, domain or workgroup, manufacturer and "
@@ -278,7 +284,7 @@ $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
   'CPU' = $cpu.Name.Trim()
   'Memory' = '{0:N1} GB' -f ($cs.TotalPhysicalMemory / 1GB)
   'Architecture' = $os.OSArchitecture
-} | Format-List | Out-String -Width 220""")),
+} | Format-List | Out-String -Width 220"""), tags=("inventory", "baseline", "hardware")),
     Script("third_party_drivers", "Third-party drivers", "Inventory",
            "Drivers installed from outside Windows (oem*.inf), with provider, version and "
            "date -- the usual suspects for a blue screen or a device that stopped working.",
@@ -286,7 +292,7 @@ $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
                "Where-Object { $_.InfName -like 'oem*.inf' } | Sort-Object DriverProviderName, "
                "DeviceName | Select-Object DeviceName, DriverProviderName, DriverVersion, "
                "@{n='Date';e={if ($_.DriverDate) { $_.DriverDate.ToString('yyyy-MM-dd') }}}, InfName "
-               + _WIDE), timeout=180),
+               + _WIDE), timeout=180, tags=("inventory", "hardware", "triage")),
 ]
 
 CLIENT_CATEGORIES = ("Troubleshooting", "System", "Hardware", "Storage", "Performance",
@@ -561,12 +567,27 @@ def prompt_line(script: Script) -> str:
     return f"PS {where}> {command}"
 
 
-def _kill_tree(pid: int) -> None:
+def _kill_tree(pid: int) -> bool:
+    """Kill a process tree. Returns True if the process is gone."""
+    import time
+    import psutil
+
     try:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
-                       timeout=10, creationflags=CREATE_NO_WINDOW)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        logger.warning("scripts: could not kill process tree %s: %s", pid, e)
+        r = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                           timeout=10, creationflags=CREATE_NO_WINDOW)
+        if r.returncode != 0:
+            logger.warning("scripts: taskkill /PID %d exited %d: %s",
+                           pid, r.returncode, r.stderr.decode(errors="replace").strip())
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("scripts: taskkill /PID %d failed: %s", pid, exc)
+        return False
+    # os.kill(pid, 0) can terminate a process on Windows; use a read-only check.
+    for _ in range(5):
+        if not psutil.pid_exists(pid):
+            return True
+        time.sleep(0.2)
+    logger.warning("scripts: PID %d still alive after taskkill", pid)
+    return False
 
 
 def run(script: Script, on_line: Callable[[str], None],
@@ -605,7 +626,8 @@ def run(script: Script, on_line: Callable[[str], None],
                 result.timed_out = True
             else:
                 continue
-            _kill_tree(proc.pid)
+            if not _kill_tree(proc.pid):
+                logger.warning("scripts: %s watchdog could not stop PID %d", script.id, proc.pid)
             return
 
     threading.Thread(target=watch, daemon=True, name=f"script-{script.id}").start()
@@ -619,10 +641,15 @@ def run(script: Script, on_line: Callable[[str], None],
             result.returncode = proc.returncode
     except subprocess.TimeoutExpired:
         logger.warning("scripts: %s did not exit after its output closed", script.id)
-        _kill_tree(proc.pid)
+        if not _kill_tree(proc.pid):
+            logger.warning("scripts: %s timeout cleanup could not stop PID %d", script.id, proc.pid)
     finally:
         done.set()
         result.seconds = time.monotonic() - start
+        # Ensure the process does not outlive this function.
+        if proc.returncode is None and proc.poll() is None:
+            if not _kill_tree(proc.pid):
+                logger.warning("scripts: %s final cleanup could not stop PID %d", script.id, proc.pid)
         _remove(body_file)
     return result
 

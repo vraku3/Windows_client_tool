@@ -61,19 +61,21 @@ class RowActions:
             return None
         path = store.path(node)
         is_dir = bool(store.attrs[node] & DIR)
+        is_mtp = (getattr(self._shell._result, "engine", None) == "mtp")
         menu = QMenu(parent if parent is not None else self._shell)
 
-        describe_control(menu.addAction("Open", lambda: self._open(path)))
-        describe_control(menu.addAction("Open containing folder", lambda: self._reveal(path)))
+        open_act = describe_control(menu.addAction("Open", lambda: self._open(path)))
+        reveal_act = describe_control(menu.addAction("Open containing folder", lambda: self._reveal(path)))
         menu.addSeparator()
         describe_control(menu.addAction("Copy path", lambda: QApplication.clipboard().setText(path)))
         describe_control(menu.addAction("Copy name", lambda: QApplication.clipboard().setText(
             store.name(node))))
         menu.addSeparator()
+        scan_act = None
         if is_dir:
-            describe_control(menu.addAction("Scan this folder",
+            scan_act = describe_control(menu.addAction("Scan this folder",
                            lambda: self._shell.start_scan(path)))
-        describe_control(menu.addAction("Exclude from scan",
+        exclude_act = describe_control(menu.addAction("Exclude from scan",
                        lambda: self._exclude(store.name(node))))
         menu.addSeparator()
 
@@ -84,11 +86,17 @@ class RowActions:
         move = describe_control(menu.addAction("Move to…", lambda: self._move(node)))
         erase = describe_control(menu.addAction("Secure erase…",
                                lambda: self._secure_erase(node)))
-        # A refused path gets a disabled entry with the reason in the tooltip,
-        # rather than an entry that looks available and then complains. A move
-        # and an erase are exactly as destructive as a delete, so they are
-        # gated with them rather than beside them.
-        if not guardrails.is_allowed(path, override=True):
+        if is_mtp:
+            for action in (open_act, reveal_act, exclude_act, recycle,
+                           permanent, move, erase):
+                action.setEnabled(False)
+                action.setToolTip("Not available for MTP devices")
+            if scan_act is not None:
+                scan_act.setEnabled(False)
+                scan_act.setToolTip("Not available for MTP devices")
+        elif not guardrails.is_allowed(path, override=True):
+            # A refused path gets a disabled entry with the reason in the tooltip,
+            # rather than an entry that looks available and then complains.
             for action in (recycle, permanent, move, erase):
                 action.setEnabled(False)
                 action.setToolTip("Protected location")

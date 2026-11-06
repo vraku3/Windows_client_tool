@@ -1098,8 +1098,20 @@ class TreeSizeShell(QWidget):
             items.append((None, None))
             items.extend(submenus)
 
+        try:
+            from ..scan.mtp_scanner import list_mtp_devices
+            mtp_devices = list_mtp_devices()
+            if mtp_devices:
+                items.append((None, None))
+                for dev in mtp_devices:
+                    items.append((dev.name,
+                                  lambda _c=False, p=dev.shell_path: self.start_scan(p)))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug("MTP menu discovery failed", exc_info=True)
+
         items.append((None, None))
-        items.append(("Select folder\u2026", self._browse_for_folder))
+        items.append(("Select folder\u2026", self._browse_for_local_folder))
         items.append((None, None))
         items.append(("Remote target\u2026", self.scan_remote))
         self.ribbon.set_menu_items("scan.select", items)
@@ -1121,14 +1133,42 @@ class TreeSizeShell(QWidget):
         self.path_combo.setCurrentIndex(-1)
         self.path_combo.setEditText("")
 
+    def _resolve_combo_target(self, index: int = -1) -> str:
+        """Return the scan target for a combo index, or the current one.
+
+        MTP devices store their shell path as UserRole data on the item;
+        filesystem paths are the text itself.
+        """
+        if index < 0:
+            index = self.path_combo.currentIndex()
+        mtp_path = self.path_combo.itemData(index, Qt.ItemDataRole.UserRole)
+        if mtp_path and str(mtp_path).startswith("::{"):
+            return str(mtp_path)
+        return self.path_combo.itemText(index).strip()
+
     def _on_path_chosen(self, index: int) -> None:
         """Choosing from the dropdown scans, as picking a place in Explorer
         navigates. Typing still needs Enter or the Go button."""
-        target = self.path_combo.itemText(index).strip()
+        target = self._resolve_combo_target(index)
         if target:
             self.start_scan(target)
 
     def _browse_for_folder(self) -> None:
+        """Show the scan-target menu so MTP devices and drives are visible.
+
+        The native QFileDialog cannot browse Shell-namespace devices (MTP
+        phones, cameras), so clicking the button face opens the same menu
+        the dropdown arrow does.  'Select folder...' in that menu still
+        opens the native dialog for local paths.
+        """
+        from PyQt6.QtGui import QCursor
+        menu = self.ribbon.menu("scan.select")
+        if menu:
+            menu.popup(QCursor.pos())
+            return
+        self._browse_for_local_folder()
+
+    def _browse_for_local_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select folder to scan")
         if folder:
             self.start_scan(folder)
@@ -1370,6 +1410,41 @@ class TreeSizeShell(QWidget):
                 self._settings.get("charge_all_hardlinks", False)),
             collect_owners=bool(self._settings.get("collect_owners", False)))
 
+    def _start_mtp_scan(self, shell_path: str) -> None:
+        """Scan an MTP device (phone/camera) via Shell COM."""
+        from ..scan.mtp_scanner import list_mtp_devices
+        from .mtp_worker import MtpScanWorker
+
+        device_name = "MTP Device"
+        capacity = free_space = 0
+        try:
+            for dev in list_mtp_devices():
+                if dev.shell_path == shell_path:
+                    device_name = dev.name
+                    capacity = dev.capacity
+                    free_space = dev.free_space
+                    break
+        except Exception:
+            pass
+
+        idx = self.path_combo.findText(device_name)
+        if idx < 0:
+            self.path_combo.addItem(device_name)
+            idx = self.path_combo.findText(device_name)
+        self.path_combo.setItemData(idx, shell_path, Qt.ItemDataRole.UserRole)
+        self.path_combo.setCurrentIndex(idx)
+
+        worker = MtpScanWorker(device_name, shell_path, capacity, free_space)
+        worker.signals.batch_ready.connect(self._on_batch)
+        worker.signals.finished.connect(self._on_finished)
+        worker.signals.failed.connect(self._on_failed)
+        worker.signals.cancelled.connect(self._on_cancelled)
+        self._worker = worker
+        self._paused = False
+        self._set_scanning(True)
+        self.ribbon.set_enabled("scan.pause", False)
+        self._pool.start(worker)
+
     def start_scan(self, target: str, filters: FilterSet | None = None) -> None:
         """Run the scan on a worker thread and return immediately.
 
@@ -1378,6 +1453,11 @@ class TreeSizeShell(QWidget):
         """
         if self._worker is not None:
             return                       # a scan is already running
+
+        if target.startswith("::{"):
+            self._start_mtp_scan(target)
+            return
+
         self.path_combo.setEditText(target)
         if self.path_combo.findText(target) < 0:
             self.path_combo.addItem(target)
@@ -1427,12 +1507,19 @@ class TreeSizeShell(QWidget):
         self._store = result.store
         self._root = result.root
         self.directory_tree.set_scan(result.store, result.root)
-        letter = result.store.name(result.root)[:1]
-        total, free = drive_space(letter) if letter.isalpha() else (0, 0)
+        is_mtp = getattr(result, "engine", None) == "mtp"
+        if is_mtp:
+            total = getattr(result, "mtp_capacity", 0)
+            free = getattr(result, "mtp_free", 0)
+        else:
+            letter = result.store.name(result.root)[:1]
+            total, free = drive_space(letter) if letter.isalpha() else (0, 0)
         self.status_bar.show_result(result, total, free)
         self._aggregates.clear()
         self._on_node_selected(result.root)
         self._set_scanning(False)
+        is_mtp = getattr(result, "engine", None) == "mtp"
+        self.ribbon.set_enabled("scan.watch", not is_mtp)
         self.scan_state.setText("")
         self.scan_finished.emit(result)
 
@@ -1454,7 +1541,7 @@ class TreeSizeShell(QWidget):
         self.ribbon.action("scan.pause").setText("Resume" if self._paused else "Pause")
 
     def refresh_scan(self) -> None:
-        target = self.path_combo.currentText().strip()
+        target = self._resolve_combo_target()
         if target:
             self.start_scan(target, filters=self._filters)
 

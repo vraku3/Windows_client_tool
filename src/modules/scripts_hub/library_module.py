@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+from PyQt6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                              QMenu, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                              QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 _SCRIPT_ROLE = Qt.ItemDataRole.UserRole
 _FOLDER_KEY = "modules.scripts.folder"
 _MAX_OUTPUT_LINES = 20_000
+_MAX_HISTORY = 25_000
 
 
 def badges(script: library.Script, elevated: bool) -> str:
@@ -44,6 +46,8 @@ def badges(script: library.Script, elevated: bool) -> str:
     parts.append("PowerShell" if script.kind == library.POWERSHELL else "Command Prompt")
     if script.requires:
         parts.append(f"needs {script.requires} -- says NOT AVAILABLE where it is missing")
+    if tags := getattr(script, "tags", ()):
+        parts.append("Tags: " + ", ".join(tags))
     return "  ·  ".join(parts)
 
 
@@ -70,10 +74,21 @@ def _format(kind: str) -> QTextCharFormat:
     return fmt
 
 
+#: Categories that are only meaningful on a desktop / laptop.
+_CLIENT_ONLY = frozenset({"Applications", "Hardware", "Power", "Printing", "Troubleshooting"})
+
 #: Top level of the tree: (label, which scripts).
-_BRANCHES = (("Windows client", lambda s: not s.server and s.category != library.USER_CATEGORY),
-             ("Windows Server", lambda s: s.server),
-             (library.USER_CATEGORY, lambda s: s.category == library.USER_CATEGORY))
+#: "Windows Client" keeps every client script — shown first.
+#: "Server / Work" is the big branch: all server scripts plus client scripts
+#: whose category is useful on servers too (Network, Security, Performance, ...).
+_BRANCHES = (
+    ("Windows Client",
+     lambda s: not s.server and s.category != library.USER_CATEGORY),
+    ("Server / Work",
+     lambda s: s.server or (not s.server and s.category not in _CLIENT_ONLY
+                            and s.category != library.USER_CATEGORY)),
+    (library.USER_CATEGORY, lambda s: s.category == library.USER_CATEGORY),
+)
 
 
 class ScriptLibraryModule(BaseModule):
@@ -89,7 +104,10 @@ class ScriptLibraryModule(BaseModule):
         self._loaded = False
         self._scripts: List[library.Script] = []
         self._current: Optional[library.Script] = None
+        self._output_script: Optional[library.Script] = None
+        self._active_filter = "all"
         self._run_worker: Optional[Worker] = None
+        self._run_script: Optional[library.Script] = None
         self._bundle_worker: Optional[Worker] = None
         self._elevated = support_bundle.is_admin()
         #: requirement key -> installed (absent = not known yet), and whether
@@ -126,6 +144,7 @@ class ScriptLibraryModule(BaseModule):
         from ui.module_intro import module_intro
         lay.addWidget(module_intro("Browse built-in admin checks and your own scripts. Read the description and View script before running: scripts can change this PC. Stop ends a run but does not undo changes. Support bundles collect diagnostics for you to review and share."))
         lay.addLayout(self._build_toolbar(w))
+        lay.addLayout(self._build_filter_row(w))
         lay.addLayout(self._build_folder_row(w))
         self._banner = ErrorBanner("", w)
         self._banner.hide()
@@ -203,17 +222,103 @@ class ScriptLibraryModule(BaseModule):
             bar.addWidget(b)
         return bar
 
+    def _build_filter_row(self, parent: QWidget) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Filter:", parent))
+        self._filter_btns: Dict[str, QPushButton] = {}
+        for key, label in (("all", "All"), ("health", "Health checks"),
+                           ("security", "Security"), ("admin", "Needs admin"),
+                           ("network", "Network"), ("storage", "Storage")):
+            b = QPushButton(label, parent)
+            b.setCheckable(True)
+            b.setChecked(key == self._active_filter)
+            b.setStyleSheet("QPushButton { padding: 3px 10px; border-radius: 10px; "
+                            "border: 1px solid #666; } "
+                            "QPushButton:checked { background-color: #3d648a; "
+                            "color: #fff; border-color: #79a8d6; }")
+            b.clicked.connect(lambda checked, k=key: self._set_filter(k))
+            self._filter_btns[key] = b
+            row.addWidget(b)
+        row.addStretch(1)
+        self._result_count = QLabel("", parent)
+        set_role(self._result_count, "statusInfo")
+        row.addWidget(self._result_count)
+        return row
+
+    def _set_filter(self, key: str) -> None:
+        self._active_filter = key
+        for k, b in self._filter_btns.items():
+            b.setChecked(k == key)
+        self._fill_tree()
+
     def _build_detail(self, parent: QWidget) -> QWidget:
         box = QWidget(parent)
         lay = QVBoxLayout(box)
         lay.setContentsMargins(6, 0, 0, 0)
         self._title = QLabel("Select a script", box)
         set_role(self._title, "sectionTitle")
-        self._badges = QLabel("", box)
-        set_role(self._badges, "statusInfo")
+        self._badges = QWidget(box)
+        self._tag_row = QHBoxLayout(self._badges)
+        self._tag_row.setContentsMargins(0, 0, 0, 0)
+        self._tag_row.setSpacing(5)
         self._desc = QLabel("", box)
         self._desc.setWordWrap(True)
         self._desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._desc.setTextFormat(Qt.TextFormat.PlainText)
+        self._desc.setStyleSheet("color: #e0e0e0; font-size: 13px; padding: 6px 0;")
+
+        # -- preview section (top half of vertical splitter) --
+        self._preview_panel = QWidget(box)
+        preview_lay = QVBoxLayout(self._preview_panel)
+        preview_lay.setContentsMargins(0, 0, 0, 0)
+        self._info_card = QFrame(self._preview_panel)
+        self._info_card.setObjectName("scriptInfoCard")
+        self._info_card.setStyleSheet(
+            "QFrame#scriptInfoCard { background: #353535; border: 1px solid #555; "
+            "border-radius: 6px; } QFrame#scriptInfoCard QLabel { color: #ddd; border: none; }")
+        self._info_layout = QVBoxLayout(self._info_card)
+        self._info_layout.setContentsMargins(12, 10, 12, 10)
+        preview_lay.addWidget(self._info_card)
+        self._body_preview = QPlainTextEdit(self._preview_panel)
+        self._body_preview.setReadOnly(True)
+        self._body_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._body_preview.setAccessibleName("Script command preview")
+        self._body_preview.setStyleSheet(
+            "QPlainTextEdit { background: #303030; color: #bbb; border: 1px solid #555; "
+            "border-radius: 4px; padding: 6px; font-family: Consolas, monospace; font-size: 12px; }")
+        self._body_preview.setMinimumHeight(60)
+        self._body_preview.setToolTip("Drag the splitter handle below to see more of the script. "
+                                      "View script shows the full source.")
+        preview_lay.addWidget(self._body_preview, 1)
+        self._preview_panel.hide()
+
+        # -- output section (bottom half of vertical splitter) --
+        self._output_box = QWidget(box)
+        out_lay = QVBoxLayout(self._output_box)
+        out_lay.setContentsMargins(0, 0, 0, 0)
+        self._output = QPlainTextEdit(self._output_box)
+        self._output.setReadOnly(True)
+        self._output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._output.setMaximumBlockCount(_MAX_OUTPUT_LINES)
+        set_role(self._output, "iseConsole")
+        self._history: list = []
+        self._apply_console(_console)
+        self._output.setPlaceholderText("Output appears here as the script runs.")
+        out_lay.addWidget(self._output, 1)
+        self._output_box.hide()
+
+        # -- vertical splitter: preview on top, output on bottom --
+        self._detail_split = QSplitter(Qt.Orientation.Vertical, box)
+        self._detail_split.setChildrenCollapsible(False)
+        self._detail_split.addWidget(self._preview_panel)
+        self._detail_split.addWidget(self._output_box)
+        self._detail_split.setStretchFactor(0, 2)
+        self._detail_split.setStretchFactor(1, 3)
+        self._detail_split.setHandleWidth(6)
+        self._detail_split.setStyleSheet(
+            "QSplitter::handle { background: #555; border-radius: 2px; }"
+            "QSplitter::handle:hover { background: #79a8d6; }")
+
         row = QHBoxLayout()
         self._btn: Dict[str, QPushButton] = {}
         for key, label, fn in (("run", "Run", self._run), ("stop", "Stop", self._stop),
@@ -226,9 +331,7 @@ class ScriptLibraryModule(BaseModule):
             b.setEnabled(False)
             self._btn[key] = b
             row.addWidget(b)
-        # A plain button with a menu, so it looks like its neighbours; the
-        # first entry is the preferred editor (PowerShell ISE when present).
-        self._btn["console"].setEnabled(True)    # always available, unlike the run buttons
+        self._btn["console"].setEnabled(True)
         self._edit = QPushButton("Edit", box)
         self._edit.setToolTip("Open the script in an editor. A built-in is copied to your scripts "
                               "folder first -- the copy is yours to change, the original stays.")
@@ -241,16 +344,6 @@ class ScriptLibraryModule(BaseModule):
         row.addStretch(1)
         self._status = QLabel("", box)
         set_role(self._status, "statusInfo")
-        self._output = QPlainTextEdit(box)
-        self._output.setReadOnly(True)
-        self._output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self._output.setMaximumBlockCount(_MAX_OUTPUT_LINES)
-        # Font and colours come from the `iseConsole` role: an application
-        # stylesheet overrides setFont(), which is why columns did not line up.
-        set_role(self._output, "iseConsole")
-        self._history: list = []          # (line, plain) -- redrawn when the colours change
-        self._apply_console(_console)
-        self._output.setPlaceholderText("Output appears here as the script runs.")
         need_row = QHBoxLayout()
         self._need = QLabel("", box)
         self._need.setWordWrap(True)
@@ -261,11 +354,97 @@ class ScriptLibraryModule(BaseModule):
         need_row.addWidget(self._install_req)
         for widget in (self._title, self._badges, self._desc):
             lay.addWidget(widget)
+        lay.addWidget(self._detail_split, 1)
         lay.addLayout(need_row)
         lay.addLayout(row)
         lay.addWidget(self._status)
-        lay.addWidget(self._output, 1)
         return box
+
+    def _update_preview(self, script: library.Script) -> None:
+        """Refresh the selected script's facts without disturbing console history."""
+        for layout in (self._tag_row, self._info_layout):
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget() is not None:
+                    item.widget().hide()
+                    item.widget().deleteLater()
+        colors = {"diagnostic": "#3d648a", "triage": "#3d648a",
+                  "security": "#8a3d3d", "compliance": "#8a3d3d", "health": "#3d8a5a",
+                  "network": "#6a3d8a", "storage": "#8a6a3d", "hardware": "#8a6a3d",
+                  "performance": "#7a8a3d"}
+        for tag in script.tags:
+            pill = QLabel(tag, self._badges)
+            pill.setTextFormat(Qt.TextFormat.PlainText)
+            pill.setStyleSheet(f"background: {colors.get(tag.lower(), '#666')}; color: #fff; "
+                              "border: none; border-radius: 8px; padding: 2px 8px; font-size: 11px;")
+            self._tag_row.addWidget(pill)
+        self._tag_row.addStretch(1)
+        self._badges.setVisible(bool(script.tags))
+        heading = QLabel("What this checks", self._info_card)
+        heading.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self._info_layout.addWidget(heading)
+        facts = [("Read-only" if script.read_only else "Can change things", False)]
+        if script.admin:
+            facts.append(("Needs administrator" + ("" if self._elevated else " (not elevated now)"),
+                          not self._elevated))
+        if script.requires:
+            facts.append((f"Needs: {script.requires}", False))
+        if script.timeout != library.Script.timeout:
+            facts.append((f"Timeout: {script.timeout:g}s", False))
+        facts.append(("PowerShell" if script.kind == library.POWERSHELL else "Command Prompt", False))
+        for text, warning in facts:
+            label = QLabel(text, self._info_card)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            if warning:
+                label.setStyleSheet("color: #f0b66a;")
+            self._info_layout.addWidget(label)
+        self._body_preview.setPlainText(self._preview_body(script))
+        self._body_preview.setPlaceholderText("No commands to preview. Use View script to inspect the full source.")
+        if self._output_script == script and (self._history or self._run_worker is not None):
+            self._show_output()
+        else:
+            self._hide_output()
+
+    @staticmethod
+    def _preview_body(script: library.Script) -> str:
+        """Omit PowerShell helper bodies and boilerplate from the small preview."""
+        lines = []
+        depth, in_function, opened = 0, False, False
+        for line in script.body.splitlines():
+            text = line.strip()
+            if script.kind == library.POWERSHELL:
+                if not in_function and re.match(r"function\s", text, re.IGNORECASE):
+                    in_function, opened, depth = True, False, 0
+                if in_function:
+                    # Ignore quoted braces and line comments when balancing helper blocks.
+                    code = re.sub(r"'(?:''|[^'])*'|\"(?:`.|[^\"`])*\"|#.*", "", text)
+                    opened = opened or "{" in code
+                    depth += code.count("{") - code.count("}")
+                    if opened and depth <= 0:
+                        in_function = False
+                    continue
+                if text.lower().startswith(("$erroractionpreference", "$progresspreference")):
+                    continue
+                if text == "& {" or text.startswith("} 2>&1 | ForEach-Object"):
+                    continue
+            if text:
+                lines.append(line)
+        return "\n".join(lines)
+
+    def _show_output(self) -> None:
+        self._desc.hide()
+        self._title.setToolTip(self._desc.text())
+        self._badges.setToolTip(self._desc.text())
+        self._preview_panel.show()
+        self._output_box.show()
+
+    def _hide_output(self) -> None:
+        self._output_box.hide()
+        self._title.setToolTip(self._desc.text())
+        self._badges.setToolTip(self._desc.text())
+        self._desc.show()
+        self._preview_panel.setVisible(self._current is not None)
 
     # ---- lifecycle ----------------------------------------------------------------------------
     def on_activate(self) -> None:
@@ -303,20 +482,39 @@ class ScriptLibraryModule(BaseModule):
         if widget_is_valid(self._need) and self._current is not None:
             self._show_requirement(self._current)
 
+    def _matches(self, s: library.Script, needle: str) -> bool:
+        """True if the script matches the search text."""
+        if not needle:
+            return True
+        if needle in f"{s.title}\n{s.description}\n{s.category}".lower():
+            return True
+        if any(needle in t.lower() for t in getattr(s, "tags", ())):
+            return True
+        keywords = getattr(s, "keywords", "")
+        if keywords and needle in keywords.lower():
+            return True
+        return needle in s.body.lower()
+
     def _fill_tree(self) -> None:
         if not widget_is_valid(self._tree):
             return
         needle = self._search.text().strip().lower()
         self._tree.clear()
-        shown = [s for s in self._scripts
-                 if not needle or needle in f"{s.title}\n{s.description}\n{s.category}".lower()]
+        shown = [s for s in self._scripts if self._matches(s, needle)]
+        if self._active_filter == "admin":
+            shown = [s for s in shown if s.admin]
+        elif self._active_filter != "all":
+            shown = [s for s in shown
+                     if self._active_filter in (t.lower() for t in getattr(s, "tags", ()))]
+        self._search.setPlaceholderText(f"Search {len(self._scripts)} scripts...")
+        self._result_count.setText(f"{len(shown)} of {len(self._scripts)} scripts")
         for label, belongs in _BRANCHES:
             mine = [s for s in shown if belongs(s)]
             branch = QTreeWidgetItem([f"{label} ({len(mine)})"])
             if label == library.USER_CATEGORY:
                 for s in mine:
                     branch.addChild(self._leaf(s))
-                if not mine and not needle:
+                if not mine and not needle and self._active_filter == "all":
                     hint = QTreeWidgetItem(["(put .ps1 / .cmd files in your scripts folder)"])
                     hint.setDisabled(True)
                     branch.addChild(hint)
@@ -348,8 +546,8 @@ class ScriptLibraryModule(BaseModule):
             return
         self._current = script
         self._title.setText(script.title)
-        self._badges.setText(badges(script, self._elevated))
         self._desc.setText(script.description + (f"\n\nFile: {script.path}" if script.path else ""))
+        self._update_preview(script)
         self._show_requirement(script)
         self._update_buttons()
 
@@ -419,7 +617,9 @@ class ScriptLibraryModule(BaseModule):
             return
         if not script.read_only and not self._confirm_user_script(script):
             return
+        self._run_script = script
         self._clear_output()
+        self._show_output()
         self._append(library.prompt_line(script), plain=True)
         self._status.setText(f"Running {script.title}…")
         w = Worker(lambda worker: library.run(script, worker.signals.log_line.emit,
@@ -427,7 +627,7 @@ class ScriptLibraryModule(BaseModule):
         w.signals.log_line.connect(self._append)
         w.signals.result.connect(self._finished)
         w.signals.error.connect(self._failed)
-        w.signals.cancelled.connect(lambda: self._finished(None))
+        w.signals.cancelled.connect(self._on_run_cancelled)
         self._run_worker = w
         self._workers.append(w)
         self._update_buttons()
@@ -435,6 +635,7 @@ class ScriptLibraryModule(BaseModule):
 
     def _clear_output(self) -> None:
         self._history = []
+        self._output_script = self._current
         self._output.clear()
 
     def _apply_console(self, style: console_style.ConsoleStyle) -> None:
@@ -465,7 +666,11 @@ class ScriptLibraryModule(BaseModule):
         a table header -- the header is only known once its rule arrives."""
         if not widget_is_valid(self._output):
             return
+        if self._output_script == self._current:
+            self._show_output()
         self._history.append((line, plain))
+        if len(self._history) > _MAX_HISTORY:
+            self._history = self._history[-_MAX_HISTORY:]
         cursor = self._output.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         if output_style.is_rule(line) and not self._output.document().isEmpty():
@@ -480,25 +685,31 @@ class ScriptLibraryModule(BaseModule):
         self._output.ensureCursorVisible()
 
     def _finished(self, result: Optional[library.RunResult]) -> None:
+        script = self._run_script
         self._run_worker = None
+        self._run_script = None
         if not widget_is_valid(self._status):
             return
-        if self._current is not None:              # ISE ends a run with a fresh prompt
+        if script is not None:              # ISE ends a run with a fresh prompt
             self._append("", plain=True)
-            self._append(f"PS {library.working_dir(self._current)}> ", plain=True)
+            self._append(f"PS {library.working_dir(script)}> ", plain=True)
         if result is None:
             self._status.setText("Stopped.")
         elif result.cancelled:
             self._status.setText(f"Stopped after {result.seconds:.1f} s.")
         elif result.timed_out:
-            self._status.setText(f"Stopped: no end after {self._current.timeout:.0f} s.")
+            self._status.setText(f"Stopped: no end after {script.timeout:.0f} s.")
         else:
             verdict = "Finished" if result.returncode == 0 else f"Finished with exit code {result.returncode}"
             self._status.setText(f"{verdict} in {result.seconds:.1f} s · {len(result.lines)} lines.")
         self._update_buttons()
 
+    def _on_run_cancelled(self) -> None:
+        self._finished(None)
+
     def _failed(self, err) -> None:
         self._run_worker = None
+        self._run_script = None
         message = str(err[1]) if isinstance(err, tuple) and len(err) > 1 else str(err)
         logger.error("script failed to start: %s", message)
         if widget_is_valid(self._status):
@@ -514,6 +725,7 @@ class ScriptLibraryModule(BaseModule):
         if self._current is None:
             return
         self._clear_output()
+        self._show_output()
         for line in self._current.body.splitlines():
             self._append(line, plain=True)
         self._status.setText("Showing the script itself (not output). Run it to see its output.")

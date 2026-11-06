@@ -53,7 +53,10 @@ class AggregateTable(QTreeWidget):
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setItemDelegateForColumn(self.PERCENT_COLUMN,
                                       ProportionBarDelegate(self))
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.header().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
+        self.header().setStretchLastSection(True)
+        self.setColumnWidth(0, 200)
         self._unit = Unit.AUTO
         self._decimals = 1
         if self.SORT_BY_SIZE:
@@ -166,7 +169,10 @@ class TopFilesView(QTreeWidget):
         self.setUniformRowHeights(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setItemDelegateForColumn(3, ProportionBarDelegate(self))
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.header().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
+        self.header().setStretchLastSection(True)
+        self.setColumnWidth(0, 280)
         self.itemDoubleClicked.connect(self._on_double_clicked)
         explain_widget(self)
 

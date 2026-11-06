@@ -7,7 +7,8 @@ widget per row, because a widget per row does not survive a large scan.
 from PyQt6.QtCore import QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QStyledItemDelegate, QStyleOptionViewItem, QTreeView,
+    QAbstractItemView, QHeaderView, QStyledItemDelegate, QStyleOptionViewItem,
+    QTreeView,
 )
 
 from ..store.node_store import DIR
@@ -85,7 +86,9 @@ class DirectoryTree(QTreeView):
         self.setAlternatingRowColors(False)
         self.setExpandsOnDoubleClick(False)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.header().setStretchLastSection(False)
+        self.header().setStretchLastSection(True)
+        self.header().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
         self.setColumnWidth(0, 320)
 
         self.selectionModel().currentChanged.connect(self._on_current_changed)

@@ -101,7 +101,10 @@ class DetailsView(QTreeWidget):
         self.setSortingEnabled(True)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.setItemDelegateForColumn(PERCENT_COLUMN, ProportionBarDelegate(self))
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.header().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive)
+        self.header().setStretchLastSection(True)
+        self.setColumnWidth(0, 280)
         self._store = None
         self._unit = Unit.AUTO
         self._decimals = 1

@@ -208,14 +208,22 @@ class QuickFixModule(BaseModule):
         if answer != QMessageBox.StandardButton.Ok:
             return
         self._safe_queue = list(safe_cards)
+        self._safe_total = len(safe_cards)
+        self._safe_done = 0
         self._run_all_btn.setEnabled(False)
+        self._run_all_btn.setText(f"Running 1/{self._safe_total}…")
         self._run_next_safe()
 
     def _run_next_safe(self) -> None:
         if not self._safe_queue:
             self._run_all_btn.setEnabled(True)
+            self._run_all_btn.setText("Run All Safe")
             return
         card = self._safe_queue.pop(0)
+        self._safe_done += 1
+        self._run_all_btn.setText(
+            f"Running {self._safe_done}/{self._safe_total}…")
+        self._scroll_to_card(card)
         def _on_done(c=card):
             try:
                 c.history_changed.disconnect(_on_done)
@@ -224,6 +232,13 @@ class QuickFixModule(BaseModule):
             self._run_next_safe()
         card.history_changed.connect(_on_done)
         card._run()
+
+    def _scroll_to_card(self, card: FixCard) -> None:
+        card.setVisible(True)
+        scroll = self._widget.findChild(QScrollArea)
+        if scroll:
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(50, lambda: scroll.ensureWidgetVisible(card))
 
     def _show_history(self) -> None:
         QuickFixHistoryDialog(self._widget).exec()
@@ -259,6 +274,9 @@ class QuickFixModule(BaseModule):
 
     def on_stop(self) -> None:
         self._safe_queue = []
+        if hasattr(self, '_run_all_btn'):
+            self._run_all_btn.setText("Run All Safe")
+            self._run_all_btn.setEnabled(True)
         for card in self._cards:
             card.cancel()
         self._workers.clear()

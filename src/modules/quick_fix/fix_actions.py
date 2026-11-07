@@ -433,6 +433,16 @@ def wu_deep_clean(output_cb: Callable[[str], None]) -> None:
               "/SuppressDefaultActions"], output_cb)
 
 
+def run_sfc(output_cb: Callable[[str], None]) -> None:
+    output_cb("Running System File Checker (this takes several minutes)...")
+    _run_cmd(["sfc", "/scannow"], output_cb)
+
+
+def run_dism_health(output_cb: Callable[[str], None]) -> None:
+    output_cb("Running DISM RestoreHealth (this can take 10+ minutes)...")
+    _run_cmd(["Dism.exe", "/Online", "/Cleanup-Image", "/RestoreHealth"], output_cb)
+
+
 def clear_clipboard(output_cb: Callable[[str], None]) -> None:
     """Ported from Quick Cleanup's _clear_clipboard."""
     _run_cmd([cmd_exe(), "/c", "echo off | clip"], output_cb)
@@ -475,6 +485,17 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup on C: drive",
               "System Repairs", fn=run_disk_cleanup,
               risk="low", duration_hint="1–5 min", scope="local"),
+    FixAction("sfc", "System File Checker (SFC)",
+              "Scan and repair protected system files with sfc /scannow",
+              "System Repairs", fn=run_sfc, long_running=True,
+              risk="low", duration_hint="5–15 min", scope="system"),
+    FixAction("dism_health", "DISM Restore Health",
+              "Repair the Windows component store with DISM /RestoreHealth",
+              "System Repairs", fn=run_dism_health, long_running=True,
+              confirm_text="This runs DISM /Online /Cleanup-Image /RestoreHealth, "
+                           "which downloads repair files from Windows Update. "
+                           "It can take 10–30 minutes and needs internet access. Continue?",
+              risk="low", duration_hint="10–30 min", scope="system"),
     FixAction("perf_reset", "Reset Performance Counters",
               "Rebuild corrupted performance counter registry keys",
               "System Repairs", fn=reset_perf_counters,

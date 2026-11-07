@@ -385,6 +385,10 @@ class QuickFixHistoryDialog(QDialog):
         self._update_summary()
 
         btn_row = QHBoxLayout()
+        export_btn = QPushButton("Export CSV")
+        export_btn.setToolTip("Export the filtered history to a CSV file")
+        export_btn.clicked.connect(self._export_csv)
+        btn_row.addWidget(export_btn)
         btn_row.addStretch()
         close_btn = QPushButton("Close")
         close_btn.setToolTip(
@@ -421,6 +425,29 @@ class QuickFixHistoryDialog(QDialog):
     def _apply_filter(self) -> None:
         self._populate()
         self._update_summary()
+
+    def _export_csv(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+        import csv
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Quick Fix History", "quick_fix_history.csv",
+            "CSV Files (*.csv)")
+        if not path:
+            return
+        rows = []
+        for row in range(self._table.rowCount()):
+            rows.append([
+                self._table.item(row, c).text() if self._table.item(row, c) else ""
+                for c in range(3)
+            ])
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                w = csv.writer(f)
+                w.writerow(["Time", "Action", "Outcome"])
+                w.writerows(rows)
+            self._summary.setText(f"Exported {len(rows)} entries to {path}")
+        except OSError as e:
+            self._summary.setText(f"Export failed: {e}")
 
     def _update_summary(self) -> None:
         total = len(self._entries)

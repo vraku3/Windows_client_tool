@@ -96,6 +96,8 @@ class QuickFixModule(BaseModule):
         self._category_headers.clear()
         self._category_containers: Dict[str, QWidget] = {}
         for cat_name, actions in categories.items():
+            hdr_row = QHBoxLayout()
+            hdr_row.setContentsMargins(0, 0, 0, 0)
             hdr = QPushButton(f"▼ {cat_name}")
             hdr.setFlat(True)
             hdr.setCursor(hdr.cursor())
@@ -105,7 +107,17 @@ class QuickFixModule(BaseModule):
                 "QPushButton:hover { color: #5C9AFF; }"
             )
             hdr.setToolTip(f"Click to collapse or expand the {cat_name} category")
-            content_layout.addWidget(hdr)
+            hdr_row.addWidget(hdr)
+            hdr_row.addStretch()
+            cat_run_btn = QPushButton("Run Safe ▶")
+            cat_run_btn.setFlat(True)
+            cat_run_btn.setStyleSheet(
+                "QPushButton { font-size: 11px; color: #4CAF50; border: none; padding: 2px 6px; } "
+                "QPushButton:hover { color: #66BB6A; }")
+            cat_run_btn.setToolTip(f"Run the low-risk actions in {cat_name} sequentially")
+            cat_run_btn.clicked.connect(lambda _c=False, cn=cat_name: self._run_category_safe(cn))
+            hdr_row.addWidget(cat_run_btn)
+            content_layout.addLayout(hdr_row)
             self._category_headers[cat_name] = hdr
 
             container = QWidget()
@@ -150,7 +162,8 @@ class QuickFixModule(BaseModule):
 
     def _build_glance(self, layout, categories):
         self._glance = {}
-        values = (("Repair actions", len(self._cards), "Available tools"),
+        cat_summary = ", ".join(f"{len(v)} {k}" for k, v in categories.items())
+        values = (("Repair actions", len(self._cards), cat_summary),
                   ("Recent failed runs", None, "Select to open History"),
                   ("Last run", None, "Select to open History"))
         for caption, count, detail in values:
@@ -210,6 +223,7 @@ class QuickFixModule(BaseModule):
         self._safe_queue = list(safe_cards)
         self._safe_total = len(safe_cards)
         self._safe_done = 0
+        self._safe_results: list = []
         self._run_all_btn.setEnabled(False)
         self._run_all_btn.setText(f"Running 1/{self._safe_total}…")
         self._run_next_safe()
@@ -218,6 +232,7 @@ class QuickFixModule(BaseModule):
         if not self._safe_queue:
             self._run_all_btn.setEnabled(True)
             self._run_all_btn.setText("Run All Safe")
+            self._show_batch_summary()
             return
         card = self._safe_queue.pop(0)
         self._safe_done += 1
@@ -229,9 +244,60 @@ class QuickFixModule(BaseModule):
                 c.history_changed.disconnect(_on_done)
             except TypeError:
                 pass
+            self._safe_results.append((c._action.title, c._card_state))
             self._run_next_safe()
         card.history_changed.connect(_on_done)
         card._run()
+
+    def _show_batch_summary(self) -> None:
+        results = getattr(self, '_safe_results', [])
+        if not results:
+            return
+        ok = sum(1 for _, s in results if s == 'success')
+        fail = sum(1 for _, s in results if s == 'error')
+        total = len(results)
+        if fail == 0:
+            msg = f"All {total} actions completed successfully."
+        else:
+            failed_names = [n for n, s in results if s == 'error']
+            msg = (f"{ok} of {total} succeeded, {fail} failed:\n\n"
+                   + "\n".join(f"  ✗ {n}" for n in failed_names))
+        QMessageBox.information(self._widget, "Run All Safe — Done", msg)
+        self._safe_results = []
+
+    def _run_category_safe(self, category: str) -> None:
+        if self._safe_queue:
+            return
+        safe_cards = [
+            c for c in self._cards
+            if isinstance(c, FixCard)
+            and getattr(c, '_category', '') == category
+            and getattr(c._action, 'risk', None) == 'low'
+            and c._action.confirm_text is None
+            and c._action.precondition is None
+            and not c._action.long_running
+            and c._card_state != 'running'
+        ]
+        if not safe_cards:
+            QMessageBox.information(self._widget, f"Run Safe — {category}",
+                                   f"No safe actions in {category} right now.")
+            return
+        names = "\n".join(f"  • {c._action.title}" for c in safe_cards)
+        answer = QMessageBox.question(
+            self._widget, f"Run Safe — {category}",
+            f"Run these {len(safe_cards)} low-risk actions?\n\n{names}",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Ok:
+            return
+        self._safe_queue = list(safe_cards)
+        self._safe_total = len(safe_cards)
+        self._safe_done = 0
+        self._safe_results = []
+        self._run_all_btn.setEnabled(False)
+        self._run_all_btn.setText(f"Running 1/{self._safe_total}…")
+        self._run_next_safe()
 
     def _scroll_to_card(self, card: FixCard) -> None:
         card.setVisible(True)

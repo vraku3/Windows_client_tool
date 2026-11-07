@@ -95,7 +95,7 @@ class ThermalService(QObject):
         try:
             gpu_fans = self._read_gpu_fans()
         except Exception as e:  # AdlxError, or the library failing outright
-            logger.warning("GPU fan check failed before opening the hardware: %s", e)
+            logger.debug("GPU fan check failed before opening the hardware: %s", e)
             gpu_fans = e
         try:
             bridge = lhm_bridge.LhmBridge()
@@ -421,7 +421,7 @@ class ThermalService(QObject):
                                "putting it back", name)
                 try:
                     self._restore_gpu(name)
-                except adlx.AdlxError as e:
+                except (adlx.AdlxError, OSError) as e:
                     logger.error("could not put %s back after an interrupted Identify: %s", name, e)
                 gpus, why = adlx.read_gpus(self.adlx_dir)
         statuses = adlx.diagnose(gpus, why, win)
@@ -443,7 +443,7 @@ class ThermalService(QObject):
                 try:
                     st.gpu.curve = adlx.set_curve(st.name, wanted, self.adlx_dir)
                     st.reason = "fan curve available (your saved curve, re-applied at start)"
-                except adlx.AdlxError as e:
+                except (adlx.AdlxError, OSError) as e:
                     logger.warning("could not re-apply the saved curve to %s: %s", st.name, e)
                     st.reason = f"your saved curve could not be re-applied: {e}"
 

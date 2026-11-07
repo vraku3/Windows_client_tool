@@ -262,6 +262,21 @@ def main():
 
     qt_app = QApplication(sys.argv)
 
+    # Suppress harmless Qt warnings from pixel-based stylesheet fonts:
+    # dark.qss sets font-size in px, so QFont.pointSize() returns -1 and Qt
+    # emits "QFont::setPointSize: Point size <= 0" internally during style
+    # processing. There is no code path that passes a bad size explicitly.
+    from PyQt6.QtCore import qInstallMessageHandler, QtMsgType
+    _qt_default_handler = None
+
+    def _qt_msg_filter(msg_type, context, message):
+        if msg_type == QtMsgType.QtWarningMsg and "Point size <= 0" in message:
+            return
+        if _qt_default_handler:
+            _qt_default_handler(msg_type, context, message)
+
+    _qt_default_handler = qInstallMessageHandler(_qt_msg_filter)
+
     # Initialize App singleton (wires all core services)
     app = App()
     from core.timeline import detect_reboot, record

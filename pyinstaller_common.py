@@ -119,6 +119,7 @@ HIDDEN_IMPORTS = [
     "core.app_facts", "ui.app_facts", "modules.app_buster.engine.autodesk_info",
     "modules.quick_fix.browser_links",
     "modules.quick_fix.browser_links_card",
+    "modules.quick_fix.fix_card",
     "win32crypt",
     "core.system_paths",
     "core.limited_task",                    # imported inside winget_updater's retry

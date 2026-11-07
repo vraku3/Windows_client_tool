@@ -30,6 +30,9 @@ class FixCard(QFrame):
         self._thread_pool = QThreadPool.globalInstance()
         self._setup_ui()
 
+    _RISK_COLORS = {"low": "#4CAF50", "medium": "#FF9800", "high": "#F44336"}
+    _SCOPE_LABELS = {"local": "Local", "service": "Service", "system": "System"}
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
@@ -40,17 +43,29 @@ class FixCard(QFrame):
         font.setBold(True)
         title_lbl.setFont(font)
         title_row.addWidget(title_lbl)
-        if self._action.reboot_required:
-            badge = QLabel("⚠ Reboot required")
-            badge.setStyleSheet("color: orange;")
-            title_row.addStretch()
-            title_row.addWidget(badge)
+        title_row.addStretch()
+        self._add_badges(title_row)
         layout.addLayout(title_row)
 
         desc = QLabel(self._action.description)
         desc.setWordWrap(True)
         desc.setStyleSheet("color: gray;")
         layout.addWidget(desc)
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        if self._action.duration_hint:
+            dur = QLabel(f"⏱ {self._action.duration_hint}")
+            dur.setStyleSheet("color: #888; font-size: 11px;")
+            dur.setToolTip("Estimated duration")
+            meta_row.addWidget(dur)
+        if self._action.interruptions:
+            intr = QLabel(f"⚡ {self._action.interruptions}")
+            intr.setStyleSheet("color: #CC8800; font-size: 11px;")
+            intr.setToolTip("What you will notice while this runs")
+            meta_row.addWidget(intr)
+        meta_row.addStretch()
+        layout.addLayout(meta_row)
 
         self._run_btn = QPushButton("Run")
         from .help_text import ACTIONS
@@ -76,6 +91,28 @@ class FixCard(QFrame):
 
         self._run_btn.clicked.connect(self._run)
         self._line.connect(self._output.appendPlainText)
+
+    def _add_badges(self, row: QHBoxLayout) -> None:
+        action = self._action
+        risk_color = self._RISK_COLORS.get(action.risk, "#888")
+        scope_label = self._SCOPE_LABELS.get(action.scope, action.scope)
+        badge_style = (
+            "font-size: 10px; padding: 1px 5px; border-radius: 3px; "
+            "color: white; background: {bg};"
+        )
+        risk_badge = QLabel(action.risk.capitalize())
+        risk_badge.setStyleSheet(badge_style.format(bg=risk_color))
+        risk_badge.setToolTip(f"Risk level: {action.risk}")
+        row.addWidget(risk_badge)
+        scope_badge = QLabel(scope_label)
+        scope_badge.setStyleSheet(badge_style.format(bg="#5C6BC0"))
+        scope_badge.setToolTip(f"Scope: {scope_label} — how far this action reaches")
+        row.addWidget(scope_badge)
+        if action.reboot_required:
+            reboot_badge = QLabel("Reboot")
+            reboot_badge.setStyleSheet(badge_style.format(bg="#E53935"))
+            reboot_badge.setToolTip("A reboot is required to complete this action")
+            row.addWidget(reboot_badge)
 
     def _refresh_status(self) -> None:
         parts = []

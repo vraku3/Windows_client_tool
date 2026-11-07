@@ -18,23 +18,20 @@ class FixAction:
     category: str
     reboot_required: bool = False
     fn: Optional[Callable[[Callable[[str], None]], None]] = field(default=None, repr=False)
-    # fn signature: fn(output_cb: Callable[[str], None]) -> None
-    # output_cb is called with each line of output
     confirm_text: Optional[str] = None
-    # When set, _FixCard shows an Ok/Cancel QMessageBox with this text
-    # (default button Cancel) before running -- ports over Quick
-    # Cleanup's per-action confirm dialogs during the Part B merge.
     precondition: Optional[Callable[[], Optional[str]]] = field(default=None, repr=False)
-    # Called just before running (before any confirm). Returning None
-    # means proceed; returning a string shows it in the card's status
-    # label instead of running -- e.g. "hibernation is off, nothing to
-    # resize" for the migrated Resize Hibernation action.
     long_running: bool = False
-    # True routes the worker to core.long_op_pool.get_long_op_pool()
-    # instead of the shared global QThreadPool -- for actions that can
-    # run 10-30 minutes (Compact WinSxS, WU Deep Clean), matching how
-    # Quick Cleanup and System Health already isolate their own
-    # long-running DISM calls from everything else's worker pool.
+    risk: str = "low"
+    # "low" = cosmetic / cache clear; "medium" = service restart or config
+    # change; "high" = stack reset, reboot needed, data loss possible
+    duration_hint: str = "< 10 s"
+    # Human-readable estimate shown on the card badge
+    scope: str = "local"
+    # "local" = affects only caches/temp data; "service" = restarts a
+    # Windows service; "system" = changes system config or needs reboot
+    interruptions: str = ""
+    # Short note about what the user will see while it runs, e.g.
+    # "Explorer restarts" or "network drops briefly"
 
 
 _tracking = threading.local()
@@ -476,94 +473,130 @@ def _hibernation_precondition() -> Optional[str]:
 ALL_ACTIONS: List[FixAction] = [
     # System Repairs
     FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup on C: drive",
-              "System Repairs", fn=run_disk_cleanup),
+              "System Repairs", fn=run_disk_cleanup,
+              risk="low", duration_hint="1–5 min", scope="local"),
     FixAction("perf_reset", "Reset Performance Counters",
               "Rebuild corrupted performance counter registry keys",
-              "System Repairs", reboot_required=False, fn=reset_perf_counters),
+              "System Repairs", fn=reset_perf_counters,
+              risk="medium", duration_hint="< 10 s", scope="system"),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,
-              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds."),
+              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds.",
+              risk="medium", duration_hint="5–15 s", scope="service",
+              interruptions="Explorer restarts"),
     FixAction("thumb_cache", "Clear Thumbnail Cache", "Delete Windows thumbnail cache files",
               "Cache & UI", fn=clear_thumbnail_cache,
-              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds."),
+              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds.",
+              risk="medium", duration_hint="5–15 s", scope="service",
+              interruptions="Explorer restarts"),
     FixAction("explorer", "Restart Explorer", "Kill and restart Windows Explorer",
               "Cache & UI", fn=restart_explorer,
-              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds."),
+              confirm_text="This restarts Windows Explorer: open File Explorer windows close, a file copy in progress is interrupted, and the taskbar disappears for a few seconds.",
+              risk="medium", duration_hint="3–8 s", scope="service",
+              interruptions="Explorer restarts"),
     FixAction("prefetch_clear", "Clear Prefetch", "Clear the Windows Prefetch cache",
-              "Cache & UI", reboot_required=False, fn=clear_prefetch),
+              "Cache & UI", fn=clear_prefetch,
+              risk="low", duration_hint="< 5 s", scope="local"),
     FixAction("recent_clear", "Clear Recent Files", "Clear recent documents and jump lists",
-              "Cache & UI", fn=clear_recent_files),
+              "Cache & UI", fn=clear_recent_files,
+              risk="low", duration_hint="< 5 s", scope="local"),
     # Network
     FixAction("flush_dns", "Flush DNS", "Clear the DNS resolver cache",
-              "Network", fn=flush_dns),
+              "Network", fn=flush_dns,
+              risk="low", duration_hint="< 2 s", scope="local"),
     FixAction("winsock", "Reset Winsock", "Reset network socket catalog (reboot required)",
               "Network", reboot_required=True, fn=reset_winsock,
               confirm_text="This will reset the Winsock network socket catalog. "
-                           "A reboot is required to complete. Continue?"),
+                           "A reboot is required to complete. Continue?",
+              risk="high", duration_hint="< 5 s", scope="system",
+              interruptions="reboot needed"),
     FixAction("tcpip", "Reset TCP/IP", "Reset TCP/IP stack (reboot required)",
               "Network", reboot_required=True, fn=reset_tcpip,
               confirm_text="This will reset all network adapter TCP/IP configurations. "
-                           "Network adapters may briefly disconnect. This cannot be undone. Continue?"),
+                           "Network adapters may briefly disconnect. This cannot be undone. Continue?",
+              risk="high", duration_hint="< 5 s", scope="system",
+              interruptions="network drops; reboot needed"),
     FixAction("ip_renew", "IP Release/Renew", "Release and renew IP address",
-              "Network", fn=ip_release_renew),
+              "Network", fn=ip_release_renew,
+              risk="low", duration_hint="5–15 s", scope="local",
+              interruptions="network drops briefly"),
     FixAction("network_reset", "Network Reset", "Reset all network adapters to default (reboot required)",
               "Network", reboot_required=True, fn=network_reset,
               confirm_text="This will reset Winsock and the TCP/IP stack. "
-                           "Your network connection will briefly drop. This cannot be undone. Continue?"),
+                           "Your network connection will briefly drop. This cannot be undone. Continue?",
+              risk="high", duration_hint="< 10 s", scope="system",
+              interruptions="network drops; reboot needed"),
     # Windows Update
     FixAction("wu_reset", "Reset Windows Update",
               "Stop WU services, clear caches, restart",
               "Windows Update", fn=reset_windows_update,
               confirm_text="This will reset the Windows Update client, clear the "
                            "SoftwareDistribution and catroot2 caches, and restart the "
-                           "affected services. This cannot be undone. Continue?"),
+                           "affected services. This cannot be undone. Continue?",
+              risk="high", duration_hint="30–60 s", scope="service",
+              interruptions="WU services restart"),
     FixAction("wu_dlls", "Re-register WU DLLs",
               "Re-register all Windows Update DLL files",
-              "Windows Update", fn=reregister_wu_dlls),
+              "Windows Update", fn=reregister_wu_dlls,
+              risk="medium", duration_hint="10–20 s", scope="system"),
     FixAction("wu_scan", "Check for Updates", "Manually trigger Windows Update scan",
-              "Windows Update", fn=check_wu_updates),
+              "Windows Update", fn=check_wu_updates,
+              risk="low", duration_hint="30–90 s", scope="local"),
     # Print
     FixAction("print_queue", "Clear Print Queue",
               "Stop Spooler, delete print jobs, restart",
               "Print", fn=clear_print_queue,
               confirm_text="This will stop the Print Spooler, clear all queued print "
                            "jobs, and restart it. Any job currently printing or queued "
-                           "will be lost."),
+                           "will be lost.",
+              risk="medium", duration_hint="5–10 s", scope="service",
+              interruptions="printing stops briefly"),
     FixAction("print_spooler_restart", "Restart Print Spooler",
               "Stop and restart the Print Spooler service",
-              "Print", reboot_required=False, fn=restart_print_spooler),
+              "Print", fn=restart_print_spooler,
+              risk="medium", duration_hint="3–5 s", scope="service",
+              interruptions="printing stops briefly"),
     # Cleanup
     FixAction("clear_event_logs", "Clear Event Logs",
               "Clear System, Application, and Security event logs",
               "Cleanup", fn=clear_event_logs,
               confirm_text="This will clear System, Application, and Security event logs. "
-                           "They cannot be recovered. Continue?"),
+                           "They cannot be recovered. Continue?",
+              risk="high", duration_hint="< 10 s", scope="system"),
     FixAction("compact_winsxs", "Compact WinSxS",
               "Run DISM component cleanup to reclaim WinSxS space",
               "Cleanup", fn=compact_winsxs, long_running=True,
               confirm_text="This runs DISM /StartComponentCleanup which can take "
-                           "10–30 minutes. The system will remain usable. Continue?"),
+                           "10–30 minutes. The system will remain usable. Continue?",
+              risk="medium", duration_hint="10–30 min", scope="system"),
     FixAction("wu_deep_clean", "WU Deep Clean",
               "Deep Windows Update component-store cleanup",
               "Cleanup", fn=wu_deep_clean, long_running=True,
               confirm_text="This runs a deep Windows Update cleanup which may take "
-                           "10–20 minutes. Continue?"),
+                           "10–20 minutes. Continue?",
+              risk="medium", duration_hint="10–20 min", scope="system"),
     FixAction("clear_clipboard", "Clear Clipboard", "Clear the Windows clipboard content",
-              "Cleanup", fn=clear_clipboard),
+              "Cleanup", fn=clear_clipboard,
+              risk="low", duration_hint="< 2 s", scope="local"),
     FixAction("reset_search", "Reset Windows Search",
               "Restart the Windows Search service and clear its database",
               "Cleanup", fn=reset_search,
               confirm_text="This will restart the Windows Search service and clear its "
-                           "database. Search may be briefly unavailable. Continue?"),
+                           "database. Search may be briefly unavailable. Continue?",
+              risk="medium", duration_hint="5–15 s", scope="service",
+              interruptions="search unavailable briefly"),
     FixAction("clear_font_cache", "Clear Font Cache",
               "Flush the Windows Font Cache service",
               "Cleanup", fn=clear_font_cache,
               confirm_text="This will flush the Windows Font Cache by stopping the "
-                           "FontCache service. Applications may briefly re-render text. Continue?"),
+                           "FontCache service. Applications may briefly re-render text. Continue?",
+              risk="low", duration_hint="3–5 s", scope="service",
+              interruptions="text may re-render briefly"),
     FixAction("resize_hibernation", "Right-size Hibernation File",
               "Shrink hiberfil.sys to 50% of RAM without disabling hibernation",
               "Cleanup", fn=resize_hibernation, precondition=_hibernation_precondition,
               confirm_text="This shrinks hiberfil.sys to 50% of RAM (Windows' own default "
-                           "since Windows 10) without disabling hibernation. Continue?"),
+                           "since Windows 10) without disabling hibernation. Continue?",
+              risk="low", duration_hint="< 5 s", scope="system"),
 ]

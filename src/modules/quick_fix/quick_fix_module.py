@@ -3,7 +3,7 @@ from typing import Dict
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QGridLayout, QLineEdit,
+    QScrollArea, QGridLayout, QLineEdit, QMessageBox,
 )
 
 from core.base_module import BaseModule
@@ -32,6 +32,7 @@ class QuickFixModule(BaseModule):
         super().__init__()
         self._cards: list = []
         self._workers: list = []
+        self._safe_queue: list = []
         self._category_headers: Dict[str, QLabel] = {}
 
     def create_widget(self) -> QWidget:
@@ -40,13 +41,18 @@ class QuickFixModule(BaseModule):
         outer_layout = QVBoxLayout(outer)
         outer_layout.setContentsMargins(0, 0, 0, 0)
 
-        # View History row
-        history_row = QHBoxLayout()
-        history_row.addStretch()
+        # Action row
+        action_row = QHBoxLayout()
+        self._run_all_btn = QPushButton("Run All Safe")
+        self._run_all_btn.setToolTip(
+            "Run all low-risk repair actions that need no confirmation, sequentially")
+        self._run_all_btn.clicked.connect(self._run_all_safe)
+        action_row.addWidget(self._run_all_btn)
+        action_row.addStretch()
         history_btn = QPushButton("View History")
         history_btn.clicked.connect(self._show_history)
-        history_row.addWidget(history_btn)
-        outer_layout.addLayout(history_row)
+        action_row.addWidget(history_btn)
+        outer_layout.addLayout(action_row)
 
         # Reboot banner (hidden by default)
         self._reboot_banner = QLabel("⚠ A system reboot is pending.")
@@ -178,6 +184,47 @@ class QuickFixModule(BaseModule):
             if isinstance(card, BrowserLinksCard):
                 card.activate()
 
+    def _run_all_safe(self) -> None:
+        safe_cards = [
+            c for c in self._cards
+            if isinstance(c, FixCard)
+            and getattr(c._action, 'risk', None) == 'low'
+            and c._action.confirm_text is None
+            and c._action.precondition is None
+            and not c._action.long_running
+            and c._card_state != 'running'
+        ]
+        if not safe_cards:
+            QMessageBox.information(self._widget, "Run All Safe",
+                                   "No safe actions are available to run right now.")
+            return
+        names = "\n".join(f"  • {c._action.title}" for c in safe_cards)
+        answer = QMessageBox.question(
+            self._widget, "Run All Safe",
+            f"Run these {len(safe_cards)} low-risk actions sequentially?\n\n{names}",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer != QMessageBox.StandardButton.Ok:
+            return
+        self._safe_queue = list(safe_cards)
+        self._run_all_btn.setEnabled(False)
+        self._run_next_safe()
+
+    def _run_next_safe(self) -> None:
+        if not self._safe_queue:
+            self._run_all_btn.setEnabled(True)
+            return
+        card = self._safe_queue.pop(0)
+        def _on_done(c=card):
+            try:
+                c.history_changed.disconnect(_on_done)
+            except TypeError:
+                pass
+            self._run_next_safe()
+        card.history_changed.connect(_on_done)
+        card._run()
+
     def _show_history(self) -> None:
         QuickFixHistoryDialog(self._widget).exec()
 
@@ -211,6 +258,7 @@ class QuickFixModule(BaseModule):
         self.app = app
 
     def on_stop(self) -> None:
+        self._safe_queue = []
         for card in self._cards:
             card.cancel()
         self._workers.clear()

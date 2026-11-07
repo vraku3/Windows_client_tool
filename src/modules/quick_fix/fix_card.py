@@ -1,10 +1,11 @@
 import logging
+import time
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QPlainTextEdit,
     QFrame, QDialog, QListWidget,
 )
-from PyQt6.QtCore import QThreadPool, pyqtSignal
+from PyQt6.QtCore import QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 
 from core.worker import Worker
@@ -28,6 +29,10 @@ class FixCard(QFrame):
         self._last_entry = last_entry
         self._recurring_count = recurring_count
         self._thread_pool = QThreadPool.globalInstance()
+        self._start_time: float = 0.0
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1000)
+        self._elapsed_timer.timeout.connect(self._tick_elapsed)
         self._setup_ui()
 
     _RISK_COLORS = {"low": "#4CAF50", "medium": "#FF9800", "high": "#F44336"}
@@ -114,6 +119,21 @@ class FixCard(QFrame):
             reboot_badge.setToolTip("A reboot is required to complete this action")
             row.addWidget(reboot_badge)
 
+    @staticmethod
+    def _fmt_elapsed(seconds: float) -> str:
+        s = int(seconds)
+        if s < 60:
+            return f"{s}s"
+        m, s = divmod(s, 60)
+        return f"{m}m {s:02d}s"
+
+    def _tick_elapsed(self) -> None:
+        elapsed = time.monotonic() - self._start_time
+        self._status.setText(f"Running… {self._fmt_elapsed(elapsed)}")
+
+    def _stop_elapsed(self) -> None:
+        self._elapsed_timer.stop()
+
     def _refresh_status(self) -> None:
         parts = []
         if self._recurring_count:
@@ -157,7 +177,9 @@ class FixCard(QFrame):
         self._run_btn.setEnabled(False)
         self._output.clear()
         self._output.show()
-        self._status.setText("Running...")
+        self._start_time = time.monotonic()
+        self._status.setText("Running… 0s")
+        self._elapsed_timer.start()
 
         def append(line: str):
             self._line.emit(line)
@@ -183,6 +205,8 @@ class FixCard(QFrame):
     def _on_done(self, worker) -> None:
         if self._worker is not worker:
             return
+        self._stop_elapsed()
+        elapsed = self._fmt_elapsed(time.monotonic() - self._start_time)
         self._running = False
         self._worker = None
         self._run_btn.setEnabled(True)
@@ -192,10 +216,13 @@ class FixCard(QFrame):
         self._recurring_count = quick_fix_history.recurring_actions().get(
             self._action.title, 0)
         self._refresh_status()
+        self._status.setText(self._status.text() + f" ✓ Completed in {elapsed}")
 
     def _on_error(self, error_str: str, worker) -> None:
         if self._worker is not worker:
             return
+        self._stop_elapsed()
+        elapsed = self._fmt_elapsed(time.monotonic() - self._start_time)
         self._running = False
         self._worker = None
         self._run_btn.setEnabled(True)
@@ -206,9 +233,11 @@ class FixCard(QFrame):
         self._recurring_count = quick_fix_history.recurring_actions().get(
             self._action.title, 0)
         self._refresh_status()
+        self._status.setText(self._status.text() + f" ✗ Failed after {elapsed}")
 
     def cancel(self) -> None:
         if self._worker is not None and self._running:
+            self._stop_elapsed()
             from core.worker import retire
             retire([self._worker])
             self._running = False

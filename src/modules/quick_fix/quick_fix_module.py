@@ -88,19 +88,24 @@ class QuickFixModule(BaseModule):
 
         self._cards.clear()
         self._category_headers.clear()
+        self._category_containers: Dict[str, QWidget] = {}
         for cat_name, actions in categories.items():
-            hdr = QLabel(cat_name)
-            hdr_font = hdr.font()
-            hdr_font.setBold(True)
-            _pt = hdr_font.pointSize()
-            if _pt > 0:
-                hdr_font.setPointSize(_pt + 1)
-            hdr.setFont(hdr_font)
+            hdr = QPushButton(f"▼ {cat_name}")
+            hdr.setFlat(True)
+            hdr.setCursor(hdr.cursor())
+            hdr.setStyleSheet(
+                "QPushButton { text-align: left; font-weight: bold; font-size: 13px; "
+                "padding: 4px 0; border: none; } "
+                "QPushButton:hover { color: #5C9AFF; }"
+            )
+            hdr.setToolTip(f"Click to collapse or expand the {cat_name} category")
             content_layout.addWidget(hdr)
             self._category_headers[cat_name] = hdr
 
-            grid = QGridLayout()
-            grid.setSpacing(8)
+            container = QWidget()
+            container_layout = QGridLayout(container)
+            container_layout.setSpacing(8)
+            container_layout.setContentsMargins(0, 0, 0, 0)
             for i, action in enumerate(actions):
                 if action.key == BrowserLinksCard.ACTION.key:
                     card = BrowserLinksCard(module_workers=self._workers)
@@ -109,8 +114,15 @@ class QuickFixModule(BaseModule):
                                    recurring.get(action.title, 0))
                 card._category = cat_name
                 self._cards.append(card)
-                grid.addWidget(card, i // 2, i % 2)
-            content_layout.addLayout(grid)
+                container_layout.addWidget(card, i // 2, i % 2)
+            content_layout.addWidget(container)
+            self._category_containers[cat_name] = container
+
+            def _toggle(checked, h=hdr, c=container, name=cat_name):
+                vis = not c.isVisible()
+                c.setVisible(vis)
+                h.setText(f"{'▼' if vis else '▶'} {name}")
+            hdr.clicked.connect(_toggle)
 
         self._build_glance(outer_layout, categories)
         content_layout.addStretch()
@@ -182,7 +194,10 @@ class QuickFixModule(BaseModule):
                 visible_by_category[card._category] = True
         self._filter_empty.setVisible(not any(visible_by_category.values()))
         for cat_name, hdr in self._category_headers.items():
-            hdr.setVisible(visible_by_category[cat_name])
+            has_visible = visible_by_category[cat_name]
+            hdr.setVisible(has_visible)
+            if cat_name in self._category_containers:
+                self._category_containers[cat_name].setVisible(has_visible)
 
     def on_deactivate(self) -> None:
         # Leaving the pane does NOT cancel a running fix. `action.fn` never

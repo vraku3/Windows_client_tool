@@ -210,7 +210,11 @@ class QuickFixModule(BaseModule):
             self._run_all_safe()
 
     def _stop_batch(self) -> None:
+        remaining = list(self._safe_queue)
         self._safe_queue.clear()
+        for c in remaining:
+            if not c._running:
+                c._run_btn.setEnabled(True)
         self._run_all_btn.setText("Run All Safe")
 
     def _run_all_safe(self) -> None:
@@ -240,6 +244,8 @@ class QuickFixModule(BaseModule):
         self._safe_total = len(safe_cards)
         self._safe_done = 0
         self._safe_results: list = []
+        for c in safe_cards:
+            c._run_btn.setEnabled(False)
         self._run_all_btn.setText(f"Stop (1/{self._safe_total})")
         self._run_next_safe()
 
@@ -259,7 +265,7 @@ class QuickFixModule(BaseModule):
                 c.history_changed.disconnect(_on_done)
             except TypeError:
                 pass
-            self._safe_results.append((c._action.title, c._card_state))
+            self._safe_results.append((c, c._action.title, c._card_state))
             self._run_next_safe()
         card.history_changed.connect(_on_done)
         card._run()
@@ -268,16 +274,36 @@ class QuickFixModule(BaseModule):
         results = getattr(self, '_safe_results', [])
         if not results:
             return
-        ok = sum(1 for _, s in results if s == 'success')
-        fail = sum(1 for _, s in results if s == 'error')
+        ok = sum(1 for _, _, s in results if s == 'success')
+        fail = sum(1 for _, _, s in results if s == 'error')
         total = len(results)
+        failed_cards = [(c, n) for c, n, s in results if s == 'error']
         if fail == 0:
             msg = f"All {total} actions completed successfully."
+            QMessageBox.information(self._widget, "Run All Safe — Done", msg)
         else:
-            failed_names = [n for n, s in results if s == 'error']
+            failed_names = [n for _, n in failed_cards]
             msg = (f"{ok} of {total} succeeded, {fail} failed:\n\n"
-                   + "\n".join(f"  ✗ {n}" for n in failed_names))
-        QMessageBox.information(self._widget, "Run All Safe — Done", msg)
+                   + "\n".join(f"  ✗ {n}" for n in failed_names)
+                   + "\n\nRetry the failed actions?")
+            answer = QMessageBox.question(
+                self._widget, "Run All Safe — Done", msg,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if answer == QMessageBox.StandardButton.Yes:
+                retry = [c for c, _ in failed_cards
+                         if c._card_state != 'running']
+                if retry:
+                    self._safe_queue = retry
+                    self._safe_total = len(retry)
+                    self._safe_done = 0
+                    self._safe_results = []
+                    for c in retry:
+                        c._run_btn.setEnabled(False)
+                    self._run_all_btn.setText(
+                        f"Stop (1/{self._safe_total})")
+                    self._run_next_safe()
+                    return
         self._safe_results = []
 
     def _run_category_safe(self, category: str) -> None:
@@ -310,6 +336,8 @@ class QuickFixModule(BaseModule):
         self._safe_total = len(safe_cards)
         self._safe_done = 0
         self._safe_results = []
+        for c in safe_cards:
+            c._run_btn.setEnabled(False)
         self._run_all_btn.setText(f"Stop (1/{self._safe_total})")
         self._run_next_safe()
 

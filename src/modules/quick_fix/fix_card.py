@@ -286,6 +286,12 @@ class FixCard(QFrame):
             self._action.title, 0)
         self._refresh_status()
         self._status.setText(self._status.text() + f" ✓ Completed in {elapsed}")
+        if self._output_lines:
+            QTimer.singleShot(2000, self._collapse_output)
+
+    def _collapse_output(self) -> None:
+        if self._card_state == 'success' and self._output.isVisible():
+            self._output.hide()
 
     def _on_error(self, error_str: str, worker) -> None:
         if self._worker is not worker:

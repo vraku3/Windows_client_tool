@@ -377,6 +377,10 @@ class QuickFixModule(BaseModule):
         # hidden, so the run finishes and records its real outcome.
         pass
 
+    def get_search_provider(self):
+        from modules.quick_fix.quick_fix_search_provider import QuickFixSearchProvider
+        return QuickFixSearchProvider()
+
     def on_start(self, app) -> None:
         self.app = app
 

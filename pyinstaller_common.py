@@ -120,6 +120,7 @@ HIDDEN_IMPORTS = [
     "modules.quick_fix.browser_links",
     "modules.quick_fix.browser_links_card",
     "modules.quick_fix.fix_card",
+    "modules.quick_fix.quick_fix_search_provider",
     "win32crypt",
     "core.system_paths",
     "core.limited_task",                    # imported inside winget_updater's retry

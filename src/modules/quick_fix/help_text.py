@@ -46,9 +46,9 @@ ACTIONS = {'cleanmgr': 'Open Windows Disk Cleanup for C:. Windows presents its o
  'compact_winsxs': 'Run DISM /StartComponentCleanup to remove superseded Windows component data. '
                    'This can take 10-30 minutes, requires elevation and has no app undo; it does '
                    'not run Reset Base.',
- 'wu_deep_clean': 'Run DISM /StartComponentCleanup /SuppressDefaultActions on the Windows '
-                  'component store. Superseded component data is removed with no app undo; it can '
-                  'take 10-20 minutes and does not run Reset Base.',
+ 'wu_deep_clean': 'Run DISM /StartComponentCleanup on the Windows component store. Superseded '
+                  'component data is removed with no app undo; it can take 10-20 minutes and does '
+                  'not run Reset Base.',
  'clear_clipboard': 'Replace the current Windows clipboard with empty content using clip. This '
                     'action provides no undo and does not promise to clear clipboard history or '
                     'synced copies.',
@@ -58,14 +58,25 @@ ACTIONS = {'cleanmgr': 'Open Windows Disk Cleanup for C:. Windows presents its o
                      'text; this implementation does not delete font files or cache files.',
  'resize_hibernation': 'Ask powercfg to resize the hibernation file to 50% of RAM. Requires '
                        'elevation and an existing hibernation file; there is no app restore of the '
-                       'previous size.'}
+                       'previous size.',
+ 'sfc': 'Run sfc /scannow to verify and repair protected system files. This takes several minutes, '
+        'requires elevation and has no app undo; Windows restores originals from the component store.',
+ 'dism_health': 'Run DISM /Online /Cleanup-Image /RestoreHealth to repair the Windows component '
+                'store from Windows Update. This can take 10+ minutes, requires elevation and has '
+                'no app undo.'}
 
 CONTROLS = {'View History': "Open this app's recorded repair outcomes without running a repair or changing "
                  'Windows settings.',
  'Close': 'Close the history window; recorded outcomes are kept.',
  'Undo Outlook/Teams change': 'Prepare a review of the saved Outlook/Teams browser-link setting '
                               'change, then ask before restoring it. This restores only the '
-                              'settings recorded by this app.'}
+                              'settings recorded by this app.',
+ 'Run All Safe': 'Run every low-risk action that needs no confirmation, one at a time. '
+                 'While running the button becomes Stop; pressing Stop lets the current '
+                 'action finish and skips the rest. Ctrl+Shift+R is the keyboard shortcut.',
+ 'Run Safe': 'Run all low-risk actions in a single category, one at a time. Same Stop '
+             'behaviour as Run All Safe.',
+ 'Export CSV': 'Save the history table to a CSV file (UTF-8 with BOM).'}
 
 INTRO = ('Run individual repair commands and inspect their output and local history. Repairs can restart '
  'services, interrupt networking or permanently delete caches and logs; caches may rebuild, but '

@@ -1,6 +1,8 @@
 from collections import OrderedDict
 from typing import Dict
 
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QScrollArea, QGridLayout, QLineEdit, QMessageBox,
@@ -46,13 +48,17 @@ class QuickFixModule(BaseModule):
         self._run_all_btn = QPushButton("Run All Safe")
         self._run_all_btn.setToolTip(
             "Run all low-risk repair actions that need no confirmation, sequentially")
-        self._run_all_btn.clicked.connect(self._run_all_safe)
+        self._run_all_btn.clicked.connect(self._on_run_all_clicked)
         action_row.addWidget(self._run_all_btn)
         action_row.addStretch()
         history_btn = QPushButton("View History")
         history_btn.clicked.connect(self._show_history)
         action_row.addWidget(history_btn)
         outer_layout.addLayout(action_row)
+
+        sc = QShortcut(QKeySequence("Ctrl+Shift+R"), outer)
+        sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        sc.activated.connect(self._on_run_all_clicked)
 
         # Reboot banner (hidden by default)
         self._reboot_banner = QLabel("⚠ A system reboot is pending.")
@@ -197,6 +203,16 @@ class QuickFixModule(BaseModule):
             if isinstance(card, BrowserLinksCard):
                 card.activate()
 
+    def _on_run_all_clicked(self) -> None:
+        if self._safe_queue:
+            self._stop_batch()
+        else:
+            self._run_all_safe()
+
+    def _stop_batch(self) -> None:
+        self._safe_queue.clear()
+        self._run_all_btn.setText("Run All Safe")
+
     def _run_all_safe(self) -> None:
         safe_cards = [
             c for c in self._cards
@@ -224,8 +240,7 @@ class QuickFixModule(BaseModule):
         self._safe_total = len(safe_cards)
         self._safe_done = 0
         self._safe_results: list = []
-        self._run_all_btn.setEnabled(False)
-        self._run_all_btn.setText(f"Running 1/{self._safe_total}…")
+        self._run_all_btn.setText(f"Stop (1/{self._safe_total})")
         self._run_next_safe()
 
     def _run_next_safe(self) -> None:
@@ -237,7 +252,7 @@ class QuickFixModule(BaseModule):
         card = self._safe_queue.pop(0)
         self._safe_done += 1
         self._run_all_btn.setText(
-            f"Running {self._safe_done}/{self._safe_total}…")
+            f"Stop ({self._safe_done}/{self._safe_total})")
         self._scroll_to_card(card)
         def _on_done(c=card):
             try:
@@ -295,8 +310,7 @@ class QuickFixModule(BaseModule):
         self._safe_total = len(safe_cards)
         self._safe_done = 0
         self._safe_results = []
-        self._run_all_btn.setEnabled(False)
-        self._run_all_btn.setText(f"Running 1/{self._safe_total}…")
+        self._run_all_btn.setText(f"Stop (1/{self._safe_total})")
         self._run_next_safe()
 
     def _scroll_to_card(self, card: FixCard) -> None:

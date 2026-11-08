@@ -425,12 +425,10 @@ def compact_winsxs(output_cb: Callable[[str], None]) -> None:
 
 
 def wu_deep_clean(output_cb: Callable[[str], None]) -> None:
-    """Ported from Quick Cleanup's _wu_deep_clean. Distinct from
-    System Health's plain Component Cleanup: this adds
-    /SuppressDefaultActions, and distinct from wu_reset above (that
-    clears the WU cache/services; this reclaims WinSxS space)."""
-    _run_cmd(["dism", "/Online", "/Cleanup-Image", "/StartComponentCleanup",
-              "/SuppressDefaultActions"], output_cb)
+    """Alias for compact_winsxs -- the original /SuppressDefaultActions
+    flag is not a valid DISM switch (error 87). Both run plain
+    /StartComponentCleanup."""
+    compact_winsxs(output_cb)
 
 
 def run_sfc(output_cb: Callable[[str], None]) -> None:

@@ -424,13 +424,6 @@ def compact_winsxs(output_cb: Callable[[str], None]) -> None:
     _run_cmd(["Dism.exe", "/Online", "/Cleanup-Image", "/StartComponentCleanup"], output_cb)
 
 
-def wu_deep_clean(output_cb: Callable[[str], None]) -> None:
-    """Alias for compact_winsxs -- the original /SuppressDefaultActions
-    flag is not a valid DISM switch (error 87). Both run plain
-    /StartComponentCleanup."""
-    compact_winsxs(output_cb)
-
-
 def run_sfc(output_cb: Callable[[str], None]) -> None:
     output_cb("Running System File Checker (this takes several minutes)...")
     _run_cmd(["sfc", "/scannow"], output_cb)
@@ -480,8 +473,10 @@ def _hibernation_precondition() -> Optional[str]:
 
 ALL_ACTIONS: List[FixAction] = [
     # System Repairs
-    FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup on C: drive",
+    FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup with saved settings",
               "System Repairs", fn=run_disk_cleanup,
+              confirm_text="Cleanup scope and categories depend on previously saved "
+                           "Disk Cleanup profile 1 settings, and may include multiple drives. Continue?",
               risk="low", duration_hint="1–5 min", scope="local"),
     FixAction("sfc", "System File Checker (SFC)",
               "Scan and repair protected system files with sfc /scannow",
@@ -538,7 +533,9 @@ ALL_ACTIONS: List[FixAction] = [
               interruptions="network drops; reboot needed"),
     FixAction("ip_renew", "IP Release/Renew", "Release and renew IP address",
               "Network", fn=ip_release_renew,
-              risk="low", duration_hint="5–15 s", scope="local",
+              confirm_text="Releasing and renewing the IP address disconnects the network "
+                           "and may sever an RDP or other remote session. Continue?",
+              risk="medium", duration_hint="5–15 s", scope="local",
               interruptions="network drops briefly"),
     FixAction("network_reset", "Network Reset", "Reset all network adapters to default (reboot required)",
               "Network", reboot_required=True, fn=network_reset,
@@ -589,12 +586,6 @@ ALL_ACTIONS: List[FixAction] = [
               confirm_text="This runs DISM /StartComponentCleanup which can take "
                            "10–30 minutes. The system will remain usable. Continue?",
               risk="medium", duration_hint="10–30 min", scope="system"),
-    FixAction("wu_deep_clean", "WU Deep Clean",
-              "Deep Windows Update component-store cleanup",
-              "Cleanup", fn=wu_deep_clean, long_running=True,
-              confirm_text="This runs a deep Windows Update cleanup which may take "
-                           "10–20 minutes. Continue?",
-              risk="medium", duration_hint="10–20 min", scope="system"),
     FixAction("clear_clipboard", "Clear Clipboard", "Clear the Windows clipboard content",
               "Cleanup", fn=clear_clipboard,
               risk="low", duration_hint="< 2 s", scope="local"),

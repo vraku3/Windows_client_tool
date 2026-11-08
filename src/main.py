@@ -274,6 +274,14 @@ def main():
             return
         if _qt_default_handler:
             _qt_default_handler(msg_type, context, message)
+        else:
+            # No previous handler: preserve diagnostics in console runs.
+            import sys
+            if hasattr(sys, "stderr") and sys.stderr is not None:
+                try:
+                    sys.stderr.write(f"[Qt] {message}\n")
+                except Exception:
+                    pass
 
     _qt_default_handler = qInstallMessageHandler(_qt_msg_filter)
 

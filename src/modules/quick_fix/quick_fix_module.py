@@ -35,6 +35,8 @@ class QuickFixModule(BaseModule):
         self._cards: list = []
         self._workers: list = []
         self._safe_queue: list = []
+        self._batch_id: int = 0
+        self._batch_active: bool = False
         self._category_headers: Dict[str, QLabel] = {}
 
     def create_widget(self) -> QWidget:
@@ -204,12 +206,13 @@ class QuickFixModule(BaseModule):
                 card.activate()
 
     def _on_run_all_clicked(self) -> None:
-        if self._safe_queue:
+        if self._batch_active:
             self._stop_batch()
         else:
             self._run_all_safe()
 
     def _stop_batch(self) -> None:
+        self._batch_active = False
         remaining = list(self._safe_queue)
         self._safe_queue.clear()
         for c in remaining:
@@ -240,6 +243,8 @@ class QuickFixModule(BaseModule):
         )
         if answer != QMessageBox.StandardButton.Ok:
             return
+        self._batch_id += 1
+        self._batch_active = True
         self._safe_queue = list(safe_cards)
         self._safe_total = len(safe_cards)
         self._safe_done = 0
@@ -250,7 +255,10 @@ class QuickFixModule(BaseModule):
         self._run_next_safe()
 
     def _run_next_safe(self) -> None:
+        if not self._batch_active:
+            return
         if not self._safe_queue:
+            self._batch_active = False
             self._run_all_btn.setEnabled(True)
             self._run_all_btn.setText("Run All Safe")
             self._show_batch_summary()
@@ -260,11 +268,15 @@ class QuickFixModule(BaseModule):
         self._run_all_btn.setText(
             f"Stop ({self._safe_done}/{self._safe_total})")
         self._scroll_to_card(card)
+        batch_id = self._batch_id
+
         def _on_done(c=card):
             try:
                 c.history_changed.disconnect(_on_done)
             except TypeError:
                 pass
+            if self._batch_id != batch_id or not self._batch_active:
+                return
             self._safe_results.append((c, c._action.title, c._card_state))
             self._run_next_safe()
         card.history_changed.connect(_on_done)
@@ -294,6 +306,8 @@ class QuickFixModule(BaseModule):
                 retry = [c for c, _ in failed_cards
                          if c._card_state != 'running']
                 if retry:
+                    self._batch_id += 1
+                    self._batch_active = True
                     self._safe_queue = retry
                     self._safe_total = len(retry)
                     self._safe_done = 0
@@ -307,7 +321,7 @@ class QuickFixModule(BaseModule):
         self._safe_results = []
 
     def _run_category_safe(self, category: str) -> None:
-        if self._safe_queue:
+        if self._batch_active:
             return
         safe_cards = [
             c for c in self._cards
@@ -332,6 +346,8 @@ class QuickFixModule(BaseModule):
         )
         if answer != QMessageBox.StandardButton.Ok:
             return
+        self._batch_id += 1
+        self._batch_active = True
         self._safe_queue = list(safe_cards)
         self._safe_total = len(safe_cards)
         self._safe_done = 0
@@ -385,6 +401,7 @@ class QuickFixModule(BaseModule):
         self.app = app
 
     def on_stop(self) -> None:
+        self._batch_active = False
         self._safe_queue = []
         if hasattr(self, '_run_all_btn'):
             self._run_all_btn.setText("Run All Safe")

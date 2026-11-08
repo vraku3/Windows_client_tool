@@ -150,8 +150,8 @@ class FixCard(QFrame):
         self._card_state = state
         self._apply_state_border()
 
-    def _append_output(self, line: str) -> None:
-        if self._output_lines >= self._MAX_OUTPUT_LINES:
+    def _append_output(self, line: str, *, force: bool = False) -> None:
+        if not force and self._output_lines >= self._MAX_OUTPUT_LINES:
             if self._output_lines == self._MAX_OUTPUT_LINES:
                 self._output.appendPlainText(
                     f"— output capped at {self._MAX_OUTPUT_LINES} lines —")
@@ -178,7 +178,16 @@ class FixCard(QFrame):
         if text:
             QApplication.clipboard().setText(text)
             self._copy_btn.setText("Copied!")
-            QTimer.singleShot(1500, lambda: self._copy_btn.setText("Copy Output"))
+            QTimer.singleShot(1500, self._reset_copy_btn)
+
+    def _reset_copy_btn(self) -> None:
+        try:
+            from PyQt6 import sip
+            if sip.isdeleted(self._copy_btn):
+                return
+        except ImportError:
+            pass
+        self._copy_btn.setText("Copy Output")
 
     @staticmethod
     def _fmt_elapsed(seconds: float) -> str:
@@ -302,7 +311,7 @@ class FixCard(QFrame):
         self._worker = None
         self._run_btn.setEnabled(True)
         self._set_card_state("error")
-        self._append_output(f"ERROR: {error_str}")
+        self._append_output(f"ERROR: {error_str}", force=True)
         self._copy_btn.show()
         from modules.quick_fix import quick_fix_history
         self._last_entry = quick_fix_history.record(self._action.title, "error")

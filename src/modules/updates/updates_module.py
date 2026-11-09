@@ -2257,12 +2257,14 @@ class _UpdateSettingsTab(QWidget):
         self._refresh_wu_health()
 
     def _refresh_pause_label(self) -> None:
-        from modules.updates.update_pause import read_pause
+        from modules.updates.update_pause import is_pause_active, read_pause
         expiry, reason = read_pause()
         if reason:
             self._pause_status.setText(reason)
-        elif expiry:
+        elif is_pause_active(expiry):
             self._pause_status.setText(f"Updates are paused until {expiry}.")
+        elif expiry:
+            self._pause_status.setText("Pause expired")
         else:
             self._pause_status.setText("Updates are not paused by these settings.")
 

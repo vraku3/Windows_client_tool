@@ -887,7 +887,7 @@ def _enforce(system, journal: Journal, log: Log) -> int:
             continue
         if catalog.service_spec(entry["name"]) is None:
             continue
-        if entry.get("kind") != "service_stop" or not entry.get("done") or entry.get("gave_up"):
+        if entry.get("kind") != "service_stop" or not entry.get("done") or entry.get("gave_up") or entry.get("undone"):
             continue
         state = system.service(entry["name"])
         if state is None or not state.running:
@@ -914,6 +914,8 @@ def undo_action(system, journal: Journal, index: int, log: Log) -> tuple:
     entry = actions[index]
     if entry.get("undone"):
         return False, "already undone"
+    if not _valid_entry(system, entry):
+        return False, "journal entry failed validation"
     handler = _RESTORE.get(entry.get("kind"))
     if handler is None:
         return False, "this change cannot be undone on its own"
@@ -1023,7 +1025,11 @@ def _valid_registry(e: dict) -> bool:
     allowed = {("HKCU", GAMEBAR_KEY, "AutoGameModeEnabled"),
                ("HKCU", GAMEBAR_KEY, "AllowAutoGameMode"),
                ("HKLM", MAINTENANCE_KEY, "MaintenanceDisabled"),
-               ("HKCU", THEMES_KEY, "EnableTransparency")}
+               ("HKCU", THEMES_KEY, "EnableTransparency"),
+               ("HKLM", r"SYSTEM\CurrentControlSet\Control\PriorityControl",
+                "Win32PrioritySeparation"),
+               ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile",
+                "SystemResponsiveness")}
     triple = (e.get("hive"), e.get("path"), e.get("name"))
     if not all(isinstance(x, str) for x in triple) or triple not in allowed:
         return False

@@ -91,6 +91,7 @@ def save_snapshot(app_data_dir, apps: Dict[str, str]) -> Optional[dict]:
         return None
     data = {"at": datetime.now().isoformat(timespec="seconds"),
             "apps": dict(apps or {})}
+    temporary = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")
@@ -100,10 +101,11 @@ def save_snapshot(app_data_dir, apps: Dict[str, str]) -> Optional[dict]:
         os.replace(temporary, path)
     except OSError as exc:
         logger.warning("Could not write the Store snapshot: %s", exc)
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                logger.warning("Could not remove the temporary Store snapshot: %s", cleanup_exc)
         return None
     return data
 

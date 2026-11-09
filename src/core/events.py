@@ -48,6 +48,12 @@ class BalloonNotifyData:
 
 
 @dataclass
+class GameModeCommandData:
+    command: str  # "on" | "off" | "toggle" | "pause"
+    minutes: int = 0
+
+
+@dataclass
 class NavRequestData:
     module_name: str
     #: Optional: a module that understands `open_path(path)` (TreeSize) jumps

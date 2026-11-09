@@ -104,3 +104,12 @@ def test_a_corrupt_snapshot_is_ignored_not_crashing(tmp_path):
     path.parent.mkdir(parents=True)
     path.write_text("{broken", encoding="utf-8")
     assert load_snapshot(tmp_path) is None
+
+
+def test_snapshot_parent_creation_failure_returns_none(tmp_path, monkeypatch):
+    from pathlib import Path
+    from modules.updates.store_verify import save_snapshot
+    def refuse(*args, **kwargs):
+        raise PermissionError("directory refused")
+    monkeypatch.setattr(Path, "mkdir", refuse)
+    assert save_snapshot(tmp_path, {"App": "1"}) is None

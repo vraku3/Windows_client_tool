@@ -73,3 +73,15 @@ def test_resume_removes_every_pause_value():
 def test_resume_without_a_pause_is_a_noop():
     ok, message = update_pause.resume_updates(FakeReg())
     assert ok and "No Windows Update pause" in message
+
+
+def test_pause_uses_windows_settings_registry_path():
+    assert update_pause.UX_KEY == r"SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
+
+
+def test_pause_activity_requires_a_valid_future_timestamp():
+    for expiry in (None, "", "bad", "2000-01-01T00:00:00Z",
+                   "2099-01-01T00:00:00", 42):
+        assert not update_pause.is_pause_active(expiry)
+    assert update_pause.is_pause_active("2099-01-01T00:00:00Z")
+    assert update_pause.is_pause_active("2099-01-01T00:00:00+02:00")

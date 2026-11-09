@@ -1,7 +1,7 @@
 ﻿"""Pause and resume Windows Update through the UX settings key.
 
 Windows Settings writes these values under
-HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\UX\\Settings.
+HKLM\\SOFTWARE\\Microsoft\\WindowsUpdate\\UX\\Settings.
 Pausing is reversible by deleting the values; the real limit (35 days) is
 Windows', not an arbitrary app rule. Writes need administrator rights.
 """
@@ -11,7 +11,7 @@ import winreg
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
-UX_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\UX\Settings"
+UX_KEY = r"SOFTWARE\Microsoft\WindowsUpdate\UX\Settings"
 VALUE_NAMES = (
     "PauseFeatureUpdatesStartTime",
     "PauseFeatureUpdatesEndTime",
@@ -39,6 +39,17 @@ def pause_values(days: int = 7, now: Optional[datetime] = None) -> Dict[str, str
         "PauseQualityUpdatesEndTime": end,
         "PauseUpdatesExpiryTime": end,
     }
+
+
+def is_pause_active(expiry: Optional[str]) -> bool:
+    """Whether a valid, timezone-aware pause expiry is still in the future."""
+    if not isinstance(expiry, str) or not expiry:
+        return False
+    try:
+        expires_at = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+        return expires_at > datetime.now(timezone.utc)
+    except (ValueError, TypeError):
+        return False
 
 
 def read_pause(reg=winreg) -> Tuple[Optional[str], str]:

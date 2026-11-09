@@ -52,3 +52,16 @@ def test_summary_says_all_running_when_they_are():
             {"label": "B", "state": "Running", "error": ""}]
     assert wu_health.summary(rows) == "All Windows Update services are running."
     assert wu_health.problems(rows) == []
+
+
+def test_default_config_query_uses_service_handles_and_closes_them(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    closed = []
+    api = SimpleNamespace(SC_MANAGER_CONNECT=1, SERVICE_QUERY_CONFIG=1,
+        OpenSCManager=lambda *args: "scm", OpenService=lambda *args: "service",
+        QueryServiceConfig=lambda handle: config(2), CloseServiceHandle=closed.append)
+    monkeypatch.setitem(sys.modules, "win32service", api)
+    row = wu_health.read_service("bits", "BITS", query_status=lambda name: status(4))
+    assert row["start_type"] == "Automatic"
+    assert closed == ["service", "scm"]

@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
     def _publish_game_mode(self, command: str, minutes: int = 0) -> None:
         from core.events import GAME_MODE_COMMAND, GameModeCommandData
         self._app.event_bus.publish(
-            GAME_MODE_COMMAND, GameModeCommandData(command=command, minutes=minutes or 30))
+            GAME_MODE_COMMAND, GameModeCommandData(command=command, minutes=minutes))
 
     def _on_tray_activated(self, reason) -> None:
         from PyQt6.QtWidgets import QSystemTrayIcon

@@ -212,14 +212,14 @@ def import_settings(config, text: str) -> dict:
     schedules_raw = payload.get("schedules", [])
     if not isinstance(schedules_raw, list):
         raise ValueError("schedules must be a list.")
+    bindings = payload.get("bindings", {})
+    if not isinstance(bindings, dict):
+        raise ValueError("bindings must be an object.")
     save_settings(config, cleaned)
     save_protected(config, payload.get("protected", []))
     config.set("modules.game_mode.protected_publishers",
                [str(p) for p in payload.get("protected_publishers", []) if str(p).strip()])
     config.set(PROFILES_KEY, {str(k): dict(v) for k, v in profiles.items() if str(k).strip()})
-    bindings = payload.get("bindings", {})
-    if not isinstance(bindings, dict):
-        raise ValueError("bindings must be an object.")
     config.set(BINDINGS_KEY, {str(k): str(v) for k, v in bindings.items()
                               if str(k).strip() and str(v).strip()})
     save_schedules(config, schedules_raw)

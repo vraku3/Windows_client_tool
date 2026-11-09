@@ -231,8 +231,10 @@ class HistoryTab(QWidget):
             return
         self._all = history_export.set_note(self._all, entry["started"], self._note.text())
         retention = (self._host._settings.retention if self._host is not None else 100)
-        self._all = history_export.trim(self._all, retention)
-        save_history(self._all, folder=self._folder)
+        disk_order = list(reversed(self._all))
+        disk_order = history_export.trim(disk_order, retention)
+        save_history(disk_order, folder=self._folder)
+        self._all = list(reversed(disk_order))
         self._render()
 
     def _export(self, kind: str):

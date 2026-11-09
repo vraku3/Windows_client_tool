@@ -260,11 +260,6 @@ class TweakEngine:
                 if self._os.appx_installed(pkg) is False:
                     reasons.append(f"'{pkg}' is not installed")
                     continue
-            elif stype in ("registry", "registry_delete"):
-                refusal = self._registry_write_refusal(step)
-                if refusal:
-                    reasons.append(refusal)
-                    continue
             # Any step that is not provably moot makes the tweak applicable.
             return verdict
 

@@ -597,7 +597,10 @@ def uninstall_updates(
             break
         if progress_cb:
             progress_cb(index, total, kb)
-        result = uninstall_update(kb, output_cb=output_cb, is_cancelled=is_cancelled)
+        try:
+            result = uninstall_update(kb, output_cb=output_cb, is_cancelled=is_cancelled)
+        except Exception as exc:
+            result = InstallResult(kb, kb, False, None, f"Unexpected error: {exc}")
         results.append(result)
         if result_cb:
             result_cb(result)

@@ -486,3 +486,16 @@ def test_uninstall_many_keeps_each_outcome_and_stops_on_cancel(monkeypatch):
     results = windows_updater.uninstall_updates(
         ["KB1", "KB2", "KB3"], is_cancelled=lambda: next(checks))
     assert seen == ["KB1"] and len(results) == 1
+
+
+def test_batch_uninstall_preserves_results_after_unexpected_failure(monkeypatch):
+    def uninstall(kb, **kwargs):
+        if kb == "KB2":
+            raise RuntimeError("COM unavailable")
+        return windows_updater.InstallResult(kb, kb, True, None, "ok")
+    monkeypatch.setattr(windows_updater, "uninstall_update", uninstall)
+    emitted = []
+    rows = windows_updater.uninstall_updates(["KB1", "KB2", "KB3"], result_cb=emitted.append)
+    assert rows == emitted
+    assert [row.success for row in rows] == [True, False, True]
+    assert "Unexpected error: COM unavailable" in rows[1].message

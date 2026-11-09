@@ -38,6 +38,14 @@ def _normalize_exclusions(exclusions):
         for key, value in {"reason": "", "origin": "manual", "added": date.today().isoformat(),
                            "review_by": None, "expires": None, "added_by": ""}.items():
             entry.setdefault(key, value)
+        defaults = {"reason": "", "origin": "manual",
+                    "added": date.today().isoformat(), "added_by": ""}
+        for key, default in defaults.items():
+            if not isinstance(entry.get(key), str):
+                entry[key] = default
+        for key in ("review_by", "expires"):
+            if entry.get(key) is not None and not isinstance(entry[key], str):
+                entry[key] = None
         entries.append(entry)
     return entries
 

@@ -138,3 +138,12 @@ def test_import_rejects_malformed_or_empty_payloads():
     for text in ("{broken", '{"version": 1}', '[1, 2]', '[{"pattern": ""}]'):
         with pytest.raises(ValueError):
             import_json(text)
+
+
+def test_imported_exclusion_metadata_is_safe_for_settings():
+    from core.blocklist import _normalize_exclusions
+    from datetime import date
+    row = _normalize_exclusions([dict(pattern="KB*", reason=[], origin=2,
+        added={}, added_by=False, review_by=3, expires=[])])[0]
+    assert row == dict(pattern="KB*", reason="", origin="manual",
+        added=date.today().isoformat(), added_by="", review_by=None, expires=None)

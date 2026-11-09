@@ -27,10 +27,26 @@ def read_service(
 ) -> dict:
     """One service's state/start type, or an explicit unreadable reason."""
     try:
-        if query_status is None or query_config is None:
+        if query_status is None:
             import win32serviceutil
-            query_status = query_status or win32serviceutil.QueryServiceStatus
-            query_config = query_config or win32serviceutil.QueryServiceConfig
+            query_status = win32serviceutil.QueryServiceStatus
+        if query_config is None:
+            import win32service
+
+            def query_config(service_name):
+                scm = win32service.OpenSCManager(
+                    None, None, win32service.SC_MANAGER_CONNECT)
+                handle = None
+                try:
+                    handle = win32service.OpenService(
+                        scm, service_name, win32service.SERVICE_QUERY_CONFIG)
+                    return win32service.QueryServiceConfig(handle)
+                finally:
+                    try:
+                        if handle is not None:
+                            win32service.CloseServiceHandle(handle)
+                    finally:
+                        win32service.CloseServiceHandle(scm)
     except Exception as exc:
         return {"service": name, "label": label, "state": "Unreadable",
                 "start_type": "", "error": f"pywin32 unavailable: {exc}"}

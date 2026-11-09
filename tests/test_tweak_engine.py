@@ -126,7 +126,7 @@ def test_access_denied_is_the_only_registry_unknown(engine):
     assert "permission" in result.reason.lower()
 
 
-def test_readable_but_write_locked_registry_tweak_is_unavailable(engine):
+def test_readable_but_write_locked_registry_tweak_remains_not_applied(engine):
     """This PC's Communications key is readable but owned by TrustedInstaller."""
     tweak = _reg_tweak()
     tweak["steps"][0]["key"] = (
@@ -144,13 +144,9 @@ def test_readable_but_write_locked_registry_tweak_is_unavailable(engine):
          patch("winreg.QueryValueEx", side_effect=FileNotFoundError(2, "not found")), \
          patch("winreg.CreateKeyEx") as create:
         result = engine.detect(tweak)
-        errors = []
-        applied = engine.apply_tweak(tweak, "rp1", on_error=errors.append)
+        assert engine.check_applicable(tweak).applicable
 
-    assert result.status == "not_applicable"
-    assert "write" in result.reason.lower()
-    assert applied is False
-    assert "write" in errors[0].lower()
+    assert result.status == "not_applied"
     create.assert_not_called()
 
 

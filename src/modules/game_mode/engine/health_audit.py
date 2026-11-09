@@ -9,7 +9,7 @@ OK, DRIFT, UNKNOWN = "ok", "drift", "unknown"
 def audit(system, actions: List[dict]) -> List[dict]:
     rows = []
     for entry in actions or []:
-        if not entry.get("done"):
+        if not entry.get("done") or entry.get("undone"):
             continue
         kind = entry.get("kind")
         label = entry.get("label") or entry.get("name") or entry.get("exe") or kind or "change"

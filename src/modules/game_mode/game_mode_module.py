@@ -245,7 +245,13 @@ class GameModeModule(BaseModule):
             self._pause_enforcement(minutes)
 
     def _pause_enforcement(self, minutes: int) -> None:
-        self._pause = session_control.PauseState(until=time.time() + max(1, minutes) * 60)
+        if minutes <= 0:
+            self._pause = None
+            if self._session_tab is not None:
+                self._session_tab.refresh()
+            self._append(f"{session.INFO}\tEnforcement resumed.")
+            return
+        self._pause = session_control.PauseState(until=time.time() + minutes * 60)
         if self._session_tab is not None:
             self._session_tab.refresh()
         self._append(f"{session.INFO}\tEnforcement paused for {minutes} minute(s).")
@@ -292,8 +298,12 @@ class GameModeModule(BaseModule):
         self._last_game_seen = None
         self._busy = True
         self._show_state()
-        self._run(work, self._on_done)
-        self._notify("Game Mode", "Game Mode turned ON automatically.")
+
+        def _auto_on_done(result):
+            self._on_done(result)
+            self._notify("Game Mode", "Game Mode turned ON automatically.")
+
+        self._run(work, _auto_on_done)
 
     def _navigate_to(self, module_name: str) -> None:
         """Optimise OS's "Open in App Buster": App Buster does the removal."""

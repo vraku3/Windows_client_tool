@@ -301,10 +301,13 @@ def run_store_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
             log(f"Store: changed since previous run: {line}")
         if not changed:
             log("Store: no installed version changed since the previous run.")
-        store_verify.save_snapshot(folder, current)
+        if not store_verify.save_snapshot(folder, current):
+            log("Store: WARNING — snapshot could not be saved to disk.")
     else:
-        log("Store: first version snapshot recorded; the next run can report changes.")
-        store_verify.save_snapshot(folder, current)
+        if store_verify.save_snapshot(folder, current):
+            log("Store: first version snapshot recorded; the next run can report changes.")
+        else:
+            log("Store: WARNING — first snapshot could not be saved to disk.")
     return {"triggered": count, "store_changed": changed,
             "store_previous_at": (previous or {}).get("at"),
             "store_read_refused": current is None}

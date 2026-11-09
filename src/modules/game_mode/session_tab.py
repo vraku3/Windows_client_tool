@@ -171,17 +171,17 @@ class SessionTab(QWidget):
         self._profile_load.clicked.connect(self._load_profile)
         self._profile_delete = QPushButton("Delete", profiles)
         self._profile_delete.clicked.connect(self._delete_profile)
-        self._resume_btn = QPushButton("Resume last", profiles)
-        self._resume_btn.setToolTip(
+        self._resume_last_btn = QPushButton("Resume last", profiles)
+        self._resume_last_btn.setToolTip(
             "Load the last session's choices and run the normal ON preview.")
-        self._resume_btn.clicked.connect(self._resume_last)
+        self._resume_last_btn.clicked.connect(self._resume_last)
         self._bind_btn = QPushButton("Bind to game", profiles)
         self._bind_btn.setToolTip("Use this profile when the bound game starts.")
         self._bind_btn.clicked.connect(self._bind_profile)
         self._unbind_btn = QPushButton("Unbind", profiles)
         self._unbind_btn.clicked.connect(self._unbind_profile)
         for widget in (self._profile_combo, self._profile_save, self._profile_load,
-                       self._profile_delete, self._resume_btn, self._bind_btn,
+                       self._profile_delete, self._resume_last_btn, self._bind_btn,
                        self._unbind_btn):
             prow.addWidget(widget)
         layout.addWidget(profiles)
@@ -323,6 +323,7 @@ class SessionTab(QWidget):
             + ("    bound: " + os.path.basename(s.bound_game) if s.bound_game else ""))
         self._pause_btn.setEnabled(active)
         self._resume_btn.setEnabled(active and paused)
+        self._resume_last_btn.setEnabled(not active)
         self._undo_btn.setEnabled(active)
         self._repair_btn.setEnabled(active)
         self._render_journal()
@@ -356,7 +357,9 @@ class SessionTab(QWidget):
     def _bound_changed(self, text: str) -> None:
         if getattr(self, "_loading", False):
             return
-        self.host._settings.bound_game = text.strip()
+        idx = self._game_combo.currentIndex()
+        data = self._game_combo.itemData(idx) if idx >= 0 else None
+        self.host._settings.bound_game = (data or text).strip()
         self.host._save_settings()
 
     def _scan_games(self) -> None:
@@ -493,14 +496,26 @@ class SessionTab(QWidget):
                 self._health_table.setItem(row, column, cell)
 
     def _repair(self) -> None:
-        try:
-            rows = health_audit.audit(self.host._system, self.host._journal.actions)
-            health_audit.repair(self.host._system, rows)
-        except Exception as exc:
-            QMessageBox.warning(self, "Repair drift", str(exc))
-        self._audit()
+        if self.host._busy:
+            return
+        system, actions = self.host._system, self.host._journal.actions
+
+        def work(w):
+            rows = health_audit.audit(system, actions)
+            health_audit.repair(system, rows)
+            return rows
+
+        self.host._busy = True
+        w = Worker(work)
+        w.signals.result.connect(lambda _r: (setattr(self.host, "_busy", False), self._audit()))
+        w.signals.error.connect(
+            lambda err: (setattr(self.host, "_busy", False),
+                         QMessageBox.warning(self, "Repair drift", str(err))))
+        self.host._start(w)
 
     def _undo(self) -> None:
+        if self.host._busy:
+            return
         row = self._journal_table.currentRow()
         journal, system = self.host._journal, self.host._system
 
@@ -509,10 +524,11 @@ class SessionTab(QWidget):
                 system, journal, row,
                 lambda level, text: w.signals.log_line.emit(f"{level}\t{text}"))
 
+        self.host._busy = True
         w = Worker(work)
         w.signals.log_line.connect(self.host._append)
-        w.signals.result.connect(lambda _r: self.refresh())
-        w.signals.error.connect(lambda err: self._error.set_error(str(err)))
+        w.signals.result.connect(lambda _r: (setattr(self.host, "_busy", False), self.refresh()))
+        w.signals.error.connect(lambda err: (setattr(self.host, "_busy", False), self._error.set_error(str(err))))
         self.host._start(w)
 
     def _export_settings(self) -> None:
@@ -592,7 +608,9 @@ class SessionTab(QWidget):
 
     def _show_recovery(self) -> None:
         if self.host._journal.active:
-            self.host._turn_off()
+            QMessageBox.information(
+                self, "Recovery",
+                "Game Mode is currently ON. Use the main OFF button to restore.")
             return
         last = Path(self.host._journal.folder) / "last_restore.json"
         try:

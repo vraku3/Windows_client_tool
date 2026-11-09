@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import List
 
 from core.search_provider import FilterField, SearchProvider, SearchQuery, SearchResult
@@ -19,7 +20,7 @@ class QuickFixSearchProvider(SearchProvider):
             if not self._matches(query, action):
                 continue
             results.append(SearchResult(
-                timestamp="",
+                timestamp=datetime.min,
                 source="Quick Fix",
                 type=action.category,
                 summary=action.title,

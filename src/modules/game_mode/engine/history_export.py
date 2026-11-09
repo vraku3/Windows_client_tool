@@ -85,7 +85,7 @@ def to_csv(entries) -> str:
     for entry in entries or []:
         writer.writerow([
             _date(entry.get("started")), _date(entry.get("ended")),
-            int(entry.get("duration_s") or 0), entry.get("preset", ""),
+            round((entry.get("duration_s") or 0) / 60), entry.get("preset", ""),
             entry.get("actions_ok", 0), entry.get("actions_failed", 0),
             entry.get("services_stopped", 0), entry.get("apps_closed", 0),
             entry.get("tasks_disabled", 0), entry.get("handles_before", ""),

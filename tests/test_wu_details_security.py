@@ -1,4 +1,4 @@
-﻿"""The Windows Update Details pane names published security identifiers."""
+"""The Windows Update Details pane names published security identifiers."""
 from types import SimpleNamespace
 
 from modules.updates.wu_details_dialog import render

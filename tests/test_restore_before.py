@@ -1,4 +1,4 @@
-﻿"""Optional System Restore point before app/Store update batches."""
+"""Optional System Restore point before app/Store update batches."""
 from types import SimpleNamespace
 
 import pytest

@@ -1,4 +1,4 @@
-﻿"""Non-destructive conflict checks before Game Mode ON (Qt-free)."""
+"""Non-destructive conflict checks before Game Mode ON (Qt-free)."""
 from __future__ import annotations
 
 from typing import Iterable, List, Optional

@@ -1,4 +1,4 @@
-﻿"""Optional System Restore point before an app/Store update batch."""
+"""Optional System Restore point before an app/Store update batch."""
 from __future__ import annotations
 
 from typing import Callable, Optional

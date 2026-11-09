@@ -225,20 +225,20 @@ def test_the_network_tools_are_tabs_of_network_diagnostics(registered):
     ]
 
 
-def test_diagnose_hosts_the_six_log_readers(registered):
+def test_diagnose_hosts_the_seven_log_readers(registered):
     diagnose = next(m for m in registered if m.name == "Diagnose")
     assert [c.name for c in diagnose.children] == [
         "Event Viewer", "CBS Log", "DISM Log",
-        "Windows Update", "Reliability", "Crash Dumps",
+        "Windows Update", "Reliability", "Crash Dumps", "Timeline",
     ]
 
 
 def test_every_diagnostic_source_is_back_in_global_search(registered):
-    """The regression: Diagnose returned None, so these six reached nothing."""
+    """Diagnose search providers include the six original readers plus Timeline."""
     diagnose = next(m for m in registered if m.name == "Diagnose")
     names = {p.module_name for p in diagnose.get_search_providers()}
     assert names == {
-        "EventViewer", "CBS", "DISM", "WindowsUpdate", "Reliability", "CrashDumps",
+        "EventViewer", "CBS", "DISM", "WindowsUpdate", "Reliability", "CrashDumps", "Timeline",
     }
 
 

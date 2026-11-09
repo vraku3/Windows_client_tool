@@ -10,12 +10,12 @@ logger = logging.getLogger(__name__)
 
 def _connect():
     """A WMI connection, or raises: a failed read must reach the error banner."""
-    import wmi
     try:
         import pythoncom
         pythoncom.CoInitialize()
     except Exception:
-        logger.debug("CoInitialize was not needed or not available", exc_info=True)
+        pass
+    import wmi
     return wmi.WMI(namespace=r"root\cimv2")
 
 
@@ -81,7 +81,12 @@ def read_reliability(max_records: int = 1000,
                      progress_callback: Optional[Callable[[int], None]] = None
                      ) -> Tuple[List[LogEntry], List[Metric], List[str]]:
     """(records, stability metrics, problems). A metrics failure is reported, not hidden."""
-    conn = _connect()
+    try:
+        conn = _connect()
+    except Exception as exc:
+        logger.warning("Could not connect to WMI for reliability records: %s", exc)
+        return [], None, [f"Could not connect to WMI: {exc}"]
+
     entries = read_reliability_records(max_records, progress_callback, conn=conn)
     problems: List[str] = []
     try:

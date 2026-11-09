@@ -90,6 +90,7 @@ class SystemHealthModule(BaseModule):
 
         self._tabs.addTab(self._build_findings_tab(), "Findings")
         self._tabs.addTab(self._build_servicing_tab(), "Servicing")
+        self._tabs.addTab(self._build_latency_tab(), "Latency & Timers")
 
         explain(outer, INTRO, CONTROLS, HEADERS, TABS)
         return outer
@@ -132,6 +133,173 @@ class SystemHealthModule(BaseModule):
         lay.addWidget(self._findings_list, 1)
         lay.addWidget(self._finding_detail)
         return tab
+
+    # ── Latency & Timers tab ──────────────────────────────────────────
+
+    def _build_latency_tab(self) -> QWidget:
+        from PyQt6.QtWidgets import QFrame, QProgressBar, QGridLayout
+        tab = QWidget()
+        lay = QVBoxLayout(tab)
+        lay.setSpacing(10)
+
+        # Toolbar
+        toolbar = QHBoxLayout()
+        self._refresh_latency_btn = QPushButton("🔄  Refresh Stats")
+        self._refresh_latency_btn.clicked.connect(self._refresh_latency_stats)
+        self._sample_latency_btn = QPushButton("⚡  Run Latency Sample")
+        self._sample_latency_btn.clicked.connect(self._run_latency_sample)
+        self._latency_progress = QProgressBar()
+        self._latency_progress.setVisible(False)
+        self._latency_progress.setRange(0, 100)
+        self._latency_progress.setMaximumWidth(150)
+        self._latency_status_lbl = QLabel("Ready to inspect kernel latency and timers.")
+        self._latency_status_lbl.setObjectName("muted")
+
+        toolbar.addWidget(self._refresh_latency_btn)
+        toolbar.addWidget(self._sample_latency_btn)
+        toolbar.addWidget(self._latency_progress)
+        toolbar.addStretch()
+        toolbar.addWidget(self._latency_status_lbl)
+        lay.addLayout(toolbar)
+
+        # Stats Cards
+        grid = QGridLayout()
+        grid.setSpacing(8)
+
+        # Timer Card
+        card_timer = QFrame()
+        card_timer.setObjectName("card")
+        lay_timer = QVBoxLayout(card_timer)
+        lbl_t_title = QLabel("<b>Platform Timer Resolution</b>")
+        self._lbl_timer_val = QLabel("Not checked")
+        self._lbl_timer_desc = QLabel("Querying NtQueryTimerResolution...")
+        self._lbl_timer_desc.setWordWrap(True)
+        self._lbl_timer_desc.setObjectName("muted")
+        lay_timer.addWidget(lbl_t_title)
+        lay_timer.addWidget(self._lbl_timer_val)
+        lay_timer.addWidget(self._lbl_timer_desc)
+        grid.addWidget(card_timer, 0, 0)
+
+        # Clock Card
+        card_clock = QFrame()
+        card_clock.setObjectName("card")
+        lay_clock = QVBoxLayout(card_clock)
+        lbl_c_title = QLabel("<b>Platform Clock Source (QPC)</b>")
+        self._lbl_clock_val = QLabel("Not checked")
+        self._lbl_clock_desc = QLabel("Querying QueryPerformanceFrequency...")
+        self._lbl_clock_desc.setWordWrap(True)
+        self._lbl_clock_desc.setObjectName("muted")
+        lay_clock.addWidget(lbl_c_title)
+        lay_clock.addWidget(self._lbl_clock_val)
+        lay_clock.addWidget(self._lbl_clock_desc)
+        grid.addWidget(card_clock, 0, 1)
+
+        # Interrupt Card
+        card_dpc = QFrame()
+        card_dpc.setObjectName("card")
+        lay_dpc = QVBoxLayout(card_dpc)
+        lbl_d_title = QLabel("<b>Interrupt & DPC Distribution</b>")
+        self._lbl_dpc_val = QLabel("Not checked")
+        self._lbl_dpc_desc = QLabel("Querying SystemInterruptInformation...")
+        self._lbl_dpc_desc.setWordWrap(True)
+        self._lbl_dpc_desc.setObjectName("muted")
+        lay_dpc.addWidget(lbl_d_title)
+        lay_dpc.addWidget(self._lbl_dpc_val)
+        lay_dpc.addWidget(self._lbl_dpc_desc)
+        grid.addWidget(card_dpc, 0, 2)
+
+        lay.addLayout(grid)
+
+        # Latency Sample Results area
+        lbl_sample_hdr = QLabel("<b>Kernel Scheduling Jitter & Micro-Stutter Analysis:</b>")
+        lay.addWidget(lbl_sample_hdr)
+
+        self._latency_out = QPlainTextEdit()
+        self._latency_out.setReadOnly(True)
+        self._latency_out.setPlaceholderText(
+            "Click 'Run Latency Sample' to execute a calibrated microsecond kernel jitter measurement.\n\n"
+            "This measures real-time kernel scheduling interruptions. Spikes over 1000 µs (1.0 ms) indicate "
+            "DPC latency delays caused by device drivers (often GPU, audio, or network drivers) or power-state "
+            "transitions, which cause game frame drops and audio stutter."
+        )
+        lay.addWidget(self._latency_out, 1)
+
+        return tab
+
+    def _refresh_latency_stats(self) -> None:
+        from modules.system_health.latency_engine import diagnose_latency_health
+        report = diagnose_latency_health()
+        if hasattr(self, "_lbl_timer_val") and widget_is_valid(self._lbl_timer_val):
+            self._lbl_timer_val.setText(f"<b>{report.timer.current_resolution_ms:.3f} ms</b>")
+            self._lbl_timer_desc.setText(report.timer.verdict)
+            self._lbl_clock_val.setText(f"<b>{report.clock.frequency_mhz:.3f} MHz</b>")
+            self._lbl_clock_desc.setText(report.clock.verdict)
+            self._lbl_dpc_val.setText(f"<b>{report.interrupts.total_dpc_count:,} DPCs</b> ({report.interrupts.core_count} Cores)")
+            self._lbl_dpc_desc.setText(report.interrupts.distribution_note)
+            self._latency_status_lbl.setText("Updated stats")
+
+    def _run_latency_sample(self) -> None:
+        self._sample_latency_btn.setEnabled(False)
+        self._latency_progress.setVisible(True)
+        self._latency_progress.setValue(0)
+        self._latency_status_lbl.setText("Sampling kernel execution latency for 3 seconds...")
+
+        def _run(worker):
+            from modules.system_health.latency_engine import sample_kernel_latency
+            return sample_kernel_latency(
+                duration_seconds=3.0,
+                callback=lambda p: worker.signals.progress.emit(p),
+            )
+
+        def _done(res):
+            if not widget_is_valid(self._sample_latency_btn):
+                return
+            self._sample_latency_btn.setEnabled(True)
+            self._latency_progress.setVisible(False)
+            self._latency_status_lbl.setText(f"Sample finished: Max Latency {res.max_latency_us:.1f} µs")
+
+            lines = [
+                "=== KERNEL SCHEDULING JITTER & DPC LATENCY REPORT ===",
+                f"Duration: {res.duration_seconds}s | Total Samples: {res.samples_count:,}",
+                f"Maximum Latency Spike: {res.max_latency_us:.1f} µs",
+                f"Average Latency Jitter: {res.avg_latency_us:.1f} µs",
+                f"Stutter Spikes (>1000 µs): {res.stutter_spikes_1000us}",
+                f"Severe Spikes (>2000 µs): {res.severe_spikes_2000us}",
+                f"\nVerdict: {res.verdict}",
+            ]
+            if res.stutter_spikes_1000us > 0:
+                lines.extend([
+                    "\n--- Admin Troubleshooting Advice ---",
+                    "• High DPC latency is almost always caused by third-party device drivers holding execution at DISPATCH_LEVEL.",
+                    "• Common culprits: Wi-Fi/NIC drivers (NDIS), GPU display drivers, or motherboard USB controller drivers.",
+                    "• Check Driver Manager for recent driver updates or rollbacks.",
+                    "• Ensure platform clock is not forced to HPET (useplatformclock should be disabled in BCD).",
+                ])
+            else:
+                lines.extend([
+                    "\n--- System Status ---",
+                    "• System responsiveness is optimal. No kernel scheduling delays exceeding 1.0 ms were detected.",
+                ])
+            self._latency_out.setPlainText("\n".join(lines))
+
+        def _err(e: str):
+            if not widget_is_valid(self._sample_latency_btn):
+                return
+            self._sample_latency_btn.setEnabled(True)
+            self._latency_progress.setVisible(False)
+            self._latency_status_lbl.setText("Sample failed")
+            self._latency_out.setPlainText(f"Error sampling latency: {e}")
+
+        w = Worker(_run)
+        w.signals.progress.connect(self._latency_progress.setValue)
+        w.signals.result.connect(_done)
+        w.signals.error.connect(_err)
+        self._workers.append(w)
+        if self.app and hasattr(self.app, "thread_pool"):
+            self.app.thread_pool.start(w)
+        else:
+            from PyQt6.QtCore import QThreadPool
+            QThreadPool.globalInstance().start(w)
 
     def _refresh_findings(self) -> None:
         self._refresh_findings_btn.setEnabled(False)

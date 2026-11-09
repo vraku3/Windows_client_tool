@@ -1,4 +1,4 @@
-﻿"""Verify a Microsoft Store update trigger against installed app versions.
+"""Verify a Microsoft Store update trigger against installed app versions.
 
 The Store offers no completion callback. This module records the installed
 versions, asks the Store to update, then re-reads them for a bounded window.

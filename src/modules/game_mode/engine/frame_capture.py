@@ -1,4 +1,4 @@
-﻿"""Optional PresentMon capture and frame-time summary (Qt-free)."""
+"""Optional PresentMon capture and frame-time summary (Qt-free)."""
 from __future__ import annotations
 
 import csv

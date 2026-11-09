@@ -1,4 +1,4 @@
-﻿"""Discover installed games from common launchers (Qt-free, read-only)."""
+"""Discover installed games from common launchers (Qt-free, read-only)."""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,4 @@
-﻿"""Windows Update pause/resume through the UX settings values."""
+"""Windows Update pause/resume through the UX settings values."""
 from datetime import datetime, timezone
 
 from modules.updates import update_pause

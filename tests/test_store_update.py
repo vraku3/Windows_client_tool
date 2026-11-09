@@ -1,4 +1,4 @@
-﻿"""Per-app Store updates through winget, plus the Store tab selection gate."""
+"""Per-app Store updates through winget, plus the Store tab selection gate."""
 from types import SimpleNamespace
 
 from modules.updates.store_update import update_apps

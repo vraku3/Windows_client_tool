@@ -1,4 +1,4 @@
-﻿"""Read Windows Update service health without changing anything (Qt-free)."""
+"""Read Windows Update service health without changing anything (Qt-free)."""
 from __future__ import annotations
 
 from typing import Callable, List, Optional

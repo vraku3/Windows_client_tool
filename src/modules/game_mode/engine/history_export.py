@@ -1,4 +1,4 @@
-﻿"""Filter, aggregate, annotate and export Game Mode history (Qt-free)."""
+"""Filter, aggregate, annotate and export Game Mode history (Qt-free)."""
 from __future__ import annotations
 
 import csv

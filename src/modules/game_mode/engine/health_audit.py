@@ -1,4 +1,4 @@
-﻿"""Check and repair drift from an active Game Mode journal (Qt-free)."""
+"""Check and repair drift from an active Game Mode journal (Qt-free)."""
 from __future__ import annotations
 
 from typing import List

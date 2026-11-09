@@ -1,4 +1,4 @@
-﻿"""CSV export of the update offers an operator is looking at (Qt-free)."""
+"""CSV export of the update offers an operator is looking at (Qt-free)."""
 from __future__ import annotations
 
 import csv

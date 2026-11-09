@@ -1,4 +1,4 @@
-﻿"""Activity ledger CSV export (Qt-free formatting plus the widget button)."""
+"""Activity ledger CSV export (Qt-free formatting plus the widget button)."""
 import csv
 import io
 

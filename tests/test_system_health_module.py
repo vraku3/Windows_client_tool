@@ -27,12 +27,17 @@ def test_module_declares_the_right_admin_model():
     assert SystemHealthModule.read_only_unelevated is True
 
 
-def test_create_widget_builds_two_tabs(qapp):
+def test_create_widget_builds_tabs(qapp):
     module, app = _module(qapp)
     try:
-        assert module._tabs.count() == 2
+        assert module._tabs.count() == 3
         assert module._tabs.tabText(0) == "Findings"
         assert module._tabs.tabText(1) == "Servicing"
+        assert module._tabs.tabText(2) == "Latency & Timers"
+        # Verify latency widgets exist and are initialized
+        assert hasattr(module, "_refresh_latency_btn")
+        assert hasattr(module, "_sample_latency_btn")
+        assert hasattr(module, "_latency_out")
     finally:
         app.shutdown()
 

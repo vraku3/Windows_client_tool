@@ -1,4 +1,4 @@
-﻿"""Windows Update service health is read-only and never guesses."""
+"""Windows Update service health is read-only and never guesses."""
 from modules.updates import wu_health
 
 

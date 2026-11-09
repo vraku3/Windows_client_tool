@@ -1,4 +1,4 @@
-﻿"""Pause and resume Windows Update through the UX settings key.
+"""Pause and resume Windows Update through the UX settings key.
 
 Windows Settings writes these values under
 HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsUpdate\\UX\\Settings.

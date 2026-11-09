@@ -1,4 +1,4 @@
-﻿"""Update selected Microsoft Store offers through winget (Qt-free)."""
+"""Update selected Microsoft Store offers through winget (Qt-free)."""
 from __future__ import annotations
 
 from typing import Callable, List

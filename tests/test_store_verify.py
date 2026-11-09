@@ -1,4 +1,4 @@
-﻿"""Store update verification: snapshot, bounded poll, honest outcome."""
+"""Store update verification: snapshot, bounded poll, honest outcome."""
 from modules.updates.store_verify import (
     changed_apps, snapshot, verify_store_update,
 )

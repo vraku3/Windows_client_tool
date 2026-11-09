@@ -36,6 +36,11 @@ class ConfigManager:
         # open is "Access is denied" (2026-10-19).
         self._lock = threading.RLock()
 
+    @property
+    def app_data_dir(self) -> str:
+        """Directory where config is stored (%APPDATA%/WindowsTweaker)."""
+        return self._config_dir
+
     def _get_defaults(self) -> dict:
         if callable(self._defaults):
             return copy.deepcopy(self._defaults())

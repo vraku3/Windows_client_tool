@@ -314,9 +314,12 @@ def collect_findings(driver_problems: Optional[int] = None,
         found.append(judge_disk(part.mountpoint.rstrip("\\"), u.free, u.total))
     vm = psutil.virtual_memory()
     found.append(judge_memory(vm.percent, vm.used, vm.total))
-    sw = psutil.swap_memory()
-    found.append(judge_commit(sw.percent, sw.used, sw.total))
-    found.append(judge_pagefile(sw.total))
+    try:
+        sw = psutil.swap_memory()
+        found.append(judge_commit(sw.percent, sw.used, sw.total))
+        found.append(judge_pagefile(sw.total))
+    except Exception:
+        logger.warning("swap_memory unreadable", exc_info=True)
     found.append(judge_uptime(time.time() - psutil.boot_time()))
     handle_rows = read_handle_counts()
     if handle_rows is None:

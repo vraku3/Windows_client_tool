@@ -1,4 +1,4 @@
-﻿"""Updates -> Driver Manager navigation carries a filter, not just a jump."""
+"""Updates -> Driver Manager navigation carries a filter, not just a jump."""
 from types import SimpleNamespace
 
 from core.events import NavRequestData

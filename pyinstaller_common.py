@@ -233,6 +233,7 @@ HIDDEN_IMPORTS = [
     "modules.shared_resources.shares_module",
     "modules.remote_tools.remote_module",
     "modules.event_viewer.event_viewer_module",
+    "modules.timeline.timeline_module",
     "modules.cbs_log.cbs_module",
     "modules.dism_log.dism_module",
     "modules.windows_update.wu_module",

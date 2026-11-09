@@ -45,6 +45,7 @@ class DiagnoseModule(CompositeModule):
         from modules.dism_log.dism_module import DISMLogModule
         from modules.event_viewer.event_viewer_module import EventViewerModule
         from modules.reliability.reliability_module import ReliabilityModule
+        from modules.timeline.timeline_module import TimelineModule
         from modules.windows_update.wu_module import WindowsUpdateModule
 
         self.children = [
@@ -54,6 +55,7 @@ class DiagnoseModule(CompositeModule):
             WindowsUpdateModule(),
             ReliabilityModule(),
             CrashDumpModule(),
+            TimelineModule(),
         ]
 
         self._widget: Optional[QWidget] = None

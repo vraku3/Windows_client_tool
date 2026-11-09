@@ -1,4 +1,4 @@
-﻿"""One save-as-CSV dialog used by the update surfaces."""
+"""One save-as-CSV dialog used by the update surfaces."""
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 

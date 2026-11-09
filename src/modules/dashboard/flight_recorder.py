@@ -196,11 +196,16 @@ class Sampler:
         if prev is None:
             return None
         dt = max(now - prev[0], 1e-6)
-        vm, sw = ps.virtual_memory(), ps.swap_memory()
+        vm = ps.virtual_memory()
+        try:
+            sw = ps.swap_memory()
+            sw_percent = sw.percent
+        except Exception:
+            sw_percent = 0.0
         sample = {
             "at": round(time.time(), 1),
             "cpu": ps.cpu_percent(interval=None),
-            "mem": vm.percent, "commit": sw.percent,
+            "mem": vm.percent, "commit": sw_percent,
             "disk": ((disk.read_bytes - prev[1].read_bytes) + (disk.write_bytes - prev[1].write_bytes)) / dt / 1048576,
             "net": ((net.bytes_recv - prev[2].bytes_recv) + (net.bytes_sent - prev[2].bytes_sent)) / dt / 1048576,
             "mhz": self._clock() if self._clock else None,

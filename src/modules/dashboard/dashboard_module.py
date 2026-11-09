@@ -469,9 +469,12 @@ class _DashboardWidget(QWidget):
 
     def _refresh_memory(self) -> None:
         vm = psutil.virtual_memory()
-        sw = psutil.swap_memory()
-        cap = (f"{_fmt(vm.used)} of {_fmt(vm.total)}  •  {_fmt(vm.available)} free"
-               f"  •  page file {sw.percent:.0f}%")
+        try:
+            sw = psutil.swap_memory()
+            sw_pct = f"  •  page file {sw.percent:.0f}%"
+        except Exception:
+            sw_pct = ""
+        cap = (f"{_fmt(vm.used)} of {_fmt(vm.total)}  •  {_fmt(vm.available)} free{sw_pct}")
         self._tiles["mem"].show_reading(f"{vm.percent:.0f}%", cap, vm.percent,
                                         self._push("mem", vm.percent))
 

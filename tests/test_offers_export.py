@@ -1,4 +1,4 @@
-﻿"""CSV export of app and Windows Update offers."""
+"""CSV export of app and Windows Update offers."""
 import csv
 import io
 from types import SimpleNamespace

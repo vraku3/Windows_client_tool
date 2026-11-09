@@ -1,4 +1,4 @@
-﻿"""CSV export of Windows Update history (Qt-free formatting)."""
+"""CSV export of Windows Update history (Qt-free formatting)."""
 import csv
 import io
 from datetime import datetime, timezone

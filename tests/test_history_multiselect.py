@@ -1,4 +1,4 @@
-﻿"""History dialog can select several succeeded KBs for one uninstall batch."""
+"""History dialog can select several succeeded KBs for one uninstall batch."""
 from datetime import datetime, timezone
 from types import SimpleNamespace
 

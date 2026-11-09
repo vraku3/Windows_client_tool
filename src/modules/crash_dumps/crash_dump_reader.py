@@ -23,6 +23,11 @@ from core.types import LogEntry
 from core.windows_utils import system_root
 
 from modules.crash_dumps.dump_parser import DumpInfo, read_dump_info
+from modules.crash_dumps.rca_engine import (
+    correlate_incidents,
+    parse_kernel_power_41,
+    parse_whea_record,
+)
 from core.diag_knowledge import bugcheck_info, bugcheck_label, is_live_kernel_event
 
 logger = logging.getLogger(__name__)
@@ -175,6 +180,74 @@ def _bugcheck_events(days: int = 90) -> Tuple[List[LogEntry], Optional[str]]:
     return out, None
 
 
+def _kernel_power_events(days: int = 90) -> Tuple[List[LogEntry], Optional[str]]:
+    from modules.event_viewer import event_query
+
+    xpath = ("*[System[Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41 "
+             f"and TimeCreated[timediff(@SystemTime) <= {days * 86400 * 1000}]]]")
+    result = event_query.query_log("System", None, 100, xpath=xpath)
+    if result.error is not None:
+        return [], f"Kernel-Power events could not be read: {result.error}"
+    out = []
+    for ev in result.entries:
+        raw_data = ev.raw.get("data", {}) if ev.raw else {}
+        kp = parse_kernel_power_41(raw_data, ev.timestamp)
+        level = "Critical" if kp.is_power_cut else "Error"
+        raw = {
+            "bug_check": kp.diagnosis,
+            "bugcheck_code": f"0x{kp.bugcheck_code:X}",
+            "params": [f"0x{p:X}" for p in kp.bugcheck_params],
+            "kind": "kernel_power",
+            "is_power_cut": kp.is_power_cut,
+            "cause": kp.cause,
+            "event_id": 41,
+            "data": raw_data,
+        }
+        out.append(LogEntry(
+            timestamp=ev.timestamp,
+            source="Microsoft-Windows-Kernel-Power",
+            level=level,
+            message=kp.diagnosis,
+            raw=raw,
+        ))
+    return out, None
+
+
+def _whea_events(days: int = 90) -> Tuple[List[LogEntry], Optional[str]]:
+    from modules.event_viewer import event_query
+
+    xpath = ("*[System[Provider[@Name='Microsoft-Windows-WHEA-Logger'] "
+             "and (EventID=17 or EventID=18 or EventID=19 or EventID=20 or EventID=47) "
+             f"and TimeCreated[timediff(@SystemTime) <= {days * 86400 * 1000}]]]")
+    result = event_query.query_log("System", None, 100, xpath=xpath)
+    if result.error is not None:
+        return [], f"WHEA events could not be read: {result.error}"
+    out = []
+    for ev in result.entries:
+        raw_data = ev.raw.get("data", {}) if ev.raw else {}
+        eid = ev.raw.get("event_id", 0) if ev.raw else 0
+        whea = parse_whea_record(eid, raw_data, ev.message, ev.timestamp)
+        level = "Critical" if whea.is_fatal else "Warning"
+        raw = {
+            "bug_check": whea.description,
+            "kind": "whea",
+            "event_id": eid,
+            "apic_id": whea.apic_id,
+            "bank": whea.bank,
+            "is_fatal": whea.is_fatal,
+            "cause": f"WHEA hardware error: {whea.description}.",
+            "data": raw_data,
+        }
+        out.append(LogEntry(
+            timestamp=ev.timestamp,
+            source="Microsoft-Windows-WHEA-Logger",
+            level=level,
+            message=whea.description,
+            raw=raw,
+        ))
+    return out, None
+
+
 def read_crash_evidence(progress_callback: Optional[Callable[[int], None]] = None
                         ) -> Tuple[List[LogEntry], List[str]]:
     """Every source above, newest first, plus notes on anything that could not be read."""
@@ -189,18 +262,28 @@ def read_crash_evidence(progress_callback: Optional[Callable[[int], None]] = Non
     entries.extend(mini)
     if note:
         notes.append(note)
-    step(25)
+    step(20)
     if os.path.isfile(MEMORY_DMP):
         entry = _entry_for_file(MEMORY_DMP, "MEMORY.DMP")
         if entry is not None:
             entries.append(entry)
-    step(45)
+    step(35)
     live, live_notes = _scan_live_reports(LIVE_REPORTS_DIR)
     entries.extend(live)
     notes.extend(live_notes)
-    step(75)
+    step(55)
     events, note = _bugcheck_events()
     entries.extend(events)
+    if note:
+        notes.append(note)
+    step(70)
+    kp_events, note = _kernel_power_events()
+    entries.extend(kp_events)
+    if note:
+        notes.append(note)
+    step(85)
+    whea, note = _whea_events()
+    entries.extend(whea)
     if note:
         notes.append(note)
     entries.sort(key=lambda e: e.timestamp, reverse=True)
@@ -257,16 +340,14 @@ def crash_frequency_trend(entries: List[LogEntry], now: Optional[datetime] = Non
 def summary_text(entries: List[LogEntry], notes: List[str]) -> str:
     crashes = [e for e in entries if e.source in ("Minidump", "MEMORY.DMP", "BugCheck event")]
     live = [e for e in entries if e.source.startswith("LiveKernelReports")]
+    rca = correlate_incidents(entries)
     if not entries:
         base = ("No crash records were found in the places that could be read." if notes
-                else "No crash dumps or bugcheck events were found: no blue screen on record.")
+                else "No crash dumps, bugchecks, or dirty shutdowns on record.")
     else:
-        base = f"{len(crashes)} crash record(s) (dumps and bugcheck events) and {len(live)} live kernel report(s)."
-        kinds = {}
-        for e in live:
-            kinds[e.source.split("\\", 1)[1]] = kinds.get(e.source.split("\\", 1)[1], 0) + 1
-        if kinds:
-            base += " Live reports by driver/watchdog: " + ", ".join(f"{k} x{n}" for k, n in sorted(kinds.items())) + "."
+        base = f"{len(crashes)} crash dump/bugcheck record(s), {rca.power_cut_count} sudden power cut/reset(s), {rca.whea_count} WHEA hardware error(s), and {len(live)} live kernel report(s)."
+        if rca.suspect_summary:
+            base += f" [RCA: {rca.suspect_summary}]"
         trend = crash_frequency_trend(entries)
         if trend:
             base += " " + trend
@@ -274,7 +355,7 @@ def summary_text(entries: List[LogEntry], notes: List[str]) -> str:
 
 
 def detail_html(entry: LogEntry) -> str:
-    """Bugcheck explanation for the detail panel: what it is, likely cause, what the parameters mean."""
+    """Bugcheck, power cut or WHEA explanation for the detail panel."""
     import html
 
     raw = entry.raw or {}
@@ -283,20 +364,37 @@ def detail_html(entry: LogEntry) -> str:
         return ""
     out = [f"<b>{html.escape(str(label))}</b><br>"]
     if raw.get("cause"):
-        out.append(f"<i>Usual cause:</i> {html.escape(raw['cause'])}<br>")
+        out.append(f"<i>Diagnosis:</i> {html.escape(raw['cause'])}<br>")
     code = raw.get("bugcheck_code")
     params = raw.get("params") or []
-    if code and params:
+    if code and params and code != "0x0":
         try:
             info = bugcheck_info(int(code, 16))
         except ValueError:
             info = None
         meanings = info.params if info else ()
+        from modules.crash_dumps.rca_engine import decode_bugcheck_params
+        numeric_params = []
+        for p in params:
+            try:
+                numeric_params.append(int(str(p), 16) if str(p).startswith("0x") else int(str(p)))
+            except (ValueError, TypeError):
+                numeric_params.append(0)
+        detailed_decoded = decode_bugcheck_params(int(code, 16), tuple(numeric_params))
+
         out.append("<i>Parameters:</i><br>")
-        for i, value in enumerate(params):
-            note = meanings[i] if i < len(meanings) and meanings[i] else ""
-            out.append(f"&nbsp;&nbsp;{i + 1}: {html.escape(str(value))}"
-                       + (f" &nbsp;({html.escape(note)})" if note else "") + "<br>")
+        if detailed_decoded:
+            for line in detailed_decoded:
+                out.append(f"&nbsp;&nbsp;{html.escape(line)}<br>")
+        else:
+            for i, value in enumerate(params):
+                note = meanings[i] if i < len(meanings) and meanings[i] else ""
+                out.append(f"&nbsp;&nbsp;{i + 1}: {html.escape(str(value))}"
+                           + (f" &nbsp;({html.escape(note)})" if note else "") + "<br>")
+    if raw.get("apic_id") is not None:
+        out.append(f"<i>Processor APIC ID (Logical Core):</i> {raw['apic_id']}<br>")
+    if raw.get("bank") is not None:
+        out.append(f"<i>Hardware Bank:</i> {raw['bank']}<br>")
     if raw.get("faulting_module"):
         out.append(f"<i>Faulting module:</i> {html.escape(raw['faulting_module'])}<br>")
     elif raw.get("kind") in ("kernel64", "kernel32"):

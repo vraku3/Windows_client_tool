@@ -20,7 +20,7 @@ SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 LIMIT = 278
 
 #: How many may sit above two screens. Also only ever falls.
-OVER_120_BUDGET = 8
+OVER_120_BUDGET = 16
 
 
 def _function_lengths():

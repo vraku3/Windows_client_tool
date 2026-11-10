@@ -1,0 +1,209 @@
+"""Tests for World of Warcraft & max performance game mode enhancements.
+
+Covers:
+- Battle.net & World of Warcraft auto-discovery
+- Game disk I/O priority boost (IoPriorityHigh) & restoration
+- Background app disk I/O demotion (IoPriorityVeryLow) & restoration
+- High-resolution 0.5ms timer management
+- Network low-latency tuning (TcpAckFrequency & TCPNoDelay)
+- MMCSS GPU and Games task priority tuning
+- Real-machine WinSystem timer resolution and network adapter enumeration
+"""
+import os
+from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
+
+from modules.game_mode.engine import catalog, game_config, game_library, session
+from modules.game_mode.engine.journal import Journal
+from modules.game_mode.engine.system import (
+    IO_PRIORITY_HIGH,
+    IO_PRIORITY_NORMAL,
+    IO_PRIORITY_VERY_LOW,
+    NORMAL,
+    Proc,
+    WinSystem,
+)
+
+
+class WowFakeSystem:
+    def __init__(self, admin=True):
+        self.admin = admin
+        self.plan = session.HIGH_PERFORMANCE
+        self.plan_names = {session.HIGH_PERFORMANCE: "High performance"}
+        self.svc = {}
+        self.reg = {}
+        self.broadcasts = []
+        self.anim = True
+        self.fullscreen = set()
+        self.wifi = False
+        self.procs = [
+            Proc(100, 1, "Wow.exe", 8000, 1, 1000),
+            Proc(101, 1, "chrome.exe", 4000, 1, 1001),
+            Proc(102, 1, "discord.exe", 2500, 1, 1002),
+        ]
+        self.prio = {100: NORMAL, 101: NORMAL, 102: NORMAL}
+        self.io_prio = {100: IO_PRIORITY_NORMAL, 101: IO_PRIORITY_NORMAL, 102: IO_PRIORITY_NORMAL}
+        self.paths = {
+            100: r"C:\Program Files (x86)\World of Warcraft\_forever_\Wow.exe",
+            101: r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            102: r"C:\Users\User\AppData\Local\Discord\app-1.0.9000\Discord.exe",
+        }
+        self.timer_res = 1.0
+        self.adapters = ["{89aee31e-e7d6-4110-8e95-f0b2d9a62194}"]
+
+    def is_admin(self): return self.admin
+    def cpu_name(self): return "AMD Ryzen 7 7800X3D 8-Core Processor"
+    def plans(self): return dict(self.plan_names)
+    def active_plan(self): return self.plan
+    def set_plan(self, guid): self.plan = guid; return None
+
+    def service(self, name): return None
+    def service_names(self, pattern): return []
+    def running_dependents(self, name): return []
+    def stop_service(self, name): return None
+    def start_service(self, name): return None
+
+    def processes(self): return list(self.procs)
+    def details(self, pid):
+        p = self.paths.get(pid)
+        return p, (f'"{p}"' if p else None), False
+
+    def aumid(self, pid): return None
+    def priority(self, pid): return self.prio.get(pid)
+    def set_priority(self, pid, value):
+        self.prio[pid] = value
+        return None
+
+    def io_priority(self, pid): return self.io_prio.get(pid, IO_PRIORITY_NORMAL)
+    def set_io_priority(self, pid, value):
+        self.io_prio[pid] = value
+        return None
+
+    def timer_resolution(self): return self.timer_res
+    def set_timer_resolution(self, period_100ns=5000):
+        self.timer_res = period_100ns / 10000.0
+        return None
+
+    def cancel_timer_resolution(self, period_100ns=5000):
+        self.timer_res = 1.0
+        return None
+
+    def active_network_interfaces(self): return list(self.adapters)
+
+    def close(self, pids, exe_path):
+        self.procs = [p for p in self.procs if (p.pid, p.create_time) not in pids]
+        return None
+
+    def close_many(self, jobs, grace=8.0, force=True):
+        return [self.close(pids, path) for pids, path in jobs]
+
+    def fullscreen_pids(self): return set(self.fullscreen)
+    def wifi_connected(self): return self.wifi
+    def alive(self, pid, ct): return any(p.pid == pid and p.create_time == ct for p in self.procs)
+
+    def launch(self, program, args="", cwd=""): return None
+    def launch_aumid(self, aumid): return None
+
+    def reg_get(self, path, name, hive="HKCU"):
+        key = (hive, path, name)
+        if key in self.reg:
+            val, kind = self.reg[key]
+            return True, val, kind
+        return False, None, 0
+
+    def reg_set(self, path, name, value, kind, hive="HKCU"):
+        self.reg[(hive, path, name)] = (value, kind)
+        return None
+
+    def reg_delete(self, path, name, hive="HKCU"):
+        self.reg.pop((hive, path, name), None)
+        return None
+
+    def broadcast_setting_change(self, area):
+        self.broadcasts.append(area)
+
+    def animations(self): return self.anim
+    def set_animations(self, on): self.anim = on; return None
+    def tasks(self): return []
+
+
+def test_battlenet_games_detection_finds_wow(tmp_path):
+    """Test discovery of World of Warcraft from directories."""
+    wow_dir = tmp_path / "World of Warcraft"
+    forever = wow_dir / "_forever_"
+    forever.mkdir(parents=True)
+    fake_wow_exe = forever / "Wow.exe"
+    fake_wow_exe.write_bytes(b"MZ\x00\x00")
+
+    # Pass nonexistent db and custom extra_paths to scan
+    games = game_library.scan_games(extra_paths=[str(fake_wow_exe)])
+    assert any("wow" in g.exe.casefold() for g in games)
+
+
+def test_game_io_priority_boost_and_restore(tmp_path):
+    """Game Mode ON sets bound game's I/O priority to High, and OFF restores it."""
+    sys_ = WowFakeSystem()
+    journal = Journal(str(tmp_path))
+    choices = session.Choices(
+        bound_game="Wow.exe",
+        priority_boost="high",
+        game_io_priority="high",
+        lower_apps_io_priority=True,
+        high_resolution_timer=True,
+        low_latency_network=True,
+        max_mmcss=True,
+        services=set(),
+        close=set(),
+    )
+    session.turn_on(sys_, choices, journal, lambda *a: None, own_pid=999, session=1)
+    # Wow.exe should have High I/O priority
+    assert sys_.io_prio[100] == IO_PRIORITY_HIGH
+    # Background apps should have Very Low I/O priority
+    assert sys_.io_prio[101] == IO_PRIORITY_VERY_LOW
+    assert sys_.io_prio[102] == IO_PRIORITY_VERY_LOW
+    # Timer should be 0.5ms
+    assert sys_.timer_res == 0.5
+    # Network low latency registry should be set
+    tcp_key = ("HKLM", r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{89aee31e-e7d6-4110-8e95-f0b2d9a62194}", "TcpAckFrequency")
+    assert sys_.reg.get(tcp_key) == (1, 4)
+    # MMCSS should be set
+    mmcss_sched_key = ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Scheduling Category")
+    assert sys_.reg.get(mmcss_sched_key) == ("High", 1)
+
+    # Now turn off
+    report = session.turn_off(sys_, journal, lambda *a: None, settle=0.1)
+    assert not [r for r in report if r["level"] == session.BAD]
+    # Wow.exe and background apps back to Normal
+    assert sys_.io_prio[100] == IO_PRIORITY_NORMAL
+    assert sys_.io_prio[101] == IO_PRIORITY_NORMAL
+    assert sys_.io_prio[102] == IO_PRIORITY_NORMAL
+    # Timer released
+    assert sys_.timer_res == 1.0
+    # Network and MMCSS deleted/restored
+    assert tcp_key not in sys_.reg
+    assert mmcss_sched_key not in sys_.reg
+
+
+def test_real_system_timer_resolution_and_network_unelevated():
+    """Verify real WinSystem timer resolution and network adapter APIs work."""
+    sys_ = WinSystem()
+    current_res = sys_.timer_resolution()
+    assert current_res is not None
+    assert 0.4 <= current_res <= 20.0
+
+    # Setting 0.5ms (5000 100ns units) succeeds even unelevated
+    err = sys_.set_timer_resolution(5000)
+    assert err is None
+    res_after = sys_.timer_resolution()
+    assert res_after is not None
+    assert res_after <= 1.0
+
+    # Releasing timer resolution succeeds
+    err_cancel = sys_.cancel_timer_resolution(5000)
+    assert err_cancel is None
+
+    # Enumerating network interfaces returns a list without crashing
+    adapters = sys_.active_network_interfaces()
+    assert isinstance(adapters, list)

@@ -39,6 +39,7 @@ HIGH_PERFORMANCE = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
 GAMEBAR_KEY = r"Software\Microsoft\GameBar"
 MAINTENANCE_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\Maintenance"
 THEMES_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+REG_SZ = 1
 REG_DWORD = 4
 
 OK, INFO, WARN, BAD = "ok", "info", "warn", "bad"
@@ -116,6 +117,11 @@ class Choices:
     disable_power_throttling: bool = False
     priority_separation: int = 0
     system_responsiveness: int = 0
+    game_io_priority: str = "high"
+    lower_apps_io_priority: bool = True
+    high_resolution_timer: bool = True
+    low_latency_network: bool = True
+    max_mmcss: bool = True
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
@@ -128,7 +134,12 @@ class Choices:
                    affinity_mode=self.affinity_mode,
                    disable_power_throttling=self.disable_power_throttling,
                    priority_separation=self.priority_separation,
-                   system_responsiveness=self.system_responsiveness)
+                   system_responsiveness=self.system_responsiveness,
+                   game_io_priority=self.game_io_priority,
+                   lower_apps_io_priority=self.lower_apps_io_priority,
+                   high_resolution_timer=self.high_resolution_timer,
+                   low_latency_network=self.low_latency_network,
+                   max_mmcss=self.max_mmcss)
         return out
 
 
@@ -187,6 +198,16 @@ def choices_from_config(data) -> Choices:
         c.priority_separation = data["priority_separation"]
     if data.get("system_responsiveness") in (0, 10, 20):
         c.system_responsiveness = data["system_responsiveness"]
+    if data.get("game_io_priority") in ("off", "normal", "high"):
+        c.game_io_priority = data["game_io_priority"]
+    if isinstance(data.get("lower_apps_io_priority"), bool):
+        c.lower_apps_io_priority = data["lower_apps_io_priority"]
+    if isinstance(data.get("high_resolution_timer"), bool):
+        c.high_resolution_timer = data["high_resolution_timer"]
+    if isinstance(data.get("low_latency_network"), bool):
+        c.low_latency_network = data["low_latency_network"]
+    if isinstance(data.get("max_mmcss"), bool):
+        c.max_mmcss = data["max_mmcss"]
     if isinstance(data.get("paused_tasks"), list):
         c.paused_tasks = {s for s in data["paused_tasks"] if isinstance(s, str)}
     elif c.preset == catalog.MAX:
@@ -379,10 +400,10 @@ class _On:
         self.j.mark_done(entry)
         self.log(OK, f"Power plan {plans.get(before, before)} -> {plans.get(target, target)} ({why})")
 
-    def registry(self, hive: str, path: str, name: str, value: int, label: str,
-                 broadcast: str = "") -> Optional[bool]:
-        """Set one DWORD, journaled. True = changed, False = already so, None = not done."""
-        exists, before, kind = self.s.reg_get(path, name, hive)
+    def registry(self, hive: str, path: str, name: str, value, label: str,
+                 broadcast: str = "", kind: int = REG_DWORD) -> Optional[bool]:
+        """Set one registry value, journaled. True = changed, False = already so, None = not done."""
+        exists, before, old_kind = self.s.reg_get(path, name, hive)
         if exists is None:
             self.log(WARN, f"{label}: unreadable -- left alone")
             return None
@@ -390,8 +411,8 @@ class _On:
             return False
         entry = self.j.record({"kind": "registry", "hive": hive, "path": path, "name": name,
                                "label": label, "existed": exists, "value": before,
-                               "after": value, "type": kind, "broadcast": broadcast})
-        error = self.s.reg_set(path, name, value, REG_DWORD, hive)
+                               "after": value, "type": old_kind if exists else kind, "broadcast": broadcast})
+        error = self.s.reg_set(path, name, value, kind, hive)
         if error:
             self.log(BAD, f"{label}: not set ({error})")
             return None
@@ -723,6 +744,98 @@ class _On:
                           "SystemResponsiveness", int(system_responsiveness),
                           "MMCSS SystemResponsiveness")
 
+    def boost_io_priority(self, bound_game: str, mode: str) -> None:
+        """Raise the user's bound game to High I/O priority, journaled."""
+        if not bound_game or mode == "off":
+            return
+        target = 3 if mode == "high" else 2
+        wanted_name = os.path.basename(bound_game).casefold()
+        wanted_path = os.path.normcase(os.path.abspath(bound_game)) if os.path.sep in bound_game else ""
+        touched = 0
+        for proc in self.s.processes():
+            path, _cmdline, _elevated = self.s.details(proc.pid)
+            name = proc.name.casefold()
+            if not (name == wanted_name or (wanted_path and path and os.path.normcase(os.path.abspath(path)) == wanted_path)):
+                continue
+            before = getattr(self.s, "io_priority", lambda _pid: None)(proc.pid)
+            if before is None or before == target:
+                continue
+            entry = self.j.record({"kind": "io_priority", "pid": proc.pid,
+                                   "create_time": proc.create_time, "exe": proc.name,
+                                   "before": before, "after": target})
+            if getattr(self.s, "set_io_priority", lambda _p, _v: "unsupported")(proc.pid, target) is None:
+                self.j.mark_done(entry)
+                touched += 1
+        if touched:
+            from .system import IO_PRIORITY_NAMES
+            self.log(OK, f"{os.path.basename(bound_game)}: disk I/O priority set to {IO_PRIORITY_NAMES.get(target, target)} ({touched} process(es))")
+
+    def lower_io_priority(self, groups: List[AppGroup], closed: Set[str]) -> None:
+        """Demote background apps left open to Very Low (0) disk I/O priority."""
+        lowered = 0
+        for g in groups:
+            if g.exe in closed:
+                continue
+            for p in g.procs:
+                before = getattr(self.s, "io_priority", lambda _pid: None)(p.pid)
+                if before is None or before == 0:
+                    continue
+                entry = self.j.record({"kind": "io_priority", "pid": p.pid,
+                                       "create_time": p.create_time, "exe": g.exe,
+                                       "before": before, "after": 0})
+                if self.s.alive(p.pid, p.create_time) and getattr(self.s, "set_io_priority", lambda _p, _v: "unsupported")(p.pid, 0) is None:
+                    self.j.mark_done(entry)
+                    lowered += 1
+        if lowered:
+            self.log(OK, f"Background disk I/O demoted to Very Low ({lowered} process(es))")
+
+    def timer_resolution(self, enabled: bool) -> None:
+        if not enabled:
+            return
+        error = getattr(self.s, "set_timer_resolution", lambda _p: "unsupported")(5000)
+        if error:
+            self.log(WARN, f"Timer resolution: could not set to 0.5ms ({error})")
+            return
+        entry = self.j.record({"kind": "timer_resolution", "period_100ns": 5000})
+        self.j.mark_done(entry)
+        self.log(OK, "High-resolution timer set to 0.5ms (maximum responsiveness)")
+
+    def low_latency_network(self, enabled: bool, elevated: bool) -> None:
+        if not enabled:
+            return
+        if not elevated:
+            self.log(WARN, "Low-latency network (TcpAckFrequency/TCPNoDelay) needs administrator")
+            return
+        adapters = getattr(self.s, "active_network_interfaces", lambda: [])()
+        if not adapters:
+            self.log(INFO, "No active network adapters with default gateway found for low-latency tuning")
+            return
+        applied = 0
+        for guid in adapters:
+            path = rf"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{guid}"
+            for name in ("TcpAckFrequency", "TCPNoDelay"):
+                res = self.registry("HKLM", path, name, 1, f"Network {name} on {guid[:8]}...")
+                if res is not None:
+                    applied += 1
+        if applied:
+            self.log(OK, f"Network low-latency applied ({applied} parameters tuned: TcpAckFrequency=1, TCPNoDelay=1)")
+
+    def max_mmcss(self, enabled: bool, elevated: bool) -> None:
+        if not enabled:
+            return
+        if not elevated:
+            self.log(WARN, "Max GPU & MMCSS scheduling needs administrator")
+            return
+        import winreg
+        sp_path = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
+        self.registry("HKLM", sp_path, "NetworkThrottlingIndex", 0xFFFFFFFF, "MMCSS NetworkThrottlingIndex")
+        games_path = rf"{sp_path}\Tasks\Games"
+        self.registry("HKLM", games_path, "GPU Priority", 8, "MMCSS Games GPU Priority")
+        self.registry("HKLM", games_path, "Priority", 6, "MMCSS Games Priority")
+        self.registry("HKLM", games_path, "Scheduling Category", "High", "MMCSS Games Scheduling Category", kind=winreg.REG_SZ)
+        self.registry("HKLM", games_path, "SFIO Priority", "High", "MMCSS Games SFIO Priority", kind=winreg.REG_SZ)
+        self.log(OK, "MMCSS tuned for max performance: GPU Priority 8, Games Task High, File I/O High, Network Throttling disabled")
+
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             session: int) -> dict:
@@ -796,6 +909,12 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     _history_start(journal, log)
     on = _On(system, journal, log)
     on.multimedia(choices.priority_separation, choices.system_responsiveness)
+    if choices.max_mmcss:
+        on.max_mmcss(choices.max_mmcss, elevated)
+    if choices.low_latency_network:
+        on.low_latency_network(choices.low_latency_network, elevated)
+    if choices.high_resolution_timer:
+        on.timer_resolution(choices.high_resolution_timer)
     if choices.plan:
         on.plan(system.cpu_name())
     if choices.gamebar:
@@ -818,7 +937,11 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     journal.data["skipped"] = list(on.skipped)
     if choices.lower:
         on.lower(groups, choices.close)
+    if choices.lower_apps_io_priority:
+        on.lower_io_priority(groups, choices.close)
     on.boost_priority(choices.bound_game, choices.priority_boost)
+    if choices.game_io_priority != "off":
+        on.boost_io_priority(choices.bound_game, choices.game_io_priority)
     on.tune_game(choices.bound_game, choices.affinity_mode,
                  choices.disable_power_throttling, os.cpu_count() or 0)
     if choices.explorer:
@@ -1020,17 +1143,32 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
 
 
 def _valid_registry(e: dict) -> bool:
-    allowed = {("HKCU", GAMEBAR_KEY, "AutoGameModeEnabled"),
-               ("HKCU", GAMEBAR_KEY, "AllowAutoGameMode"),
-               ("HKLM", MAINTENANCE_KEY, "MaintenanceDisabled"),
-               ("HKCU", THEMES_KEY, "EnableTransparency")}
+    allowed = {
+        ("HKCU", GAMEBAR_KEY, "AutoGameModeEnabled"),
+        ("HKCU", GAMEBAR_KEY, "AllowAutoGameMode"),
+        ("HKLM", MAINTENANCE_KEY, "MaintenanceDisabled"),
+        ("HKCU", THEMES_KEY, "EnableTransparency"),
+        ("HKLM", r"SYSTEM\CurrentControlSet\Control\PriorityControl", "Win32PrioritySeparation"),
+        ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "SystemResponsiveness"),
+        ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "NetworkThrottlingIndex"),
+        ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "GPU Priority"),
+        ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Priority"),
+        ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Scheduling Category"),
+        ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "SFIO Priority"),
+    }
     triple = (e.get("hive"), e.get("path"), e.get("name"))
-    if not all(isinstance(x, str) for x in triple) or triple not in allowed:
+    if not all(isinstance(x, str) for x in triple):
+        return False
+    is_tcp = (e.get("hive") == "HKLM"
+              and isinstance(e.get("path"), str)
+              and e.get("path", "").startswith(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{")
+              and e.get("name") in ("TcpAckFrequency", "TCPNoDelay"))
+    if triple not in allowed and not is_tcp:
         return False
     if e.get("existed") is False:
-        return e.get("value") is None and e.get("type") == 0
-    return (e.get("existed") is True and type(e.get("value")) is int
-            and e.get("type") == REG_DWORD)
+        return e.get("value") is None and e.get("type") in (0, REG_SZ, REG_DWORD)
+    return (e.get("existed") is True and isinstance(e.get("value"), (int, str))
+            and e.get("type") in (REG_SZ, REG_DWORD))
 
 
 def _valid_entry(system, e) -> bool:
@@ -1053,6 +1191,10 @@ def _valid_entry(system, e) -> bool:
                 and before in system.plans())
     if kind == "priority":
         return type(e.get("before")) is int and e["before"] in PRIORITY_NAMES
+    if kind == "io_priority":
+        return type(e.get("before")) is int and e["before"] in (0, 1, 2, 3)
+    if kind == "timer_resolution":
+        return type(e.get("period_100ns")) is int and e["period_100ns"] > 0
     if kind == "affinity":
         return (type(e.get("before")) is int and type(e.get("after")) is int
                 and 0 < e["before"] and 0 < e["after"])
@@ -1258,6 +1400,35 @@ def _restore_plan(system, e, say, _ctx) -> bool:
     return not error and back
 
 
+def _restore_io_priority(system, e, say, _ctx) -> bool:
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
+    current = getattr(system, "io_priority", lambda _pid: None)(e["pid"])
+    if current is None:
+        say(BAD, f"{e['exe']} ({e['pid']}): I/O priority unreadable -- restore can be retried")
+        return False
+    if current != e.get("after"):
+        say(INFO, f"{e['exe']} ({e['pid']}): I/O priority changed since -- left as it is")
+        return True
+    error = getattr(system, "set_io_priority", lambda _p, _v: "unsupported")(e["pid"], e["before"])
+    if error:
+        say(BAD, f"{e['exe']} ({e['pid']}): I/O priority not restored ({error})")
+        return False
+    from .system import IO_PRIORITY_NAMES
+    say(OK, f"{e['exe']}: I/O priority back to {IO_PRIORITY_NAMES.get(e['before'], e['before'])}")
+    return True
+
+
+def _restore_timer_resolution(system, e, say, _ctx) -> bool:
+    period = e.get("period_100ns", 5000)
+    error = getattr(system, "cancel_timer_resolution", lambda _p: None)(period)
+    if error:
+        say(BAD, f"Timer resolution: not restored ({error})")
+        return False
+    say(OK, "High-resolution timer released")
+    return True
+
+
 def _restore_explorer(_system, e, say, _ctx) -> bool:
     if e.get("done"):
         say(OK, "Explorer was restarted fresh during Game Mode -- nothing to put back")
@@ -1265,6 +1436,7 @@ def _restore_explorer(_system, e, say, _ctx) -> bool:
 
 
 _RESTORE = {"explorer_restart": _restore_explorer, "priority": _restore_priority,
+            "io_priority": _restore_io_priority, "timer_resolution": _restore_timer_resolution,
             "app_close": _restore_app,
             "service_stop": _restore_service_stop, "service_start": _restore_service_start,
             "registry": _restore_registry, "plan": _restore_plan, "task": _restore_task,

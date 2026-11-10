@@ -393,7 +393,7 @@ WINDOWS_ON_DEMAND = frozenset({"searchhost.exe", "crossdeviceresume.exe", "shell
 #: Game launchers. Anything they started -- the game itself -- is never
 #: closed, however it is named (see `session.running_apps`).
 LAUNCHERS = (
-    "steam.exe", "battle.net.exe", "agent.exe", "epicgameslauncher.exe", "eadesktop.exe",
+    "steam.exe", "battle.net.exe", "battlenet.exe", "agent.exe", "epicgameslauncher.exe", "eadesktop.exe",
     "ealauncher.exe", "origin.exe", "ubisoftconnect.exe", "upc.exe", "galaxyclient*.exe",
     "riotclient*.exe", "xboxpcapp.exe", "gamelaunchhelper.exe", "playnite*.exe", "heroic.exe",
     "rockstarlauncher.exe", "launcher.exe", "bsglauncher.exe", "wargaminggamecenter.exe",
@@ -429,6 +429,8 @@ NEVER_CLOSE = LAUNCHERS + ANTIVIRUS_PATTERNS + (
     "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "wsl*.exe",
     "bash.exe", "sh.exe", "mintty.exe", "git.exe", "ssh.exe",
     "codex-command-runner*.exe", "opencode*.exe", "chatgpt.exe", "node_repl.exe",
+    "wow.exe", "wowclassic.exe", "wowt.exe", "wowb.exe", "wowvoiceproxy*.exe",
+    "blizzardbrowser*.exe", "blizzarderror*.exe",
     "winclienttool*.exe",
 )
 

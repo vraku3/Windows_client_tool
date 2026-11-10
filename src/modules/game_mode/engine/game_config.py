@@ -34,6 +34,11 @@ class GameSettings:
     priority_separation: int = 0          # 0 = leave alone, else 26/38
     system_responsiveness: int = 0        # 0 = leave alone, else 10/20
     handle_target: int = 0                 # 0 = no target
+    game_io_priority: str = "high"        # off / normal / high
+    lower_apps_io_priority: bool = True   # demote background apps to Very Low disk I/O
+    high_resolution_timer: bool = True    # 0.5ms timer resolution
+    low_latency_network: bool = True      # TcpAckFrequency=1 & TCPNoDelay=1
+    max_mmcss: bool = True                # Max GPU & MMCSS Scheduling Category High + SFIO Priority High
 
     def normalized(self) -> "GameSettings":
         data = asdict(self)
@@ -50,6 +55,12 @@ class GameSettings:
         if data["system_responsiveness"] not in (0, 10, 20):
             data["system_responsiveness"] = 0
         data["handle_target"] = max(0, min(int(self.handle_target or 0), 1000000))
+        if data.get("game_io_priority") not in ("off", "normal", "high"):
+            data["game_io_priority"] = "high"
+        data["lower_apps_io_priority"] = bool(data.get("lower_apps_io_priority", True))
+        data["high_resolution_timer"] = bool(data.get("high_resolution_timer", True))
+        data["low_latency_network"] = bool(data.get("low_latency_network", True))
+        data["max_mmcss"] = bool(data.get("max_mmcss", True))
         return GameSettings(**data)
 
 

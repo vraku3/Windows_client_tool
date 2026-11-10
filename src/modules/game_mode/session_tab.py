@@ -120,6 +120,25 @@ class SessionTab(QWidget):
                                       controls)
         self._throttle_cb.toggled.connect(self._setting_changed)
         form.addRow("", self._throttle_cb)
+        self._game_io = QComboBox(controls)
+        for label, value in (("High disk I/O (Recommended)", "high"),
+                             ("Normal disk I/O", "normal"),
+                             ("Off (leave alone)", "off")):
+            self._game_io.addItem(label, value)
+        self._game_io.currentIndexChanged.connect(self._setting_changed)
+        form.addRow("Bound game disk I/O", self._game_io)
+        self._lower_io_cb = QCheckBox("Demote background apps disk I/O to Very Low", controls)
+        self._lower_io_cb.toggled.connect(self._setting_changed)
+        form.addRow("", self._lower_io_cb)
+        self._timer_res_cb = QCheckBox("0.5ms high-resolution timer (eliminates thread scheduling jitter)", controls)
+        self._timer_res_cb.toggled.connect(self._setting_changed)
+        form.addRow("Timer & Network", self._timer_res_cb)
+        self._net_latency_cb = QCheckBox("Low latency network (TcpAckFrequency=1 & TCPNoDelay=1)", controls)
+        self._net_latency_cb.toggled.connect(self._setting_changed)
+        form.addRow("", self._net_latency_cb)
+        self._max_mmcss_cb = QCheckBox("Maximize GPU & MMCSS scheduling (Games Task High, Network Throttling disabled)", controls)
+        self._max_mmcss_cb.toggled.connect(self._setting_changed)
+        form.addRow("", self._max_mmcss_cb)
         self._prio_sep = QComboBox(controls)
         for label, value in (("Leave PrioritySeparation alone", 0),
                              ("26 (short, fixed)", 26), ("38 (short, variable)", 38)):
@@ -152,9 +171,12 @@ class SessionTab(QWidget):
         self._bound.currentTextChanged.connect(self._bound_changed)
         self._scan_btn = QPushButton("Rescan games", controls)
         self._scan_btn.clicked.connect(self._scan_games)
+        self._wow_opt_btn = QPushButton("Optimize for World of Warcraft / Max Performance", controls)
+        self._wow_opt_btn.clicked.connect(self._optimize_for_wow)
         bound_row = QHBoxLayout()
         bound_row.addWidget(self._bound, 1)
         bound_row.addWidget(self._scan_btn)
+        bound_row.addWidget(self._wow_opt_btn)
         form.addRow("Bound game", bound_row)
         self._armed_cb = QCheckBox("Enter Game Mode when the bound game starts", controls)
         self._armed_cb.toggled.connect(self._setting_changed)
@@ -303,6 +325,11 @@ class SessionTab(QWidget):
         self._prio_sep.setCurrentIndex(max(0, self._prio_sep.findData(s.priority_separation)))
         self._responsiveness.setCurrentIndex(
             max(0, self._responsiveness.findData(s.system_responsiveness)))
+        self._game_io.setCurrentIndex(max(0, self._game_io.findData(s.game_io_priority)))
+        self._lower_io_cb.setChecked(bool(s.lower_apps_io_priority))
+        self._timer_res_cb.setChecked(bool(s.high_resolution_timer))
+        self._net_latency_cb.setChecked(bool(s.low_latency_network))
+        self._max_mmcss_cb.setChecked(bool(s.max_mmcss))
         self._bound.blockSignals(True)
         self._bound.setCurrentText(s.bound_game)
         self._bound.blockSignals(False)
@@ -347,8 +374,47 @@ class SessionTab(QWidget):
         s.disable_power_throttling = self._throttle_cb.isChecked()
         s.priority_separation = int(self._prio_sep.currentData() or 0)
         s.system_responsiveness = int(self._responsiveness.currentData() or 0)
+        s.game_io_priority = self._game_io.currentData() or "high"
+        s.lower_apps_io_priority = self._lower_io_cb.isChecked()
+        s.high_resolution_timer = self._timer_res_cb.isChecked()
+        s.low_latency_network = self._net_latency_cb.isChecked()
+        s.max_mmcss = self._max_mmcss_cb.isChecked()
         self.host._save_settings()
         self.host._show_state()
+
+    def _optimize_for_wow(self) -> None:
+        if not self._games:
+            self._scan_games()
+        wow_exe = None
+        for g in self._games:
+            if "warcraft" in g.name.casefold() or "wow" in g.exe.casefold():
+                wow_exe = g.exe
+                break
+        if not wow_exe:
+            for env in ("ProgramFiles(x86)", "ProgramFiles"):
+                base = os.environ.get(env)
+                if base:
+                    for sub in (Path("_retail_") / "Wow.exe", Path("_classic_") / "WowClassic.exe", Path("_forever_") / "Wow.exe"):
+                        cand = Path(base) / "World of Warcraft" / sub
+                        if cand.exists():
+                            wow_exe = str(cand)
+                            break
+                    if wow_exe:
+                        break
+        if wow_exe:
+            self._bound.setCurrentText(wow_exe)
+        self._priority.setCurrentIndex(max(0, self._priority.findData("high")))
+        self._game_io.setCurrentIndex(max(0, self._game_io.findData("high")))
+        self._lower_io_cb.setChecked(True)
+        self._timer_res_cb.setChecked(True)
+        self._net_latency_cb.setChecked(True)
+        self._max_mmcss_cb.setChecked(True)
+        self._prio_sep.setCurrentIndex(max(0, self._prio_sep.findData(26)))
+        self._responsiveness.setCurrentIndex(max(0, self._responsiveness.findData(10)))
+        self._throttle_cb.setChecked(True)
+        self._setting_changed()
+        self._status.setText(
+            "Optimized for World of Warcraft: High CPU & Disk I/O priority, 0.5ms timer, low network latency & max MMCSS active.")
 
     def _auto_changed(self, _value) -> None:
         self._setting_changed()

@@ -94,14 +94,74 @@ def epic_games(manifests: Path) -> List[GameEntry]:
     return games
 
 
+def battlenet_games(bnet_product_db: Optional[Path] = None) -> List[GameEntry]:
+    """Scan Battle.net installed games (World of Warcraft, Diablo, etc.)."""
+    games: List[GameEntry] = []
+    candidates: List[Path] = []
+    if bnet_product_db is None:
+        progdata = os.environ.get("ProgramData")
+        if progdata:
+            bnet_product_db = Path(progdata) / "Battle.net" / "Agent" / "product.db"
+    if bnet_product_db and bnet_product_db.exists():
+        try:
+            raw = bnet_product_db.read_bytes()
+            found = re.findall(rb"[A-Za-z]:/[^\x00\r\n\t\"]+", raw)
+            for item in found:
+                try:
+                    p = Path(item.decode("utf-8", errors="ignore"))
+                    if p.exists() and p.is_dir():
+                        candidates.append(p)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("Battle.net path parsing failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Reading Battle.net product.db failed: %s", exc)
+    for env in ("ProgramFiles(x86)", "ProgramFiles"):
+        base = os.environ.get(env)
+        if base:
+            candidates.append(Path(base) / "World of Warcraft")
+
+    wow_flavors = (
+        ("_retail_", "World of Warcraft (Retail)", "Wow.exe"),
+        ("_classic_", "World of Warcraft Classic", "WowClassic.exe"),
+        ("_classic_era_", "World of Warcraft Classic Era", "Wow.exe"),
+        ("_forever_", "World of Warcraft Classic Era", "Wow.exe"),
+        ("_ptr_", "World of Warcraft (PTR)", "WowT.exe"),
+        ("_beta_", "World of Warcraft (Beta)", "WowB.exe"),
+    )
+    seen_dirs = set()
+    for cand in candidates:
+        norm = os.path.normcase(os.path.abspath(cand))
+        if norm in seen_dirs or not cand.exists():
+            continue
+        seen_dirs.add(norm)
+        has_flavor = False
+        for sub, label, exe_name in wow_flavors:
+            exe_path = cand / sub / exe_name
+            if exe_path.exists():
+                games.append(GameEntry(label, str(exe_path), "Battle.net"))
+                has_flavor = True
+        if not has_flavor:
+            try:
+                for exe in sorted(cand.glob("*.exe")):
+                    ename = exe.name.casefold()
+                    if not any(skip in ename for skip in ("launcher", "setup", "error", "update")):
+                        games.append(GameEntry(f"{cand.name} ({exe.stem})", str(exe), "Battle.net"))
+            except OSError as exc:
+                logger.debug("Scanning candidate %s failed: %s", cand, exc)
+    return games
+
+
 def scan_games(steam_root: Optional[str] = None,
                epic_manifests: Optional[str] = None,
-               extra_paths: Iterable[str] = ()) -> List[GameEntry]:
+               extra_paths: Iterable[str] = (),
+               scan_battlenet: bool = True) -> List[GameEntry]:
     games: List[GameEntry] = []
     if steam_root:
         games.extend(steam_games(Path(steam_root)))
     if epic_manifests:
         games.extend(epic_games(Path(epic_manifests)))
+    if scan_battlenet:
+        games.extend(battlenet_games())
     for raw in extra_paths:
         path = Path(raw)
         exe = str(path) if path.is_file() else _first_exe(path) if path.is_dir() else None

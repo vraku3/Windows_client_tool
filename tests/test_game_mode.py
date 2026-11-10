@@ -143,6 +143,21 @@ class FakeSystem:
     def broadcast_setting_change(self, area):
         self.broadcasts.append(area)
 
+    def io_priority(self, pid): return getattr(self, "io_prio", {}).get(pid, 2)
+    def set_io_priority(self, pid, value):
+        if not hasattr(self, "io_prio"):
+            self.io_prio = {}
+        self.io_prio[pid] = value
+        return None
+    def timer_resolution(self): return getattr(self, "timer_res", 1.0)
+    def set_timer_resolution(self, period_100ns=5000):
+        self.timer_res = period_100ns / 10000.0
+        return None
+    def cancel_timer_resolution(self, period_100ns=5000):
+        self.timer_res = 1.0
+        return None
+    def active_network_interfaces(self): return list(getattr(self, "adapters", ["{89aee31e-e7d6-4110-8e95-f0b2d9a62194}"]))
+
     # services by pattern, tasks, animations
     def service_names(self, pattern):
         import fnmatch

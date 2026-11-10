@@ -197,6 +197,11 @@ class GameModeModule(BaseModule):
         choices.disable_power_throttling = settings.disable_power_throttling
         choices.priority_separation = settings.priority_separation
         choices.system_responsiveness = settings.system_responsiveness
+        choices.game_io_priority = settings.game_io_priority
+        choices.lower_apps_io_priority = settings.lower_apps_io_priority
+        choices.high_resolution_timer = settings.high_resolution_timer
+        choices.low_latency_network = settings.low_latency_network
+        choices.max_mmcss = settings.max_mmcss
 
     def _apply_settings_to_choices(self) -> None:
         self._apply_settings_to(self._choices)
@@ -205,7 +210,8 @@ class GameModeModule(BaseModule):
         """Profiles carry their own tuning; adopt it before applying choices."""
         for field in ("priority_boost", "force_close", "close_grace_s", "affinity_mode",
                       "disable_power_throttling", "priority_separation",
-                      "system_responsiveness"):
+                      "system_responsiveness", "game_io_priority", "lower_apps_io_priority",
+                      "high_resolution_timer", "low_latency_network", "max_mmcss"):
             if field in data:
                 setattr(self._settings, field, data[field])
         self._settings = self._settings.normalized()

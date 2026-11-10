@@ -32,6 +32,12 @@ NORMAL = 0x20
 ABOVE_NORMAL = 0x8000
 HIGH = 0x80
 
+IO_PRIORITY_NAMES = {0: "Very Low", 1: "Low", 2: "Normal", 3: "High"}
+IO_PRIORITY_VERY_LOW = 0
+IO_PRIORITY_LOW = 1
+IO_PRIORITY_NORMAL = 2
+IO_PRIORITY_HIGH = 3
+
 
 @dataclass(frozen=True)
 class ServiceState:
@@ -65,6 +71,45 @@ def split_command_line(cmdline: str) -> Tuple[str, str]:
             return text[1:end], text[end + 1:].strip()
     program, _, rest = text.partition(" ")
     return program, rest.strip()
+
+
+def _enable_privilege(name: str) -> bool:
+    """Enable a Windows token privilege on the current process token."""
+    try:
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class _LUID(ctypes.Structure):
+            _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+        class _LUID_AND_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [("Luid", _LUID), ("Attributes", wintypes.DWORD)]
+
+        class _TOKEN_PRIVILEGES(ctypes.Structure):
+            _fields_ = [("PrivilegeCount", wintypes.DWORD), ("Privileges", _LUID_AND_ATTRIBUTES * 1)]
+
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.LookupPrivilegeValueW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.POINTER(_LUID)]
+        advapi32.LookupPrivilegeValueW.restype = wintypes.BOOL
+        advapi32.AdjustTokenPrivileges.argtypes = [wintypes.HANDLE, wintypes.BOOL, ctypes.POINTER(_TOKEN_PRIVILEGES),
+                                                  wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p]
+        advapi32.AdjustTokenPrivileges.restype = wintypes.BOOL
+
+        h_token = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0020 | 0x0008, ctypes.byref(h_token)):
+            return False
+        try:
+            luid = _LUID()
+            if not advapi32.LookupPrivilegeValueW(None, name, ctypes.byref(luid)):
+                return False
+            tp = _TOKEN_PRIVILEGES(1, (_LUID_AND_ATTRIBUTES(luid, 0x00000002),))
+            return bool(advapi32.AdjustTokenPrivileges(h_token, False, ctypes.byref(tp), 0, None, None))
+        finally:
+            kernel32.CloseHandle(h_token)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("game mode: could not enable privilege %s: %s", name, exc)
+        return False
 
 
 class WinSystem:
@@ -239,6 +284,49 @@ class WinSystem:
             return None
         except (psutil.Error, OSError) as error:
             return str(error) or type(error).__name__
+
+    def io_priority(self, pid: int) -> Optional[int]:
+        """Process disk I/O priority: 0 (Very Low), 1 (Low), 2 (Normal), 3 (High)."""
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ntdll = ctypes.WinDLL("ntdll")
+        # 0x1000 = PROCESS_QUERY_LIMITED_INFORMATION
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            prio = ctypes.c_ulong(0)
+            ret_len = ctypes.c_ulong(0)
+            status = ntdll.NtQueryInformationProcess(handle, 33, ctypes.byref(prio), ctypes.sizeof(prio),
+                                                     ctypes.byref(ret_len))
+            return int(prio.value) if status == 0 else None
+        except Exception as error:  # noqa: BLE001
+            logger.debug("game mode: io_priority for pid %s unreadable: %s", pid, error)
+            return None
+        finally:
+            kernel32.CloseHandle(handle)
+
+    def set_io_priority(self, pid: int, value: int) -> Optional[str]:
+        """Set process disk I/O priority: 0 (Very Low), 1 (Low), 2 (Normal), 3 (High)."""
+        if value not in (0, 1, 2, 3):
+            return f"invalid io priority {value}"
+        if value == 3:
+            _enable_privilege("SeIncreaseBasePriorityPrivilege")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ntdll = ctypes.WinDLL("ntdll")
+        # 0x0200 = PROCESS_SET_INFORMATION
+        handle = kernel32.OpenProcess(0x0200, False, pid)
+        if not handle:
+            return f"OpenProcess refused ({ctypes.get_last_error()})"
+        try:
+            prio = ctypes.c_ulong(value)
+            status = ntdll.NtSetInformationProcess(handle, 33, ctypes.byref(prio), ctypes.sizeof(prio))
+            if status != 0:
+                return f"NtSetInformationProcess refused (0x{status & 0xffffffff:x})"
+            return None
+        except Exception as error:  # noqa: BLE001
+            return str(error)
+        finally:
+            kernel32.CloseHandle(handle)
 
     def close(self, identities: List[Tuple[int, int]], exe_path: Optional[str],
               grace: float = 8.0) -> Optional[str]:
@@ -697,6 +785,87 @@ class WinSystem:
                                             _SPIF_UPDATEINIFILE | _SPIF_SENDCHANGE):
             return f"SystemParametersInfo refused ({ctypes.get_last_error()})"
         return None
+
+    # ---- timer resolution ----------------------------------------------------------------------
+    def timer_resolution(self) -> Optional[float]:
+        """Current Windows timer resolution in milliseconds (e.g. 0.5 or 15.6)."""
+        try:
+            ntdll = ctypes.WinDLL("ntdll")
+            min_res = ctypes.c_ulong(0)
+            max_res = ctypes.c_ulong(0)
+            cur_res = ctypes.c_ulong(0)
+            status = ntdll.NtQueryTimerResolution(ctypes.byref(min_res), ctypes.byref(max_res), ctypes.byref(cur_res))
+            if status == 0 and cur_res.value > 0:
+                return round(cur_res.value / 10000.0, 3)
+            return None
+        except Exception as error:  # noqa: BLE001
+            logger.debug("game mode: timer_resolution query error: %s", error)
+            return None
+
+    def set_timer_resolution(self, period_100ns: int = 5000) -> Optional[str]:
+        """Request high-resolution timer (5000 = 0.5ms). Returns error string if refused."""
+        try:
+            ntdll = ctypes.WinDLL("ntdll")
+            cur_res = ctypes.c_ulong(0)
+            status = ntdll.NtSetTimerResolution(period_100ns, 1, ctypes.byref(cur_res))
+            if status != 0:
+                return f"NtSetTimerResolution refused (0x{status & 0xffffffff:x})"
+            return None
+        except Exception as error:  # noqa: BLE001
+            logger.debug("game mode: set_timer_resolution error: %s", error)
+            return str(error)
+
+    def cancel_timer_resolution(self, period_100ns: int = 5000) -> Optional[str]:
+        """Release timer resolution request."""
+        try:
+            ntdll = ctypes.WinDLL("ntdll")
+            cur_res = ctypes.c_ulong(0)
+            status = ntdll.NtSetTimerResolution(period_100ns, 0, ctypes.byref(cur_res))
+            if status != 0:
+                return f"NtSetTimerResolution cancel refused (0x{status & 0xffffffff:x})"
+            return None
+        except Exception as error:  # noqa: BLE001
+            logger.debug("game mode: cancel_timer_resolution error: %s", error)
+            return str(error)
+
+    # ---- network interfaces --------------------------------------------------------------------
+    def active_network_interfaces(self) -> List[str]:
+        """GUIDs of active IPv4 interfaces having a configured default gateway."""
+        base = r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces"
+        active: List[str] = []
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as k:
+                i = 0
+                while True:
+                    try:
+                        guid = winreg.EnumKey(k, i)
+                        i += 1
+                    except OSError:
+                        logger.debug("game mode: end of network adapters enumeration at index %s", i)
+                        break
+                    try:
+                        with winreg.OpenKey(k, guid) as subk:
+                            def _val(val_name: str):
+                                try:
+                                    return winreg.QueryValueEx(subk, val_name)[0]
+                                except OSError as val_error:
+                                    logger.debug("game mode: adapter %s value %s unreadable: %s", guid, val_name, val_error)
+                                    return None
+
+                            ip = _val("IPAddress")
+                            dhcp_ip = _val("DhcpIPAddress")
+                            gw = _val("DefaultGateway")
+                            dhcp_gw = _val("DhcpDefaultGateway")
+                            has_ip = bool((ip and ip != ["0.0.0.0"] and ip != "0.0.0.0")
+                                          or (dhcp_ip and dhcp_ip != "0.0.0.0"))
+                            has_gw = bool(gw or dhcp_gw)
+                            if has_ip and has_gw:
+                                active.append(guid)
+                    except OSError as error:
+                        logger.debug("game mode: adapter %s read error: %s", guid, error)
+        except OSError as error:
+            logger.warning("game mode: enumerating network interfaces failed: %s", error)
+        return active
 
     # ---- service names (patterns) --------------------------------------------------------------
     def service_names(self, pattern: str) -> List[str]:

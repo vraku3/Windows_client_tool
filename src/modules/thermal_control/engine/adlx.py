@@ -36,9 +36,11 @@ from ctypes import POINTER, byref, c_char_p, c_int, c_uint, c_uint8, c_uint64, c
 from dataclasses import dataclass, field
 from typing import Iterator, List, Optional, Tuple
 
+from core.windows_utils import system32
+
 logger = logging.getLogger(__name__)
 
-SYSTEM_COPY = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+SYSTEM_COPY = system32()
 
 # Function-table positions, from the SDK's C *Vtbl structs.
 _SYS_GET_GPUS, _SYS_GET_TUNING = 1, 8

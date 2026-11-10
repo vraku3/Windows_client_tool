@@ -601,6 +601,7 @@ def test_real_logon_script_is_clean_on_this_machine():
     assert inv.items == [] and inv.problems == []
 
 
+@pytest.mark.real_machine
 def test_real_machine_inventory_is_plausible(tmp_path):
     pythoncom = pytest.importorskip("pythoncom")
     pythoncom.CoInitialize()

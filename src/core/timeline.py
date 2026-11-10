@@ -69,7 +69,8 @@ def _read(path):
                         continue
                     _parse_time(item["ts"])
                     events.append(item)
-                except (ValueError, TypeError, OverflowError, OSError):
+                except (ValueError, TypeError, OverflowError, OSError) as exc:
+                    logger.debug("Skipping invalid timeline record: %s", exc)
                     continue
     except FileNotFoundError:
         return []

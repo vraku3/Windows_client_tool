@@ -37,10 +37,16 @@ def record(action: str, outcome: str) -> dict:
     entry = {"at": datetime.now().isoformat(timespec="seconds"),
              "action": action, "outcome": outcome}
     entries.append(entry)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(entries[-200:], f, indent=2)
-    from core.timeline import record as timeline_record
-    timeline_record(os.path.dirname(path), "quick_fix", "fix_run", f"{action}: {outcome}", {"outcome": outcome}, "error" if outcome == "error" else "warning" if outcome == "cancelled" else "info")
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(entries[-200:], f, indent=2)
+    except OSError as exc:
+        logger.warning("Could not write quick fix history to %s: %s", path, exc)
+    try:
+        from core.timeline import record as timeline_record
+        timeline_record(os.path.dirname(path), "quick_fix", "fix_run", f"{action}: {outcome}", {"outcome": outcome}, "error" if outcome == "error" else "warning" if outcome == "cancelled" else "info")
+    except Exception as exc:
+        logger.debug("Could not record quick fix timeline: %s", exc)
     return entry
 
 

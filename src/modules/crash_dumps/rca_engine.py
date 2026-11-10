@@ -208,13 +208,13 @@ def parse_whea_record(event_id: int, raw_data: dict, message: str, timestamp: da
     if "ProcessorAPICID" in raw_data or "ApicId" in raw_data:
         try:
             apic_id = int(raw_data.get("ProcessorAPICID", raw_data.get("ApicId")))
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug("Failed parsing apic_id: %s", exc)
     if "Bank" in raw_data:
         try:
             bank = int(raw_data["Bank"])
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug("Failed parsing bank: %s", exc)
 
     # Fallback to regex on message text if structured data is absent
     if apic_id is None:
@@ -374,8 +374,8 @@ def correlate_incidents(
             if code is not None:
                 try:
                     code_int = int(code, 16) if isinstance(code, str) and code.startswith("0x") else int(code)
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.debug("Failed parsing bugcheck code %s: %s", code, exc)
 
             label = raw.get("bug_check") or (bugcheck_label(code_int) if code_int else "BugCheck")
             src_name = "Minidump" if "minidump" in source else ("MEMORY.DMP" if "memory" in source else "BugCheck 1001")

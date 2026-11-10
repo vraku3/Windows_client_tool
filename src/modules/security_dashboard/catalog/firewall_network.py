@@ -27,7 +27,7 @@ from ..security_reader import (
     check_admin_shares, check_firewall, check_firewall_logging,
     check_firewall_outbound, check_firewall_stealth,
     check_llmnr, check_mdns, check_netbios_tcpip, check_network_profile, check_rdp,
-    check_rdp_nla, check_remote_registry, check_smb_signing, check_smbv1,
+    check_rdp_nla, check_remote_registry, check_smb_guest_auth, check_smb_server_signing, check_smb_signing, check_smbv1,
     check_telnet, check_winrm, check_wpad,
 )
 from .model import Category, Risk, SecurityControl
@@ -43,6 +43,7 @@ _LANMAN_SERVER = (r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer"
                   r"\Parameters")
 _TERMINAL_SERVER = r"HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server"
 _RDP_TCP = _TERMINAL_SERVER + r"\WinStations\RDP-Tcp"
+_WINHTTP = r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp"
 
 _PS = f'"{powershell_exe()}" -NoProfile -Command '
 
@@ -311,9 +312,9 @@ CONTROLS: Tuple[SecurityControl, ...] = (
     # -- SMB ----------------------------------------------------------------
     SecurityControl(
         id="smb_signing",
-        title="SMB signing required",
+        title="SMB client signing required",
         category=Category.FIREWALL_NETWORK,
-        description="Requires every SMB session to be signed.",
+        description="Requires every outgoing SMB session from this machine to be signed.",
         why_it_matters="Signing is what defeats an SMB relay: a stolen "
                        "authentication cannot be replayed against another "
                        "machine.",
@@ -321,6 +322,35 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         on_steps=(_dword(_LANMAN_WORKSTATION, "RequireSecuritySignature", 1),),
         off_steps=(_dword(_LANMAN_WORKSTATION, "RequireSecuritySignature", 0),),
         desired=True,
+        risk=Risk.MEDIUM,
+    ),
+
+    SecurityControl(
+        id="smb_server_signing",
+        title="SMB server signing required",
+        category=Category.FIREWALL_NETWORK,
+        description="Requires incoming SMB sessions to this computer to be digitally signed.",
+        why_it_matters="Stops NTLM credential relay attacks against this machine: "
+                       "an attacker intercepting NTLM credentials cannot replay them "
+                       "against this computer's SMB server without valid session signing keys.",
+        reader=check_smb_server_signing,
+        on_steps=(_dword(_LANMAN_SERVER, "RequireSecuritySignature", 1),),
+        off_steps=(_dword(_LANMAN_SERVER, "RequireSecuritySignature", 0),),
+        desired=True,
+        risk=Risk.MEDIUM,
+    ),
+
+    SecurityControl(
+        id="smb_guest_auth",
+        title="SMB insecure guest logons",
+        category=Category.FIREWALL_NETWORK,
+        description="Whether the SMB client permits unauthenticated guest logons to remote file shares.",
+        why_it_matters="Insecure guest logons allow connections to file servers without credentials. "
+                       "Guest sessions are not signed or encrypted, exposing traffic to Man-in-the-Middle tampering.",
+        reader=check_smb_guest_auth,
+        on_steps=(_dword(_LANMAN_WORKSTATION, "AllowInsecureGuestAuth", 1),),
+        off_steps=(_dword(_LANMAN_WORKSTATION, "AllowInsecureGuestAuth", 0),),
+        desired=False,
         risk=Risk.MEDIUM,
     ),
 
@@ -391,15 +421,12 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         description="Whether this machine asks the network where its proxy "
                     "configuration lives.",
         why_it_matters="Whoever answers first becomes this machine's proxy "
-                       "and sees, or rewrites, its web traffic. This is ON "
-                       "here.",
+                       "and sees, or rewrites, its web traffic.",
         reader=check_wpad,
-        read_only_reason="Auto-detect is a per-user Internet Settings value "
-                         "in HKCU. The elevated helper that applies changes "
-                         "runs as the administrator, so it would write the "
-                         "wrong user's hive and the verify pass would "
-                         "correctly report that nothing changed. Turn it off "
-                         "in Settings > Network & internet > Proxy, per user.",
+        on_steps=(_dword(_WINHTTP, "DisableWpad", 0),),
+        off_steps=(_dword(_WINHTTP, "DisableWpad", 1),),
+        desired=False,
+        risk=Risk.LOW,
     ),
 
     SecurityControl(

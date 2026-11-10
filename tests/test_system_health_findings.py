@@ -9,7 +9,8 @@ import pytest
 
 from modules.system_health.findings import (
     Finding, check_pending_servicing, check_orphaned_scheduled_tasks,
-    check_orphaned_services, check_hardware_errors, check_upgrade_headroom, all_findings,
+    check_orphaned_services, check_hardware_errors, check_upgrade_headroom,
+    check_crash_control, check_print_queue, check_driver_blocklist, all_findings,
 )
 
 
@@ -359,17 +360,199 @@ def test_upgrade_headroom_above_threshold_is_info(monkeypatch):
     assert finding.severity == "info"
 
 
-def test_all_findings_combines_all_five_checks(monkeypatch, tmp_path):
+def test_crash_control_real_machine():
+    findings = check_crash_control()
+    assert len(findings) >= 1
+    assert any(f.id in ("crash_dump_config", "crash_dumps_disabled", "crash_control_refused") for f in findings)
+
+
+def test_crash_control_disabled_reported_as_warning(monkeypatch):
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    
+    def fake_query(key, name):
+        if name == "CrashDumpEnabled": return (0, 4)
+        if name == "AutoReboot": return (0, 4)
+        if name == "LogEvent": return (1, 4)
+        raise FileNotFoundError(name)
+        
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
+
+    findings = check_crash_control()
+    ids = [f.id for f in findings]
+    assert "crash_dumps_disabled" in ids
+    assert "auto_reboot_disabled" in ids
+    assert any(f.severity == "warning" for f in findings)
+
+
+def test_print_queue_stuck_jobs(tmp_path, monkeypatch):
+    spool = tmp_path / "System32" / "spool" / "PRINTERS"
+    spool.mkdir(parents=True)
+    (spool / "FP00001.SHD").write_text("x")
+    (spool / "FP00001.SPL").write_text("y")
+    monkeypatch.setenv("windir", str(tmp_path))
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+
+    findings = check_print_queue()
+    assert len(findings) == 1
+    assert findings[0].id == "stuck_print_jobs"
+    assert findings[0].severity == "warning"
+    assert "2 stuck print spool file(s)" in findings[0].title
+
+
+def test_print_queue_empty_when_clean(tmp_path, monkeypatch):
+    spool = tmp_path / "System32" / "spool" / "PRINTERS"
+    spool.mkdir(parents=True)
+    monkeypatch.setenv("windir", str(tmp_path))
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+
+    assert check_print_queue() == []
+
+
+def test_driver_blocklist_enabled(monkeypatch):
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda k, name: (1, 4))
+
+    finding = check_driver_blocklist()
+    assert finding.id == "vulnerable_driver_blocklist_enabled"
+    assert finding.severity == "info"
+
+
+def test_driver_blocklist_disabled(monkeypatch):
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+    
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda k, name: (0, 4))
+
+    finding = check_driver_blocklist()
+    assert finding.id == "vulnerable_driver_blocklist_disabled"
+    assert finding.severity == "warning"
+
+
+def test_all_findings_combines_all_checks(monkeypatch, tmp_path):
     monkeypatch.setenv("windir", str(tmp_path))  # no pending.xml
     monkeypatch.setenv("SystemRoot", str(tmp_path))
     monkeypatch.setattr(subprocess, "run", lambda cmd, **k: type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})())
     monkeypatch.setattr("shutil.disk_usage", lambda path: (500 * 1024**3, 100 * 1024**3, 400 * 1024**3))
     monkeypatch.setattr("modules.system_health.findings.check_orphaned_services", lambda: [])
+    monkeypatch.setattr("modules.system_health.findings.check_crash_control", lambda: [Finding(id="fake_crash", title="Crash", detail="", severity="info")])
+    monkeypatch.setattr("modules.system_health.findings.check_print_queue", lambda: [])
+    monkeypatch.setattr("modules.system_health.findings.check_driver_blocklist", lambda: Finding(id="fake_driver", title="Driver", detail="", severity="info"))
 
     findings = all_findings()
+    ids = [f.id for f in findings]
+    assert "fake_crash" in ids
+    assert "fake_driver" in ids
+    assert "upgrade_headroom" in ids
+    assert len(findings) >= 3
 
-    # No pending servicing, no orphaned tasks (empty schtasks output), no
-    # orphaned services (mocked empty above), no hardware errors (empty
-    # subprocess output above parses as []), one headroom finding.
-    assert len(findings) == 1
-    assert findings[0].id == "upgrade_headroom"
+
+def test_vss_services_disabled(monkeypatch):
+    from modules.system_health.findings import check_vss_services
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda k, name: (4, 4))  # 4 = Disabled
+
+    findings = check_vss_services()
+    assert len(findings) == 2
+    assert findings[0].id == "vss_service_disabled"
+    assert findings[0].severity == "warning"
+    assert findings[1].id == "swprv_service_disabled"
+    assert findings[1].severity == "warning"
+
+
+def test_fast_startup_uptime_flagged(monkeypatch):
+    from modules.system_health.findings import check_fast_startup_uptime
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    import winreg
+    import ctypes
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda k, name: (1, 4))
+    # Mock 20 days of uptime in milliseconds
+    ms_20_days = 20 * 24 * 60 * 60 * 1000
+    monkeypatch.setattr(ctypes.windll.kernel32, "GetTickCount64", lambda: ms_20_days)
+
+    finding = check_fast_startup_uptime()
+    assert finding is not None
+    assert finding.id == "fast_startup_prolonged_uptime"
+    assert "20 days" in finding.title
+    assert finding.severity == "info"
+
+
+def test_scheduled_chkdsk_detected(monkeypatch):
+    from modules.system_health.findings import check_scheduled_chkdsk
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(
+        winreg,
+        "QueryValueEx",
+        lambda k, name: (["autocheck autochk *", r"autocheck autochk /p \??\C:"], 7)
+    )
+
+    finding = check_scheduled_chkdsk()
+    assert finding is not None
+    assert finding.id == "scheduled_chkdsk_pending"
+    assert finding.severity == "warning"
+    assert "chkdsk" in finding.title.lower()
+
+
+def test_safeboot_active_detected(monkeypatch):
+    from modules.system_health.findings import check_safeboot_active
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+
+    import winreg
+    monkeypatch.setattr(winreg, "OpenKey", lambda *a, **k: FakeKey())
+    monkeypatch.setattr(winreg, "QueryValueEx", lambda k, name: (1, 4))
+
+    finding = check_safeboot_active()
+    assert finding is not None
+    assert finding.id == "safeboot_active"
+    assert finding.severity == "warning"
+    assert "Minimal" in finding.title
+
+
+def test_wer_queue_buildup(tmp_path, monkeypatch):
+    from modules.system_health.findings import check_wer_queue
+    monkeypatch.setenv("ProgramData", str(tmp_path))
+    wer_dir = tmp_path / "Microsoft" / "Windows" / "WER" / "ReportQueue"
+    wer_dir.mkdir(parents=True)
+
+    # Empty queue
+    assert check_wer_queue() is None
+
+    # Small queue
+    rpt1 = wer_dir / "Report1"
+    rpt1.mkdir()
+    (rpt1 / "Report.wer").write_text("crash data")
+    f_info = check_wer_queue()
+    assert f_info is not None
+    assert f_info.severity == "info"
+
+    # Queue exceeding max_reports threshold
+    f_warn = check_wer_queue(max_reports=1)
+    assert f_warn is not None
+    assert f_warn.severity == "warning"

@@ -271,32 +271,40 @@ def reregister_wu_dlls(output_cb: Callable[[str], None]) -> None:
 
 
 def clear_print_queue(output_cb: Callable[[str], None]) -> None:
-    """Stop the spooler, clear queued jobs, and ALWAYS restart the
-    spooler even if a spool file was locked and could not be deleted --
-    an all-or-nothing chain here would leave printing broken with just a
-    generic error. This function has had this unconditional-restart
-    behavior since it was created. Quick Cleanup's own `_clear_print_queue`
-    needed a similar fix later (commit f954f63, 2026-09-14) after shipping
-    with an all-`&&` chain that could leave the spooler stopped on a
-    failed delete."""
+    """Stop the spooler, clear lingering spool jobs (.SHD/.SPL/.TMP), and
+    ALWAYS restart the spooler even if a file was locked or missing."""
+    from core.windows_utils import system_root
+
+    output_cb("Stopping Print Spooler (spoolsv)...")
     if not _stop_service("Spooler", output_cb):
-        # Deleting spool files under a running spooler races it. The stop may
-        # still land after the wait timed out (STOP_PENDING), so the spooler
-        # is started again if it is not running -- never left stopped.
         output_cb("Print queue NOT cleared: the Print Spooler did not stop.")
         _start_service("Spooler", output_cb)
         return
+
+    spool_dir = os.path.join(system_root(), "System32", "spool", "PRINTERS")
+    deleted_count = 0
     try:
-        spool_dir = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
-                                 r"System32\spool\PRINTERS")
         if os.path.isdir(spool_dir):
-            for f in os.listdir(spool_dir):
+            entries = os.listdir(spool_dir)
+            targets = [
+                f for f in entries
+                if f.lower().endswith((".shd", ".spl", ".tmp"))
+                or os.path.isfile(os.path.join(spool_dir, f))
+            ]
+            for f in targets:
                 fpath = os.path.join(spool_dir, f)
+                if not os.path.isfile(fpath):
+                    continue
                 try:
                     os.remove(fpath)
                     output_cb(f"Deleted: {f}")
+                    deleted_count += 1
                 except OSError as e:
                     output_cb(f"Skip {f}: {e}")
+            if deleted_count > 0:
+                output_cb(f"Cleared {deleted_count} lingering spool file(s).")
+            else:
+                output_cb("Print queue was already empty.")
     except OSError as e:
         output_cb(f"Could not read the spool folder: {e}")
         _note_failure(f"could not read the spool folder: {e}")
@@ -456,6 +464,63 @@ def clear_font_cache(output_cb: Callable[[str], None]) -> None:
     output_cb("Font cache cleared.")
 
 
+def salvage_wmi_repository(output_cb: Callable[[str], None]) -> None:
+    """Run winmgmt /salvagerepository to repair a corrupted or inconsistent WMI repository."""
+    output_cb("Running WMI repository salvage (winmgmt /salvagerepository)...")
+    rc = _run_cmd(["winmgmt", "/salvagerepository"], output_cb)
+    if rc == 0:
+        output_cb("WMI repository salvage completed successfully.")
+    else:
+        output_cb(f"winmgmt /salvagerepository returned exit code {rc}.")
+
+
+def clear_wer_queue(output_cb: Callable[[str], None]) -> None:
+    """Clear Windows Error Reporting queue and archives."""
+    program_data = os.environ.get("ProgramData", r"C:\ProgramData")
+    wer_base = os.path.join(program_data, "Microsoft", "Windows", "WER")
+    total_removed = 0
+    for sub in ("ReportQueue", "ReportArchive", "Temp"):
+        target = os.path.join(wer_base, sub)
+        if not os.path.isdir(target):
+            continue
+        output_cb(f"Clearing WER {sub}...")
+        removed_count = 0
+        try:
+            for item in os.listdir(target):
+                item_path = os.path.join(target, item)
+                try:
+                    if os.path.isdir(item_path):
+                        import shutil
+                        shutil.rmtree(item_path, ignore_errors=True)
+                    else:
+                        os.remove(item_path)
+                    removed_count += 1
+                except OSError as exc:
+                    output_cb(f"Could not remove {item}: {exc}")
+                    logger.debug("Could not remove WER item %s: %s", item_path, exc)
+        except OSError as exc:
+            output_cb(f"Could not list {target}: {exc}")
+            logger.debug("Could not list %s: %s", target, exc)
+        output_cb(f"Removed {removed_count} item(s) from {sub}.")
+        total_removed += removed_count
+    output_cb(f"Windows Error Reporting queue cleared ({total_removed} total item(s) removed).")
+
+
+def _wer_queue_precondition() -> Optional[str]:
+    """Check if there are any crash reports or files in WER queues."""
+    program_data = os.environ.get("ProgramData", r"C:\ProgramData")
+    wer_base = os.path.join(program_data, "Microsoft", "Windows", "WER")
+    for sub in ("ReportQueue", "ReportArchive", "Temp"):
+        target = os.path.join(wer_base, sub)
+        if os.path.isdir(target):
+            try:
+                if os.listdir(target):
+                    return None
+            except OSError as exc:
+                logger.debug("WER queue check failed for %s: %s", target, exc)
+    return "WER ReportQueue and archives are already empty — nothing to clear"
+
+
 def resize_hibernation(output_cb: Callable[[str], None]) -> None:
     """Ported from Quick Cleanup's _resize_hibernation. The hiberfil.sys
     existence gate moves to a `precondition` on the FixAction entry
@@ -473,6 +538,44 @@ def _hibernation_precondition() -> Optional[str]:
     return None
 
 
+def _print_queue_precondition() -> Optional[str]:
+    """Check if there are any spool files before allowing clear."""
+    from core.windows_utils import system_root
+    spool_dir = os.path.join(system_root(), "System32", "spool", "PRINTERS")
+    if not os.path.isdir(spool_dir):
+        return "Spool folder does not exist"
+    try:
+        entries = os.listdir(spool_dir)
+        spool_files = [
+            f for f in entries
+            if f.lower().endswith((".shd", ".spl", ".tmp"))
+            and os.path.isfile(os.path.join(spool_dir, f))
+        ]
+        if not spool_files:
+            return "Print queue is empty — no lingering spool files found"
+    except OSError as e:
+        return f"Spool folder unreadable: {e}"
+    return None
+
+
+def _servicing_precondition() -> Optional[str]:
+    """Matches system_health.findings.check_pending_servicing:
+    DISM refuses component cleanup if pending.xml exists."""
+    from core.windows_utils import system_root
+    pending = os.path.join(system_root(), "WinSxS", "pending.xml")
+    if os.path.exists(pending):
+        return "A servicing transaction is pending (reboot required before running DISM cleanup)"
+    return None
+
+
+def _wu_reset_precondition() -> Optional[str]:
+    """Prevent resetting Windows Update cache while a reboot is pending."""
+    from core.windows_utils import is_reboot_pending
+    if is_reboot_pending():
+        return "A reboot is pending for Windows Update — reboot before resetting cache"
+    return None
+
+
 ALL_ACTIONS: List[FixAction] = [
     # System Repairs
     FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup on C: drive",
@@ -480,6 +583,11 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("perf_reset", "Reset Performance Counters",
               "Rebuild corrupted performance counter registry keys",
               "System Repairs", reboot_required=False, fn=reset_perf_counters),
+    FixAction("wmi_salvage", "Salvage WMI Repository",
+              "Check and salvage an inconsistent or corrupted WMI repository",
+              "System Repairs", fn=salvage_wmi_repository,
+              confirm_text="This will scan and salvage the WMI repository using winmgmt /salvagerepository. "
+                           "Management tools and services depending on WMI will be refreshed. Continue?"),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,
@@ -515,6 +623,7 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("wu_reset", "Reset Windows Update",
               "Stop WU services, clear caches, restart",
               "Windows Update", fn=reset_windows_update,
+              precondition=_wu_reset_precondition,
               confirm_text="This will reset the Windows Update client, clear the "
                            "SoftwareDistribution and catroot2 caches, and restart the "
                            "affected services. This cannot be undone. Continue?"),
@@ -527,6 +636,7 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("print_queue", "Clear Print Queue",
               "Stop Spooler, delete print jobs, restart",
               "Print", fn=clear_print_queue,
+              precondition=_print_queue_precondition,
               confirm_text="This will stop the Print Spooler, clear all queued print "
                            "jobs, and restart it. Any job currently printing or queued "
                            "will be lost."),
@@ -542,11 +652,13 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("compact_winsxs", "Compact WinSxS",
               "Run DISM component cleanup to reclaim WinSxS space",
               "Cleanup", fn=compact_winsxs, long_running=True,
+              precondition=_servicing_precondition,
               confirm_text="This runs DISM /StartComponentCleanup which can take "
                            "10–30 minutes. The system will remain usable. Continue?"),
     FixAction("wu_deep_clean", "WU Deep Clean",
               "Deep Windows Update component-store cleanup",
               "Cleanup", fn=wu_deep_clean, long_running=True,
+              precondition=_servicing_precondition,
               confirm_text="This runs a deep Windows Update cleanup which may take "
                            "10–20 minutes. Continue?"),
     FixAction("clear_clipboard", "Clear Clipboard", "Clear the Windows clipboard content",
@@ -566,4 +678,8 @@ ALL_ACTIONS: List[FixAction] = [
               "Cleanup", fn=resize_hibernation, precondition=_hibernation_precondition,
               confirm_text="This shrinks hiberfil.sys to 50% of RAM (Windows' own default "
                            "since Windows 10) without disabling hibernation. Continue?"),
+    FixAction("clear_wer_queue", "Clear WER Queue",
+              "Clear pending crash reports and minidumps from Windows Error Reporting",
+              "Cleanup", fn=clear_wer_queue, precondition=_wer_queue_precondition,
+              confirm_text="This will delete pending crash report packages and minidumps from the Windows Error Reporting queue and archive. Continue?"),
 ]

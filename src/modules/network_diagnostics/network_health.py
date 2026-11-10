@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from modules.network_diagnostics import dns_client, network_events
+from modules.network_diagnostics import dns_client, network_events, winsock_catalog
 from core.windows_utils import system32
 
 logger = logging.getLogger(__name__)
@@ -157,6 +157,21 @@ def read_hosts() -> Optional[List[Dict[str, str]]]:
         return None
 
 
+def read_dns_search_list() -> Optional[List[str]]:
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters") as k:
+            val, _ = winreg.QueryValueEx(k, "SearchList")
+            if not val:
+                return []
+            return [s.strip() for s in re.split(r"[,;\s]+", str(val)) if s.strip()]
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        logger.warning("dns search list read failed: %s", e)
+        return None
+
+
 def collect_snapshot() -> Dict[str, Any]:
     """Read configuration. ``errors`` lists what could not be read and why."""
     snap: Dict[str, Any] = {"errors": [], "taken": datetime.now().isoformat(timespec="seconds")}
@@ -173,6 +188,8 @@ def collect_snapshot() -> Dict[str, Any]:
     snap["user_proxy"] = read_user_proxy()
     snap["hosts"] = read_hosts()
     snap["events"] = network_events.read_network_events()
+    snap["winsock"] = winsock_catalog.read_catalog()
+    snap["dns_search_list"] = read_dns_search_list()
     return snap
 
 
@@ -605,12 +622,51 @@ def _f_events(snap: Dict[str, Any]) -> List[Finding]:
     return out
 
 
+def _f_winsock(snap: Dict[str, Any]) -> List[Finding]:
+    if "winsock" not in snap:
+        return []
+    providers = snap.get("winsock")
+    if providers is None:
+        return [Finding("winsock", UNKNOWN, "Winsock catalog could not be read")]
+    broken = winsock_catalog.broken_providers(providers)
+    if broken:
+        return [Finding(
+            "winsock-corrupt",
+            ERROR,
+            f"{len(broken)} corrupted Winsock catalog provider(s) detected",
+            "One or more registered Winsock Layered Service Providers point to non-existent DLL files on disk. "
+            "This typically breaks network connectivity for all applications.",
+            fix="reset_winsock",
+            items=[f"{p.description}: {p.provider_path}" for p in broken],
+        )]
+    return [Finding("winsock", OK, "Winsock catalog intact", f"{len(providers)} registered provider(s) verified.")]
+
+
+def _f_dns_search_list(snap: Dict[str, Any]) -> List[Finding]:
+    if "dns_search_list" not in snap:
+        return []
+    suffixes = snap.get("dns_search_list")
+    if suffixes is None:
+        return [Finding("dns-searchlist", UNKNOWN, "DNS search suffix list could not be read")]
+    if len(suffixes) > 6:
+        return [Finding(
+            "dns-searchlist",
+            WARNING,
+            f"Large DNS search suffix list ({len(suffixes)} suffixes configured)",
+            "Windows queries each suffix in order for unqualified names. Long lists cause noticeable DNS query latency and timeout cascades.",
+            items=suffixes,
+        )]
+    if suffixes:
+        return [Finding("dns-searchlist", INFO, f"{len(suffixes)} DNS search suffix(es) configured", items=suffixes)]
+    return []
+
+
 def evaluate(snap: Dict[str, Any], probes: Dict[str, Any], now: Optional[datetime] = None) -> List[Finding]:
     now = now or datetime.now()
     out: List[Finding] = [Finding("read", UNKNOWN, "Could not read some configuration", e) for e in snap.get("errors", [])]
     for part in (_f_gateway(snap, probes), _f_multi_route(snap), _f_apipa(snap), _f_dns(snap, probes),
                  _f_proxy(snap), _f_hosts(snap), _f_dhcp(snap, now), _f_links(snap), _f_mtu(snap, probes),
-                 _f_time_v6(probes), _f_events(snap)):
+                 _f_time_v6(probes), _f_events(snap), _f_winsock(snap), _f_dns_search_list(snap)):
         out.extend(part)
     out.sort(key=lambda f: SEVERITY_ORDER[f.severity])
     return out

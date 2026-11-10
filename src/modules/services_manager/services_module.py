@@ -507,11 +507,15 @@ class ServicesModule(BaseModule):
         # Action buttons
         btn_row = QHBoxLayout()
         btn_row.addStretch()
+        self._detail_recovery_btn = QPushButton("Set Auto-Restart on Crash")
+        self._detail_recovery_btn.setToolTip("Configure this service to restart automatically after 60s upon crash (sc failure)")
         self._detail_refresh_btn = QPushButton("Refresh Details")
         self._detail_copy_btn = QPushButton("Copy details")
+        btn_row.addWidget(self._detail_recovery_btn)
         btn_row.addWidget(self._detail_copy_btn)
         btn_row.addWidget(self._detail_refresh_btn)
         self._detail_copy_btn.clicked.connect(self._copy_detail)
+        self._detail_recovery_btn.clicked.connect(self._configure_recovery_restart)
         self._detail_layout.addLayout(btn_row)
 
         self._detail_refresh_btn.clicked.connect(self._refresh_detail)
@@ -762,6 +766,33 @@ class ServicesModule(BaseModule):
 
     def _refresh_detail(self):
         self._load_detail()
+
+    def _configure_recovery_restart(self):
+        svc = self._get_selected_service()
+        if not svc:
+            return
+        name = svc["Name"]
+        disp = svc.get("Display Name", name)
+        reply = QMessageBox.question(
+            self._outer,
+            "Configure Recovery",
+            f"Set service '{disp}' ({name}) to restart automatically on 1st and 2nd failure?\n\n"
+            "This runs: sc failure <name> reset= 86400 actions= restart/60000/restart/60000",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        ok, msg = service_view.set_failure_actions(
+            name,
+            [("restart", 60000), ("restart", 60000)],
+            reset_seconds=86400,
+        )
+        if ok:
+            self._status_label.setText(f"Configured auto-restart recovery for {name}.")
+            self._refresh_detail()
+        else:
+            QMessageBox.warning(self._outer, "Recovery Configuration Failed", msg)
 
     # ------------------------------------------------------------------
     # Actions

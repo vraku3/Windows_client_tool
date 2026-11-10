@@ -1,11 +1,13 @@
 from core.system_paths import powershell_exe
 import datetime
 import json
+import logging
+import os
 import re
 import subprocess
+import winreg
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Tuple
-import logging
+from typing import Any, List, Optional, Dict, Tuple
 logger = logging.getLogger(__name__)
 
 CREATE_NO_WINDOW = 0x08000000
@@ -456,3 +458,230 @@ def list_restore_points() -> Optional[List[dict]]:
         logger.warning("Could not parse restore point list: %s", exc)
         return None
     return [data] if isinstance(data, dict) else data
+
+
+# ------------------------------------------------------------------
+# Kernel Posture & Testsigning Detection
+# ------------------------------------------------------------------
+
+_CONTROL_KEY = r"SYSTEM\CurrentControlSet\Control"
+_CI_CONFIG_KEY = r"SYSTEM\CurrentControlSet\Control\CI\Config"
+
+
+@dataclass(frozen=True)
+class KernelPosture:
+    raw_options: str
+    testsigning: bool
+    no_integrity_checks: bool
+    vulnerable_driver_blocklist: Optional[bool]  # True=on, False=off, None=unconfigured
+    is_degraded: bool
+    warnings: List[str]
+    refusal_reason: Optional[str] = None
+
+
+def check_kernel_posture() -> KernelPosture:
+    """Read kernel integrity posture from SystemStartOptions and CI\\Config.
+
+    Accessible unelevated. Never swallows errors: permission or registry
+    failures are recorded as refusal_reason, not a clean bill of health.
+    """
+    raw_options = ""
+    testsigning = False
+    no_integrity_checks = False
+    refusal = None
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _CONTROL_KEY) as key:
+            val, _ = winreg.QueryValueEx(key, "SystemStartOptions")
+            raw_options = str(val or "")
+            tokens = {t.upper() for t in raw_options.split()}
+            testsigning = "TESTSIGNING" in tokens
+            no_integrity_checks = bool(tokens & {"NOINTEGRITYCHECKS", "DISABLE_INTEGRITY_CHECKS"})
+    except FileNotFoundError:
+        logger.debug("SystemStartOptions value missing under HKLM\\%s", _CONTROL_KEY)
+    except OSError as exc:
+        logger.warning("Could not read SystemStartOptions: %s", exc)
+        refusal = f"Could not read SystemStartOptions: {exc}"
+
+    # Check Microsoft Vulnerable Driver Blocklist
+    blocklist_enabled: Optional[bool] = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _CI_CONFIG_KEY) as key:
+            val, _ = winreg.QueryValueEx(key, "VulnerableDriverBlocklistEnable")
+            blocklist_enabled = bool(val)
+    except FileNotFoundError:
+        logger.debug("VulnerableDriverBlocklistEnable not found under HKLM\\%s", _CI_CONFIG_KEY)
+        blocklist_enabled = None
+    except OSError as exc:
+        logger.warning("Could not read VulnerableDriverBlocklistEnable: %s", exc)
+        if not refusal:
+            refusal = f"Could not read CI\\Config: {exc}"
+
+    warnings: List[str] = []
+    if testsigning:
+        warnings.append("Kernel Testsigning is ENABLED (test-signed drivers permitted)")
+    if no_integrity_checks:
+        warnings.append("Kernel Driver Signature Enforcement is DISABLED")
+    if blocklist_enabled is False:
+        warnings.append("Microsoft Vulnerable Driver Blocklist is DISABLED (BYOVD risk)")
+
+    is_degraded = bool(testsigning or no_integrity_checks or (blocklist_enabled is False))
+
+    return KernelPosture(
+        raw_options=raw_options,
+        testsigning=testsigning,
+        no_integrity_checks=no_integrity_checks,
+        vulnerable_driver_blocklist=blocklist_enabled,
+        is_degraded=is_degraded,
+        warnings=warnings,
+        refusal_reason=refusal,
+    )
+
+
+def check_testsigning_status() -> Dict[str, Any]:
+    """Compatibility dictionary wrapper for check_kernel_posture()."""
+    p = check_kernel_posture()
+    return {
+        "testsigning": p.testsigning,
+        "no_integrity_checks": p.no_integrity_checks,
+        "vulnerable_driver_blocklist": p.vulnerable_driver_blocklist,
+        "is_degraded": p.is_degraded,
+        "raw_options": p.raw_options,
+        "warnings": p.warnings,
+        "refusal_reason": p.refusal_reason,
+    }
+
+
+# ------------------------------------------------------------------
+# Non-PnP Kernel Driver Service Audit
+# ------------------------------------------------------------------
+
+_SERVICES_KEY = r"SYSTEM\CurrentControlSet\Services"
+
+
+def _resolve_driver_path(image_path: Optional[str], svc_name: str) -> str:
+    """Resolve an SCM driver ImagePath to a real filesystem path.
+
+    Handles NT prefixes (\\SystemRoot\\, \\??\\), relative paths (System32\\...),
+    and SCM defaults (%SystemRoot%\\System32\\drivers\\<svc>.sys when ImagePath is missing).
+    """
+    sysroot = os.environ.get("SystemRoot", r"C:\Windows")
+    if not image_path:
+        return os.path.normpath(os.path.join(sysroot, "System32", "drivers", f"{svc_name}.sys"))
+
+    p = image_path.strip().strip('"')
+    p_lower = p.lower()
+    if p_lower.startswith("\\systemroot\\") or p_lower.startswith("\\systemroot/"):
+        p = os.path.join(sysroot, p[12:])
+    elif p_lower.startswith("system32\\") or p_lower.startswith("system32/"):
+        p = os.path.join(sysroot, p)
+    elif p_lower.startswith("\\??\\"):
+        p = p[4:]
+
+    return os.path.normpath(os.path.expandvars(p))
+
+
+def _has_reg_val(key, val_name: str) -> bool:
+    try:
+        winreg.QueryValueEx(key, val_name)
+        return True
+    except OSError as exc:
+        logger.debug("Value %s absent or unreadable: %s", val_name, exc)
+        return False
+
+
+def fetch_non_pnp_drivers(verify_signatures: bool = True) -> List[DriverInfo]:
+    """Scan HKLM\\SYSTEM\\CurrentControlSet\\Services for Type 1 & 2 drivers.
+
+    Detects orphaned driver services (binary missing on disk) and unsigned
+    or invalid kernel binaries. Uses catalog-aware verification via
+    modules.startup_manager.trust to avoid misdiagnosing catalog-signed inbox drivers.
+    """
+    from modules.startup_manager.trust import check as check_trust
+
+    drivers: List[DriverInfo] = []
+    try:
+        services_key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _SERVICES_KEY)
+    except OSError as exc:
+        logger.warning("Could not open Services registry key: %s", exc)
+        return []
+
+    with services_key:
+        try:
+            count = winreg.QueryInfoKey(services_key)[0]
+        except OSError as exc:
+            logger.warning("Could not query Services count: %s", exc)
+            return []
+
+        for i in range(count):
+            try:
+                svc_name = winreg.EnumKey(services_key, i)
+            except OSError as exc:
+                logger.debug("EnumKey failed at index %d: %s", i, exc)
+                break
+
+            try:
+                with winreg.OpenKey(services_key, svc_name) as sk:
+                    try:
+                        svc_type, _ = winreg.QueryValueEx(sk, "Type")
+                    except OSError as exc:
+                        logger.debug("QueryValueEx Type failed on %s: %s", svc_name, exc)
+                        continue
+                    if svc_type not in (1, 2):
+                        continue
+
+                    img, _ = winreg.QueryValueEx(sk, "ImagePath") if _has_reg_val(sk, "ImagePath") else (None, 0)
+                    start, _ = winreg.QueryValueEx(sk, "Start") if _has_reg_val(sk, "Start") else (None, 0)
+                    display_name, _ = winreg.QueryValueEx(sk, "DisplayName") if _has_reg_val(sk, "DisplayName") else ("", 0)
+            except OSError as exc:
+                logger.debug("Could not inspect service %s: %s", svc_name, exc)
+                continue
+
+            resolved = _resolve_driver_path(img, svc_name)
+            binary_exists = os.path.isfile(resolved)
+
+            flags: List[str] = []
+            signed = True
+            publisher = ""
+
+            if not binary_exists:
+                if start == 4:
+                    flags.append("⚪ Orphaned service (disabled, binary missing)")
+                else:
+                    flags.append("🔴 Orphaned service (binary missing from disk)")
+                signed = False
+            elif verify_signatures:
+                try:
+                    trust = check_trust(resolved)
+                    publisher = trust.publisher or ""
+                    if trust.status == "unsigned":
+                        signed = False
+                        flags.append("🔴 Unsigned non-PnP driver")
+                    elif trust.status == "invalid":
+                        signed = False
+                        flags.append(f"🔴 Invalid signature: {trust.reason or 'untrusted'}")
+                    elif trust.status == "unknown":
+                        flags.append("⚪ Signature unverified")
+                except Exception as exc:
+                    logger.debug("Trust check failed for %s: %s", resolved, exc)
+                    flags.append("⚪ Signature unverified")
+
+            driver_class = "Kernel Driver" if svc_type == 1 else "File System Driver"
+            name = display_name.strip() if display_name else svc_name
+
+            drivers.append(DriverInfo(
+                device_name=f"{name} [{svc_name}]",
+                driver_class=driver_class,
+                version="",
+                date="",
+                publisher=publisher,
+                signed=signed,
+                error_code=0,
+                flags=" ".join(flags),
+                inf_name="",
+                device_id=f"SERVICE\\{svc_name}",
+                hardware_id="",
+                whql_certified=False,
+            ))
+
+    return drivers

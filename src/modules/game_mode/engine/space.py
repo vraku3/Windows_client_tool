@@ -385,8 +385,30 @@ class CleanupBackend:
         return False, ""
 
     def dism(self, log, cancelled) -> dict:
-        from modules.updates.stage_runners import run_dism_stage
-        return run_dism_stage(None, log, cancelled)
+        import subprocess
+        from core import pending_reboot
+        restart_message = ("SKIPPED: a restart is pending (Windows Update/servicing) -- "
+                           "run component cleanup after restarting")
+        if pending_reboot.check().needed:
+            log(f"DISM: {restart_message}")
+            return {"status": "SKIPPED", "reboot_required": True, "output": restart_message}
+        log("Phase: cleaning")
+        log("DISM: running StartComponentCleanup (this can take several minutes)...")
+        proc = subprocess.run(
+            ["dism", "/Online", "/Cleanup-Image", "/StartComponentCleanup"],
+            capture_output=True, text=True, timeout=1800,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        output = (proc.stdout or "") + (proc.stderr or "")
+        log(output or "(no output)")
+        if proc.returncode & 0xFFFFFFFF == 0x800F0806:
+            log(f"DISM: {restart_message}")
+            return {"status": "SKIPPED", "reboot_required": True, "returncode": proc.returncode,
+                    "output": restart_message + "\n" + output}
+        if proc.returncode != 0:
+            log(f"DISM: FAILED (exit {proc.returncode}).")
+        return {"output": output, "returncode": proc.returncode,
+                **({"error": f"DISM exited {proc.returncode}"} if proc.returncode != 0 else {})}
 
     def delivery_size(self) -> int:
         return delivery_size()

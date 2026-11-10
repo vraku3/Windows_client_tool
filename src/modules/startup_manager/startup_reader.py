@@ -28,6 +28,11 @@ _RUNONCE_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
 _RUNONCE_APPROVED_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\RunOnce"
 _STARTUP_FOLDER_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
 
+_RUN_WOW64_KEY = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Run"
+_RUNONCE_WOW64_KEY = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce"
+_MACHINE_RUN_APPROVED_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+_MACHINE_RUN32_APPROVED_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run32"
+_MACHINE_STARTUP_FOLDER_APPROVED_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\StartupFolder"
 
 
 def last_run_text(value) -> str:
@@ -40,11 +45,11 @@ def last_run_text(value) -> str:
     return f"Last: {text}"
 
 
-def _collect_disabled_names(approved_key: str) -> set:
+def _collect_disabled_names(approved_key: str, hive=winreg.HKEY_CURRENT_USER) -> set:
     """Return the set of entry names marked disabled (0x03) under StartupApproved."""
     disabled = set()
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, approved_key) as k:
+        with winreg.OpenKey(hive, approved_key) as k:
             i = 0
             while True:
                 try:
@@ -63,7 +68,7 @@ def _collect_disabled_names(approved_key: str) -> set:
 
 
 def _read_run_values(hive, key_path: str, source: str,
-                     disabled: set) -> List[StartupEntry]:
+                     disabled: set, extra: str = "") -> List[StartupEntry]:
     entries = []
     try:
         with winreg.OpenKey(hive, key_path) as k:
@@ -76,6 +81,7 @@ def _read_run_values(hive, key_path: str, source: str,
                         command=str(data),
                         enabled=(name not in disabled),
                         source=source,
+                        extra=extra,
                     ))
                     i += 1
                 except OSError:
@@ -98,16 +104,26 @@ def get_registry_entries() -> List[StartupEntry]:
 
 
 def get_machine_registry_entries() -> List[StartupEntry]:
-    """HKLM\\...\\Run values (machine-wide startup). Read-only source."""
-    return _read_run_values(
+    """HKLM\\...\\Run values (machine-wide startup, including 64-bit and WOW6432Node)."""
+    hklm_disabled = _collect_disabled_names(_MACHINE_RUN_APPROVED_KEY, hive=winreg.HKEY_LOCAL_MACHINE)
+    entries = _read_run_values(
         winreg.HKEY_LOCAL_MACHINE, _RUN_KEY,
         source="registry_run_machine",
-        disabled=set(),
+        disabled=hklm_disabled,
+        extra="64-bit",
     )
+    wow64_disabled = _collect_disabled_names(_MACHINE_RUN32_APPROVED_KEY, hive=winreg.HKEY_LOCAL_MACHINE)
+    wow64_entries = _read_run_values(
+        winreg.HKEY_LOCAL_MACHINE, _RUN_WOW64_KEY,
+        source="registry_run_machine",
+        disabled=wow64_disabled,
+        extra="32-bit (WOW64)",
+    )
+    return entries + wow64_entries
 
 
 def get_runonce_entries() -> List[StartupEntry]:
-    """HKCU + HKLM RunOnce values. These run once and are auto-cleared."""
+    """HKCU + HKLM RunOnce values (including 32-bit WOW64). These run once and are auto-cleared."""
     hkcu = _read_run_values(
         winreg.HKEY_CURRENT_USER, _RUNONCE_KEY,
         source="runonce",
@@ -118,7 +134,13 @@ def get_runonce_entries() -> List[StartupEntry]:
         source="runonce",
         disabled=set(),
     )
-    return hkcu + hklm
+    hklm_wow64 = _read_run_values(
+        winreg.HKEY_LOCAL_MACHINE, _RUNONCE_WOW64_KEY,
+        source="runonce",
+        disabled=set(),
+        extra="32-bit (WOW64)",
+    )
+    return hkcu + hklm + hklm_wow64
 
 
 def set_registry_entry_enabled(name: str, enabled: bool) -> None:
@@ -156,21 +178,42 @@ def add_registry_entry(name: str, command: str) -> None:
         winreg.SetValueEx(k, name, 0, winreg.REG_SZ, command)
 
 
-def get_startup_folder_entries() -> List[StartupEntry]:
-    entries = []
-    folder = os.path.join(
-        os.environ.get("APPDATA", ""),
+def get_common_startup_folder_path() -> str:
+    from core.windows_utils import program_data
+    return os.path.join(
+        program_data(),
         r"Microsoft\Windows\Start Menu\Programs\Startup",
     )
-    disabled_names = _collect_disabled_names(_STARTUP_FOLDER_KEY)
-    if os.path.isdir(folder):
-        for f in os.listdir(folder):
-            if f.lower().endswith((".lnk", ".url", ".bat", ".cmd", ".exe")):
+
+
+def get_startup_folder_entries() -> List[StartupEntry]:
+    """Startup folder entries: per-user (%APPDATA%) and common (%ProgramData%)."""
+    entries = []
+    # User startup folder
+    user_folder = get_startup_folder_path()
+    user_disabled = _collect_disabled_names(_STARTUP_FOLDER_KEY, hive=winreg.HKEY_CURRENT_USER)
+    if os.path.isdir(user_folder):
+        for f in os.listdir(user_folder):
+            if f.lower() != "desktop.ini" and f.lower().endswith((".lnk", ".url", ".bat", ".cmd", ".exe")):
                 entries.append(StartupEntry(
                     name=f,
-                    command=os.path.join(folder, f),
-                    enabled=(f not in disabled_names),
+                    command=os.path.join(user_folder, f),
+                    enabled=(f not in user_disabled),
                     source="startup_folder",
+                    extra="User",
+                ))
+    # Common startup folder
+    common_folder = get_common_startup_folder_path()
+    mach_disabled = _collect_disabled_names(_MACHINE_STARTUP_FOLDER_APPROVED_KEY, hive=winreg.HKEY_LOCAL_MACHINE)
+    if os.path.isdir(common_folder):
+        for f in os.listdir(common_folder):
+            if f.lower() != "desktop.ini" and f.lower().endswith((".lnk", ".url", ".bat", ".cmd", ".exe")):
+                entries.append(StartupEntry(
+                    name=f,
+                    command=os.path.join(common_folder, f),
+                    enabled=(f not in mach_disabled and f not in user_disabled),
+                    source="startup_folder",
+                    extra="All Users",
                 ))
     return entries
 
@@ -192,18 +235,23 @@ def get_startup_folder_path() -> str:
 
 
 def remove_startup_folder_entry(name: str) -> None:
-    """Delete a file from the Startup folder (plus its StartupApproved marker)."""
-    folder = get_startup_folder_path()
-    target = os.path.join(folder, name)
-    if os.path.isfile(target):
-        os.remove(target)
+    """Delete a file from the user or common Startup folder (plus its StartupApproved marker)."""
+    user_target = os.path.join(get_startup_folder_path(), name)
+    common_target = os.path.join(get_common_startup_folder_path(), name)
+    for target in (user_target, common_target):
+        if os.path.isfile(target):
+            try:
+                os.remove(target)
+            except OSError as exc:
+                logger.warning("remove_startup_folder_entry: could not remove %s: %s", target, exc)
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_FOLDER_KEY,
                             0, winreg.KEY_SET_VALUE) as k:
             winreg.DeleteValue(k, name)
     except FileNotFoundError:
-        logger.warning("remove_startup_folder_entry: could not remove %r from the Startup folder", name, exc_info=True)
-        pass
+        logger.debug("remove_startup_folder_entry: marker not present for %r", name)
+    except OSError as exc:
+        logger.warning("remove_startup_folder_entry: registry access failed for %r: %s", name, exc)
 
 
 def get_scheduled_task_entries() -> List[StartupEntry]:

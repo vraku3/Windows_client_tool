@@ -149,6 +149,7 @@ def test_manual_wu_persists_inside_worker(tmp_path, monkeypatch, qapp):
     from modules.updates import updates_module as ui
     monkeypatch.setattr(ui.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=lambda worker: worker.run()))
     monkeypatch.setattr("core.disk_space.check_wu_preflight", lambda *a: None)
+    monkeypatch.setattr("modules.updates.reboot_preflight.assess", lambda *a: None)
     tab = ui._WinUpdatesTab()
     tab.set_app(SimpleNamespace(app_data_dir=tmp_path, config=SimpleNamespace(get=lambda k, d=None: False)))
     tab._updates = [ui.WindowsUpdate("KB1", "Patch", "", 0, "")]

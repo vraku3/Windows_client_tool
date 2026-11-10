@@ -367,14 +367,377 @@ def check_upgrade_headroom() -> Finding:
     )
 
 
+def check_crash_control() -> List[Finding]:
+    """Audit Windows BSOD / crash dump configuration in CrashControl.
+
+    A machine where CrashDumpEnabled is 0 produces no crash dumps on BSOD,
+    preventing root-cause analysis. If AutoReboot is 0, the system hangs
+    indefinitely on the bugcheck screen until manually power-cycled.
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\CrashControl",
+            0,
+            winreg.KEY_READ,
+        ) as k:
+            try:
+                dump_type = winreg.QueryValueEx(k, "CrashDumpEnabled")[0]
+            except FileNotFoundError:
+                dump_type = None
+            try:
+                auto_reboot = winreg.QueryValueEx(k, "AutoReboot")[0]
+            except FileNotFoundError:
+                auto_reboot = None
+            try:
+                log_event = winreg.QueryValueEx(k, "LogEvent")[0]
+            except FileNotFoundError:
+                log_event = None
+    except OSError as exc:
+        logger.debug("CrashControl unreadable: %s", exc)
+        return [Finding(
+            id="crash_control_refused",
+            title="Could not read CrashControl configuration",
+            detail=str(exc),
+            severity="info",
+            jump="Diagnose",
+        )]
+
+    findings: List[Finding] = []
+    dump_names = {
+        0: "None (Disabled)",
+        1: "Complete memory dump",
+        2: "Kernel memory dump",
+        3: "Small memory dump (Minidump)",
+        7: "Automatic memory dump",
+    }
+
+    if dump_type == 0:
+        findings.append(Finding(
+            id="crash_dumps_disabled",
+            title="Crash dumps are disabled",
+            detail="Windows is configured not to write a memory dump when a Blue Screen (BSOD) occurs. Without memory dumps, diagnosing system crashes or hardware faults is impossible.",
+            severity="warning",
+            evidence="CrashDumpEnabled=0 in HKLM\\SYSTEM\\CurrentControlSet\\Control\\CrashControl",
+            jump="Diagnose",
+        ))
+    elif dump_type is not None:
+        findings.append(Finding(
+            id="crash_dump_config",
+            title=f"Crash dumps configured ({dump_names.get(dump_type, f'Type {dump_type}')})",
+            detail=f"Windows will save a {dump_names.get(dump_type, 'dump')} on system failure.",
+            severity="info",
+            evidence=f"CrashDumpEnabled={dump_type}, AutoReboot={auto_reboot}, LogEvent={log_event}",
+            jump="Diagnose",
+        ))
+
+    if auto_reboot == 0:
+        findings.append(Finding(
+            id="auto_reboot_disabled",
+            title="Automatic reboot on system failure is disabled",
+            detail="When a BSOD occurs, the system will remain frozen on the bluescreen indefinitely instead of restarting automatically.",
+            severity="warning",
+            evidence="AutoReboot=0 in HKLM\\SYSTEM\\CurrentControlSet\\Control\\CrashControl",
+            jump="Diagnose",
+        ))
+
+    return findings
+
+
+def check_print_queue() -> List[Finding]:
+    """Check for stuck print job files in %SystemRoot%\\System32\\spool\\PRINTERS.
+
+    Orphaned spool files (.SHD/.SPL) left by aborted print jobs or stalled printers
+    cause spoolsv.exe high CPU, spooler crashes, or block all subsequent print jobs.
+    """
+    spool_dir = os.path.join(system_root(), "System32", "spool", "PRINTERS")
+    if not os.path.exists(spool_dir):
+        return []
+    try:
+        entries = os.listdir(spool_dir)
+        spool_files = [f for f in entries if f.lower().endswith((".shd", ".spl"))]
+    except OSError as exc:
+        logger.debug("spool\\PRINTERS unreadable: %s", exc)
+        return []
+
+    if not spool_files:
+        return []
+
+    return [Finding(
+        id="stuck_print_jobs",
+        title=f"{len(spool_files)} stuck print spool file(s) in queue",
+        detail=(
+            f"Found {len(spool_files)} orphaned .SHD/.SPL file(s) in {spool_dir}. "
+            "Stuck spool files can stall the Print Spooler or block printing until cleared."
+        ),
+        severity="warning",
+        evidence=", ".join(spool_files[:10]) + (f" (+{len(spool_files)-10} more)" if len(spool_files) > 10 else ""),
+        jump="Quick Fix",
+    )]
+
+
+def check_driver_blocklist() -> Finding:
+    """Check Microsoft Vulnerable Driver Blocklist (WDAC / HVCI driver blocklist).
+
+    When enabled, Windows blocks known vulnerable third-party drivers with known
+    security flaws from loading, mitigating Bring Your Own Vulnerable Driver (BYOVD)
+    privilege escalation attacks.
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\CI\Config",
+            0,
+            winreg.KEY_READ,
+        ) as k:
+            val, _ = winreg.QueryValueEx(k, "VulnerableDriverBlocklistEnable")
+            enabled = bool(val)
+    except FileNotFoundError:
+        enabled = False
+    except OSError as exc:
+        logger.debug("VulnerableDriverBlocklist unreadable: %s", exc)
+        return Finding(
+            id="driver_blocklist_unknown",
+            title="Could not check Vulnerable Driver Blocklist",
+            detail=str(exc),
+            severity="info",
+            jump="Security Dashboard",
+        )
+
+    if not enabled:
+        return Finding(
+            id="vulnerable_driver_blocklist_disabled",
+            title="Microsoft Vulnerable Driver Blocklist is disabled",
+            detail="The kernel does not enforce Microsoft's list of blocked drivers with known security vulnerabilities, leaving the system exposed to Bring Your Own Vulnerable Driver (BYOVD) attacks.",
+            severity="warning",
+            evidence="VulnerableDriverBlocklistEnable=0 or missing under HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Config",
+            jump="Security Dashboard",
+        )
+    return Finding(
+        id="vulnerable_driver_blocklist_enabled",
+        title="Microsoft Vulnerable Driver Blocklist is active",
+        detail="The kernel blocks drivers with known security vulnerabilities from loading.",
+        severity="info",
+        evidence="VulnerableDriverBlocklistEnable=1 under HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Config",
+        jump="Security Dashboard",
+    )
+
+
+def check_vss_services() -> List[Finding]:
+    """Check if Volume Shadow Copy (VSS) or Software Shadow Copy Provider (swprv) are disabled.
+
+    Both services must not be disabled for restore points, shadow copies, and servicing rollbacks.
+    """
+    import winreg
+    findings = []
+    for svc_name, display_name in (
+        ("VSS", "Volume Shadow Copy service"),
+        ("swprv", "Microsoft Software Shadow Copy Provider"),
+    ):
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                rf"SYSTEM\CurrentControlSet\Services\{svc_name}",
+                0,
+                winreg.KEY_READ,
+            ) as k:
+                val, _ = winreg.QueryValueEx(k, "Start")
+                if val == 4:  # Disabled
+                    findings.append(Finding(
+                        id=f"{svc_name.lower()}_service_disabled",
+                        title=f"{display_name} is disabled",
+                        detail=f"The {display_name} ({svc_name}) is configured as Disabled. System Restore point creation and servicing rollback will fail.",
+                        severity="warning",
+                        evidence=f"Start=4 under HKLM\\SYSTEM\\CurrentControlSet\\Services\\{svc_name}",
+                        jump="Services",
+                    ))
+        except FileNotFoundError:
+            logger.debug("VSS service %s key not found", svc_name)
+        except OSError as exc:
+            logger.debug("Could not read %s service key: %s", svc_name, exc)
+    return findings
+
+
+def check_fast_startup_uptime() -> Optional[Finding]:
+    """Audit kernel uptime against Fast Startup hybrid shutdown state.
+
+    Fast Startup retains kernel memory across shutdowns. If the machine
+    has not undergone a full reboot in over 14 days, pending file renames, servicing transactions,
+    and driver memory can cause latency or instability.
+    """
+    import winreg
+    import ctypes
+
+    try:
+        fast_startup_enabled = True
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Session Manager\Power",
+                0,
+                winreg.KEY_READ,
+            ) as k:
+                val, _ = winreg.QueryValueEx(k, "HiberbootEnabled")
+                fast_startup_enabled = bool(val)
+        except FileNotFoundError:
+            logger.debug("HiberbootEnabled registry value not found, defaulting to True")
+
+        if not fast_startup_enabled:
+            return None
+
+        # Uptime in milliseconds
+        tick_ms = ctypes.windll.kernel32.GetTickCount64()
+        days = tick_ms / (1000 * 60 * 60 * 24)
+        if days >= 14.0:
+            return Finding(
+                id="fast_startup_prolonged_uptime",
+                title=f"System has not had a full restart in {int(days)} days (Fast Startup active)",
+                detail=(
+                    "Windows Fast Startup saves the kernel session to disk during shutdown rather "
+                    "than terminating it. A full restart is recommended to flush locked resources, "
+                    "reset kernel pools, and apply pending driver/servicing updates."
+                ),
+                severity="info" if days < 30.0 else "warning",
+                evidence=f"Kernel uptime: {days:.1f} days, HiberbootEnabled=1",
+                jump="System Health",
+            )
+    except Exception as exc:
+        logger.debug("Could not evaluate uptime or fast startup: %s", exc)
+    return None
+
+
+def check_scheduled_chkdsk() -> Optional[Finding]:
+    """Check if a boot-time autochk (chkdsk) is queued in BootExecute."""
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager",
+            0,
+            winreg.KEY_READ,
+        ) as k:
+            val, _ = winreg.QueryValueEx(k, "BootExecute")
+            entries = val if isinstance(val, list) else [val]
+            for entry in entries:
+                if entry and isinstance(entry, str) and ("autochk /p" in entry or "\\??\\" in entry):
+                    return Finding(
+                        id="scheduled_chkdsk_pending",
+                        title="File system check (chkdsk) is queued for next reboot",
+                        detail=f"Windows will perform an autochk disk scan on next boot: '{entry.strip()}'.",
+                        severity="warning",
+                        evidence=f"BootExecute={val}",
+                        jump="Disk Health",
+                    )
+    except FileNotFoundError:
+        logger.debug("BootExecute registry value not found")
+    except OSError as exc:
+        logger.debug("Could not read BootExecute: %s", exc)
+    return None
+
+
+def check_wer_queue(max_reports: int = 50, max_mb: float = 500.0) -> Optional[Finding]:
+    """Check for crash report and minidump buildup in Windows Error Reporting queue."""
+    from core.windows_utils import program_data
+    queue_path = os.path.join(program_data(), "Microsoft", "Windows", "WER", "ReportQueue")
+    if not os.path.isdir(queue_path):
+        return None
+    try:
+        entries = os.listdir(queue_path)
+    except OSError as exc:
+        logger.debug("WER ReportQueue unreadable: %s", exc)
+        return None
+    if not entries:
+        return None
+    total_bytes = 0
+    try:
+        for root, _dirs, files in os.walk(queue_path):
+            for f in files:
+                try:
+                    total_bytes += os.path.getsize(os.path.join(root, f))
+                except OSError as exc:
+                    logger.debug("WER file size read failed for %s: %s", f, exc)
+                    continue
+    except OSError as exc:
+        logger.debug("WER tree walk failed: %s", exc)
+    size_mb = total_bytes / (1024 * 1024)
+    count = len(entries)
+    if count >= max_reports or size_mb >= max_mb:
+        return Finding(
+            id="wer_queue_buildup",
+            title=f"Windows Error Reporting queue holds {count} crash report(s) ({size_mb:.1f} MB)",
+            detail=(
+                "Crash packages and minidumps are accumulating in the WER ReportQueue without "
+                "being cleared. This indicates recurring application crashes or disabled telemetry "
+                "upload services."
+            ),
+            severity="warning",
+            evidence=f"{count} report folders in {queue_path}, total size {size_mb:.1f} MB",
+            jump="Quick Fix",
+        )
+    return Finding(
+        id="wer_queue_buildup",
+        title=f"{count} crash report(s) in Windows Error Reporting queue ({size_mb:.1f} MB)",
+        detail="Pending crash reports awaiting upload or cleanup.",
+        severity="info",
+        evidence=f"{count} report folders in {queue_path}",
+        jump="Quick Fix",
+    )
+
+
+def check_safeboot_active() -> Optional[Finding]:
+    """Check if Windows is currently operating in Safe Mode."""
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\SafeBoot\Option",
+            0,
+            winreg.KEY_READ,
+        ) as k:
+            val, _ = winreg.QueryValueEx(k, "OptionValue")
+            mode_map = {1: "Minimal", 2: "Network", 3: "Directory Services Repair"}
+            mode_name = mode_map.get(val, f"Mode {val}")
+            return Finding(
+                id="safeboot_active",
+                title=f"Windows is running in Safe Mode ({mode_name})",
+                detail=(
+                    "The system was booted into Safe Mode. Many drivers, services, and hardware "
+                    "acceleration features are disabled until a normal reboot."
+                ),
+                severity="warning",
+                evidence=f"OptionValue={val} under HKLM\\SYSTEM\\CurrentControlSet\\Control\\SafeBoot\\Option",
+                jump="Startup & Boot",
+            )
+    except (FileNotFoundError, OSError):
+        return None
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
     if pending:
         findings.append(pending)
+    safeboot = check_safeboot_active()
+    if safeboot:
+        findings.append(safeboot)
     findings.extend(check_orphaned_scheduled_tasks())
     findings.extend(check_orphaned_services())
     findings.extend(check_hardware_errors())
+    findings.extend(check_crash_control())
+    findings.extend(check_print_queue())
+    findings.extend(check_vss_services())
+    uptime_finding = check_fast_startup_uptime()
+    if uptime_finding:
+        findings.append(uptime_finding)
+    chkdsk_finding = check_scheduled_chkdsk()
+    if chkdsk_finding:
+        findings.append(chkdsk_finding)
+    wer_finding = check_wer_queue()
+    if wer_finding:
+        findings.append(wer_finding)
+    findings.append(check_driver_blocklist())
     findings.append(check_upgrade_headroom())
     return findings
 

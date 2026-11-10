@@ -59,6 +59,62 @@ def parse_catalog(text: str) -> List[WinsockProvider]:
     return providers
 
 
+def _resolve_indirect_string(s: str) -> str:
+    if not s.startswith("@"):
+        return s
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(512)
+        if ctypes.windll.shlwapi.SHLoadIndirectString(s, buf, 512, None) == 0 and buf.value:
+            return buf.value
+    except Exception as exc:
+        logger.debug("SHLoadIndirectString failed for %r: %s", s, exc)
+    return s
+
+
+def read_catalog_from_registry() -> Optional[List[WinsockProvider]]:
+    """Read Winsock catalog entries directly from HKLM registry.
+
+    Provides reliable, unelevated access even on modern Windows 11 builds
+    where `netsh winsock show catalog` has been deprecated.
+    """
+    import winreg
+    subkeys = [
+        r"SYSTEM\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Catalog_Entries",
+        r"SYSTEM\CurrentControlSet\Services\Winsock2\Parameters\Protocol_Catalog9\Catalog_Entries64",
+    ]
+    providers: List[WinsockProvider] = []
+    found_any = False
+    for path in subkeys:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as k:
+                num_subkeys = winreg.QueryInfoKey(k)[0]
+                found_any = True
+                for idx in range(num_subkeys):
+                    sub_name = winreg.EnumKey(k, idx)
+                    with winreg.OpenKey(k, sub_name) as sk:
+                        try:
+                            pname = str(winreg.QueryValueEx(sk, "ProtocolName")[0])
+                        except OSError:
+                            pname = sub_name
+                        desc = _resolve_indirect_string(pname)
+                        try:
+                            raw = winreg.QueryValueEx(sk, "PackedCatalogItem")[0]
+                            prov_path = raw.split(b"\x00")[0].decode("latin1", errors="replace").strip()
+                        except (OSError, IndexError, AttributeError):
+                            prov_path = ""
+                        providers.append(WinsockProvider(
+                            description=desc,
+                            provider_path=prov_path,
+                            catalog_id=sub_name,
+                            entry_type="Base Service Provider",
+                        ))
+        except OSError as exc:
+            logger.debug("Could not open Winsock catalog key %s: %s", path, exc)
+            continue
+    return providers if found_any else None
+
+
 def read_catalog(timeout: int = 30) -> Optional[List[WinsockProvider]]:
     """None means the read failed or was refused."""
     try:
@@ -69,8 +125,10 @@ def read_catalog(timeout: int = 30) -> Optional[List[WinsockProvider]]:
         logger.warning("netsh winsock show catalog failed: %s", exc)
         return None
     if result.returncode != 0:
-        logger.warning("netsh winsock show catalog refused: %s",
-                       (result.stderr or result.stdout or "").strip()[:200])
+        err_msg = (result.stderr or result.stdout or "").strip()
+        if "command was not found" in err_msg.lower():
+            return read_catalog_from_registry()
+        logger.warning("netsh winsock show catalog refused: %s", err_msg[:200])
         return None
     return parse_catalog(result.stdout)
 

@@ -7,9 +7,12 @@ Windows', not an arbitrary app rule. Writes need administrator rights.
 """
 from __future__ import annotations
 
+import logging
 import winreg
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 UX_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\UX\Settings"
 VALUE_NAMES = (
@@ -90,8 +93,8 @@ def resume_updates(reg=winreg) -> Tuple[bool, str]:
             try:
                 reg.DeleteValue(key, name)
                 removed += 1
-            except FileNotFoundError:
-                pass
+            except FileNotFoundError as exc:
+                logger.debug("Value %s already missing during resume: %s", name, exc)
             except OSError as exc:
                 errors.append(f"{name}: {exc}")
     finally:

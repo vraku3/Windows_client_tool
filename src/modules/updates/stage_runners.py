@@ -351,7 +351,8 @@ def run_cleanup_safe_stage(app, log: LogFn, is_cancelled: CancelFn) -> dict:
     for item in all_items:
         item.selected = True
     total = sum(item.size for item in all_items)
-    wu_root = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "SoftwareDistribution")
+    from core.windows_utils import system_root
+    wu_root = os.path.join(system_root(), "SoftwareDistribution")
     needs_wu = any(_is_inside(item.path, wu_root) for item in all_items)
 
     if not all_items:

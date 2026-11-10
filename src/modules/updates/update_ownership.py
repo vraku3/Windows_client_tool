@@ -64,7 +64,8 @@ def _read_enrollments():
                         for name in ("ProviderID", "EnrollmentState"):
                             try:
                                 value = winreg.QueryValueEx(sub, name)[0]
-                            except FileNotFoundError:
+                            except FileNotFoundError as exc:
+                                logger.debug("QueryValueEx missing %s: %s", name, exc)
                                 continue
                             if name == "ProviderID":
                                 provider = str(value)

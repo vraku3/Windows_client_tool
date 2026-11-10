@@ -7,8 +7,11 @@ Blank lines and lines starting with '#' are treated as comments and ignored.
 """
 import fnmatch
 import json
+import logging
 from datetime import date
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_patterns(raw_text: str) -> List[str]:
@@ -87,7 +90,8 @@ def expired_exclusions(exclusions) -> list[dict]:
             try:
                 if date.fromisoformat(entry["expires"]) < date.today():
                     expired.append(entry)
-            except (ValueError, TypeError):
+            except (ValueError, TypeError) as exc:
+                logger.debug("Parsing expiration date %s: %s", entry.get("expires"), exc)
                 continue
     return expired
 

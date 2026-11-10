@@ -102,8 +102,8 @@ def save_snapshot(app_data_dir, apps: Dict[str, str]) -> Optional[dict]:
         logger.warning("Could not write the Store snapshot: %s", exc)
         try:
             temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("Failed unlinking temporary store snapshot %s: %s", temporary, exc)
         return None
     return data
 

@@ -227,7 +227,7 @@ def check_wmi_repository() -> List[Finding]:
             id="wmi_repository", title="The WMI repository is inconsistent",
             detail="Inventory, Task Manager details, many management tools and some installers depend on "
                    "WMI. From an elevated prompt: winmgmt /salvagerepository (then /resetrepository if that fails).",
-            severity="warning", evidence=out[:300])]
+            severity="warning", evidence=out[:300], jump="Quick Fix")]
     if "is consistent" in out.lower():
         return []
     return [_unknown("wmi_repository", "the WMI repository", out or "no output")]

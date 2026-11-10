@@ -186,11 +186,14 @@ def test_read_disk_report_failure_is_an_exception_not_empty(monkeypatch):
         dr.read_disk_report()
 
 
+@pytest.mark.real_machine
 def test_real_machine_report_is_plausible():
     try:
         rep = dr.read_disk_report()
     except dr.DiskReadError as e:
         pytest.skip(f"cannot read disks here: {e}")
+    if not rep.disks and "disks" in rep.errors:
+        pytest.skip(f"physical disks query refused: {rep.errors['disks']}")
     real = [d for d in rep.disks if not d.is_virtual]
     assert real, "a real machine has at least one physical disk"
     for d in real:

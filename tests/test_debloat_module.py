@@ -344,6 +344,9 @@ def test_apps_applied_reports_what_actually_left(monkeypatch):
     monkeypatch.setattr(
         dm.debloat_scanner, "get_installed_packages",
         lambda: {"Pkg.B": "Pkg.B"})  # Pkg.A genuinely left; Pkg.B did not
+    monkeypatch.setattr(
+        dm.debloat_scanner, "get_installed_packages_or_none",
+        lambda: {"Pkg.B": "Pkg.B"})
     # The completion dialog is a real QMessageBox with a custom "Open
     # Restore Manager..." action button (A22) -- exec() would otherwise
     # block waiting for a click that never comes in a headless test.

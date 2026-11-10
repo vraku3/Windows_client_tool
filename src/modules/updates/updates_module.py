@@ -1930,7 +1930,20 @@ class _UpdateSettingsTab(QWidget):
         inner = QWidget()
         layout = QVBoxLayout(inner)
 
-        # -- General --
+        layout.addWidget(self._build_general_box())
+        layout.addWidget(self._build_owner_box())
+        layout.addWidget(self._build_policy_box())
+        layout.addWidget(self._build_pause_box())
+        layout.addWidget(self._build_health_box())
+        layout.addWidget(self._build_block_box())
+        layout.addWidget(self._build_sched_box())
+        layout.addWidget(self._build_legacy_box())
+
+        layout.addStretch()
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
+
+    def _build_general_box(self) -> QGroupBox:
         general_box = QGroupBox("General")
         general_lay = QVBoxLayout(general_box)
         self._chk_verify = QCheckBox("Verify versions after updating and report confirmed/unchanged")
@@ -1970,9 +1983,20 @@ class _UpdateSettingsTab(QWidget):
         stale_row.addStretch()
         general_lay.addLayout(stale_row)
         self._stale_hours.valueChanged.connect(lambda value: self._set_cfg("updates.stale_hours", value))
-        layout.addWidget(general_box)
+        self._chk_verify.toggled.connect(lambda v: self._set_cfg("updates.verify_after_update", v))
+        self._chk_restore.toggled.connect(lambda v: self._set_cfg("updates.restore_point_before_install", v))
+        self._chk_restore_apps.toggled.connect(
+            lambda v: self._set_cfg("updates.restore_point_before_app_updates", v))
+        self._chk_drivers.toggled.connect(lambda v: self._set_cfg("updates.wu_include_drivers", v))
+        self._chk_allow_feature.toggled.connect(
+            lambda v: self._set_cfg("updates.allow_feature_updates", v))
+        self._chk_allow_optional.toggled.connect(
+            lambda v: self._set_cfg("updates.allow_optional_updates", v))
+        self._chk_allow_drivers.toggled.connect(
+            lambda v: self._set_cfg("updates.allow_auto_drivers", v))
+        return general_box
 
-        # -- Update source & ownership --
+    def _build_owner_box(self) -> QGroupBox:
         owner_box = QGroupBox("Update source & ownership")
         owner_lay = QVBoxLayout(owner_box)
         owner_desc = QLabel(
@@ -1995,9 +2019,9 @@ class _UpdateSettingsTab(QWidget):
         owner_lay.addWidget(owner_desc)
         owner_lay.addWidget(self._owner_table)
         owner_lay.addLayout(owner_row)
-        layout.addWidget(owner_box)
+        return owner_box
 
-        # -- Effective update policy --
+    def _build_policy_box(self) -> QGroupBox:
         policy_box = QGroupBox("Windows Update policy (deferrals, pause, deadlines)")
         policy_lay = QVBoxLayout(policy_box)
         policy_desc = QLabel(
@@ -2020,9 +2044,9 @@ class _UpdateSettingsTab(QWidget):
         policy_lay.addWidget(policy_desc)
         policy_lay.addWidget(self._policy_table)
         policy_lay.addLayout(policy_row)
-        layout.addWidget(policy_box)
+        return policy_box
 
-        # -- Pause Windows Update --
+    def _build_pause_box(self) -> QGroupBox:
         pause_box = QGroupBox("Pause Windows Update")
         pause_lay = QVBoxLayout(pause_box)
         pause_desc = QLabel(
@@ -2040,6 +2064,8 @@ class _UpdateSettingsTab(QWidget):
         self._pause_days.setValue(7)
         self._pause_btn = QPushButton("Pause updates")
         self._resume_btn = QPushButton("Resume updates")
+        self._pause_btn.clicked.connect(self._do_pause)
+        self._resume_btn.clicked.connect(self._do_resume)
         pause_row.addWidget(self._pause_days)
         pause_row.addWidget(self._pause_btn)
         pause_row.addWidget(self._resume_btn)
@@ -2047,9 +2073,9 @@ class _UpdateSettingsTab(QWidget):
         pause_lay.addWidget(pause_desc)
         pause_lay.addWidget(self._pause_status)
         pause_lay.addLayout(pause_row)
-        layout.addWidget(pause_box)
+        return pause_box
 
-        # -- Windows Update services --
+    def _build_health_box(self) -> QGroupBox:
         health_box = QGroupBox("Windows Update services")
         health_lay = QVBoxLayout(health_box)
         health_desc = QLabel(
@@ -2066,15 +2092,16 @@ class _UpdateSettingsTab(QWidget):
         self._wu_health_table.setMaximumHeight(190)
         apply_table_style(self._wu_health_table)
         self._wu_health_refresh_btn = QPushButton("Refresh services")
+        self._wu_health_refresh_btn.clicked.connect(self._refresh_wu_health)
         health_row = QHBoxLayout()
         health_row.addWidget(self._wu_health_refresh_btn)
         health_row.addStretch()
         health_lay.addWidget(health_desc)
         health_lay.addWidget(self._wu_health_table)
         health_lay.addLayout(health_row)
-        layout.addWidget(health_box)
+        return health_box
 
-        # -- Blocklist --
+    def _build_block_box(self) -> QGroupBox:
         block_box = QGroupBox("Blocklist")
         block_lay = QVBoxLayout(block_box)
         block_desc = QLabel(
@@ -2086,9 +2113,9 @@ class _UpdateSettingsTab(QWidget):
         block_lay.addWidget(block_desc)
         self._exclusions_editor = ExclusionsEditor()
         block_lay.addWidget(self._exclusions_editor)
-        layout.addWidget(block_box)
+        return block_box
 
-        # -- Scheduled unattended maintenance --
+    def _build_sched_box(self) -> QGroupBox:
         sched_box = QGroupBox("Scheduled Unattended Maintenance")
         sched_lay = QVBoxLayout(sched_box)
         sched_desc = QLabel(
@@ -2126,6 +2153,10 @@ class _UpdateSettingsTab(QWidget):
         self._sched_remove_btn = QPushButton("Remove Task")
         self._sched_run_btn = QPushButton("Run Now")
         self._sched_health_refresh_btn = QPushButton("Refresh Task Health")
+        self._sched_save_btn.clicked.connect(self._save_schedule)
+        self._sched_remove_btn.clicked.connect(self._remove_schedule)
+        self._sched_run_btn.clicked.connect(self._run_schedule_now)
+        self._sched_health_refresh_btn.clicked.connect(self._refresh_task_health)
         sched_btn_row.addWidget(self._sched_save_btn)
         sched_btn_row.addWidget(self._sched_remove_btn)
         sched_btn_row.addWidget(self._sched_run_btn)
@@ -2134,11 +2165,6 @@ class _UpdateSettingsTab(QWidget):
         sched_lay.addLayout(sched_btn_row)
         self._sched_status_lbl = QLabel("")
         sched_lay.addWidget(self._sched_status_lbl)
-        # Distinct from _sched_status_lbl above, which only ever echoes the
-        # result of the button just clicked here (Task saved / removed /
-        # started) and says nothing about whether a PAST scheduled run
-        # actually succeeded. This is read fresh from `schtasks` itself —
-        # see task_health.py for why that matters.
         self._task_health_lbl = QLabel("Task health: not checked yet.")
         self._task_health_lbl.setWordWrap(True)
         sched_lay.addWidget(self._task_health_lbl)
@@ -2152,9 +2178,9 @@ class _UpdateSettingsTab(QWidget):
         self._latest_report_lbl = QLabel("")
         self._latest_report_lbl.linkActivated.connect(lambda link: QDesktopServices.openUrl(QUrl(link)))
         sched_lay.addWidget(self._latest_report_lbl)
-        layout.addWidget(sched_box)
+        return sched_box
 
-        # -- Legacy quick winget-only schedule (kept as-is for existing users) --
+    def _build_legacy_box(self) -> QGroupBox:
         legacy_box = QGroupBox("Quick winget Auto-Update (legacy)")
         legacy_lay = QVBoxLayout(legacy_box)
         legacy_desc = QLabel("A simpler task that silently runs 'winget upgrade --all' on a schedule.")
@@ -2173,38 +2199,15 @@ class _UpdateSettingsTab(QWidget):
         legacy_btn_row = QHBoxLayout()
         self._legacy_save_btn = QPushButton("Save")
         self._legacy_remove_btn = QPushButton("Remove")
+        self._legacy_save_btn.clicked.connect(self._save_legacy)
+        self._legacy_remove_btn.clicked.connect(self._remove_legacy)
         legacy_btn_row.addWidget(self._legacy_save_btn)
         legacy_btn_row.addWidget(self._legacy_remove_btn)
         legacy_btn_row.addStretch()
         legacy_lay.addLayout(legacy_btn_row)
         self._legacy_status_lbl = QLabel("")
         legacy_lay.addWidget(self._legacy_status_lbl)
-        layout.addWidget(legacy_box)
-
-        layout.addStretch()
-        scroll.setWidget(inner)
-        outer.addWidget(scroll)
-
-        self._chk_verify.toggled.connect(lambda v: self._set_cfg("updates.verify_after_update", v))
-        self._chk_restore.toggled.connect(lambda v: self._set_cfg("updates.restore_point_before_install", v))
-        self._chk_restore_apps.toggled.connect(
-            lambda v: self._set_cfg("updates.restore_point_before_app_updates", v))
-        self._chk_drivers.toggled.connect(lambda v: self._set_cfg("updates.wu_include_drivers", v))
-        self._chk_allow_feature.toggled.connect(
-            lambda v: self._set_cfg("updates.allow_feature_updates", v))
-        self._chk_allow_optional.toggled.connect(
-            lambda v: self._set_cfg("updates.allow_optional_updates", v))
-        self._chk_allow_drivers.toggled.connect(
-            lambda v: self._set_cfg("updates.allow_auto_drivers", v))
-        self._pause_btn.clicked.connect(self._do_pause)
-        self._resume_btn.clicked.connect(self._do_resume)
-        self._wu_health_refresh_btn.clicked.connect(self._refresh_wu_health)
-        self._sched_save_btn.clicked.connect(self._save_schedule)
-        self._sched_remove_btn.clicked.connect(self._remove_schedule)
-        self._sched_run_btn.clicked.connect(self._run_schedule_now)
-        self._sched_health_refresh_btn.clicked.connect(self._refresh_task_health)
-        self._legacy_save_btn.clicked.connect(self._save_legacy)
-        self._legacy_remove_btn.clicked.connect(self._remove_legacy)
+        return legacy_box
 
     def _set_cfg(self, key: str, value) -> None:
         if self.app is not None:

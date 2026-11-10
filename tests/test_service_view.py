@@ -72,3 +72,54 @@ def test_start_type_map_is_keyed_on_lowercased_name():
     rows = [svc(Name="RpcSs", **{"Start Type": "Auto"}), svc(Name="Foo", **{"Start Type": "Disabled"})]
     m = sv.start_type_map(rows)
     assert m == {"rpcss": "Auto", "foo": "Disabled"}
+
+
+def test_is_unquoted_path_filter():
+    unquoted = svc(Path=r"C:\Program Files\Some App\service.exe")
+    quoted = svc(Path=r'"C:\Program Files\Some App\service.exe"')
+    assert sv.is_unquoted_path(unquoted)
+    assert not sv.is_unquoted_path(quoted)
+    assert sv.passes("unquoted", unquoted)
+    assert not sv.passes("unquoted", quoted)
+
+
+def test_set_failure_actions_success(monkeypatch):
+    class R:
+        def __init__(self, rc, out): self.returncode, self.stdout, self.stderr = rc, out, ""
+    
+    recorded_cmd = []
+    def fake_run(cmd, *a, **k):
+        recorded_cmd.extend(cmd)
+        return R(0, "[SC] ChangeServiceConfig2 SUCCESS")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ok, msg = sv.set_failure_actions("Spooler", [("restart", 60000), ("restart", 60000)], reset_seconds=86400)
+    assert ok is True
+    assert "SUCCESS" in msg
+    assert "sc.exe" in recorded_cmd
+    assert "failure" in recorded_cmd
+    assert "reset=" in recorded_cmd
+    assert "86400" in recorded_cmd
+    assert "actions=" in recorded_cmd
+    assert "restart/60000/restart/60000" in recorded_cmd
+
+
+def test_set_failure_actions_clear(monkeypatch):
+    class R:
+        def __init__(self, rc, out): self.returncode, self.stdout, self.stderr = rc, out, ""
+    
+    recorded_cmd = []
+    def fake_run(cmd, *a, **k):
+        recorded_cmd.extend(cmd)
+        return R(0, "[SC] ChangeServiceConfig2 SUCCESS")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    ok, msg = sv.set_failure_actions("Spooler", [])
+    assert ok is True
+    assert '""' in recorded_cmd
+
+
+def test_set_failure_actions_refuses_invalid_inputs():
+    assert sv.set_failure_actions("Spooler & bad", [])[0] is False
+    assert sv.set_failure_actions("Spooler", [("invalid_action", 1000)])[0] is False
+

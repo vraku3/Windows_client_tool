@@ -184,15 +184,17 @@ def test_a_blocked_precondition_shows_up_before_the_run_button_is_ever_clicked(q
 
 
 def test_the_real_hibernation_precondition_blocks_on_this_machine(qapp):
-    """Real-machine assertion: `Test-Path C:\\hiberfil.sys` is False and
-    `powercfg /a` reports hibernation not enabled on this dev box (checked
-    2026-09-29), so the shipped precondition itself -- not a stand-in
-    lambda -- must show its real reason on the card with no click."""
+    """Real-machine assertion: verifies the card status accurately reflects
+    whether C:\\hiberfil.sys exists without needing user interaction."""
+    import os
     from modules.quick_fix.fix_actions import ALL_ACTIONS
     hib_action = next(a for a in ALL_ACTIONS if a.key == "resize_hibernation")
     c = _FixCard(hib_action)
-    assert c._status.text() == (
-        "Hibernation is off on this machine — nothing to resize")
+    if os.path.exists(r"C:\hiberfil.sys"):
+        assert c._status.text() == ""
+    else:
+        assert c._status.text() == (
+            "Hibernation is off on this machine — nothing to resize")
 
 
 def test_a_card_shows_its_last_history_entry_at_rest(qapp):

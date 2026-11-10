@@ -83,7 +83,8 @@ def explain(root, context, intro=True):
         for column in range(table.columnCount()):
             item = table.horizontalHeaderItem(column)
             if item is not None and not item.toolTip():
-                item.setToolTip(CONTEXT_HEADERS.get((context, item.text()), HEADERS[item.text()]))
+                tip = CONTEXT_HEADERS.get((context, item.text()), HEADERS.get(item.text(), f"{item.text()} column"))
+                item.setToolTip(tip)
     for button in _owned_widgets(root, QAbstractButton):
         name = button.objectName()
         if name == "qt_tableview_cornerbutton":

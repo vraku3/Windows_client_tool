@@ -12,13 +12,31 @@ from PyQt6.QtWidgets import QApplication
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _isolated_operation_mutex():
+def _isolated_operation_mutex(tmp_path_factory):
     import uuid
     from core import operation_lock
     original = operation_lock.MUTEX_NAME
+    original_sidecar = operation_lock._sidecar
     operation_lock.MUTEX_NAME = "Local\\WinClientTool_pytest_" + uuid.uuid4().hex
+    temp_dir = tmp_path_factory.mktemp("op_lock")
+    operation_lock._sidecar = lambda: temp_dir / "operation_lock.json"
     yield
     operation_lock.MUTEX_NAME = original
+    operation_lock._sidecar = original_sidecar
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_test_histories(tmp_path_factory):
+    from modules.debloat import debloat_history
+    from modules.quick_fix import quick_fix_history
+    temp_dir = tmp_path_factory.mktemp("test_histories")
+    orig_debloat = debloat_history._history_path
+    orig_qfix = quick_fix_history._history_path
+    debloat_history._history_path = lambda: str(temp_dir / "debloat_history.json")
+    quick_fix_history._history_path = lambda: str(temp_dir / "quick_fix_history.json")
+    yield
+    debloat_history._history_path = orig_debloat
+    quick_fix_history._history_path = orig_qfix
 
 
 @pytest.fixture(scope="session", autouse=True)

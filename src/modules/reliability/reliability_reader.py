@@ -13,8 +13,8 @@ def _connect():
     try:
         import pythoncom
         pythoncom.CoInitialize()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("CoInitialize in reliability_reader: %s", exc)
     import wmi
     return wmi.WMI(namespace=r"root\cimv2")
 

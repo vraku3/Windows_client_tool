@@ -194,6 +194,38 @@ def program_path(command: str) -> str:
     return os.path.expandvars((command or "").strip().strip('"'))
 
 
+def is_unquoted_path(command: str) -> bool:
+    """Detect if an executable command has spaces in its path without enclosing quotes.
+
+    An unquoted path containing spaces (e.g. C:\\Program Files\\Vendor\\tool.exe)
+    is vulnerable to binary planting / privilege escalation (CWE-428) when executed
+    by Task Scheduler or Windows services.
+    """
+    if not command:
+        return False
+    cmd = command.strip()
+    if not cmd or cmd.startswith('"') or cmd.startswith("'") or cmd.startswith("COM handler"):
+        return False
+    if " " not in cmd:
+        return False
+
+    # Match executable with spaces before or inside its path
+    m = re.match(r'^(.*?\.(?:exe|bat|cmd|vbs|ps1))\b', cmd, re.IGNORECASE)
+    if m:
+        exe_part = m.group(1).strip()
+        return " " in exe_part
+
+    # Absolute path without extension
+    if re.match(r'^[a-zA-Z]:\\', cmd) or cmd.startswith('\\\\'):
+        return True
+    return False
+
+
+def has_unquoted_path(details: TaskDetails) -> bool:
+    """True if any Exec action in the task has an unquoted path with spaces."""
+    return any(is_unquoted_path(prog) for prog, _args in details.commands)
+
+
 def signature_line(details: TaskDetails) -> Optional[str]:
     """The first Exec action's program, signed or not -- computed on demand
     (called only from `detail_text`, never from a filter that would run it
@@ -283,6 +315,10 @@ def _highest(t) -> bool:
     return _details(t).run_level == "HighestAvailable"
 
 
+def _unquoted(t) -> bool:
+    return has_unquoted_path(_details(t))
+
+
 FILTERS: Tuple[Tuple[str, str, Callable], ...] = (
     ("all", "All", lambda t: True),
     ("failed", "Failed", lambda t: failed(t.last_result_code)),
@@ -293,6 +329,7 @@ FILTERS: Tuple[Tuple[str, str, Callable], ...] = (
     ("system", "SYSTEM", _runs_as_system),
     ("logon", "Logon/boot", _at_logon_or_boot),
     ("highest", "Elevated", _highest),
+    ("unquoted", "Unquoted path", _unquoted),
     ("missing", "Missing exe", _missing),
 )
 _BY_KEY = {k: fn for k, _, fn in FILTERS}
@@ -338,6 +375,8 @@ def detail_text(task) -> str:
     ]
     for prog, args in d.commands:
         lines.append(f"Runs:        {prog} {args}".rstrip())
+    if has_unquoted_path(d):
+        lines.append("SECURITY:    unquoted program path contains spaces (privilege escalation risk).")
     missing = program_missing(d)
     if missing:
         lines.append("WARNING:     the program does not exist on disk.")

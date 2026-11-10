@@ -204,6 +204,25 @@ def _reg_read(key: str, value: str, kind: str = "REG_DWORD") -> Optional[Any]:
     return raw
 
 
+def _reg_enum_subkeys(key: str) -> List[str]:
+    """Enumerate subkey names under a registry key.
+
+    Returns empty list if key does not exist. Raises RegistryReadError on access denial.
+    """
+    hive_name, _, sub = key.partition("\\")
+    hive = _HIVES.get(hive_name.upper())
+    if hive is None:
+        return []
+    try:
+        with winreg.OpenKey(hive, sub) as handle:
+            count = winreg.QueryInfoKey(handle)[0]
+            return [winreg.EnumKey(handle, i) for i in range(count)]
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise RegistryReadError(f"{key}: {exc}") from exc
+
+
 def _reg_write(key: str, value: str, data: Any, kind: str = "REG_DWORD") -> bool:
     """Write a registry value via reg add. Returns True on success."""
     try:
@@ -519,6 +538,11 @@ def check_lsass_protection() -> Dict[str, Any]:
     key = r"HKLM\SYSTEM\CurrentControlSet\Control\Lsa"
     try:
         val = _reg_read(key, "RunAsPPL")
+        if val in (None, 0):
+            # Windows 11 22H2+ sets RunAsPPLBoot without necessarily populating RunAsPPL
+            val_boot = _reg_read(key, "RunAsPPLBoot")
+            if val_boot in (1, 2):
+                val = val_boot
         if val == 1:
             return {"status": "Protected", "color": "green",
                     "details": [("LSASS Protection", "On with UEFI lock on Secure Boot/UEFI (RunAsPPL=1)")], "enabled": True}
@@ -1609,17 +1633,41 @@ def check_netbios_tcpip() -> Dict[str, Any]:
         val = _reg_read(r"HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters", "NodeType")
         if val is None:
             # No NodeType means H-node, which has NetBIOS ON.
-            return {"status": "Not Configured", "color": "amber",
-                    "available": True, "enabled": True,
-                    "details": [("NetBIOS", "No NodeType — default H-node")]}
-        labels = {1: "B-node (broadcast)", 2: "P-node: no broadcast name resolution", 4: "M-node", 8: "H-node (default)"}
-        label = labels.get(val, f"Unknown ({val})")
-        disabled = val == 2
-        return {"status": label, "available": True, "node_type": val,
-                "color": "green" if disabled else ("amber" if val == 8 else "red"),
-                "details": [("NetBIOS NodeType", label),
-                            ("Scope", "P-node uses WINS; NetBIOS over TCP/IP "
-                             "remains controlled per adapter")],
+            node_label = "No NodeType — default H-node"
+            disabled = False
+            status_text = "Not Configured"
+        else:
+            labels = {1: "B-node (broadcast)", 2: "P-node: no broadcast name resolution", 4: "M-node", 8: "H-node (default)"}
+            node_label = labels.get(val, f"Unknown ({val})")
+            disabled = val == 2
+            status_text = node_label
+
+        details = [("NetBIOS NodeType", node_label)]
+
+        # Audit per-adapter NetbiosOptions
+        try:
+            ifaces = _reg_enum_subkeys(r"HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces")
+            if ifaces:
+                disabled_count = 0
+                for iface in ifaces:
+                    opt = _reg_read(rf"HKLM\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces\{iface}", "NetbiosOptions")
+                    if opt == 2:
+                        disabled_count += 1
+                total = len(ifaces)
+                if disabled_count == total:
+                    details.append(("Adapter NetBIOS", f"Disabled on all {total} interfaces (ports 137-139 closed)"))
+                else:
+                    active = total - disabled_count
+                    details.append(("Adapter NetBIOS", f"Active on {active}/{total} interfaces ({disabled_count} disabled)"))
+            else:
+                details.append(("Adapter NetBIOS", "No interfaces configured"))
+        except RegistryReadError as exc:
+            logger.debug("Could not read NetBT interfaces: %s", exc)
+            details.append(("Adapter NetBIOS", "Could not audit interface keys"))
+
+        return {"status": status_text, "available": True, "node_type": val,
+                "color": "green" if disabled else ("amber" if val in (8, None) else "red"),
+                "details": details,
                 "enabled": not disabled}
     except RegistryReadError as exc:
         return _registry_unavailable(exc)
@@ -1633,7 +1681,7 @@ _WPAD_AUTODETECT_BIT = 0x08
 
 
 def check_wpad() -> Dict[str, Any]:
-    """WPAD auto-detect, per user.
+    """WPAD auto-detect, per user and machine policy.
 
     The `AutoDetect` value this used to read is absent on a default Windows,
     and absence was reported as "Disabled (default)" in GREEN. It is not the
@@ -1641,6 +1689,15 @@ def check_wpad() -> Dict[str, Any]:
     DefaultConnectionSettings, and on this machine that bit is SET.
     """
     try:
+        machine_disabled = _reg_read(
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp",
+            "DisableWpad"
+        )
+        if machine_disabled == 1:
+            return {"status": "Disabled (machine policy)", "color": "green", "available": True,
+                    "details": [("WPAD Auto-Detect", "Disabled machine-wide via WinHttp policy")],
+                    "enabled": False}
+
         val = _reg_read(r"HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings", "AutoDetect")
         if val is not None:
             enabled = val != 0
@@ -1788,11 +1845,60 @@ def check_smb_signing() -> Dict[str, Any]:
         val = _reg_read(r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters", "RequireSecuritySignature")
         if val is None:
             return {"status": "Not Required", "color": "red",
-                    "details": [("SMB Signing", "Not configured — not required")], "enabled": False}
+                    "details": [("SMB Client Signing", "Not configured — not required")], "enabled": False}
         required = val == 1
         return {"status": "Required" if required else "Not Required",
                 "color": "green" if required else "red",
-                "details": [("SMB Signing Required", "Yes" if required else "No")], "enabled": required}
+                "details": [("SMB Client Signing Required", "Yes" if required else "No")], "enabled": required}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
+    except Exception:
+        return {"status": "Error", "color": "amber", "details": []}
+
+def check_smb_server_signing() -> Dict[str, Any]:
+    try:
+        val = _reg_read(r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters", "RequireSecuritySignature")
+        if val is None:
+            return {"status": "Not Required", "color": "red",
+                    "details": [("SMB Server Signing", "Not configured — not required")], "enabled": False}
+        required = val == 1
+        return {"status": "Required" if required else "Not Required",
+                "color": "green" if required else "red",
+                "details": [("SMB Server Signing Required", "Yes" if required else "No")], "enabled": required}
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
+    except Exception:
+        return {"status": "Error", "color": "amber", "details": []}
+
+def check_smb_guest_auth() -> Dict[str, Any]:
+    """Read SMB insecure guest authentication policy without elevation.
+
+    Stored under HKLM\\SYSTEM\\CurrentControlSet\\Services\\LanmanWorkstation\\Parameters\\AllowInsecureGuestAuth.
+    """
+    try:
+        val = _reg_read(
+            r"HKLM\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters",
+            "AllowInsecureGuestAuth",
+        )
+        if val is None:
+            return {
+                "status": "Disabled (default)",
+                "color": "green",
+                "available": True,
+                "enabled": False,
+                "details": [("Insecure Guest Logons", "Not configured — disabled by default on modern Windows")],
+            }
+        allowed = val == 1
+        return {
+            "status": "Enabled" if allowed else "Disabled",
+            "color": "red" if allowed else "green",
+            "available": True,
+            "enabled": allowed,
+            "details": [
+                ("Insecure Guest Logons",
+                 "Allowed (unauthenticated SMB access permitted)" if allowed else "Disabled")
+            ],
+        }
     except RegistryReadError as exc:
         return _registry_unavailable(exc)
     except Exception:
@@ -3068,6 +3174,32 @@ def check_memory_integrity_registry() -> Dict[str, Any]:
         return _registry_unavailable(exc)
     except Exception:
         return {"status": "Error", "color": "amber", "details": [("Memory Integrity", "Check failed")]}
+
+def check_vulnerable_driver_blocklist() -> Dict[str, Any]:
+    """Read Microsoft Vulnerable Driver Blocklist state without elevation.
+
+    Stored under HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Config
+    VulnerableDriverBlocklistEnable (DWORD).
+    """
+    try:
+        val = _reg_read(r"HKLM\SYSTEM\CurrentControlSet\Control\CI\Config", "VulnerableDriverBlocklistEnable")
+        if val == 1:
+            return {
+                "status": "Enabled",
+                "color": "green",
+                "details": [("Vulnerable Driver Blocklist", "Enabled — kernel blocks known vulnerable drivers")],
+                "enabled": True,
+            }
+        return {
+            "status": "Disabled",
+            "color": "red",
+            "details": [("Vulnerable Driver Blocklist", "Disabled — system vulnerable to BYOVD exploits")],
+            "enabled": False,
+        }
+    except RegistryReadError as exc:
+        return _registry_unavailable(exc)
+    except Exception:
+        return {"status": "Error", "color": "amber", "details": [("Vulnerable Driver Blocklist", "Check failed")]}
 
 #: Get-ProcessMitigation's tri-state. NOTSET is "Windows' default applies",
 #: which is emphatically not the same as OFF.

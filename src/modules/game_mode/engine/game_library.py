@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
+
+logger = logging.getLogger(__name__)
 
 _PATH = re.compile(r'"path"\s+"([^"]+)"', re.I)
 
@@ -56,7 +59,8 @@ def steam_games(steam_root: Path) -> List[GameEntry]:
         common = library / "steamapps" / "common"
         try:
             folders = sorted(child for child in common.iterdir() if child.is_dir())
-        except OSError:
+        except OSError as exc:
+            logger.debug("Iterating library common %s: %s", common, exc)
             continue
         for folder in folders:
             exe = _first_exe(folder)
@@ -77,7 +81,8 @@ def epic_games(manifests: Path) -> List[GameEntry]:
             name = str(data.get("DisplayName") or "").strip()
             install = str(data.get("InstallLocation") or "").strip()
             relative = str(data.get("LaunchExecutable") or "").strip()
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError) as exc:
+            logger.debug("Reading Epic item %s: %s", item, exc)
             continue
         if not name or not install:
             continue

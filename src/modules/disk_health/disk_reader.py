@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -285,6 +286,83 @@ def _run(args: Sequence[str], timeout: int) -> Tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _query_bitlocker_com(drive_letter: str) -> Optional[str]:
+    """Query BitLocker status via Shell.Application (works unelevated)."""
+    initialized = False
+    try:
+        import pythoncom
+        import win32com.client
+        try:
+            pythoncom.CoInitialize()
+            initialized = True
+        except Exception as exc:
+            logger.debug("CoInitialize note for %s: %s", drive_letter, exc)
+        sh = win32com.client.Dispatch("Shell.Application")
+        ns = sh.NameSpace(f"{drive_letter}:\\")
+        if ns is not None:
+            prop = ns.Self.ExtendedProperty("System.Volume.BitLockerProtection")
+            val = _opt_int(prop)
+            if val is not None:
+                return _BITLOCKER.get(val, f"state {val}")
+    except Exception as exc:
+        logger.debug("Win32 BitLocker read failed for %s: %s", drive_letter, exc)
+    finally:
+        if initialized:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception as exc:
+                logger.debug("CoUninitialize note for %s: %s", drive_letter, exc)
+    return None
+
+
+def _read_volumes_win32() -> List[VolumeInfo]:
+    """Native Win32 fallback for volume enumeration when CIM/WMI Get-Volume fails."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+
+    buf_len = kernel32.GetLogicalDriveStringsW(0, None)
+    if not buf_len:
+        return []
+    buf = ctypes.create_unicode_buffer(buf_len)
+    if not kernel32.GetLogicalDriveStringsW(buf_len, buf):
+        return []
+
+    raw_bytes = ctypes.string_at(ctypes.byref(buf), buf_len * 2)
+    drive_names = [d.rstrip(":\\") for d in raw_bytes.decode("utf-16le", errors="ignore").split("\x00") if d]
+
+    volumes: List[VolumeInfo] = []
+    for drive in drive_names:
+        root = f"{drive}:\\"
+        dtype = kernel32.GetDriveTypeW(root)
+        if dtype != 3:  # DRIVE_FIXED
+            continue
+
+        vol_name = ctypes.create_unicode_buffer(261)
+        fs_name = ctypes.create_unicode_buffer(261)
+        ok = kernel32.GetVolumeInformationW(root, vol_name, 261, None, None, None, fs_name, 261)
+        label = vol_name.value if ok else ""
+        fs = fs_name.value if ok else ""
+
+        free_bytes = ctypes.c_ulonglong(0)
+        total_bytes = ctypes.c_ulonglong(0)
+        kernel32.GetDiskFreeSpaceExW(root, None, ctypes.byref(total_bytes), ctypes.byref(free_bytes))
+
+        bl_status = _query_bitlocker_com(drive)
+
+        volumes.append(VolumeInfo(
+            letter=drive,
+            label=label,
+            filesystem=fs,
+            health="Healthy",
+            size_bytes=total_bytes.value,
+            free_bytes=free_bytes.value,
+            bitlocker=bl_status,
+        ))
+    return volumes
+
+
 def read_disk_report(elevated: bool = False, timeout: int = 60) -> DiskReport:
     try:
         rc, out, err = _run([powershell_exe(), "-NoProfile", "-NonInteractive",
@@ -298,6 +376,14 @@ def read_disk_report(elevated: bool = False, timeout: int = 60) -> DiskReport:
     except (ValueError, TypeError) as e:
         raise DiskReadError(f"Unreadable disk data: {e}") from e
     rep.elevated = elevated
+    if not rep.volumes:
+        try:
+            fallback = _read_volumes_win32()
+            if fallback:
+                rep.volumes = fallback
+                rep.errors.pop("volumes", None)
+        except Exception as exc:
+            logger.debug("Win32 volume fallback error: %s", exc)
     try:
         _rc, fs_out, _e = _run(["fsutil", "behavior", "query", "DisableDeleteNotify"], 15)
         rep.trim_enabled = parse_trim(fs_out)
@@ -433,6 +519,12 @@ def volume_findings(vol: VolumeInfo) -> List[Finding]:
         elif pct < 10:
             out.append(Finding("warning", vol.display, f"{pct:.1f}% free",
                                f"{format_size(vol.free_bytes)} left."))
+        elif _is_system_drive(vol) and vol.free_bytes < 20 * (1024 ** 3):
+            out.append(Finding(
+                "warning", vol.display,
+                f"Low system drive headroom: {format_size(vol.free_bytes)} free",
+                "Windows Update and servicing operations typically require at least 20 GB of free space.",
+            ))
     return out
 
 

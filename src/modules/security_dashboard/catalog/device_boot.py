@@ -21,7 +21,7 @@ from ..security_reader import (
     check_ntp_sync, check_pagefile_clear, check_secure_boot_tpm,
     check_smartscreen,
     check_test_signing, check_tpm_details, check_usb_storage,
-    check_wu_auto_update,
+    check_vulnerable_driver_blocklist, check_wu_auto_update,
 )
 from .model import Category, Risk, SecurityControl
 
@@ -30,6 +30,7 @@ _MEMORY_MANAGEMENT = (r"HKLM\SYSTEM\CurrentControlSet\Control"
 _HVCI_POLICY = (r"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard"
                 r"\Scenarios\HypervisorEnforcedCodeIntegrity")
 _DEVICE_GUARD = r"HKLM\SYSTEM\CurrentControlSet\Control\DeviceGuard"
+_CI_CONFIG = r"HKLM\SYSTEM\CurrentControlSet\Control\CI\Config"
 _EXPLORER_POLICY = (r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion"
                     r"\Policies\Explorer")
 _SMARTSCREEN_POLICY = r"HKLM\SOFTWARE\Policies\Microsoft\Windows\System"
@@ -123,6 +124,20 @@ CONTROLS: Tuple[SecurityControl, ...] = (
         read_only_reason="This is the live state, not a setting. Write the "
                          "policy through the Memory Integrity control above; "
                          "this card is how you find out whether it took.",
+    ),
+
+    SecurityControl(
+        id="vulnerable_driver_blocklist",
+        title="Microsoft Vulnerable Driver Blocklist",
+        category=Category.DEVICE_BOOT,
+        description="Enforces Microsoft's kernel blocklist of third-party drivers with known security vulnerabilities.",
+        why_it_matters="Defends against Bring Your Own Vulnerable Driver (BYOVD) attacks, where attackers load a legitimately signed but vulnerable driver to bypass kernel protections.",
+        reader=check_vulnerable_driver_blocklist,
+        on_steps=(_dword(_CI_CONFIG, "VulnerableDriverBlocklistEnable", 1),),
+        off_steps=(_dword(_CI_CONFIG, "VulnerableDriverBlocklistEnable", 0),),
+        desired=True,
+        risk=Risk.LOW,
+        requires_reboot=True,
     ),
 
     SecurityControl(

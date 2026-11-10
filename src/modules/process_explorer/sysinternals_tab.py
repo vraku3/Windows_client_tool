@@ -51,12 +51,18 @@ TOOLS = [
 def _get_cache_dir() -> str:
     base = os.environ.get("APPDATA", os.path.expanduser("~"))
     d = os.path.join(base, "WindowsTweaker", "sysinternals")
-    os.makedirs(d, exist_ok=True)
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError as exc:
+        logger.debug("Creating sysinternals cache dir: %s", exc)
     return d
 
 
 def _is_cached(exe: str) -> bool:
-    return os.path.isfile(os.path.join(_get_cache_dir(), exe))
+    try:
+        return os.path.isfile(os.path.join(_get_cache_dir(), exe))
+    except Exception:
+        return False
 
 
 def _is_webclient_running() -> bool:

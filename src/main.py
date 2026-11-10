@@ -234,8 +234,8 @@ def _run_game_mode(command: str, profile: str) -> int:
     finally:
         try:
             app.shutdown()
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger("main").debug("app.shutdown error: %s", exc)
     return 0
 
 

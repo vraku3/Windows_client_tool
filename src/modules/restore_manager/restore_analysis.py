@@ -62,6 +62,17 @@ class ShadowStorage:
 
 
 @dataclass
+class ShadowCopyInfo:
+    shadow_id: str                      # GUID: "{289f81ca-5cb8-4eb8-b9f1-f03767cba4fa}"
+    set_id: str                         # GUID: "{b671b559-0016-4fb4-9c0d-cf2e2609041a}"
+    creation_time: str                  # e.g. "10/15/2026 3:34:55 PM"
+    original_volume: str                # "(C:)\\\\?\\Volume{...}\\" or "C:"
+    shadow_volume: str                  # "\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1"
+    provider: str                       # "'Microsoft Software Shadow Copy provider 1.0'"
+    attributes: str                     # "Persistent, Client-accessible, Differential"
+
+
+@dataclass
 class Protection:
     """Volumes with System Protection on, straight from the SPP registry key."""
     mounts: List[str] = field(default_factory=list)      # ["C:"]
@@ -239,6 +250,93 @@ def read_shadow_storage() -> Tuple[Optional[List[ShadowStorage]], str]:
 
 
 # --------------------------------------------------------------------------
+# Shadow copies (vssadmin list shadows)
+# --------------------------------------------------------------------------
+
+_SET_ID = re.compile(r"shadow copy set ID:\s*(\{[0-9a-fA-F-]+\})", re.IGNORECASE)
+_CREATION_TIME = re.compile(r"creation time:\s*(.+)$", re.IGNORECASE)
+_SHADOW_ID = re.compile(r"Shadow Copy ID:\s*(\{[0-9a-fA-F-]+\})", re.IGNORECASE)
+_ORIGINAL_VOL = re.compile(r"Original Volume:\s*(?:(?:\(([A-Za-z]:)\))|(\S+))", re.IGNORECASE)
+_SHADOW_VOL = re.compile(r"Shadow Copy Volume:\s*(\S+)", re.IGNORECASE)
+_PROVIDER = re.compile(r"Provider:\s*['\"]?(.*?)['\"]?$", re.IGNORECASE)
+_ATTRIBUTES = re.compile(r"Attributes:\s*(.+)$", re.IGNORECASE)
+
+
+def parse_shadow_copies(output: str) -> Optional[List[ShadowCopyInfo]]:
+    """One entry per shadow copy. None when vssadmin refused or said nothing
+    parseable; [] only when it answered and listed no shadow copy."""
+    if not output or not output.strip():
+        return None
+    low = output.lower()
+    if "shadow copy id" not in low:
+        if "no items found" in low or "no shadow copies" in low or ("error:" not in low and "0 shadow copies" in low):
+            return []
+        return None
+    entries: List[ShadowCopyInfo] = []
+    current_set_id = ""
+    current_time = ""
+    current_shadow: Optional[ShadowCopyInfo] = None
+
+    for line in output.splitlines():
+        trimmed = line.strip()
+        m_set = _SET_ID.search(trimmed)
+        if m_set:
+            current_set_id = m_set.group(1)
+            continue
+        m_time = _CREATION_TIME.search(trimmed)
+        if m_time:
+            current_time = m_time.group(1).strip()
+            continue
+        m_id = _SHADOW_ID.search(trimmed)
+        if m_id:
+            current_shadow = ShadowCopyInfo(
+                shadow_id=m_id.group(1),
+                set_id=current_set_id,
+                creation_time=current_time,
+                original_volume="",
+                shadow_volume="",
+                provider="",
+                attributes="",
+            )
+            entries.append(current_shadow)
+            continue
+        if current_shadow is None:
+            continue
+        m_orig = _ORIGINAL_VOL.search(trimmed)
+        if m_orig:
+            current_shadow.original_volume = m_orig.group(1) or m_orig.group(2) or ""
+            continue
+        m_svol = _SHADOW_VOL.search(trimmed)
+        if m_svol:
+            current_shadow.shadow_volume = m_svol.group(1)
+            continue
+        m_prov = _PROVIDER.search(trimmed)
+        if m_prov:
+            current_shadow.provider = m_prov.group(1).strip("'\"")
+            continue
+        m_attr = _ATTRIBUTES.search(trimmed)
+        if m_attr:
+            current_shadow.attributes = m_attr.group(1).strip()
+            continue
+
+    return entries
+
+
+def read_shadow_copies() -> Tuple[Optional[List[ShadowCopyInfo]], str]:
+    """(entries, error). entries None means we could not find out."""
+    try:
+        rc, out, err = _run(["vssadmin", "list", "shadows"], 30)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("vssadmin list shadows failed: %s", e)
+        return None, f"vssadmin could not be run ({e})."
+    parsed = parse_shadow_copies(out)
+    if parsed is None:
+        reason = (out.strip() or err.strip() or f"exit code {rc}").splitlines()[-1][:160]
+        return None, f"vssadmin refused: {reason}. Listing shadow copies needs administrator rights."
+    return parsed, ""
+
+
+# --------------------------------------------------------------------------
 # VSS service start type (readable unelevated)
 # --------------------------------------------------------------------------
 
@@ -274,8 +372,15 @@ def read_service_disabled(name: str) -> Optional[bool]:
         finally:
             win32service.CloseServiceHandle(hscm)
     except Exception as e:
-        logger.debug("read_service_disabled(%s) failed: %s", name, e)
-        return None
+        logger.debug("read_service_disabled(%s) via SCM failed: %s; trying registry", name, e)
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, rf"SYSTEM\CurrentControlSet\Services\{name}") as k:
+                val, _ = winreg.QueryValueEx(k, "Start")
+                # In Windows SCM: 4 is SERVICE_DISABLED
+                return int(val) == 4
+        except Exception as reg_err:
+            logger.debug("read_service_disabled(%s) via registry failed: %s", name, reg_err)
+            return None
 
 
 def read_vss_services_disabled() -> Dict[str, Optional[bool]]:
@@ -322,6 +427,8 @@ def read_sr_task_status() -> SrTaskStatus:
         text = (err.strip() or out.strip() or f"exit code {rc}").splitlines()[-1][:160]
         if "access is denied" in text.lower():
             return SrTaskStatus(error=f"Task Scheduler refused to list \"{SR_TASK_PATH}\" (access denied).")
+        if "network address is invalid" in text.lower():
+            return SrTaskStatus(error=f"Task Scheduler RPC unreachable: {text}")
         return SrTaskStatus(error=f"The automatic restore point task could not be read: {text}")
     fields: Dict[str, str] = {}
     for line in out.splitlines():

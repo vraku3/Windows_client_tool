@@ -4,7 +4,7 @@ No Qt in here. Every judgement works on the plain dicts `get_services()` returns
 (Name, Display Name, Status, Start Type, PID, Description, Impact, Path,
 StartName), and a field WMI left empty is treated as unknown, never as a value.
 """
-from typing import Callable, Dict, Iterable, List, Tuple
+from typing import Callable, Dict, Iterable, List, Sequence, Tuple
 
 #: Accounts every service may run under without anyone having chosen them.
 _BUILTIN_ACCOUNTS = {"localsystem", "nt authority\\system", "nt authority\\localservice",
@@ -81,6 +81,12 @@ def is_third_party(svc: Dict) -> bool:
     return "\\windows\\" not in path
 
 
+def is_unquoted_path(svc: Dict) -> bool:
+    """True when the service ImagePath is unquoted and contains a space."""
+    from modules.services_manager import service_audit
+    return service_audit.is_unquoted_path(_text(svc, "Path"))
+
+
 FILTERS: Tuple[Tuple[str, str, Callable[[Dict], bool]], ...] = (
     ("all", "All", lambda s: True),
     ("running", "Running", is_running),
@@ -91,6 +97,7 @@ FILTERS: Tuple[Tuple[str, str, Callable[[Dict], bool]], ...] = (
     ("disabled", "Disabled", is_disabled),
     ("delayed", "Delayed start", is_delayed_autostart),
     ("triggerstart", "Trigger-start", is_trigger_start),
+    ("unquoted", "Unquoted path", is_unquoted_path),
 )
 _FILTER_BY_KEY = {key: fn for key, _, fn in FILTERS}
 
@@ -183,6 +190,50 @@ def set_start_type(name: str, label: str):
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError) as e:
         logging.getLogger(__name__).warning("sc config failed: %s", e)
+        return False, str(e)
+    out = (done.stdout or done.stderr or "").strip()
+    if done.returncode == 0 and "SUCCESS" in out.upper():
+        return True, out
+    return False, out or f"sc exited {done.returncode}"
+
+
+def set_failure_actions(
+    name: str,
+    actions: Sequence[Tuple[str, int]],
+    reset_seconds: int = 86400,
+) -> Tuple[bool, str]:
+    """Change a service's recovery actions via `sc failure`.
+
+    `actions`: sequence of (action, delay_ms), where action in ('restart', 'reboot', 'run', '').
+    Empty actions list clears failure actions (`actions= "" reset= 0`).
+    Returns (ok, message).
+    """
+    import logging
+    import re
+    import subprocess
+    if not re.fullmatch(r"[\w .\-$@]+", name or ""):
+        return False, f"refusing an odd service name {name!r}"
+
+    if not actions:
+        cmd = ["sc.exe", "failure", name, "reset=", "0", "actions=", '""']
+    else:
+        parts = []
+        for act, delay in actions:
+            act_lower = act.lower().strip()
+            if act_lower not in ("restart", "reboot", "run", ""):
+                return False, f"invalid failure action {act!r}"
+            parts.append(f"{act_lower}/{int(delay)}")
+        actions_str = "/".join(parts)
+        cmd = ["sc.exe", "failure", name, "reset=", str(int(reset_seconds)), "actions=", actions_str]
+
+    try:
+        done = subprocess.run(
+            cmd,
+            capture_output=True, text=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logging.getLogger(__name__).warning("sc failure failed: %s", e)
         return False, str(e)
     out = (done.stdout or done.stderr or "").strip()
     if done.returncode == 0 and "SUCCESS" in out.upper():

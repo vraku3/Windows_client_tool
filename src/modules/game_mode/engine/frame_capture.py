@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def find_presentmon(extra_paths=()) -> Optional[str]:
@@ -33,7 +36,8 @@ def find_presentmon(extra_paths=()) -> Optional[str]:
             if root.is_dir():
                 for path in root.rglob("PresentMon*.exe"):
                     return str(path)
-        except OSError:
+        except OSError as exc:
+            logger.debug("Accessing candidate root %s: %s", root, exc)
             continue
     return None
 
@@ -83,7 +87,8 @@ def summarize(text: str) -> dict:
             continue
         try:
             value = float(row[index])
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            logger.debug("Parsing frame value: %s", exc)
             continue
         if 0 < value < 10_000:
             frame_ms.append(value)

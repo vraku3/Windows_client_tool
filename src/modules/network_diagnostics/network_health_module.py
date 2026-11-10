@@ -23,7 +23,7 @@ from core.worker import Worker
 from ui.chip_bar import ChipBar
 from ui.table_style import apply_table_style
 from ui.help.network_overview import add_glance, unreadable
-from modules.network_diagnostics import dns_cache, dns_client, network_fixes, network_health, route_table
+from modules.network_diagnostics import dns_cache, dns_client, network_fixes, network_health, port_reader, route_table
 from modules.network_diagnostics.ping_stats import PingStats
 from modules.perfmon.perfmon_charts import _QtLineChart
 
@@ -43,7 +43,7 @@ def _alive(w: Any) -> bool:
 def _read_only_table(cols: List[str]) -> QTableWidget:
     t = QTableWidget(0, len(cols))
     t.setHorizontalHeaderLabels(cols)
-    numeric = [i for i, c in enumerate(cols) if c in ("Time (ms)", "Metric", "TTL")]
+    numeric = [i for i, c in enumerate(cols) if c in ("Time (ms)", "Metric", "TTL", "Port", "PID")]
     apply_table_style(t, numeric_columns=numeric)
     t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -592,6 +592,142 @@ class _DnsCachePane(QWidget):
         self.refresh()
 
 
+class _PortsPane(QWidget):
+    """Listening TCP sockets and bound UDP endpoints across all processes."""
+
+    def __init__(self, module: "NetworkHealthModule") -> None:
+        super().__init__()
+        self._module = module
+        self._entries: List[port_reader.ListeningPort] = []
+        lay = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>Listening ports & bound sockets</b>"))
+        self._status = QLabel("")
+        set_role(self._status, "muted")
+        top.addWidget(self._status, 1)
+
+        self._filter = QLineEdit()
+        control_help(self._filter, 'self._filter')
+        self._filter.setPlaceholderText("Filter port, process, service...")
+        self._filter.textChanged.connect(self._apply_filter)
+        top.addWidget(self._filter)
+
+        self._copy_btn = QPushButton("Copy list")
+        self._copy_btn.setToolTip("Copy the filtered listening ports list to clipboard")
+        self._copy_btn.clicked.connect(self._copy_list)
+        top.addWidget(self._copy_btn)
+
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(self._refresh_btn)
+        lay.addLayout(top)
+
+        self._chips = ChipBar([
+            ("all", "All", 0),
+            ("public", "Public (0.0.0.0 / ::)", 0),
+            ("loopback", "Loopback", 0),
+            ("third_party", "Third-party", 0),
+        ])
+        self._chips.selection_changed.connect(lambda _: self._apply_filter())
+        lay.addWidget(self._chips)
+
+        cols = ["Proto", "Port", "Scope", "Service", "Process", "PID", "User", "Address"]
+        self._table = _read_only_table(cols)
+        lay.addWidget(self._table, 1)
+
+    def refresh(self) -> None:
+        self._refresh_btn.setEnabled(False)
+        self._status.setText("Reading listening ports...")
+        w = Worker(lambda _w: port_reader.read_listening_ports())
+        w.signals.result.connect(lambda r: self._done(r) if _alive(self) else None)
+        w.signals.error.connect(lambda e: self._failed(str(e)) if _alive(self) else None)
+        self._module.track(w)
+
+    def _failed(self, message: str) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._status.setText(f"Could not read listening ports: {message}")
+
+    def _done(self, result: Tuple[List[port_reader.ListeningPort], List[str]]) -> None:
+        self._refresh_btn.setEnabled(True)
+        ports, problems = result
+        self._entries = ports
+
+        pub_count = sum(1 for p in ports if p.is_public)
+        loop_count = sum(1 for p in ports if p.scope == "Loopback")
+        third_count = sum(1 for p in ports if not p.is_system)
+
+        self._chips.set_counts({
+            "all": len(ports),
+            "public": pub_count,
+            "loopback": loop_count,
+            "third_party": third_count,
+        })
+
+        prob_msg = f" ({'; '.join(problems)})" if problems else ""
+        self._status.setText(
+            f"{len(ports)} listening port(s) — {pub_count} public, {third_count} third-party{prob_msg}"
+        )
+        self._apply_filter()
+
+    def _filtered_entries(self) -> List[port_reader.ListeningPort]:
+        sel = self._chips.selected_key or "all"
+        needle = self._filter.text().strip().lower()
+
+        entries = self._entries
+        if sel == "public":
+            entries = [p for p in entries if p.is_public]
+        elif sel == "loopback":
+            entries = [p for p in entries if p.scope == "Loopback"]
+        elif sel == "third_party":
+            entries = [p for p in entries if not p.is_system]
+
+        if needle:
+            entries = [
+                p for p in entries
+                if needle in p.process_name.lower()
+                or needle in str(p.port)
+                or needle in p.service_name.lower()
+                or needle in p.proto.lower()
+                or needle in p.scope.lower()
+                or needle in p.username.lower()
+                or needle in (p.process_path or "").lower()
+            ]
+        return entries
+
+    def _apply_filter(self) -> None:
+        rows = self._filtered_entries()
+        self._table.setRowCount(len(rows))
+        for r, p in enumerate(rows):
+            values = [
+                p.proto,
+                str(p.port),
+                p.scope,
+                p.service_name or "—",
+                p.process_name,
+                str(p.pid) if p.pid is not None else "—",
+                p.username or "—",
+                f"{p.ip}:{p.port}",
+            ]
+            for c, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                if c == 2 and p.is_public:
+                    item.setForeground(QColor(semantic("warning")))
+                if c == 4 and p.process_path:
+                    item.setToolTip(f"{p.process_name}\nPath: {p.process_path}\nUser: {p.username or 'unknown'}")
+                self._table.setItem(r, c, item_help(item, self._table, c))
+        self._table.resizeColumnsToContents()
+        self._table.horizontalHeader().setStretchLastSection(True)
+
+    def _copy_list(self) -> None:
+        rows = self._filtered_entries()
+        lines = ["Proto\tPort\tScope\tService\tProcess\tPID\tUser\tEndpoint"]
+        for p in rows:
+            lines.append(f"{p.proto}\t{p.port}\t{p.scope}\t{p.service_name}\t{p.process_name}\t{p.pid or ''}\t{p.username}\t{p.endpoint}")
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self._status.setText(f"Copied {len(rows)} port(s) to clipboard.")
+
+
 class NetworkHealthModule(BaseModule):
     name = "Health"
     icon = "🩺"
@@ -603,6 +739,7 @@ class NetworkHealthModule(BaseModule):
         super().__init__()
         self._widget: Optional[QWidget] = None
         self._health: Optional[_HealthPane] = None
+        self._ports: Optional[_PortsPane] = None
         self._ping: Optional[_PingPane] = None
         self._routes: Optional["_RoutesPane"] = None
         self._dns_cache: Optional["_DnsCachePane"] = None
@@ -622,20 +759,25 @@ class NetworkHealthModule(BaseModule):
     def create_widget(self) -> QWidget:
         tabs = QTabWidget()
         self._health = _HealthPane(self)
+        self._ports = _PortsPane(self)
         self._ping = _PingPane(self)
         self._routes = _RoutesPane(self)
         self._dns_cache = _DnsCachePane(self)
         tabs.addTab(self._health, "Health")
+        tabs.addTab(self._ports, "Listening ports")
         tabs.addTab(_DnsPane(self), "DNS compare")
         tabs.addTab(self._dns_cache, "DNS cache")
         tabs.addTab(self._ping, "Ping and jitter")
         tabs.addTab(self._routes, "Routes")
         self._widget = tabs
         return explain_tabs(tabs, "Health")
+
     def on_activate(self) -> None:
         h = self._health
         if h is not None and not h._findings:
             h.run_checks()
+        if self._ports is not None and not self._ports._entries:
+            self._ports.refresh()
         if self._routes is not None and self._routes._snapshot is None:
             self._routes.refresh()
         if self._dns_cache is not None and not self._dns_cache._entries:

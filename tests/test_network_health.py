@@ -309,6 +309,42 @@ def test_every_fix_has_a_runner_and_destructive_ones_say_so():
     assert network_fixes.FIXES["reset_winsock"].reboot and "REBOOT" in network_fixes.FIXES["reset_winsock"].confirm_text
 
 
+def test_winsock_findings_broken_and_intact(tmp_path):
+    from modules.network_diagnostics.winsock_catalog import WinsockProvider
+    missing = str(tmp_path / "missing.dll")
+    broken_prov = [WinsockProvider("Broken", missing, "1001", "Base Service Provider")]
+    s_broken = snap(winsock=broken_prov)
+    f_broken = by_id(h.evaluate(s_broken, {}))
+    assert "winsock-corrupt" in f_broken
+    assert f_broken["winsock-corrupt"].severity == h.ERROR
+    assert f_broken["winsock-corrupt"].fix == "reset_winsock"
+
+    existing = tmp_path / "ok.dll"
+    existing.write_text("ok")
+    clean_prov = [WinsockProvider("Clean", str(existing), "1002", "Base Service Provider")]
+    s_clean = snap(winsock=clean_prov)
+    f_clean = by_id(h.evaluate(s_clean, {}))
+    assert "winsock" in f_clean
+    assert f_clean["winsock"].severity == h.OK
+
+
+def test_dns_search_list_findings():
+    s_large = snap(dns_search_list=["a.com", "b.com", "c.com", "d.com", "e.com", "f.com", "g.com"])
+    f_large = by_id(h.evaluate(s_large, {}))
+    assert "dns-searchlist" in f_large
+    assert f_large["dns-searchlist"].severity == h.WARNING
+
+    s_normal = snap(dns_search_list=["corp.example.com"])
+    f_normal = by_id(h.evaluate(s_normal, {}))
+    assert "dns-searchlist" in f_normal
+    assert f_normal["dns-searchlist"].severity == h.INFO
+
+    s_none = snap(dns_search_list=None)
+    f_none = by_id(h.evaluate(s_none, {}))
+    assert "dns-searchlist" in f_none
+    assert f_none["dns-searchlist"].severity == h.UNKNOWN
+
+
 # ---- real machine (read-only) ----------------------------------------------
 def test_real_snapshot_is_plausible():
     s = h.collect_snapshot()

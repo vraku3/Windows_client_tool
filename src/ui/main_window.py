@@ -27,6 +27,9 @@ WM_HOTKEY = 0x0312
 GAME_MODE_HOTKEY_ID = 0x4A21
 
 
+logger = logging.getLogger(__name__)
+
+
 class _GlobalHotkeyFilter(QAbstractNativeEventFilter):
     """Turn the registered Ctrl+Alt+G WM_HOTKEY into the Game Mode command."""
 
@@ -42,12 +45,9 @@ class _GlobalHotkeyFilter(QAbstractNativeEventFilter):
                 if msg.message == WM_HOTKEY and int(msg.wParam) == self._id:
                     self._callback()
                     return True, 0
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("nativeEventFilter error: %s", exc)
         return False, 0
-
-
-logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):

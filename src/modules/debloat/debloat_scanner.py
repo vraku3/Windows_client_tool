@@ -111,6 +111,8 @@ PROTECTED_APPS = {
     "Microsoft.WindowsCalculator",
     "Microsoft.WindowsNotepad",
     "Microsoft.ScreenSketch",
+    "Microsoft.SecHealthUI",
+    "Microsoft.DesktopAppInstaller",
 }
 
 PROTECTED_REASONS = {
@@ -122,4 +124,7 @@ PROTECTED_REASONS = {
     "Microsoft.WindowsNotepad": "System text editor",
     "Microsoft.ScreenSketch": "Windows' screenshot/annotation tool — "
         "several other apps (Teams, OneNote) shell out to it",
+    "Microsoft.SecHealthUI": "Windows Security Center user interface — "
+        "removal breaks Windows Defender UI and security settings",
+    "Microsoft.DesktopAppInstaller": "Windows Package Manager (winget) and MSIX package installer",
 }

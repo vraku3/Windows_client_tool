@@ -253,3 +253,103 @@ def test_hibernation_precondition_blocks_when_hiberfil_is_absent(monkeypatch):
 def test_hibernation_precondition_allows_when_hiberfil_is_present(monkeypatch):
     monkeypatch.setattr(fix_actions.os.path, "exists", lambda p: True)
     assert fix_actions._hibernation_precondition() is None
+
+
+def test_clear_print_queue_purges_shd_spl_and_counts(monkeypatch, output):
+    """Matches system_health.findings.check_print_queue: targets .SHD and .SPL files,
+    ignores subdirectories, and reports the count."""
+    lines, cb = output
+    calls = []
+    removed = []
+
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, cb: (calls.append(("stop", name)), True)[1])
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, cb: calls.append(("start", name)))
+    monkeypatch.setattr(fix_actions.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(fix_actions.os, "listdir", lambda p: ["FP0001.SHD", "FP0001.SPL", "subfolder"])
+    monkeypatch.setattr(fix_actions.os.path, "isfile", lambda p: not p.endswith("subfolder"))
+    monkeypatch.setattr(fix_actions.os, "remove", lambda p: removed.append(os.path.basename(p)))
+
+    fix_actions.clear_print_queue(cb)
+
+    assert ("stop", "Spooler") in calls
+    assert ("start", "Spooler") in calls
+    assert removed == ["FP0001.SHD", "FP0001.SPL"]
+    assert any("Cleared 2 lingering spool file(s)" in line for line in lines)
+
+
+def test_clear_print_queue_reports_already_empty(monkeypatch, output):
+    lines, cb = output
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, cb: True)
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, cb: None)
+    monkeypatch.setattr(fix_actions.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(fix_actions.os, "listdir", lambda p: [])
+
+    fix_actions.clear_print_queue(cb)
+
+    assert any("already empty" in line.lower() for line in lines)
+
+
+def test_print_queue_precondition_blocks_when_empty(monkeypatch):
+    monkeypatch.setattr(fix_actions.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(fix_actions.os, "listdir", lambda p: [])
+    msg = fix_actions._print_queue_precondition()
+    assert msg is not None
+    assert "empty" in msg.lower()
+
+
+def test_print_queue_precondition_allows_when_spool_files_exist(monkeypatch):
+    monkeypatch.setattr(fix_actions.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(fix_actions.os, "listdir", lambda p: ["job01.SPL"])
+    monkeypatch.setattr(fix_actions.os.path, "isfile", lambda p: True)
+    assert fix_actions._print_queue_precondition() is None
+
+
+def test_servicing_precondition_blocks_when_pending_xml_exists(monkeypatch):
+    monkeypatch.setattr(fix_actions.os.path, "exists", lambda p: "pending.xml" in p)
+    msg = fix_actions._servicing_precondition()
+    assert msg is not None
+    assert "servicing transaction is pending" in msg
+
+
+def test_servicing_precondition_allows_when_no_pending_xml(monkeypatch):
+    monkeypatch.setattr(fix_actions.os.path, "exists", lambda p: False)
+    assert fix_actions._servicing_precondition() is None
+
+
+def test_wu_reset_precondition_blocks_on_pending_reboot(monkeypatch):
+    monkeypatch.setattr("core.windows_utils.is_reboot_pending", lambda: True)
+    msg = fix_actions._wu_reset_precondition()
+    assert msg is not None
+    assert "reboot is pending" in msg.lower()
+
+
+def test_wmi_salvage_runs_command(ran, output):
+    lines, cb = output
+    fix_actions.salvage_wmi_repository(cb)
+    assert ["winmgmt", "/salvagerepository"] in ran
+    assert any("salvage completed successfully" in l for l in lines)
+
+
+def test_clear_wer_queue_and_precondition(tmp_path, monkeypatch, output):
+    lines, cb = output
+    monkeypatch.setenv("ProgramData", str(tmp_path))
+    wer_dir = tmp_path / "Microsoft" / "Windows" / "WER" / "ReportQueue"
+    wer_dir.mkdir(parents=True)
+
+    # Empty precondition blocks
+    pre = fix_actions._wer_queue_precondition()
+    assert pre is not None
+    assert "empty" in pre.lower()
+
+    # Add crash item
+    report = wer_dir / "AppCrash_test"
+    report.mkdir()
+    (report / "Report.wer").write_text("crash log")
+
+    # Precondition allows
+    assert fix_actions._wer_queue_precondition() is None
+
+    # Clear queue runs and deletes
+    fix_actions.clear_wer_queue(cb)
+    assert not report.exists()
+    assert any("cleared" in l.lower() for l in lines)

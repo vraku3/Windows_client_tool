@@ -26,8 +26,12 @@ def record(kind: str, success: int, total: int) -> None:
             entries = []
     entries.append({"at": datetime.now().isoformat(timespec="seconds"),
                     "kind": kind, "success": success, "total": total})
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(entries[-200:], f, indent=2)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(entries[-200:], f, indent=2)
+    except OSError as exc:
+        import logging
+        logging.getLogger(__name__).warning("Could not write debloat history to %s: %s", path, exc)
 
 
 def recent(limit: int = 20) -> List[dict]:

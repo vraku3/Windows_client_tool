@@ -86,6 +86,8 @@ def test_turn_on_reads_in_worker_and_cancel_never_executes(qapp, monkeypatch, tm
     module._journal = Journal(str(tmp_path))
     module.app = SimpleNamespace()
     module.create_widget()
+    from core import pending_reboot
+    monkeypatch.setattr(pending_reboot, "check", lambda: SimpleNamespace(needed=False, reasons=[]))
     workers = []
     monkeypatch.setattr(module, "_start", workers.append)
     monkeypatch.setattr(ui, "_session_id", lambda: 1)
@@ -121,6 +123,8 @@ def test_preflight_uses_snapshot_and_ignores_results_after_navigation(qapp, monk
     module._system = FakeSystem()
     module.app = SimpleNamespace()
     module.create_widget()
+    from core import pending_reboot
+    monkeypatch.setattr(pending_reboot, "check", lambda: SimpleNamespace(needed=False, reasons=[]))
     workers, executions, previews = [], [], []
     monkeypatch.setattr(module, "_start", workers.append)
     monkeypatch.setattr(ui, "_session_id", lambda: 1)
@@ -148,8 +152,12 @@ def test_preflight_failure_leaves_off_and_reports_error(qapp, monkeypatch, tmp_p
     from modules.game_mode.engine.journal import Journal
     module = ui.GameModeModule()
     module._journal = Journal(str(tmp_path))
+    module._system = FakeSystem()
     module.app = SimpleNamespace()
     module.create_widget()
+    # Mock pending_reboot to return not needed so QMessageBox doesn't block
+    from core import pending_reboot
+    monkeypatch.setattr(pending_reboot, "check", lambda: SimpleNamespace(needed=False, reasons=[]))
     workers = []
     monkeypatch.setattr(module, "_start", workers.append)
     monkeypatch.setattr(ui, "_session_id", lambda: 1)

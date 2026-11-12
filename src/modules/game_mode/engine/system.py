@@ -838,7 +838,10 @@ class WinSystem:
             ntdll = ctypes.WinDLL("ntdll")
             cur_res = ctypes.c_ulong(0)
             status = ntdll.NtSetTimerResolution(period_100ns, 0, ctypes.byref(cur_res))
-            if status != 0:
+            # 0x0 = STATUS_SUCCESS; 0xC0000245 = STATUS_TIMER_RESOLUTION_NOT_SET.
+            # If the process restarted or resolution was already canceled, the OS kernel
+            # returns 0xC0000245 indicating the resolution request is already not set / released.
+            if status != 0 and (status & 0xFFFFFFFF) != 0xC0000245:
                 return f"NtSetTimerResolution cancel refused (0x{status & 0xffffffff:x})"
             return None
         except Exception as error:  # noqa: BLE001

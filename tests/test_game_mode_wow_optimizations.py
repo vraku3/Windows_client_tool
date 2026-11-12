@@ -294,3 +294,20 @@ def test_real_system_timer_resolution_and_network_unelevated():
 
     # Trimming working set of own process succeeds
     assert sys_.trim_working_set(os.getpid()) is True
+
+
+def test_timer_resolution_cancel_not_set_status_resolves_cleanly():
+    """STATUS_TIMER_RESOLUTION_NOT_SET (0xc0000245) should resolve cleanly without error."""
+    sys_ = WinSystem()
+    # Calling cancel on a fresh process where no resolution was requested returns None (clean success)
+    err = sys_.cancel_timer_resolution(5000)
+    assert err is None
+
+    # session._restore_timer_resolution handles 0xc0000245 error strings cleanly as well
+    logs = []
+    fake_sys = Mock()
+    fake_sys.cancel_timer_resolution.return_value = "NtSetTimerResolution cancel refused (0xc0000245)"
+    res = session._restore_timer_resolution(fake_sys, {"period_100ns": 5000}, lambda lvl, txt: logs.append((lvl, txt)), {})
+    assert res is True
+    assert any("released" in txt for _lvl, txt in logs)
+

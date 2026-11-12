@@ -1586,6 +1586,8 @@ def _restore_io_priority(system, e, say, _ctx) -> bool:
 def _restore_timer_resolution(system, e, say, _ctx) -> bool:
     period = e.get("period_100ns", 5000)
     error = getattr(system, "cancel_timer_resolution", lambda _p: None)(period)
+    if error and "0xc0000245" in error.lower():
+        error = None  # STATUS_TIMER_RESOLUTION_NOT_SET: already released by OS or prior process
     if error:
         say(BAD, f"Timer resolution: not restored ({error})")
         return False

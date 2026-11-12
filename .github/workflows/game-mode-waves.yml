@@ -51,13 +51,22 @@ jobs:
           Write-Host "Running $Cycles waves (duration=${Duration}s)..."
           pwsh -ExecutionPolicy Bypass -File scripts/run_game_mode_waves.ps1 -Cycles $Cycles -DurationSeconds $Duration -PythonExe python
 
+      - name: Stage Telemetry Artifacts
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path telemetry-artifacts -Force | Out-Null
+          if (Test-Path "$env:APPDATA\WindowsTweaker\game_mode") {
+            Copy-Item "$env:APPDATA\WindowsTweaker\game_mode\*" -Destination telemetry-artifacts -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path "$env:APPDATA\WindowsTweaker\GameMode") {
+            Copy-Item "$env:APPDATA\WindowsTweaker\GameMode\*" -Destination telemetry-artifacts -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Upload Telemetry Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: game-mode-wave-metrics
-          path: |
-            $env:APPDATA\WindowsTweaker\game_mode\game_mode_metrics.jsonl
-            $env:APPDATA\WindowsTweaker\game_mode\game_mode_metrics.log
-            $env:TEMP\WindowsTweaker\GameMode\*.json
+          path: telemetry-artifacts/
           if-no-files-found: ignore

@@ -84,8 +84,9 @@ class ResourceTracker:
             try:
                 import ctypes
                 close_fn = getattr(ctypes.windll.kernel32, "CloseHandle", None)
-                if close_fn and handle:
-                    close_fn(handle)
+                if close_fn and handle and handle not in (-1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
+                    close_fn.argtypes = [ctypes.c_void_p]
+                    close_fn(ctypes.c_void_p(handle))
             except Exception as e:
                 logger.warning("Failed to close handle %s: %s", handle, e)
 
@@ -101,6 +102,7 @@ class ResourceTracker:
                     worker.cancel()
             except Exception as e:
                 logger.warning("Worker cancel failed: %s", e)
+        _cancel._worker = worker
 
         with self._lock:
             self._cleanup_actions.append(_cancel)
@@ -111,6 +113,19 @@ class ResourceTracker:
                 "type": "worker",
                 "id": worker_id or str(type(worker).__name__),
             })
+
+    def untrack_worker(self, worker: Any) -> None:
+        """Unregister a finished worker to prevent memory accumulation across cycles."""
+        with self._lock:
+            self._cleanup_actions = [a for a in self._cleanup_actions if getattr(a, "_worker", None) is not worker]
+            worker_id = getattr(worker, "id", None)
+            if worker_id is not None and not isinstance(worker_id, (str, int, float, bool)):
+                worker_id = str(worker_id)
+            target_id = worker_id or str(type(worker).__name__)
+            for i, item in enumerate(self._snapshot):
+                if item.get("type") == "worker" and item.get("id") == target_id:
+                    self._snapshot.pop(i)
+                    break
 
     def track_timer(self, timer_obj: Any, description: str = "timer") -> None:
         """Register a timer resolution object or callable restore function."""

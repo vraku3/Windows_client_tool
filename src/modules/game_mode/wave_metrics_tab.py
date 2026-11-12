@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.widget_life import widget_is_valid
 from core.worker import Worker
 from ui.log_pane import LogPane
 from .telemetry import (
@@ -63,6 +64,11 @@ class WaveMetricsTab(QWidget):
         if not self._loaded:
             self._loaded = True
             self._pane.load(force=True)
+
+    def cancel(self) -> None:
+        if self._running_worker is not None:
+            self._running_worker.cancel()
+            self._running_worker = None
 
     def _build_toolbar(self, layout: QHBoxLayout, extra: dict) -> None:
         self._run_btn = QPushButton("Run 40-Wave Test", self)
@@ -159,8 +165,9 @@ class WaveMetricsTab(QWidget):
             def progress(current: int, total: int) -> None:
                 w.signals.progress.emit(int((current / total) * 100))
 
+            target_sys = getattr(self.host, "_system", getattr(self.host, "system", None))
             return run_wave_benchmark(
-                system=getattr(self.host, "system", None),
+                system=target_sys,
                 wave_count=40,
                 interval_s=0.2,
                 folder=self._folder(),
@@ -188,6 +195,8 @@ class WaveMetricsTab(QWidget):
 
     def _on_benchmark_done(self, results: Any) -> None:
         self._running_worker = None
+        if not widget_is_valid(self):
+            return
         self._pane._progress.setVisible(False)
         if self._run_btn:
             self._run_btn.setEnabled(True)
@@ -216,6 +225,8 @@ class WaveMetricsTab(QWidget):
 
     def _on_benchmark_error(self, exc: Any) -> None:
         self._running_worker = None
+        if not widget_is_valid(self):
+            return
         self._pane._progress.setVisible(False)
         if self._run_btn:
             self._run_btn.setEnabled(True)

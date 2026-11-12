@@ -158,3 +158,10 @@ def test_wave_metrics_tab_ui(qapp):
 
     tab.activate()
     assert tab._loaded is True
+
+    # Test tab cancel
+    mock_running = MagicMock()
+    tab._running_worker = mock_running
+    tab.cancel()
+    mock_running.cancel.assert_called_once()
+    assert tab._running_worker is None

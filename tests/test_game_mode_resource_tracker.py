@@ -149,3 +149,28 @@ def test_session_turn_on_and_off_with_tracker(tmp_path):
     session.turn_off(sys_, journal, lambda *a: None, settle=0.1, resource_tracker=tracker)
     assert tracker.count == 0
     assert sys_.timer_cancelled is True
+
+
+def test_resource_tracker_untrack_worker(tmp_path):
+    tracker = ResourceTracker(base_dir=str(tmp_path))
+    worker = MagicMock()
+    worker.id = "worker_123"
+
+    tracker.track_worker(worker)
+    assert tracker.count == 1
+    assert len(tracker.get_snapshot()) == 1
+
+    tracker.untrack_worker(worker)
+    assert tracker.count == 0
+    assert len(tracker.get_snapshot()) == 0
+
+
+def test_resource_tracker_invalid_handle_ignored(tmp_path):
+    tracker = ResourceTracker(base_dir=str(tmp_path))
+    # Handles 0, -1, 0xFFFFFFFF should not crash or call CloseHandle
+    tracker.track_handle(0)
+    tracker.track_handle(-1)
+    tracker.track_handle(0xFFFFFFFF)
+    assert tracker.count == 3
+    tracker.cleanup()
+    assert tracker.count == 0

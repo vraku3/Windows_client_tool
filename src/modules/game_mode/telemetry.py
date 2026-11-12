@@ -56,15 +56,31 @@ def get_network_latency_ms(host: str = "8.8.8.8", port: int = 53, timeout_s: flo
         return 0.0
 
 
+_PREV_DISK_IO = None
+
+
 def get_disk_latency_ms() -> float:
-    """Estimate average disk operation latency in ms using psutil."""
+    """Estimate average disk operation latency in ms using delta I/O counters."""
+    global _PREV_DISK_IO
     try:
         import psutil
         io = psutil.disk_io_counters()
-        if io and (io.read_count + io.write_count) > 0:
-            total_ops = io.read_count + io.write_count
-            total_ms = io.read_time + io.write_time
-            return round(total_ms / total_ops, 2)
+        if not io:
+            return 0.0
+        if _PREV_DISK_IO is None:
+            _PREV_DISK_IO = io
+            if (io.read_count + io.write_count) > 0:
+                total_ops = io.read_count + io.write_count
+                total_ms = io.read_time + io.write_time
+                ratio = total_ms / total_ops
+                return round(ratio, 2) if ratio >= 0.01 else round(ratio, 4)
+            return 0.0
+        delta_ops = (io.read_count + io.write_count) - (_PREV_DISK_IO.read_count + _PREV_DISK_IO.write_count)
+        delta_ms = (io.read_time + io.write_time) - (_PREV_DISK_IO.read_time + _PREV_DISK_IO.write_time)
+        _PREV_DISK_IO = io
+        if delta_ops > 0:
+            return round(delta_ms / delta_ops, 2)
+        return 0.0
     except Exception:
         pass
     return 0.0
@@ -185,9 +201,9 @@ def record_wave_metric(wave_id: int, data: Dict[str, Any], folder: Optional[str]
     net_lat = float(data.get("network_latency_ms") or 0.0)
     ram_pct = float(data.get("ram_percent") or 0.0)
 
-    # Status evaluation
+    # Status evaluation (aligns with run_game_mode_waves.ps1 upper bound)
     status = "ok"
-    if handles is not None and handles > 200000:
+    if handles is not None and handles > 350000:
         status = "warn"
 
     record = {

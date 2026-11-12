@@ -89,27 +89,31 @@ print(json.dumps(record))
         continue
     }
 
-    $Rec = $Output | ConvertFrom-Json
+    $RawJson = $Output | Select-Object -Last 1
+    $Rec = $RawJson | ConvertFrom-Json
     $H = $Rec.handles
     $Cpu = $Rec.cpu_percent
     $Net = $Rec.network_latency_ms
     $Disk = $Rec.disk_latency_ms
 
-    $HandleReadings += $H
-
     $Growth = 0
-    if ($HandleReadings.Count -gt 1) {
-        $Growth = $H - $HandleReadings[0]
-    }
+    if ($null -ne $H) {
+        $HandleReadings += $H
+        if ($HandleReadings.Count -gt 1) {
+            $Growth = $H - $HandleReadings[0]
+        }
 
-    if ($H -gt $MaxHandlesThreshold) {
-        Write-Host " Handles: $H (EXCEEDS $MaxHandlesThreshold!)" -ForegroundColor Red
-        $FailedWaves++
-    } elseif ($Growth -gt $MaxHandleGrowth) {
-        Write-Host " Handles: $H (LEAK: +$Growth > $MaxHandleGrowth)" -ForegroundColor Red
-        $FailedWaves++
+        if ($H -gt $MaxHandlesThreshold) {
+            Write-Host " Handles: $H (EXCEEDS $MaxHandlesThreshold!)" -ForegroundColor Red
+            $FailedWaves++
+        } elseif ($Growth -gt $MaxHandleGrowth) {
+            Write-Host " Handles: $H (LEAK: +$Growth > $MaxHandleGrowth)" -ForegroundColor Red
+            $FailedWaves++
+        } else {
+            Write-Host " Handles: $H | CPU: $Cpu% | Disk: ${Disk}ms | Net: ${Net}ms [OK]" -ForegroundColor Green
+        }
     } else {
-        Write-Host " Handles: $H | CPU: $Cpu% | Disk: ${Disk}ms | Net: ${Net}ms [OK]" -ForegroundColor Green
+        Write-Host " Handles: N/A | CPU: $Cpu% | Disk: ${Disk}ms | Net: ${Net}ms [OK]" -ForegroundColor Yellow
     }
 
     if ($DurationSeconds -gt 0 -and $i -lt $Cycles) {
@@ -134,7 +138,7 @@ out = {
 print(json.dumps(out))
 "
 
-$Summary = $SummaryJson | ConvertFrom-Json
+$Summary = ($SummaryJson | Select-Object -Last 1) | ConvertFrom-Json
 Write-Host "Total Waves Recorded: $($Summary.total)/$Cycles"
 Write-Host "Average Handles:      $($Summary.avg_handles)"
 Write-Host "Minimum Handles:      $($Summary.min_handles)"

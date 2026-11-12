@@ -51,6 +51,32 @@ OK, INFO, WARN, BAD = "ok", "info", "warn", "bad"
 #: affected.
 _DUAL_CCD_X3D = re.compile(r"Ryzen 9\s+\d{4}X3D", re.IGNORECASE)
 
+_COMMON_GAME_EXES = {
+    "wow.exe", "wowclassic.exe", "wowt.exe", "wowb.exe",
+    "diablo iv.exe", "overwatch.exe", "starcraft.exe",
+    "cs2.exe", "dota2.exe", "valorant-win64-shipping.exe",
+    "league of legends.exe", "fortniteclient-win64-shipping.exe",
+    "gta5.exe", "cyberpunk2077.exe", "eldenring.exe",
+    "bg3.exe", "baldursgate3.exe", "r5apex.exe"
+}
+
+
+def detect_running_game(system, explicit_binding: str = "") -> str:
+    """Return explicit_binding if provided, else scan running processes for any recognized game exe."""
+    if explicit_binding:
+        return explicit_binding
+    procs = getattr(system, "processes", lambda: [])()
+    for p in procs:
+        pname = getattr(p, "name", "").casefold()
+        if pname in _COMMON_GAME_EXES:
+            try:
+                path, _cmd, _elev = system.details(p.pid)
+                return path or p.name
+            except Exception:
+                return p.name
+    return ""
+
+
 Log = Callable[[str, str], None]
 
 
@@ -801,6 +827,38 @@ class _On:
         if lowered:
             self.log(OK, f"Background disk I/O demoted to Very Low ({lowered} process(es))")
 
+    def isolate_background_affinity(self, groups: List[AppGroup], closed: Set[str],
+                                    affinity_mode: str, total_threads: int,
+                                    bound_game: str = "") -> None:
+        """On Dual-CCD CPUs (e.g. AMD Ryzen 9 9950X3D/7950X3D), pin background apps to the opposite CCD
+        so the game on CCD0 (3D V-Cache) gets 100% exclusive execution without cache or thread contention."""
+        from .session_control import affinity_mask
+        if affinity_mode not in ("ccd0", "ccd1") or not total_threads or total_threads < 4:
+            return
+        bg_mode = "ccd1" if affinity_mode == "ccd0" else "ccd0"
+        bg_mask = affinity_mask(bg_mode, total_threads)
+        if bg_mask is None:
+            return
+        wanted_name = os.path.basename(bound_game).casefold() if bound_game else ""
+        touched = 0
+        for g in groups:
+            if g.exe in closed or (wanted_name and g.exe.casefold() == wanted_name):
+                continue
+            for p in g.procs:
+                before = getattr(self.s, "get_affinity", lambda _pid: None)(p.pid)
+                if before is None or before == bg_mask:
+                    continue
+                entry = self.j.record({"kind": "affinity", "pid": p.pid,
+                                       "create_time": p.create_time, "exe": g.exe,
+                                       "before": before, "after": bg_mask})
+                if getattr(self.s, "set_affinity", lambda _pid, _mask: "unsupported")(
+                        p.pid, bg_mask) is None:
+                    self.j.mark_done(entry)
+                    touched += 1
+        if touched:
+            self.log(OK, f"Dual-CCD X3D Isolation: {touched} background process(es) pinned to {bg_mode.upper()} "
+                         f"(reserving {affinity_mode.upper()} V-Cache exclusively for game)")
+
     def timer_resolution(self, enabled: bool) -> None:
         if not enabled:
             return
@@ -829,8 +887,12 @@ class _On:
                 res = self.registry("HKLM", path, name, 1, f"Network {name} on {guid[:8]}...")
                 if res is not None:
                     applied += 1
+        qos_res = self.registry("HKLM", r"SOFTWARE\Policies\Microsoft\Windows\Psched",
+                                "NonBestEffortLimit", 0, "Network QoS reserved bandwidth limit (0%)")
+        if qos_res is not None:
+            applied += 1
         if applied:
-            self.log(OK, f"Network low-latency applied ({applied} parameters tuned: TcpAckFrequency=1, TCPNoDelay=1)")
+            self.log(OK, f"Network low-latency applied ({applied} parameters tuned: TcpAckFrequency=1, TCPNoDelay=1, NonBestEffortLimit=0)")
 
     def max_mmcss(self, enabled: bool, elevated: bool) -> None:
         if not enabled:
@@ -976,8 +1038,6 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
         on.max_mmcss(choices.max_mmcss, elevated)
     if choices.suppress_game_dvr:
         on.game_dvr(choices.suppress_game_dvr)
-    if choices.prefer_discrete_gpu:
-        on.discrete_gpu(choices.bound_game, choices.prefer_discrete_gpu)
     if choices.low_latency_network:
         on.low_latency_network(choices.low_latency_network, elevated)
     if choices.high_resolution_timer:
@@ -1002,17 +1062,38 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
                   protected_publishers=choices.protected_publishers,
                   grace=choices.close_grace_s, force=choices.force_close)
     journal.data["skipped"] = list(on.skipped)
+
+    target_game = detect_running_game(system, choices.bound_game)
+    effective_affinity = choices.affinity_mode
+    is_x3d = dual_ccd_x3d(system.cpu_name())
+    if effective_affinity == "off" and is_x3d and target_game:
+        effective_affinity = "ccd0"
+
+    effective_prio = choices.priority_boost
+    if effective_prio == "off" and target_game:
+        effective_prio = "high"
+
+    effective_io = choices.game_io_priority
+    if effective_io == "off" and target_game:
+        effective_io = "high"
+
+    if target_game and choices.prefer_discrete_gpu:
+        on.discrete_gpu(target_game, choices.prefer_discrete_gpu)
     if choices.lower:
         on.lower(groups, choices.close)
     if choices.lower_apps_io_priority:
         on.lower_io_priority(groups, choices.close)
     if choices.trim_background_memory:
-        on.trim_memory(groups, choices.close, choices.bound_game)
-    on.boost_priority(choices.bound_game, choices.priority_boost)
-    if choices.game_io_priority != "off":
-        on.boost_io_priority(choices.bound_game, choices.game_io_priority)
-    on.tune_game(choices.bound_game, choices.affinity_mode,
-                 choices.disable_power_throttling, os.cpu_count() or 0)
+        on.trim_memory(groups, choices.close, target_game)
+    if target_game:
+        on.boost_priority(target_game, effective_prio)
+        if effective_io != "off":
+            on.boost_io_priority(target_game, effective_io)
+        on.tune_game(target_game, effective_affinity,
+                     choices.disable_power_throttling, os.cpu_count() or 0)
+    if is_x3d and effective_affinity in ("ccd0", "ccd1"):
+        on.isolate_background_affinity(groups, choices.close, effective_affinity,
+                                       os.cpu_count() or 0, target_game)
     if choices.explorer:
         on.explorer(session)
     time.sleep(1.0)
@@ -1224,6 +1305,7 @@ def _valid_registry(e: dict) -> bool:
         ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Priority"),
         ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Scheduling Category"),
         ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "SFIO Priority"),
+        ("HKLM", r"SOFTWARE\Policies\Microsoft\Windows\Psched", "NonBestEffortLimit"),
         ("HKCU", r"System\GameConfigStore", "GameDVR_Enabled"),
         ("HKCU", r"System\GameConfigStore", "GameDVR_FSEBehaviorMode"),
         ("HKCU", r"System\GameConfigStore", "GameDVR_HonorUserFSEBehaviorMode"),

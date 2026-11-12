@@ -428,6 +428,7 @@ class SessionTab(QWidget):
             self._bound.setCurrentText(wow_exe)
         self._priority.setCurrentIndex(max(0, self._priority.findData("high")))
         self._game_io.setCurrentIndex(max(0, self._game_io.findData("high")))
+        self._affinity.setCurrentIndex(max(0, self._affinity.findData("ccd0")))
         self._lower_io_cb.setChecked(True)
         self._timer_res_cb.setChecked(True)
         self._net_latency_cb.setChecked(True)
@@ -440,7 +441,7 @@ class SessionTab(QWidget):
         self._throttle_cb.setChecked(True)
         self._setting_changed()
         self._status.setText(
-            "Optimized for World of Warcraft: High CPU & Disk I/O priority, 0.5ms timer, low network latency, max MMCSS, RAM trim, DirectFlip & Discrete GPU active.")
+            "Optimized for World of Warcraft: CCD0 (3D V-Cache) affinity + background apps isolated to CCD1, High CPU & Disk I/O priority, 0.5ms timer, low network latency, max MMCSS, RAM trim, DirectFlip & Discrete GPU active.")
 
     def _auto_changed(self, _value) -> None:
         self._setting_changed()
@@ -448,7 +449,8 @@ class SessionTab(QWidget):
     def _bound_changed(self, text: str) -> None:
         if getattr(self, "_loading", False):
             return
-        self.host._settings.bound_game = text.strip()
+        data = self._bound.currentData()
+        self.host._settings.bound_game = str(data) if data else text.strip()
         self.host._save_settings()
 
     def _scan_games(self) -> None:

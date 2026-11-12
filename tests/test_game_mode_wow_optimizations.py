@@ -18,6 +18,7 @@ import pytest
 from modules.game_mode.engine import catalog, game_config, game_library, session
 from modules.game_mode.engine.journal import Journal
 from modules.game_mode.engine.system import (
+    HIGH,
     IO_PRIORITY_HIGH,
     IO_PRIORITY_NORMAL,
     IO_PRIORITY_VERY_LOW,
@@ -53,9 +54,14 @@ class WowFakeSystem:
         self.timer_res = 1.0
         self.adapters = ["{89aee31e-e7d6-4110-8e95-f0b2d9a62194}"]
         self.trimmed_pids = []
+        self.affinities = {100: 0xFFFFFFFF, 101: 0xFFFFFFFF, 102: 0xFFFFFFFF}
 
     def is_admin(self): return self.admin
-    def cpu_name(self): return "AMD Ryzen 7 7800X3D 8-Core Processor"
+    def cpu_name(self): return getattr(self, "_cpu", "AMD Ryzen 7 7800X3D 8-Core Processor")
+    def get_affinity(self, pid): return self.affinities.get(pid, 0xFFFFFFFF)
+    def set_affinity(self, pid, mask):
+        self.affinities[pid] = mask
+        return None
     def plans(self): return dict(self.plan_names)
     def active_plan(self): return self.plan
     def set_plan(self, guid): self.plan = guid; return None
@@ -188,6 +194,8 @@ def test_game_io_priority_boost_and_restore(tmp_path):
     # Network low latency registry should be set
     tcp_key = ("HKLM", r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{89aee31e-e7d6-4110-8e95-f0b2d9a62194}", "TcpAckFrequency")
     assert sys_.reg.get(tcp_key) == (1, 4)
+    qos_key = ("HKLM", r"SOFTWARE\Policies\Microsoft\Windows\Psched", "NonBestEffortLimit")
+    assert sys_.reg.get(qos_key) == (0, 4)
     # MMCSS should be set
     mmcss_sched_key = ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Scheduling Category")
     assert sys_.reg.get(mmcss_sched_key) == ("High", 1)
@@ -203,10 +211,63 @@ def test_game_io_priority_boost_and_restore(tmp_path):
     assert sys_.timer_res == 1.0
     # Network, MMCSS, Game DVR and GPU preferences deleted/restored
     assert tcp_key not in sys_.reg
+    assert qos_key not in sys_.reg
     assert mmcss_sched_key not in sys_.reg
     assert dvr_fse not in sys_.reg
     assert dvr_app not in sys_.reg
     assert gpu_key not in sys_.reg
+
+
+def test_dual_ccd_x3d_isolation_and_auto_game_detect(tmp_path, monkeypatch):
+    """Ryzen 9 9950X3D / 7950X3D: auto-detects Wow.exe, pins game to CCD0 (V-Cache) and background to CCD1."""
+    sys_ = WowFakeSystem()
+    sys_._cpu = "AMD Ryzen 9 9950X3D 16-Core Processor"
+    monkeypatch.setattr(session.os, "cpu_count", lambda: 32)
+    journal = Journal(str(tmp_path))
+
+    # choices with bound_game="" and affinity_mode="off" -- auto-detection should trigger!
+    choices = session.Choices(
+        bound_game="",
+        priority_boost="off",
+        affinity_mode="off",
+        game_io_priority="off",
+        lower_apps_io_priority=True,
+        high_resolution_timer=False,
+        low_latency_network=False,
+        max_mmcss=False,
+        trim_background_memory=False,
+        suppress_game_dvr=False,
+        prefer_discrete_gpu=False,
+        services=set(),
+        close=set(),
+    )
+    session.turn_on(sys_, choices, journal, lambda *a: None, own_pid=999, session=1)
+
+    # 32 threads: half is 16.
+    # CCD0 (low 16 threads): (1 << 16) - 1 = 0x0000FFFF (65535)
+    # CCD1 (high 16 threads): 0xFFFF0000 (4294901760)
+    expected_ccd0 = 0x0000FFFF
+    expected_ccd1 = 0xFFFF0000
+
+    # Game (pid 100 Wow.exe) should be pinned to CCD0
+    assert sys_.affinities[100] == expected_ccd0
+    # Background apps (pid 101 chrome, pid 102 discord) should be isolated to CCD1
+    assert sys_.affinities[101] == expected_ccd1
+    assert sys_.affinities[102] == expected_ccd1
+
+    # Wow.exe should have High CPU and High I/O priority
+    assert sys_.prio[100] == HIGH
+    assert sys_.io_prio[100] == IO_PRIORITY_HIGH
+
+    # Turn off: everything must be restored cleanly!
+    report = session.turn_off(sys_, journal, lambda *a: None, settle=0.1)
+    assert not [r for r in report if r["level"] == session.BAD]
+    assert sys_.affinities[100] == 0xFFFFFFFF
+    assert sys_.affinities[101] == 0xFFFFFFFF
+    assert sys_.affinities[102] == 0xFFFFFFFF
+    assert sys_.prio[100] == NORMAL
+    assert sys_.io_prio[100] == IO_PRIORITY_NORMAL
+
 
 
 def test_real_system_timer_resolution_and_network_unelevated():

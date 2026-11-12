@@ -122,6 +122,9 @@ class Choices:
     high_resolution_timer: bool = True
     low_latency_network: bool = True
     max_mmcss: bool = True
+    trim_background_memory: bool = True
+    suppress_game_dvr: bool = True
+    prefer_discrete_gpu: bool = True
 
     def to_config(self) -> dict:
         out = {flag: getattr(self, flag) for flag in _FLAGS}
@@ -139,7 +142,10 @@ class Choices:
                    lower_apps_io_priority=self.lower_apps_io_priority,
                    high_resolution_timer=self.high_resolution_timer,
                    low_latency_network=self.low_latency_network,
-                   max_mmcss=self.max_mmcss)
+                   max_mmcss=self.max_mmcss,
+                   trim_background_memory=self.trim_background_memory,
+                   suppress_game_dvr=self.suppress_game_dvr,
+                   prefer_discrete_gpu=self.prefer_discrete_gpu)
         return out
 
 
@@ -208,6 +214,12 @@ def choices_from_config(data) -> Choices:
         c.low_latency_network = data["low_latency_network"]
     if isinstance(data.get("max_mmcss"), bool):
         c.max_mmcss = data["max_mmcss"]
+    if isinstance(data.get("trim_background_memory"), bool):
+        c.trim_background_memory = data["trim_background_memory"]
+    if isinstance(data.get("suppress_game_dvr"), bool):
+        c.suppress_game_dvr = data["suppress_game_dvr"]
+    if isinstance(data.get("prefer_discrete_gpu"), bool):
+        c.prefer_discrete_gpu = data["prefer_discrete_gpu"]
     if isinstance(data.get("paused_tasks"), list):
         c.paused_tasks = {s for s in data["paused_tasks"] if isinstance(s, str)}
     elif c.preset == catalog.MAX:
@@ -836,6 +848,57 @@ class _On:
         self.registry("HKLM", games_path, "SFIO Priority", "High", "MMCSS Games SFIO Priority", kind=winreg.REG_SZ)
         self.log(OK, "MMCSS tuned for max performance: GPU Priority 8, Games Task High, File I/O High, Network Throttling disabled")
 
+    def trim_memory(self, groups: List[AppGroup], closed: Set[str], bound_game: str) -> None:
+        """Trim working sets of background processes to flush unneeded pages to pagefile."""
+        wanted_name = os.path.basename(bound_game).casefold() if bound_game else ""
+        wanted_path = os.path.normcase(os.path.abspath(bound_game)) if bound_game and os.path.sep in bound_game else ""
+        trimmed = 0
+        for g in groups:
+            if g.exe in closed:
+                continue
+            for p in g.procs:
+                path, _cmd, _elev = self.s.details(p.pid)
+                name = p.name.casefold()
+                if (wanted_name and name == wanted_name) or (wanted_path and path and os.path.normcase(os.path.abspath(path)) == wanted_path):
+                    continue
+                if self.s.alive(p.pid, p.create_time):
+                    if getattr(self.s, "trim_working_set", lambda _pid: False)(p.pid):
+                        trimmed += 1
+        if trimmed:
+            self.log(OK, f"Trimmed background process working sets ({trimmed} process(es) trimmed to maximize game RAM)")
+
+    def game_dvr(self, suppress: bool) -> None:
+        if not suppress:
+            return
+        gcs = r"System\GameConfigStore"
+        self.registry("HKCU", gcs, "GameDVR_Enabled", 0, "GameDVR_Enabled")
+        self.registry("HKCU", gcs, "GameDVR_FSEBehaviorMode", 2, "GameDVR_FSEBehaviorMode")
+        self.registry("HKCU", gcs, "GameDVR_HonorUserFSEBehaviorMode", 1, "GameDVR_HonorUserFSEBehaviorMode")
+        self.registry("HKCU", gcs, "GameDVR_DXGIHonorFSEWindowsCompatible", 1, "GameDVR_DXGIHonorFSEWindowsCompatible")
+        self.registry("HKCU", gcs, "GameDVR_EFSEFeatureFlags", 0, "GameDVR_EFSEFeatureFlags")
+        dvr = r"Software\Microsoft\Windows\CurrentVersion\GameDVR"
+        self.registry("HKCU", dvr, "AppCaptureEnabled", 0, "GameDVR AppCaptureEnabled")
+        self.registry("HKCU", dvr, "HistoricalCaptureEnabled", 0, "GameDVR HistoricalCaptureEnabled")
+        self.log(OK, "Xbox Game DVR background capture suppressed (GPU encoder contention eliminated, DirectFlip enabled)")
+
+    def discrete_gpu(self, bound_game: str, prefer: bool) -> None:
+        if not prefer or not bound_game:
+            return
+        wanted_path = bound_game
+        if os.path.sep not in bound_game:
+            for p in self.s.processes():
+                if p.name.casefold() == bound_game.casefold():
+                    path, _c, _e = self.s.details(p.pid)
+                    if path:
+                        wanted_path = path
+                        break
+        path = r"Software\Microsoft\DirectX\UserGpuPreferences"
+        res = self.registry("HKCU", path, wanted_path, "GpuPreference=2;",
+                            f"{os.path.basename(wanted_path)} Discrete GPU preference",
+                            kind=REG_SZ)
+        if res is not None:
+            self.log(OK, f"{os.path.basename(wanted_path)}: High-Performance Discrete GPU forced in DirectX")
+
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             session: int) -> dict:
@@ -911,6 +974,10 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     on.multimedia(choices.priority_separation, choices.system_responsiveness)
     if choices.max_mmcss:
         on.max_mmcss(choices.max_mmcss, elevated)
+    if choices.suppress_game_dvr:
+        on.game_dvr(choices.suppress_game_dvr)
+    if choices.prefer_discrete_gpu:
+        on.discrete_gpu(choices.bound_game, choices.prefer_discrete_gpu)
     if choices.low_latency_network:
         on.low_latency_network(choices.low_latency_network, elevated)
     if choices.high_resolution_timer:
@@ -939,6 +1006,8 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
         on.lower(groups, choices.close)
     if choices.lower_apps_io_priority:
         on.lower_io_priority(groups, choices.close)
+    if choices.trim_background_memory:
+        on.trim_memory(groups, choices.close, choices.bound_game)
     on.boost_priority(choices.bound_game, choices.priority_boost)
     if choices.game_io_priority != "off":
         on.boost_io_priority(choices.bound_game, choices.game_io_priority)
@@ -1155,6 +1224,13 @@ def _valid_registry(e: dict) -> bool:
         ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Priority"),
         ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Scheduling Category"),
         ("HKLM", r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "SFIO Priority"),
+        ("HKCU", r"System\GameConfigStore", "GameDVR_Enabled"),
+        ("HKCU", r"System\GameConfigStore", "GameDVR_FSEBehaviorMode"),
+        ("HKCU", r"System\GameConfigStore", "GameDVR_HonorUserFSEBehaviorMode"),
+        ("HKCU", r"System\GameConfigStore", "GameDVR_DXGIHonorFSEWindowsCompatible"),
+        ("HKCU", r"System\GameConfigStore", "GameDVR_EFSEFeatureFlags"),
+        ("HKCU", r"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled"),
+        ("HKCU", r"Software\Microsoft\Windows\CurrentVersion\GameDVR", "HistoricalCaptureEnabled"),
     }
     triple = (e.get("hive"), e.get("path"), e.get("name"))
     if not all(isinstance(x, str) for x in triple):
@@ -1163,7 +1239,9 @@ def _valid_registry(e: dict) -> bool:
               and isinstance(e.get("path"), str)
               and e.get("path", "").startswith(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{")
               and e.get("name") in ("TcpAckFrequency", "TCPNoDelay"))
-    if triple not in allowed and not is_tcp:
+    is_gpu_pref = (e.get("hive") == "HKCU"
+                   and e.get("path") == r"Software\Microsoft\DirectX\UserGpuPreferences")
+    if triple not in allowed and not is_tcp and not is_gpu_pref:
         return False
     if e.get("existed") is False:
         return e.get("value") is None and e.get("type") in (0, REG_SZ, REG_DWORD)

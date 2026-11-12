@@ -202,6 +202,9 @@ class GameModeModule(BaseModule):
         choices.high_resolution_timer = settings.high_resolution_timer
         choices.low_latency_network = settings.low_latency_network
         choices.max_mmcss = settings.max_mmcss
+        choices.trim_background_memory = settings.trim_background_memory
+        choices.suppress_game_dvr = settings.suppress_game_dvr
+        choices.prefer_discrete_gpu = settings.prefer_discrete_gpu
 
     def _apply_settings_to_choices(self) -> None:
         self._apply_settings_to(self._choices)
@@ -211,7 +214,8 @@ class GameModeModule(BaseModule):
         for field in ("priority_boost", "force_close", "close_grace_s", "affinity_mode",
                       "disable_power_throttling", "priority_separation",
                       "system_responsiveness", "game_io_priority", "lower_apps_io_priority",
-                      "high_resolution_timer", "low_latency_network", "max_mmcss"):
+                      "high_resolution_timer", "low_latency_network", "max_mmcss",
+                      "trim_background_memory", "suppress_game_dvr", "prefer_discrete_gpu"):
             if field in data:
                 setattr(self._settings, field, data[field])
         self._settings = self._settings.normalized()

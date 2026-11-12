@@ -52,6 +52,7 @@ class WowFakeSystem:
         }
         self.timer_res = 1.0
         self.adapters = ["{89aee31e-e7d6-4110-8e95-f0b2d9a62194}"]
+        self.trimmed_pids = []
 
     def is_admin(self): return self.admin
     def cpu_name(self): return "AMD Ryzen 7 7800X3D 8-Core Processor"
@@ -80,6 +81,10 @@ class WowFakeSystem:
     def set_io_priority(self, pid, value):
         self.io_prio[pid] = value
         return None
+
+    def trim_working_set(self, pid):
+        self.trimmed_pids.append(pid)
+        return True
 
     def timer_resolution(self): return self.timer_res
     def set_timer_resolution(self, period_100ns=5000):
@@ -154,6 +159,9 @@ def test_game_io_priority_boost_and_restore(tmp_path):
         high_resolution_timer=True,
         low_latency_network=True,
         max_mmcss=True,
+        trim_background_memory=True,
+        suppress_game_dvr=True,
+        prefer_discrete_gpu=True,
         services=set(),
         close=set(),
     )
@@ -163,6 +171,18 @@ def test_game_io_priority_boost_and_restore(tmp_path):
     # Background apps should have Very Low I/O priority
     assert sys_.io_prio[101] == IO_PRIORITY_VERY_LOW
     assert sys_.io_prio[102] == IO_PRIORITY_VERY_LOW
+    # Background apps should be trimmed to free RAM, bound game NOT trimmed
+    assert 101 in sys_.trimmed_pids
+    assert 102 in sys_.trimmed_pids
+    assert 100 not in sys_.trimmed_pids
+    # Game DVR should be suppressed & DirectFlip enabled
+    dvr_fse = ("HKCU", r"System\GameConfigStore", "GameDVR_FSEBehaviorMode")
+    assert sys_.reg.get(dvr_fse) == (2, 4)
+    dvr_app = ("HKCU", r"Software\Microsoft\Windows\CurrentVersion\GameDVR", "AppCaptureEnabled")
+    assert sys_.reg.get(dvr_app) == (0, 4)
+    # Discrete GPU preference should be set in DirectX
+    gpu_key = ("HKCU", r"Software\Microsoft\DirectX\UserGpuPreferences", r"C:\Program Files (x86)\World of Warcraft\_forever_\Wow.exe")
+    assert sys_.reg.get(gpu_key) == ("GpuPreference=2;", 1)
     # Timer should be 0.5ms
     assert sys_.timer_res == 0.5
     # Network low latency registry should be set
@@ -181,13 +201,16 @@ def test_game_io_priority_boost_and_restore(tmp_path):
     assert sys_.io_prio[102] == IO_PRIORITY_NORMAL
     # Timer released
     assert sys_.timer_res == 1.0
-    # Network and MMCSS deleted/restored
+    # Network, MMCSS, Game DVR and GPU preferences deleted/restored
     assert tcp_key not in sys_.reg
     assert mmcss_sched_key not in sys_.reg
+    assert dvr_fse not in sys_.reg
+    assert dvr_app not in sys_.reg
+    assert gpu_key not in sys_.reg
 
 
 def test_real_system_timer_resolution_and_network_unelevated():
-    """Verify real WinSystem timer resolution and network adapter APIs work."""
+    """Verify real WinSystem timer resolution, memory trim and network adapter APIs work."""
     sys_ = WinSystem()
     current_res = sys_.timer_resolution()
     assert current_res is not None
@@ -207,3 +230,6 @@ def test_real_system_timer_resolution_and_network_unelevated():
     # Enumerating network interfaces returns a list without crashing
     adapters = sys_.active_network_interfaces()
     assert isinstance(adapters, list)
+
+    # Trimming working set of own process succeeds
+    assert sys_.trim_working_set(os.getpid()) is True

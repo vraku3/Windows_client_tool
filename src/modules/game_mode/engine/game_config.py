@@ -39,6 +39,9 @@ class GameSettings:
     high_resolution_timer: bool = True    # 0.5ms timer resolution
     low_latency_network: bool = True      # TcpAckFrequency=1 & TCPNoDelay=1
     max_mmcss: bool = True                # Max GPU & MMCSS Scheduling Category High + SFIO Priority High
+    trim_background_memory: bool = True   # Flush inactive background working sets to maximize game RAM
+    suppress_game_dvr: bool = True        # Suppress Xbox Game DVR background recording & enable DirectFlip
+    prefer_discrete_gpu: bool = True      # Force High-Performance Discrete GPU for bound game
 
     def normalized(self) -> "GameSettings":
         data = asdict(self)
@@ -61,6 +64,9 @@ class GameSettings:
         data["high_resolution_timer"] = bool(data.get("high_resolution_timer", True))
         data["low_latency_network"] = bool(data.get("low_latency_network", True))
         data["max_mmcss"] = bool(data.get("max_mmcss", True))
+        data["trim_background_memory"] = bool(data.get("trim_background_memory", True))
+        data["suppress_game_dvr"] = bool(data.get("suppress_game_dvr", True))
+        data["prefer_discrete_gpu"] = bool(data.get("prefer_discrete_gpu", True))
         return GameSettings(**data)
 
 

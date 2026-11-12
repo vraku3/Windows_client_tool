@@ -139,6 +139,15 @@ class SessionTab(QWidget):
         self._max_mmcss_cb = QCheckBox("Maximize GPU & MMCSS scheduling (Games Task High, Network Throttling disabled)", controls)
         self._max_mmcss_cb.toggled.connect(self._setting_changed)
         form.addRow("", self._max_mmcss_cb)
+        self._trim_mem_cb = QCheckBox("Trim background apps working sets (flush RAM for game)", controls)
+        self._trim_mem_cb.toggled.connect(self._setting_changed)
+        form.addRow("Memory & GPU", self._trim_mem_cb)
+        self._dvr_cb = QCheckBox("Suppress Game DVR background capture & enable DirectFlip", controls)
+        self._dvr_cb.toggled.connect(self._setting_changed)
+        form.addRow("", self._dvr_cb)
+        self._discrete_gpu_cb = QCheckBox("Force High-Performance Discrete GPU for bound game", controls)
+        self._discrete_gpu_cb.toggled.connect(self._setting_changed)
+        form.addRow("", self._discrete_gpu_cb)
         self._prio_sep = QComboBox(controls)
         for label, value in (("Leave PrioritySeparation alone", 0),
                              ("26 (short, fixed)", 26), ("38 (short, variable)", 38)):
@@ -330,6 +339,9 @@ class SessionTab(QWidget):
         self._timer_res_cb.setChecked(bool(s.high_resolution_timer))
         self._net_latency_cb.setChecked(bool(s.low_latency_network))
         self._max_mmcss_cb.setChecked(bool(s.max_mmcss))
+        self._trim_mem_cb.setChecked(bool(s.trim_background_memory))
+        self._dvr_cb.setChecked(bool(s.suppress_game_dvr))
+        self._discrete_gpu_cb.setChecked(bool(s.prefer_discrete_gpu))
         self._bound.blockSignals(True)
         self._bound.setCurrentText(s.bound_game)
         self._bound.blockSignals(False)
@@ -379,6 +391,9 @@ class SessionTab(QWidget):
         s.high_resolution_timer = self._timer_res_cb.isChecked()
         s.low_latency_network = self._net_latency_cb.isChecked()
         s.max_mmcss = self._max_mmcss_cb.isChecked()
+        s.trim_background_memory = self._trim_mem_cb.isChecked()
+        s.suppress_game_dvr = self._dvr_cb.isChecked()
+        s.prefer_discrete_gpu = self._discrete_gpu_cb.isChecked()
         self.host._save_settings()
         self.host._show_state()
 
@@ -409,12 +424,15 @@ class SessionTab(QWidget):
         self._timer_res_cb.setChecked(True)
         self._net_latency_cb.setChecked(True)
         self._max_mmcss_cb.setChecked(True)
+        self._trim_mem_cb.setChecked(True)
+        self._dvr_cb.setChecked(True)
+        self._discrete_gpu_cb.setChecked(True)
         self._prio_sep.setCurrentIndex(max(0, self._prio_sep.findData(26)))
         self._responsiveness.setCurrentIndex(max(0, self._responsiveness.findData(10)))
         self._throttle_cb.setChecked(True)
         self._setting_changed()
         self._status.setText(
-            "Optimized for World of Warcraft: High CPU & Disk I/O priority, 0.5ms timer, low network latency & max MMCSS active.")
+            "Optimized for World of Warcraft: High CPU & Disk I/O priority, 0.5ms timer, low network latency, max MMCSS, RAM trim, DirectFlip & Discrete GPU active.")
 
     def _auto_changed(self, _value) -> None:
         self._setting_changed()

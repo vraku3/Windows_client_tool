@@ -328,6 +328,23 @@ class WinSystem:
         finally:
             kernel32.CloseHandle(handle)
 
+    def trim_working_set(self, pid: int) -> bool:
+        """Trim the working set of a process to release physical RAM to the system."""
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        # 0x0100 = PROCESS_SET_QUOTA
+        handle = kernel32.OpenProcess(0x0100, False, pid)
+        if not handle:
+            logger.debug("game mode: could not open pid %s for working set trim (%s)", pid, ctypes.get_last_error())
+            return False
+        try:
+            res = kernel32.SetProcessWorkingSetSize(handle, ctypes.c_size_t(-1), ctypes.c_size_t(-1))
+            return bool(res)
+        except Exception as error:  # noqa: BLE001
+            logger.debug("game mode: trim_working_set for pid %s failed: %s", pid, error)
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+
     def close(self, identities: List[Tuple[int, int]], exe_path: Optional[str],
               grace: float = 8.0) -> Optional[str]:
         """Close only the recorded process instances."""

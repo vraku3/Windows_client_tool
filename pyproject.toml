@@ -104,7 +104,7 @@ testpaths = ["tests"]
 # -m 'not real_machine' keeps the default run about the code. The
 # excluded tests are not disabled — CI runs them as a separate,
 # non-gating step, and `pytest -m real_machine` runs them here.
-addopts = "-q --timeout=120 --basetemp=build/pytest-tmp -m 'not real_machine'"
+addopts = "-q --timeout=120 --basetemp=.pytest_tmp -m 'not real_machine'"
 # Belt and braces: don't accumulate numbered run directories either.
 tmp_path_retention_policy = "none"
 markers = [

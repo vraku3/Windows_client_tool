@@ -14,10 +14,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
@@ -33,17 +33,24 @@ jobs:
       - name: Import check (matches the documented dev-command in CLAUDE.md)
         run: python -c "import sys; sys.path.insert(0, 'src'); import main"
 
+      - name: Create temp directory for pytest
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path .pytest_tmp -Force | Out-Null
+          New-Item -ItemType Directory -Path build/pytest-tmp -Force | Out-Null
+
       - name: Run tests
         env:
           # No interactive desktop on the runner — Qt must use its offscreen platform.
           QT_QPA_PLATFORM: offscreen
+          CI: "true"
         # --timeout is a safety net against genuine hangs eating the whole CI
         # job silently. Note it uses pytest-timeout's "thread" method, which
         # can only interrupt regular Python execution — a test blocked in a
         # native/blocking Qt call (e.g. a stray dialog .exec()) won't be
         # preempted by it. Still worth having for the more common case
         # (an accidental infinite loop, a background op that never returns).
-        run: python -m pytest -q --timeout=120
+        run: python -m pytest -v --tb=short --timeout=120 -m "not real_machine"
 
   package:
     # Catches packaging regressions the test job's import/compile checks
@@ -57,10 +64,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"

@@ -178,6 +178,9 @@ def test_real_logs_are_plausible():
     # Unelevated, Diagnostics-Performance/Operational refuses -- a real,
     # honestly-reported refusal, not a bug. Elevated, there must be none.
     from core.admin_utils import is_admin
+    if not facts.boots and not facts.fallback_boots:
+        import pytest
+        pytest.skip("no boot records in event logs in this environment (e.g. freshly provisioned CI VM)")
     if is_admin():
         assert not facts.problems, facts.problems
         assert 1 <= len(facts.boots) <= 20

@@ -29,6 +29,8 @@ tools/signing.local.json
 
 # ── Testing & coverage ────────────────────────────────────────────────────────
 .pytest_cache/
+.pytest_tmp/
+.pytest_temp/
 .tox/
 .nox/
 .coverage

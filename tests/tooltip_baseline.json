@@ -1,886 +1,1565 @@
 {
- "modules": [
-  {
-   "module": "Scripts > File Forensics",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Scripts > Script Library",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Stress Test",
-   "buttons": 13,
-   "headers": 5,
-   "tabs": 0,
-   "intro": false,
-   "total": 19,
-   "gaps": [
+  "modules": [
     {
-     "kind": "buttons",
-     "class": "QCheckBox",
-     "objectName": "",
-     "text": "CPU"
+      "module": "Updates",
+      "buttons": 21,
+      "headers": 23,
+      "tabs": 0,
+      "intro": true,
+      "total": 44,
+      "gaps": [
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Let Run All and unattended runs install feature upgrades (Windows 11 versions)",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 1958
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Let Run All and unattended runs install optional updates (previews, .NET)",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 1960
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "4 hours"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Item",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Value",
+          "section": 1
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Refresh ownership",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 2015
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Setting",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Effective value",
+          "section": 1
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Refresh policy",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 2040
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "7 days"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Pause updates",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 2065
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Resume updates",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 2066
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Service",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "State",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Start type",
+          "section": 2
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Detail",
+          "section": 3
+        },
+        {
+          "kind": "buttons",
+          "class": "QLineEdit",
+          "objectName": "",
+          "text": ""
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "All outcomes"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Refresh activity"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Date",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Package",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Version change",
+          "section": 3
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Outcome",
+          "section": 4
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Context",
+          "section": 5
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Install Visible",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 991
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Details",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 993
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "Any severity"
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "Any classification"
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "Any restart behaviour"
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "Any download state"
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "Any category"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Update",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Change",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Detail",
+          "section": 2
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Update Visible",
+          "file": "src/modules/updates/updates_module.py",
+          "line": 253
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "All sources"
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "All results"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Date",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Version change",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Outcome",
+          "section": 2
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Context",
+          "section": 3
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Update",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Change",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Detail",
+          "section": 2
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QCheckBox",
-     "objectName": "",
-     "text": "RAM"
+      "module": "Game Mode",
+      "buttons": 30,
+      "headers": 11,
+      "tabs": 0,
+      "intro": true,
+      "total": 41,
+      "gaps": [
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Date",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Duration",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Preset",
+          "section": 2
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Actions",
+          "section": 3
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Handles freed",
+          "section": 4
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Restore status",
+          "section": 5
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Save note"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Export CSV"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Export JSON"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Retry restore"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Pause enforcement 30 min"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Resume enforcement"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "0 min (0 = never)"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Create a restore point before ON"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Show tray notifications"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Force-close programs that ignore the polite close"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "8 s grace"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Disable power throttling/EcoQoS for the bound game"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Warn before Maximum on battery"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "100 sessions kept"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "0 handles target (0 = off)"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Rescan games"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Enter Game Mode when the bound game starts"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Save current"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Delete"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Unbind"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Save protection"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Save windows"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Change",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Expected",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Actual",
+          "section": 2
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Check state"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Repair drift"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Change",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Label",
+          "section": 2
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Undo selected"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Export settings"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Import settings"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Recovery details"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "What survived"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "Only unknown",
+          "file": "src/modules/game_mode/game_mode_module.py",
+          "line": 480
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QSpinBox",
-     "objectName": "",
-     "text": "32"
+      "module": "Stress Test",
+      "buttons": 13,
+      "headers": 5,
+      "tabs": 0,
+      "intro": false,
+      "total": 19,
+      "gaps": [
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "CPU"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "RAM"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "32"
+        },
+        {
+          "kind": "buttons",
+          "class": "QDoubleSpinBox",
+          "objectName": "",
+          "text": "21.100 GiB"
+        },
+        {
+          "kind": "buttons",
+          "class": "QComboBox",
+          "objectName": "",
+          "text": "5 minutes"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "90 C"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "90 C"
+        },
+        {
+          "kind": "buttons",
+          "class": "QSpinBox",
+          "objectName": "",
+          "text": "105 C"
+        },
+        {
+          "kind": "buttons",
+          "class": "QCheckBox",
+          "objectName": "",
+          "text": "I acknowledge running without CPU temperature protection (maximum 10 minutes)"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Start"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Stop"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Refresh sensors"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Sensor",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Value / availability",
+          "section": 1
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Min",
+          "section": 2
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Max",
+          "section": 3
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Cut-off",
+          "section": 4
+        },
+        {
+          "kind": "buttons",
+          "class": "QAbstractButton",
+          "objectName": "qt_tableview_cornerbutton",
+          "text": ""
+        },
+        {
+          "kind": "intro",
+          "class": "StressTab",
+          "objectName": "",
+          "text": "Missing moduleIntro label"
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QDoubleSpinBox",
-     "objectName": "",
-     "text": "25.173 GiB"
+      "module": "Dashboard > Timeline",
+      "buttons": 8,
+      "headers": 2,
+      "tabs": 0,
+      "intro": false,
+      "total": 11,
+      "gaps": [
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "◷ All"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "↻ Updates"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "▶ Game Mode"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "⌫ Cleanup"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "⚙ Optimise"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "◆ Security"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "✚ Quick Fix"
+        },
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "▣ System"
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "When",
+          "section": 0
+        },
+        {
+          "kind": "headers",
+          "class": "QTableWidget",
+          "objectName": "",
+          "text": "Summary",
+          "section": 2
+        },
+        {
+          "kind": "intro",
+          "class": "TimelineTab",
+          "objectName": "",
+          "text": "Missing moduleIntro label"
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QComboBox",
-     "objectName": "",
-     "text": "5 minutes"
+      "module": "Dashboard",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 1,
+      "intro": true,
+      "total": 1,
+      "gaps": [
+        {
+          "kind": "tabs",
+          "class": "QTabWidget",
+          "objectName": "",
+          "text": "◷ Timeline",
+          "section": 1
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QSpinBox",
-     "objectName": "",
-     "text": "90 C"
+      "module": "Dashboard > Services",
+      "buttons": 1,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 1,
+      "gaps": [
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Unquoted path"
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QSpinBox",
-     "objectName": "",
-     "text": "90 C"
+      "module": "Driver Manager",
+      "buttons": 1,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 1,
+      "gaps": [
+        {
+          "kind": "buttons",
+          "class": "QPushButton",
+          "objectName": "",
+          "text": "Snapshots â–¾",
+          "file": "src/modules/driver_manager/driver_module.py",
+          "line": 344
+        }
+      ],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QSpinBox",
-     "objectName": "",
-     "text": "105 C"
+      "module": "About",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QCheckBox",
-     "objectName": "",
-     "text": "I acknowledge running without CPU temperature protection (maximum 10 minutes)"
+      "module": "Certificates",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QPushButton",
-     "objectName": "",
-     "text": "Start"
+      "module": "Cleanup",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QPushButton",
-     "objectName": "",
-     "text": "Stop"
+      "module": "Dashboard > App history",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QPushButton",
-     "objectName": "",
-     "text": "Refresh sensors"
+      "module": "Dashboard > Benchmarks",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "headers",
-     "class": "QTableWidget",
-     "objectName": "",
-     "text": "Sensor",
-     "section": 0
+      "module": "Dashboard > Connections",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "headers",
-     "class": "QTableWidget",
-     "objectName": "",
-     "text": "Value / availability",
-     "section": 1
+      "module": "Dashboard > Details",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "headers",
-     "class": "QTableWidget",
-     "objectName": "",
-     "text": "Min",
-     "section": 2
+      "module": "Dashboard > Disk Space",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "headers",
-     "class": "QTableWidget",
-     "objectName": "",
-     "text": "Max",
-     "section": 3
+      "module": "Dashboard > Energy",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "headers",
-     "class": "QTableWidget",
-     "objectName": "",
-     "text": "Cut-off",
-     "section": 4
+      "module": "Dashboard > Flight Recorder",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "buttons",
-     "class": "QAbstractButton",
-     "objectName": "qt_tableview_cornerbutton",
-     "text": ""
+      "module": "Dashboard > Installed Apps",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     },
     {
-     "kind": "intro",
-     "class": "StressTab",
-     "objectName": "",
-     "text": "Missing moduleIntro label"
+      "module": "Dashboard > Overview",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > PerfMon",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Performance",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Power & Freq",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Process Explorer",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Processes",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Startup apps",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > System Info",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Thermals",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Dashboard > Users",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Debloat",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Debloat > App Buster",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Debloat > Debloat",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Debloat > Store Apps",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > CBS Log",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > Crash Dumps",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > DISM Log",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > Event Viewer",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > Reliability",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > Timeline",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Diagnose > Windows Update",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Disk Health",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Environment Variables",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Firewall Rules",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Group Policy",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Hardware Info",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Local Users & Groups",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Log Viewer",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Monitor Control",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Health",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Hosts Editor",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Network Diagnostics",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Network Extras",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Remote Tools",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Shared Resources",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Network Diagnostics > Wi-Fi Analyzer",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Quick Fix",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Registry Explorer",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Scripts",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Scripts > Explorer Navigation Pane",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Scripts > File Forensics",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Scripts > Script Library",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Security Dashboard",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Software Inventory",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Startup & Boot",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Startup & Boot > Boot Analyzer",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Startup & Boot > Power & Boot",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Startup & Boot > Startup Manager",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Health",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Management",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Management > Scheduled Tasks",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Management > Services",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Management > Windows Features",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Report",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "System Restore",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Thermal Control",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "TreeSize",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
+    },
+    {
+      "module": "Tweaks",
+      "buttons": 0,
+      "headers": 0,
+      "tabs": 0,
+      "intro": true,
+      "total": 0,
+      "gaps": [],
+      "error": null
     }
-   ],
-   "error": null
-  },
-  {
-   "module": "Scripts",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "About",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Certificates",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Cleanup",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > App history",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Benchmarks",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Connections",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Details",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Disk Space",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Energy",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Flight Recorder",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Installed Apps",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Overview",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > PerfMon",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Performance",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Power & Freq",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Process Explorer",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Processes",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Services",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Startup apps",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > System Info",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Thermals",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Dashboard > Users",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Debloat",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Debloat > App Buster",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Debloat > Debloat",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Debloat > Store Apps",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose > CBS Log",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose > Crash Dumps",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose > DISM Log",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose > Event Viewer",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose > Reliability",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Diagnose > Windows Update",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Disk Health",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Driver Manager",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Environment Variables",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Firewall Rules",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Game Mode",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Group Policy",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Hardware Info",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Local Users & Groups",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Log Viewer",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Monitor Control",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Health",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Hosts Editor",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Network Diagnostics",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Network Extras",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Remote Tools",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Shared Resources",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Network Diagnostics > Wi-Fi Analyzer",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Quick Fix",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Registry Explorer",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Scripts > Explorer Navigation Pane",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Security Dashboard",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Software Inventory",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Startup & Boot",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Startup & Boot > Boot Analyzer",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Startup & Boot > Power & Boot",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Startup & Boot > Startup Manager",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Health",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Management",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Management > Scheduled Tasks",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Management > Services",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Management > Windows Features",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Report",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "System Restore",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Thermal Control",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "TreeSize",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Tweaks",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  },
-  {
-   "module": "Updates",
-   "buttons": 0,
-   "headers": 0,
-   "tabs": 0,
-   "intro": true,
-   "total": 0,
-   "gaps": [],
-   "error": null
-  }
- ],
- "errors": [],
- "elapsed_seconds": 2.001
+  ],
+  "errors": [],
+  "elapsed_seconds": 2.609
 }

@@ -78,6 +78,11 @@ class GameModeModule(BaseModule):
         self._widget: Optional[QWidget] = None
         self._system = WinSystem()
         self._journal = Journal()
+        from core.resource_tracker import ResourceTracker
+        self._tracker = ResourceTracker(base_dir=self._journal.folder)
+        from PyQt6.QtCore import QThreadPool
+        self._pool = QThreadPool()
+        self._pool.setMaxThreadCount(2)
         self._choices = session.Choices()
         self._busy = False
         self._preflight_worker = None
@@ -100,6 +105,7 @@ class GameModeModule(BaseModule):
         self._optimise_tab = None
         self._history_tab = None
         self._session_tab = None
+        self._wave_metrics_tab = None
         self._settings = game_config.GameSettings()
         self._pause = session_control.PauseState()
         self._saw_game = False
@@ -177,6 +183,10 @@ class GameModeModule(BaseModule):
             self._enforce_timer.stop()
         if self._monitor_timer is not None:
             self._monitor_timer.stop()
+        if hasattr(self, "_pool") and self._pool is not None:
+            self._pool.waitForDone(1500)
+        if hasattr(self, "_tracker") and self._tracker is not None:
+            self._tracker.cleanup()
         _keep_awake(False)
         self.cancel_all_workers()
 
@@ -294,7 +304,8 @@ class GameModeModule(BaseModule):
             def log(level, text):
                 w.signals.log_line.emit(f"{level}\t{text}")
 
-            return session.turn_on(system, choices, journal, log, own, sid)
+            return session.turn_on(system, choices, journal, log, own, sid,
+                                   resource_tracker=getattr(self, "_tracker", None))
 
         self._append(f"{session.INFO}\tAuto-ON starting ({profile or 'current choices'}).")
         self._auto_started = True
@@ -350,6 +361,9 @@ class GameModeModule(BaseModule):
         from .history_tab import HistoryTab
         self._history_tab = HistoryTab(self._journal.folder, w, host=self)
         self._tabs.addTab(self._history_tab, "History")
+        from .wave_metrics_tab import WaveMetricsTab
+        self._wave_metrics_tab = WaveMetricsTab(self, w)
+        self._tabs.addTab(self._wave_metrics_tab, "Wave Metrics")
         self._tabs.currentChanged.connect(self._tab_changed)
         lay.addWidget(self._tabs, 1)
         self._widget = w
@@ -369,6 +383,8 @@ class GameModeModule(BaseModule):
             self._history_tab.activate()
         if self._session_tab is not None and self._tabs.widget(index) is self._session_tab:
             self._session_tab.refresh()
+        if self._wave_metrics_tab is not None and self._tabs.widget(index) is self._wave_metrics_tab:
+            self._wave_metrics_tab.activate()
 
     def _build_header(self, parent: QWidget) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -868,7 +884,8 @@ class GameModeModule(BaseModule):
                         "created (System Restore off or blocked by policy?). Turn off "
                         "'Create a restore point before ON' in the Session tab to continue.")
                 log(session.INFO, "Restore point created.")
-            return session.turn_on(system, choices, journal, log, own, sid)
+            return session.turn_on(system, choices, journal, log, own, sid,
+                                   resource_tracker=getattr(self, "_tracker", None))
         self._run(work, self._on_done)
 
     def _turn_off(self) -> None:
@@ -889,7 +906,8 @@ class GameModeModule(BaseModule):
 
         def work(w):
             log = lambda level, text: w.signals.log_line.emit(f"{level}\t{text}")  # noqa: E731
-            return session.turn_off(system, journal, log)
+            return session.turn_off(system, journal, log,
+                                    resource_tracker=getattr(self, "_tracker", None))
         self._run(work, self._off_done)
 
     def _run(self, work, done) -> None:
@@ -1063,5 +1081,11 @@ class GameModeModule(BaseModule):
         """Track `w` until it finishes -- the enforce tick runs every minute
         for as long as Game Mode is on, so finished workers must not pile up."""
         self._workers.append(w)
+        if hasattr(self, "_tracker") and self._tracker is not None:
+            self._tracker.track_worker(w)
         w.signals.finished.connect(lambda: w in self._workers and self._workers.remove(w))
-        self.app.thread_pool.start(w)
+        pool = getattr(self, "_pool", None) or getattr(getattr(self, "app", None), "thread_pool", None)
+        if pool is not None:
+            pool.start(w)
+        else:
+            w.run()

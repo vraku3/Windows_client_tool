@@ -411,8 +411,9 @@ def freed_estimate(procs: List[Proc], groups: List[AppGroup], close: Set[str]) -
 
 # ==== ON ========================================================================================
 class _On:
-    def __init__(self, system, journal: Journal, log: Log) -> None:
+    def __init__(self, system, journal: Journal, log: Log, tracker: Optional[Any] = None) -> None:
         self.s, self.j, self.log = system, journal, log
+        self.tracker = tracker
         self.skipped: List[dict] = []
 
     def _skip(self, label: str, reason: str) -> None:
@@ -868,6 +869,11 @@ class _On:
             return
         entry = self.j.record({"kind": "timer_resolution", "period_100ns": 5000})
         self.j.mark_done(entry)
+        if getattr(self, "tracker", None):
+            self.tracker.track_timer(
+                lambda: getattr(self.s, "cancel_timer_resolution", lambda _p: None)(5000),
+                "high_resolution_timer_5000",
+            )
         self.log(OK, "High-resolution timer set to 0.5ms (maximum responsiveness)")
 
     def low_latency_network(self, enabled: bool, elevated: bool) -> None:
@@ -963,7 +969,7 @@ class _On:
 
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
-            session: int) -> dict:
+            session: int, resource_tracker: Optional[Any] = None) -> dict:
     with OPERATION_LOCK, operation_lock("Game Mode ON"):
         if journal.load():
             raise RuntimeError("Game Mode is already ON; use OFF to restore it first")
@@ -972,7 +978,8 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             report.append({"level": level, "text": text})
             log(level, text)
         try:
-            result = _turn_on(system, choices, journal, say, own_pid, session)
+            result = _turn_on(system, choices, journal, say, own_pid, session,
+                              resource_tracker=resource_tracker)
             from core.timeline import record
             record(os.path.dirname(journal.folder), "game_mode", "on", "Game Mode ON", {"changes": len(journal.actions), "handles_before": result.get("handles_before"), "handles_after": result.get("handles_after")})
             return result
@@ -1016,7 +1023,7 @@ def _history_end(journal: Journal, data: dict, report: list, log: Log,
 
 
 def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
-             session: int) -> dict:
+             session: int, resource_tracker: Optional[Any] = None) -> dict:
     """Apply `choices`. Returns {handles_before, handles_after, processes_before, ...}."""
     elevated = system.is_admin()
     procs = system.processes()
@@ -1032,7 +1039,7 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     except Exception:
         logger.debug("game mode: metrics snapshot failed", exc_info=True)
     _history_start(journal, log)
-    on = _On(system, journal, log)
+    on = _On(system, journal, log, tracker=resource_tracker)
     on.multimedia(choices.priority_separation, choices.system_responsiveness)
     if choices.max_mmcss:
         on.max_mmcss(choices.max_mmcss, elevated)
@@ -1209,20 +1216,22 @@ def undo_action(system, journal: Journal, index: int, log: Log) -> tuple:
 
 
 # ==== OFF =======================================================================================
-def turn_off(system, journal: Journal, log: Log, settle: float = 10.0) -> List[dict]:
+def turn_off(system, journal: Journal, log: Log, settle: float = 10.0,
+             resource_tracker: Optional[Any] = None) -> List[dict]:
     """Serialize OFF after ON/enforce, retaining every unresolved change."""
     with OPERATION_LOCK, operation_lock("Game Mode OFF"):
         if not journal.load():
             return []
         from core.timeline import record
         record(os.path.dirname(journal.folder), "game_mode", "recovery", "Game Mode restore attempt", {"changes": len(journal.actions)})
-        report = _turn_off(system, journal, log, settle)
+        report = _turn_off(system, journal, log, settle, resource_tracker=resource_tracker)
         incomplete = journal.active
         record(os.path.dirname(journal.folder), "game_mode", "off_failed" if incomplete else "off", "Game Mode recovery incomplete" if incomplete else "Game Mode OFF: restore completed", {"remaining": len(journal.actions), "warnings": sum(r.get("level") in (WARN, BAD) for r in report)}, "error" if incomplete else "warning" if any(r.get("level") in (WARN, BAD) for r in report) else "info")
         return report
 
 
-def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
+def _turn_off(system, journal: Journal, log: Log, settle: float,
+              resource_tracker: Optional[Any] = None) -> List[dict]:
     report: List[dict] = []
 
     def say(level: str, text: str) -> None:
@@ -1289,6 +1298,16 @@ def _turn_off(system, journal: Journal, log: Log, settle: float) -> List[dict]:
         history_error = journal.finish(report, restored=len(validated))
         if history_error:
             say(WARN, history_error)
+    if resource_tracker is not None:
+        try:
+            resource_tracker.cleanup()
+        except Exception as exc:
+            say(WARN, f"Resource tracker cleanup: {exc}")
+    elif getattr(system, "_resource_tracker", None):
+        try:
+            system._resource_tracker.cleanup()
+        except Exception:
+            pass
     return report
 
 

@@ -1,0 +1,63 @@
+name: Game Mode Wave Telemetry
+
+on:
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      cycles:
+        description: 'Number of wave cycles to execute'
+        required: false
+        default: '40'
+      duration:
+        description: 'Seconds per wave cycle'
+        required: false
+        default: '2'
+
+jobs:
+  wave-telemetry:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Game Mode Wave Benchmark
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          CI: "true"
+        run: |
+          $Cycles = if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ github.event.inputs.cycles }}") {
+            [int]"${{ github.event.inputs.cycles }}"
+          } else {
+            10
+          }
+          $Duration = if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ github.event.inputs.duration }}") {
+            [int]"${{ github.event.inputs.duration }}"
+          } else {
+            0
+          }
+          Write-Host "Running $Cycles waves (duration=${Duration}s)..."
+          pwsh -ExecutionPolicy Bypass -File scripts/run_game_mode_waves.ps1 -Cycles $Cycles -DurationSeconds $Duration -PythonExe python
+
+      - name: Upload Telemetry Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-mode-wave-metrics
+          path: |
+            $env:APPDATA\WindowsTweaker\game_mode\game_mode_metrics.jsonl
+            $env:APPDATA\WindowsTweaker\game_mode\game_mode_metrics.log
+            $env:TEMP\WindowsTweaker\GameMode\*.json
+          if-no-files-found: ignore

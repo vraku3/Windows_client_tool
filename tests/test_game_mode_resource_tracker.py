@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
 from core.resource_tracker import ResourceTracker, get_resource_tracker
-from modules.game_mode.engine import catalog, session
+from modules.game_mode.engine import session
 from modules.game_mode.engine.journal import Journal
 
 

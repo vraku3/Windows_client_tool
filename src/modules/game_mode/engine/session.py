@@ -22,7 +22,7 @@ import time
 import threading
 from core.operation_lock import OperationBusy, operation_lock
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from . import catalog, session_history
 from .journal import Journal

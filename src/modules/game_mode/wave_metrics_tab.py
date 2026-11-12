@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,

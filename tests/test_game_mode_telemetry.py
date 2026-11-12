@@ -1,13 +1,9 @@
 """Tests for modules.game_mode.telemetry and WaveMetricsTab."""
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 
-from modules.game_mode import telemetry
 from modules.game_mode.telemetry import (
     METRICS_JSONL,
     METRICS_LOG,

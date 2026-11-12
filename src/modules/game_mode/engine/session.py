@@ -1444,6 +1444,10 @@ def _restore_task(system, e, say, ctx) -> bool:
         ctx["tasks"] += 1
         return True
     error = system.set_task_enabled(e["path"], True)
+    if error == "task not found":
+        say(INFO, f"Scheduled task {e['path']}: task no longer exists in Windows (skipped)")
+        ctx["tasks"] += 1
+        return True
     if error:
         say(BAD, f"Scheduled task {e['path']}: not enabled again ({error})")
     else:

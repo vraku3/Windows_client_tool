@@ -175,6 +175,8 @@ class FakeSystem:
     def set_task_enabled(self, path, enabled):
         if path in self.protected:
             return "access denied"
+        if path not in self.task_state:
+            return "task not found"
         self.task_state[path] = enabled
 
     def animations(self):

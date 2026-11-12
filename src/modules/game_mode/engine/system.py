@@ -983,7 +983,17 @@ class WinSystem:
         try:
             return service.GetFolder(folder or "\\").GetTask(name)
         except Exception as error:  # noqa: BLE001
-            logger.warning("game mode: task %s not readable: %s", path, error)
+            args = getattr(error, "args", ())
+            is_not_found = False
+            if args:
+                if len(args) > 2 and isinstance(args[2], tuple) and len(args[2]) > 5 and args[2][5] in (-2147024894, 0x80070002):
+                    is_not_found = True
+                elif args[0] in (-2147024894, 0x80070002):
+                    is_not_found = True
+            if is_not_found:
+                logger.debug("game mode: task %s not found in Task Scheduler", path)
+            else:
+                logger.warning("game mode: task %s not readable: %s", path, error)
             return None
 
 

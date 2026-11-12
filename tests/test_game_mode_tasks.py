@@ -236,3 +236,33 @@ def test_photos_condition_cannot_be_bypassed_as_another_apps_helper():
 def test_legacy_maximum_config_includes_maximum_tasks():
     c = session.choices_from_config({"preset": catalog.MAX})
     assert c.paused_tasks == {t.pattern for t in catalog.TASKS if t.level in (catalog.REC, catalog.MAX)}
+
+
+def test_deleted_task_does_not_trap_game_mode_on_restore(monkeypatch, journal):
+    """When a task is deleted while Game Mode is ON, OFF completes cleanly without getting stuck in recovery."""
+    monkeypatch.setattr(catalog, "TASKS", (catalog.TaskSpec(r"\EphemeralUserTask", "Ephemeral Task", catalog.REC),))
+    monkeypatch.setattr(session.time, "sleep", lambda _s: None)
+    s = TaskSystem()
+    s.task_state = {r"\EphemeralUserTask": True}
+    c = session.preset(catalog.REC, [])
+    c.close = set()
+    log_calls = []
+
+    def _log(level, text):
+        log_calls.append((level, text))
+
+    data = session.turn_on(s, c, journal, _log, 999, 1)
+    assert any(e["kind"] == "task" and e["path"] == r"\EphemeralUserTask" and e["done"] for e in data["actions"])
+    assert s.task_state[r"\EphemeralUserTask"] is False
+
+    # Simulate Windows/app removing or updating the task while Game Mode is ON
+    del s.task_state[r"\EphemeralUserTask"]
+    assert s.task_enabled(r"\EphemeralUserTask") is None
+    assert s.set_task_enabled(r"\EphemeralUserTask", True) == "task not found"
+
+    # Turn off Game Mode: should not fail or remain active
+    report = session.turn_off(s, journal, _log, settle=0)
+    assert not journal.active, "Journal should no longer be active"
+    assert not any("Recovery incomplete" in r.get("text", "") for r in report)
+    assert any("no longer exists" in r.get("text", "") and r.get("level") == session.INFO for r in report)
+

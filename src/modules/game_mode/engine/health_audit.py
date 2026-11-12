@@ -76,11 +76,15 @@ def verify_restored(system, actions: List[dict]) -> List[str]:
             elif state.running is False:
                 issues.append(f"{label}: still stopped after restore")
         elif kind == "task":
-            enabled = system.task_enabled(entry.get("path", ""))
+            path = entry.get("path", "")
+            enabled = system.task_enabled(path)
             if enabled is False:
                 issues.append(f"{label}: task still disabled after restore")
             elif enabled is None:
-                issues.append(f"{label}: task state unreadable after restore")
+                if hasattr(system, "set_task_enabled") and system.set_task_enabled(path, True) == "task not found":
+                    pass  # Task was removed from Windows while Game Mode was ON; not left disabled
+                else:
+                    issues.append(f"{label}: task state unreadable after restore")
         elif kind == "plan":
             if system.active_plan() != entry.get("before"):
                 issues.append(f"{label}: power plan was not restored")

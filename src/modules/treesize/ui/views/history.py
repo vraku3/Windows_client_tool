@@ -36,8 +36,17 @@ class Sparkline(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._points: list[tuple[float, int]] = []
+        self._bg_color = QColor(0x1F, 0x1F, 0x1F)
+        self._grid_color = GRID
+        self._text_color = TEXT
         self.setMinimumHeight(120)
         explain_widget(self)
+
+    def set_theme_colors(self, colors: dict) -> None:
+        self._bg_color = QColor(colors.get("bg", "#1F1F1F"))
+        self._grid_color = QColor(colors.get("border", "#3F3F46"))
+        self._text_color = QColor(colors.get("muted", "#9D9D9D"))
+        self.update()
 
     def set_points(self, points) -> None:
         self._points = sorted(points, key=lambda p: p[0])
@@ -46,10 +55,10 @@ class Sparkline(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor(0x1F, 0x1F, 0x1F))
+        painter.fillRect(self.rect(), self._bg_color)
         metrics = QFontMetrics(painter.font())
         if len(self._points) < 2:
-            painter.setPen(TEXT)
+            painter.setPen(self._text_color)
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
                              "Two or more snapshots are needed to show a trend")
             return
@@ -63,15 +72,15 @@ class Sparkline(QWidget):
         if high == low:
             high = low + max(1, low // 20)
 
-        painter.setPen(QPen(GRID, 1))
+        painter.setPen(QPen(self._grid_color, 1))
         for i in range(3):
             y = top + (bottom - top) * i / 2
             painter.drawLine(left, int(y), right, int(y))
             value = high - (high - low) * i / 2
-            painter.setPen(TEXT)
+            painter.setPen(self._text_color)
             painter.drawText(4, int(y) + metrics.ascent() // 2,
                              format_bytes(int(value)))
-            painter.setPen(QPen(GRID, 1))
+            painter.setPen(QPen(self._grid_color, 1))
 
         span = self._points[-1][0] - self._points[0][0] or 1.0
         polygon = QPolygonF()

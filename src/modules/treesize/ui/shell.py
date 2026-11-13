@@ -88,6 +88,8 @@ class TreeSizeShell(QWidget):
         self.row_actions = RowActions(self)
         self._paused = False
         self._pool = QThreadPool.globalInstance()
+        self._current_theme = "dark"
+        self._settings: dict = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -318,6 +320,10 @@ class TreeSizeShell(QWidget):
         act("result.export").triggered.connect(self.export_any)
         act("scan.exclude").triggered.connect(self._exclude_pattern)
         act("view.select").triggered.connect(self._cycle_view)
+        act("view.theme").triggered.connect(self._cycle_theme)
+        act("theme.dark").triggered.connect(lambda: self.set_theme("dark", save=True))
+        act("theme.light").triggered.connect(lambda: self.set_theme("light", save=True))
+        act("theme.system").triggered.connect(lambda: self.set_theme("system", save=True))
         act("view.hidesmall").triggered.connect(self._prompt_hide_smaller)
         act("unit.decimals").triggered.connect(self._prompt_decimals)
         act("scan.schedule").triggered.connect(lambda: self.schedule_scan("DAILY"))
@@ -962,6 +968,7 @@ class TreeSizeShell(QWidget):
             # opening; the defaults already loaded are usable.
             logger.debug("apply_settings: giving up on this read", exc_info=True)
             pass
+        self.set_theme(settings.get("theme", "dark"))
         self._filters.exclude_hidden = bool(settings.get("exclude_hidden", False))
         self._permanent_excludes = tuple(settings.get("exclude_patterns") or ())
         self._apply_exclusions()
@@ -969,6 +976,23 @@ class TreeSizeShell(QWidget):
         self.chart.treemap.max_depth = int(settings.get("treemap_depth", 6))
         self._aggregates.clear()
         self._refresh_right_pane()
+
+    def _cycle_theme(self) -> None:
+        next_theme = "light" if self._current_theme == "dark" else "dark"
+        self.set_theme(next_theme, save=True)
+
+    def set_theme(self, theme: str, save: bool = False) -> None:
+        from .theme import apply_theme
+        self._current_theme = theme
+        apply_theme(self, theme)
+        for t_id, t_name in (("theme.dark", "dark"), ("theme.light", "light"), ("theme.system", "system")):
+            action = self.ribbon.action(t_id)
+            if action:
+                action.setChecked(self._current_theme == t_name)
+        if save:
+            self._settings["theme"] = theme
+            save_settings(self.config, self._settings)
+            self.scan_state.setText(f"Theme set to {theme.capitalize()}")
 
     def open_options(self) -> None:
         dialog = OptionsDialog(self._settings, self)

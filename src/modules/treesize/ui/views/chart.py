@@ -53,7 +53,14 @@ class TreemapWidget(QWidget):
         self._colors: dict[int, QColor] = {}
         self.max_depth = 6
         self._mode = Mode.SIZE
+        self._bg_color = QColor(0x1F, 0x1F, 0x1F)
+        self._muted_color = QColor(0x9D, 0x9D, 0x9D)
         explain_widget(self)
+
+    def set_theme_colors(self, colors: dict) -> None:
+        self._bg_color = QColor(colors.get("bg", "#1F1F1F"))
+        self._muted_color = QColor(colors.get("muted", "#9D9D9D"))
+        self.update()
 
     def set_value_mode(self, mode: Mode) -> None:
         """Spec 5.5's pane mode: what a tile's AREA measures."""
@@ -104,9 +111,9 @@ class TreemapWidget(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        painter.fillRect(self.rect(), QColor(0x1F, 0x1F, 0x1F))
+        painter.fillRect(self.rect(), self._bg_color)
         if not self._rects:
-            painter.setPen(QColor(0x9D, 0x9D, 0x9D))
+            painter.setPen(self._muted_color)
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
                              "No scan")
             return
@@ -200,8 +207,19 @@ class SliceChart(QWidget):
         #: because what a slice MEANS depends on the mode, and neither painter
         #: should have to work that out again.
         self._rows: list = []
+        self._bg_color = QColor(0x1F, 0x1F, 0x1F)
+        self._text_color = QColor(0xF1, 0xF1, 0xF1)
+        self._muted_color = QColor(0x9D, 0x9D, 0x9D)
+        self._track_color = QColor(0x2A, 0x2D, 0x2E)
         self.setMinimumHeight(160)
         explain_widget(self)
+
+    def set_theme_colors(self, colors: dict) -> None:
+        self._bg_color = QColor(colors.get("bg", "#1F1F1F"))
+        self._text_color = QColor(colors.get("text", "#F1F1F1"))
+        self._muted_color = QColor(colors.get("muted", "#9D9D9D"))
+        self._track_color = QColor(colors.get("bar_track", "#2A2D2E"))
+        self.update()
 
     def set_value_mode(self, mode: Mode) -> None:
         if mode is self._mode:
@@ -254,9 +272,9 @@ class SliceChart(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor(0x1F, 0x1F, 0x1F))
+        painter.fillRect(self.rect(), self._bg_color)
         if not self._rows:
-            painter.setPen(QColor(0x9D, 0x9D, 0x9D))
+            painter.setPen(self._muted_color)
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
                              "Nothing to chart")
             return
@@ -271,12 +289,12 @@ class SliceChart(QWidget):
         angle = 90 * 16                     # start at twelve o'clock
         for _node, _name, _size, fraction, color in self._rows:
             sweep = -int(360 * 16 * fraction)
-            painter.setPen(QPen(QColor(0x1F, 0x1F, 0x1F), 1))
+            painter.setPen(QPen(self._bg_color, 1))
             painter.setBrush(color)
             painter.drawPie(cx - r, cy - r, r * 2, r * 2, angle, sweep)
             angle += sweep
         # Donut hole, which is what keeps small slices legible at the centre.
-        painter.setBrush(QColor(0x1F, 0x1F, 0x1F))
+        painter.setBrush(self._bg_color)
         painter.setPen(Qt.PenStyle.NoPen)
         inner = int(r * 0.55)
         painter.drawEllipse(cx - inner, cy - inner, inner * 2, inner * 2)
@@ -290,17 +308,17 @@ class SliceChart(QWidget):
             y = 8 + i * row_height
             if y + row_height > self.height():
                 break
-            painter.setPen(QColor(0xF1, 0xF1, 0xF1))
+            painter.setPen(self._text_color)
             painter.drawText(8, y + metrics.ascent(),
                              metrics.elidedText(name, Qt.TextElideMode.ElideMiddle,
                                                 label_width - 12))
             track = self.width() - label_width - 110
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(0x2A, 0x2D, 0x2E))
+            painter.setBrush(self._track_color)
             painter.drawRect(label_width, y, track, row_height - 8)
             painter.setBrush(color)
             painter.drawRect(label_width, y, int(track * fraction), row_height - 8)
-            painter.setPen(QColor(0x9D, 0x9D, 0x9D))
+            painter.setPen(self._muted_color)
             painter.drawText(label_width + track + 8, y + metrics.ascent(),
                              f"{text}  {fraction * 100:.1f}%")
 
@@ -314,7 +332,7 @@ class SliceChart(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             painter.drawRect(x, y, 10, 10)
-            painter.setPen(QColor(0xF1, 0xF1, 0xF1))
+            painter.setPen(self._text_color)
             painter.drawText(x + 16, y + metrics.ascent() - 2,
                              f"{name}  —  {text}  "
                              f"({fraction * 100:.1f}%)")

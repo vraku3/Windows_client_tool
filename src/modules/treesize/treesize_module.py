@@ -20,7 +20,6 @@ from core.search_provider import SearchProvider
 
 from modules.treesize.search_provider import TreeSizeSearchProvider
 from modules.treesize.ui.shell import TreeSizeShell
-from modules.treesize.ui.theme import apply_theme
 
 logger = logging.getLogger(__name__)
 
@@ -50,15 +49,14 @@ class TreeSizeModule(BaseModule):
 
     def create_widget(self) -> QWidget:
         self._shell = TreeSizeShell()
-        # The sheet is applied to this module's root widget, so it scopes to
-        # the pane by descent and leaves every other module's styling alone.
-        apply_theme(self._shell)
         self._shell.scan_finished.connect(self._on_scan_finished)
         config = getattr(self, "_config", None)
         if config is not None:
             from modules.treesize.ui.options_dialog import load_settings
             self._shell.config = config
             self._shell.apply_settings(load_settings(config))
+        else:
+            self._shell.set_theme("dark")
         # Elevation only changes which engine is chosen, never whether the
         # module works, so it is a note rather than a gate.
         self._shell.ribbon.set_enabled("tools.admin", not _is_admin())
@@ -73,6 +71,15 @@ class TreeSizeModule(BaseModule):
         # here -- touching the shell would be touching a widget that does not
         # exist yet.
         self._config = getattr(app, "config", None)
+        theme_mgr = getattr(app, "theme", None)
+        if theme_mgr is not None and hasattr(theme_mgr, "theme_changed"):
+            theme_mgr.theme_changed.connect(self._on_app_theme_changed)
+
+    def _on_app_theme_changed(self, new_theme: str) -> None:
+        if self._shell is not None:
+            current = getattr(self._shell, "_current_theme", "dark")
+            if current == "system":
+                self._shell.set_theme("system")
 
     def on_activate(self) -> None:
         if self._shell is not None:

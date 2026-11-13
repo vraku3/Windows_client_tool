@@ -12,6 +12,8 @@ from .help_text import INTRO, control_help, header_help, tab_help
 def describe_control(control, key=''):
     if control is None or not hasattr(control, 'setToolTip'):
         return control
+    if control.property('explanationSuppressed'):
+        return control
     if key:
         control.setProperty('explanationKey', key)
     else:

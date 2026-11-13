@@ -80,6 +80,7 @@ RIBBON: tuple = (
     )),
     ("View", (
         ("Views", (("view.select", "Select active\nView", True, True),)),
+        ("Theme", (("view.theme", "Theme", True, True),)),
         ("Mode", (("mode.size", "Size", False, False),
                   ("mode.allocated", "Allocated space", False, False),
                   ("mode.files", "Number of files", False, False),
@@ -125,6 +126,9 @@ MENUS: dict = {
                      ("scan.refresh.selected", "Refresh selected folder"),
                      None,
                      ("scan.watch", "Watch for file system changes")),
+    "view.theme": (("theme.dark", "Dark theme (default)"),
+                   ("theme.light", "Light theme"),
+                   ("theme.system", "System (Windows)")),
     "tree.expand": (("tree.expand.1", "Expand one level"),
                     ("tree.expand.2", "Expand two levels"),
                     ("tree.expand.3", "Expand three levels"),
@@ -198,6 +202,7 @@ CHECKABLE = {
     "panel.drives", "panel.overview", "panel.status",
     "view.changes", "view.hideempty", "view.group", "scan.watch",
     "unit.decimals.0", "unit.decimals.1", "unit.decimals.2",
+    "theme.dark", "theme.light", "theme.system",
     "details.autosize",
     "hidesmall.off", "hidesmall.1mb", "hidesmall.10mb", "hidesmall.100mb",
 }

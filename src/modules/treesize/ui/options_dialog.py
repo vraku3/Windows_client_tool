@@ -22,6 +22,7 @@ from .formatting import Mode, Unit
 CONFIG_PREFIX = "treesize."
 
 DEFAULTS = {
+    "theme": "dark",
     "unit": Unit.AUTO.value,
     "decimals": 1,
     "mode": Mode.SIZE.value,
@@ -49,6 +50,17 @@ class OptionsDialog(QDialog):
 
         display = QGroupBox("Display", self)
         form = QFormLayout(display)
+
+        self.theme = QComboBox(display)
+        describe_control(self.theme, 'theme')
+        self.theme.addItem("Dark (default)", "dark")
+        self.theme.addItem("Light", "light")
+        self.theme.addItem("System (Windows)", "system")
+        current_theme = self._settings.get("theme", "dark")
+        idx = self.theme.findData(current_theme)
+        self.theme.setCurrentIndex(max(0, idx))
+        form.addRow("Theme:", self.theme)
+
         self.unit = QComboBox(display)
         describe_control(self.unit, 'unit')
         for unit in Unit:
@@ -155,6 +167,7 @@ class OptionsDialog(QDialog):
         explain_widget(self)
 
     def restore_defaults(self) -> None:
+        self.theme.setCurrentIndex(max(0, self.theme.findData(DEFAULTS["theme"])))
         self.unit.setCurrentIndex(max(0, self.unit.findData(DEFAULTS["unit"])))
         self.decimals.setValue(DEFAULTS["decimals"])
         self.mode.setCurrentIndex(max(0, self.mode.findData(DEFAULTS["mode"])))
@@ -168,6 +181,7 @@ class OptionsDialog(QDialog):
 
     def values(self) -> dict:
         return {
+            "theme": self.theme.currentData(),
             "unit": self.unit.currentData(),
             "decimals": self.decimals.value(),
             "mode": self.mode.currentData(),

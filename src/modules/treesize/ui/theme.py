@@ -90,19 +90,39 @@ QWidget {{ background: {bg}; color: {text}; }}
 
 QComboBox {{
     background: {bg}; border: 1px solid {border};
-    border-radius: 2px; padding: 3px 6px;
+    border-radius: 2px; padding: 3px 6px; color: {text};
 }}
 QComboBox:focus {{ border: 1px solid {accent}; }}
-
-QTreeView, QTreeWidget {{
-    background: {bg}; alternate-background-color: {panel};
-    border: 1px solid {border}; outline: none;
+QComboBox QAbstractItemView {{
+    background: {panel}; color: {text}; border: 1px solid {border};
+    selection-background-color: {selection};
 }}
-QTreeView::item, QTreeWidget::item {{ padding: 2px; border: none; }}
-QTreeView::item:selected, QTreeWidget::item:selected {{
+
+QLineEdit {{
+    background: {bg}; color: {text}; border: 1px solid {border};
+    border-radius: 2px; padding: 3px 6px;
+}}
+QLineEdit:focus {{ border: 1px solid {accent}; }}
+
+QSpinBox {{
+    background: {bg}; color: {text}; border: 1px solid {border};
+    border-radius: 2px; padding: 2px 4px; color: {text};
+}}
+QSpinBox:focus {{ border: 1px solid {accent}; }}
+
+QTreeView, QTreeWidget, QTableView, QTableWidget {{
+    background: {bg}; alternate-background-color: {panel};
+    border: 1px solid {border}; outline: none; color: {text};
+}}
+QTreeView::item, QTreeWidget::item, QTableView::item, QTableWidget::item {{
+    padding: 2px; border: none;
+}}
+QTreeView::item:selected, QTreeWidget::item:selected, QTableView::item:selected, QTableWidget::item:selected {{
     background: {selection}; color: {text};
 }}
-QTreeView::item:hover, QTreeWidget::item:hover {{ background: {bar_track}; }}
+QTreeView::item:hover, QTreeWidget::item:hover, QTableView::item:hover, QTableWidget::item:hover {{
+    background: {bar_track};
+}}
 
 QHeaderView::section {{
     background: {panel}; color: {muted};
@@ -118,12 +138,50 @@ QTabBar::tab {{
 QTabBar::tab:selected {{ background: {bg}; color: {text}; }}
 
 QSplitter::handle {{ background: {border}; }}
+
 QScrollBar:vertical {{ background: {bg}; width: 12px; margin: 0; }}
 QScrollBar::handle:vertical {{
     background: {border}; border-radius: 5px; min-height: 24px;
 }}
 QScrollBar::handle:vertical:hover {{ background: {muted}; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; width: 0; }}
+
+QScrollBar:horizontal {{ background: {bg}; height: 12px; margin: 0; }}
+QScrollBar::handle:horizontal {{
+    background: {border}; border-radius: 5px; min-width: 24px;
+}}
+QScrollBar::handle:horizontal:hover {{ background: {muted}; }}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ height: 0; width: 0; }}
+
+QCheckBox, QRadioButton {{ color: {text}; spacing: 6px; }}
+QGroupBox {{
+    color: {text}; border: 1px solid {border}; border-radius: 4px;
+    margin-top: 8px; padding-top: 10px; font-weight: 600;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin; subcontrol-position: top left;
+    padding: 0 4px; left: 8px;
+}}
+
+QPushButton {{
+    background: {panel}; color: {text}; border: 1px solid {border};
+    border-radius: 3px; padding: 4px 12px;
+}}
+QPushButton:hover {{ background: {selection}; border-color: {accent}; }}
+QPushButton:disabled {{ color: {muted}; border-color: {border}; }}
+
+QMenu {{
+    background: {panel}; color: {text}; border: 1px solid {border};
+    padding: 4px;
+}}
+QMenu::item {{ padding: 4px 20px 4px 24px; border-radius: 2px; color: {text}; }}
+QMenu::item:selected {{ background: {selection}; color: {text}; }}
+QMenu::separator {{ height: 1px; background: {border}; margin: 4px 6px; }}
+
+QToolTip {{
+    background: {panel}; color: {text}; border: 1px solid {border};
+    padding: 4px 8px; border-radius: 2px;
+}}
 
 #titleRow {{ background: {ribbon}; border-bottom: 1px solid {border}; }}
 #paneTitle {{ color: {text}; font-weight: 600; }}
@@ -186,7 +244,7 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 
 
 def windows_prefers_light() -> bool:
-    """Read AppsUseLightTheme. Defaults to dark, which is what Pro ships."""
+    """Read AppsUseLightTheme. Defaults to False (dark mode)."""
     try:
         with winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
@@ -196,21 +254,40 @@ def windows_prefers_light() -> bool:
         return False
 
 
-def stylesheet(light: bool | None = None) -> str:
-    if light is None:
-        light = windows_prefers_light()
-    return _TEMPLATE.format(**(LIGHT if light else DARK))
+def is_light_theme(theme: str | bool | None = None, light: bool | None = None) -> bool:
+    """Determine whether to use the light theme.
+
+    Defaults to DARK (False), matching the app's default dark theme.
+    If 'system', follows Windows AppsUseLightTheme.
+    If 'light' or True, returns True.
+    If 'dark' or False or None, returns False.
+    """
+    if light is not None:
+        return bool(light)
+    if theme is None or theme == "dark" or theme is False:
+        return False
+    if theme == "light" or theme is True:
+        return True
+    if theme == "system":
+        return windows_prefers_light()
+    return False
 
 
-def palette(light: bool | None = None) -> dict:
-    if light is None:
-        light = windows_prefers_light()
-    return LIGHT if light else DARK
+def stylesheet(theme: str | bool | None = None, light: bool | None = None) -> str:
+    use_light = is_light_theme(theme, light=light)
+    return _TEMPLATE.format(**(LIGHT if use_light else DARK))
 
 
-def apply_theme(widget, light: bool | None = None) -> None:
-    widget.setStyleSheet(stylesheet(light))
-    _repaint_bars(widget, palette(light))
+def palette(theme: str | bool | None = None, light: bool | None = None) -> dict:
+    use_light = is_light_theme(theme, light=light)
+    return LIGHT if use_light else DARK
+
+
+def apply_theme(widget, theme: str | bool | None = None, light: bool | None = None) -> None:
+    colors = palette(theme, light=light)
+    widget.setStyleSheet(stylesheet(theme, light=light))
+    _repaint_bars(widget, colors)
+    _repaint_custom_views(widget, colors)
 
 
 def _repaint_bars(widget, colors: dict) -> None:
@@ -229,3 +306,14 @@ def _repaint_bars(widget, colors: dict) -> None:
     fill, track = QColor(colors["accent"]), QColor(colors["bar_track"])
     for delegate in widget.findChildren(ProportionBarDelegate):
         delegate.set_bar_colors(fill, track)
+
+
+def _repaint_custom_views(widget, colors: dict) -> None:
+    """Notify custom painting widgets (Treemap, ChartView, Sparkline) of theme colors."""
+    from PyQt6.QtWidgets import QWidget
+    for child in widget.findChildren(QWidget):
+        if hasattr(child, "set_theme_colors") and callable(child.set_theme_colors):
+            try:
+                child.set_theme_colors(colors)
+            except Exception:
+                pass

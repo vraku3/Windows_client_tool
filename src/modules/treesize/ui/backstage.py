@@ -47,7 +47,7 @@ class TitleRow(QWidget):
                                       ("result.export", "⇪", "Export")):
             action = ribbon.action(action_id)
             button = QToolButton(self)
-            describe_control(button, 'button')
+            button.setProperty('explanationSuppressed', True)
             button.setText(glyph)
             button.setToolTip(tip)
             button.setAutoRaise(True)

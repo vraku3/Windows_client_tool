@@ -165,3 +165,53 @@ def test_wave_metrics_tab_ui(qapp):
     tab.cancel()
     mock_running.cancel.assert_called_once()
     assert tab._running_worker is None
+
+
+def test_record_wave_metric_preserves_error_status(tmp_path):
+    from modules.game_mode.telemetry import record_wave_metric
+
+    data = {
+        "handles": 500000,
+        "status": "bad",
+        "cpu_percent": 50.0,
+    }
+    rec = record_wave_metric(1, data, folder=str(tmp_path))
+    assert rec["status"] == "bad"
+
+    data_err = {
+        "handles": 450000,
+        "status": "error",
+    }
+    rec_err = record_wave_metric(2, data_err, folder=str(tmp_path))
+    assert rec_err["status"] == "error"
+
+
+def test_wave_metrics_tab_busy_guards(qapp, monkeypatch):
+    from modules.game_mode.wave_metrics_tab import WaveMetricsTab
+    from PyQt6.QtWidgets import QMessageBox
+
+    host = MagicMock()
+    host._busy = True
+    tab = WaveMetricsTab(host)
+
+    # Should not open question box or create worker when host is busy
+    box_called = False
+    def fake_question(*a, **k):
+        nonlocal box_called
+        box_called = True
+        return QMessageBox.StandardButton.Yes
+    monkeypatch.setattr(QMessageBox, "question", fake_question)
+
+    tab._on_run_clicked()
+    assert box_called is False
+    assert tab._running_worker is None
+
+    # Benchmark done while host._busy should suppress pane load and modal popup
+    pane_load_called = False
+    tab._pane.load = lambda **k: setattr(tab, "_pane_load_called", True)
+    info_called = False
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: setattr(tab, "_info_called", True))
+    tab._on_benchmark_done([{"handles": 100000}])
+    assert getattr(tab, "_pane_load_called", False) is False
+    assert getattr(tab, "_info_called", False) is False
+

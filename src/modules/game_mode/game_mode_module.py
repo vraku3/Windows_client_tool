@@ -15,6 +15,7 @@ from . import help_text as help_info
 
 import ctypes
 import datetime
+import json
 import logging
 import os
 import textwrap
@@ -82,7 +83,7 @@ class GameModeModule(BaseModule):
         self._tracker = ResourceTracker(base_dir=self._journal.folder)
         from PyQt6.QtCore import QThreadPool
         self._pool = QThreadPool()
-        self._pool.setMaxThreadCount(2)
+        self._pool.setMaxThreadCount(4)
         self._choices = session.Choices()
         self._busy = False
         self._preflight_worker = None
@@ -401,13 +402,24 @@ class GameModeModule(BaseModule):
         row.addLayout(col, 1)
         self._on_btn = QPushButton("Game Mode ON", parent)
         set_role(self._on_btn, "accentButton")
-        self._on_btn.setMinimumSize(170, 40)
+        self._on_btn.setMinimumSize(160, 40)
         self._on_btn.clicked.connect(self._turn_on)
         self._off_btn = QPushButton("Game Mode OFF", parent)
-        self._off_btn.setMinimumSize(170, 40)
-        self._off_btn.clicked.connect(self._turn_off)
+        self._off_btn.setMinimumSize(160, 40)
+        self._off_btn.clicked.connect(lambda: self._turn_off(force=False))
+        self._force_off_btn = QPushButton("Force OFF", parent)
+        self._force_off_btn.setMinimumSize(120, 40)
+        self._force_off_btn.setStyleSheet(
+            "QPushButton { background-color: #8b1e1e; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 6px 12px; } "
+            "QPushButton:hover { background-color: #a82424; } "
+            "QPushButton:disabled { background-color: #3a2020; color: #777777; }"
+        )
+        self._force_off_btn.setToolTip("Force Game Mode OFF immediately, cancelling any active tasks and clearing the journal.")
+        self._force_off_btn.clicked.connect(lambda: self._turn_off(force=True))
+        self._force_off_btn.setVisible(False)
         row.addWidget(self._on_btn)
         row.addWidget(self._off_btn)
+        row.addWidget(self._force_off_btn)
         return row
 
     def _build_advice(self, parent: QWidget) -> QWidget:
@@ -731,9 +743,33 @@ class GameModeModule(BaseModule):
         optimise_busy = self._optimise_tab is not None and self._optimise_tab.busy
         self._on_btn.setEnabled(not on and not self._busy and not optimise_busy)
         self._off_btn.setEnabled(on and not self._busy)
+        if hasattr(self, "_force_off_btn") and widget_is_valid(self._force_off_btn):
+            self._force_off_btn.setEnabled(on)
+            self._force_off_btn.setVisible(on)
         for widget in (*self._flag_boxes.values(), self._svc_tree, self._app_tree,
                        self._rec_btn, self._max_btn):
             widget.setEnabled(not on and not self._busy)
+
+        # Write state file for external diagnostics / logging
+        try:
+            state_data = {
+                "active": bool(on),
+                "busy": bool(self._busy),
+                "state_text": self._state.text() if widget_is_valid(self._state) else "",
+                "numbers_text": self._numbers.text() if widget_is_valid(self._numbers) else "",
+                "on_enabled": bool(self._on_btn.isEnabled()) if widget_is_valid(self._on_btn) else False,
+                "off_enabled": bool(self._off_btn.isEnabled()) if widget_is_valid(self._off_btn) else False,
+                "force_off_enabled": bool(getattr(self, "_force_off_btn", None) and self._force_off_btn.isEnabled()),
+                "recovery_message": getattr(self, "_recovery_message", ""),
+                "changes_count": sum(1 for a in self._journal.actions if isinstance(a, dict) and a.get("done")),
+                "updated_at": datetime.datetime.now().isoformat()
+            }
+            state_path = os.path.join(self._journal.folder, "game_mode_state.json")
+            os.makedirs(self._journal.folder, exist_ok=True)
+            with open(state_path, "w", encoding="utf-8") as f:
+                json.dump(state_data, f, indent=2)
+        except Exception:
+            pass
 
     def _numbers_text(self, handles: Optional[int], processes: Optional[int]) -> str:
         d = self._journal.data
@@ -757,11 +793,30 @@ class GameModeModule(BaseModule):
         level, _, text = payload.partition("\t")
         mark = {session.OK: "[OK]  ", session.INFO: "[INFO]", session.WARN: "[WARN]",
                 session.BAD: "[BAD] "}.get(level, "      ")
-        line = f"{datetime.datetime.now():%H:%M:%S} {mark} {text}"
+        now_dt = datetime.datetime.now()
+        line = f"{now_dt:%H:%M:%S} {mark} {text}"
+        full_line = f"{now_dt:%Y-%m-%d %H:%M:%S} {mark} {text}"
         if not widget_is_valid(self._log):
             self._pending_log = (self._pending_log + [line])[-500:]
-            return
-        self._log.appendPlainText(line)
+        else:
+            self._log.appendPlainText(line)
+
+        # Persistent file logging
+        try:
+            log_path = os.path.join(self._journal.folder, "game_mode.log")
+            os.makedirs(self._journal.folder, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(full_line + "\n")
+        except Exception:
+            pass
+
+        # Python logger
+        if level == session.BAD:
+            logger.error("game mode: %s", text)
+        elif level == session.WARN:
+            logger.warning("game mode: %s", text)
+        else:
+            logger.info("game mode: %s", text)
 
     # ---- ON / OFF -----------------------------------------------------------------------------
     def _confirm_on(self, items) -> bool:
@@ -891,34 +946,88 @@ class GameModeModule(BaseModule):
                                    getattr(self, "_tracker", None))
         self._run(work, self._on_done)
 
-    def _turn_off(self) -> None:
-        if self._busy or not self._journal.active:
+    def _cancel_all_operations(self) -> None:
+        """Cancel and reset all running Game Mode workers and timers."""
+        if self._enforce_timer is not None:
+            self._enforce_timer.stop()
+        if self._monitor_timer is not None:
+            self._monitor_timer.stop()
+        if self._preflight_worker is not None:
+            try:
+                self._preflight_worker.cancel()
+            except Exception:
+                pass
+            self._preflight_worker = None
+        if self._enforce_worker is not None:
+            try:
+                self._enforce_worker.cancel()
+            except Exception:
+                pass
+            self._enforce_worker = None
+        if hasattr(self, "_wave_metrics_tab") and self._wave_metrics_tab is not None:
+            if hasattr(self._wave_metrics_tab, "cancel"):
+                try:
+                    self._wave_metrics_tab.cancel()
+                except Exception:
+                    pass
+        for w in list(self._workers):
+            try:
+                w.cancel()
+            except Exception:
+                pass
+        self._workers.clear()
+        self._off_pending = False
+
+    def _turn_off(self, force: bool = False) -> None:
+        if not self._journal.active and not force:
+            return
+        if self._busy and not force:
             return
         self._busy = True
         self._show_state()
         self._tabs.setCurrentIndex(2)
         if self._enforce_timer is not None:
             self._enforce_timer.stop()
-        if self._enforce_worker is not None:
+        if self._monitor_timer is not None:
+            self._monitor_timer.stop()
+        if hasattr(self, "_wave_metrics_tab") and self._wave_metrics_tab is not None:
+            if hasattr(self._wave_metrics_tab, "cancel"):
+                self._wave_metrics_tab.cancel()
+        if self._enforce_worker is not None and not force:
             self._off_pending = True
+            if hasattr(self._enforce_worker, "cancel"):
+                self._enforce_worker.cancel()
             return
-        self._start_off()
+        if force:
+            self._cancel_all_operations()
+            self._busy = True
+        self._start_off(force=force)
 
-    def _start_off(self) -> None:
+    def _start_off(self, force: bool = False) -> None:
         system, journal = self._system, self._journal
 
         def work(w):
             log = lambda level, text: w.signals.log_line.emit(f"{level}\t{text}")  # noqa: E731
             return session.turn_off(system, journal, log, 10.0,
-                                    getattr(self, "_tracker", None))
-        self._run(work, self._off_done)
+                                    getattr(self, "_tracker", None), force=force)
+        self._run(work, self._off_done, track_resource=False)
 
-    def _run(self, work, done) -> None:
+    def _run(self, work, done, track_resource: bool = True) -> None:
         w = Worker(work)
         w.signals.log_line.connect(self._append)
         w.signals.result.connect(done)
         w.signals.error.connect(self._failed)
-        self._start(w)
+        w.signals.cancelled.connect(lambda: self._on_worker_cancelled(done))
+        self._start(w, track_resource=track_resource)
+
+    def _on_worker_cancelled(self, done_callback=None) -> None:
+        self._busy = False
+        self._off_pending = False
+        self._show_state()
+        if done_callback is self._off_done:
+            self._off_done([])
+        else:
+            self._show_error("Game Mode operation was cancelled.")
 
     def _on_done(self, data: dict) -> None:
         self._busy = False
@@ -947,11 +1056,14 @@ class GameModeModule(BaseModule):
             self._history_tab.invalidate()
         if self._enforce_timer is not None:
             self._enforce_timer.stop()
+        if hasattr(self, "_wave_metrics_tab") and self._wave_metrics_tab is not None:
+            if hasattr(self._wave_metrics_tab, "cancel"):
+                self._wave_metrics_tab.cancel()
         _keep_awake(False)
-        bad = sum(1 for r in report if r["level"] == session.BAD)
+        bad = sum(1 for r in report if r.get("level") == session.BAD)
         if self._journal.active:
-            message = next((r["text"] for r in reversed(report)
-                            if "Recovery incomplete:" in r["text"]),
+            message = next((r.get("text", "") for r in reversed(report)
+                            if "Recovery incomplete:" in r.get("text", "")),
                            "Recovery incomplete: journal kept. Game Mode stays ON; OFF can be tried again.")
             self._recovery_message = message
             self._append(f"{session.BAD}\t{message}")
@@ -1024,7 +1136,8 @@ class GameModeModule(BaseModule):
 
         def work(w):
             return session.enforce(system, journal,
-                                   lambda level, text: w.signals.log_line.emit(f"{level}\t{text}"))
+                                   lambda level, text: w.signals.log_line.emit(f"{level}\t{text}"),
+                                   cancel_check=lambda: w.is_cancelled)
         w = Worker(work)
         w.signals.log_line.connect(self._append)
         w.signals.error.connect(lambda err: logger.warning("game mode: enforce failed: %s", err))
@@ -1080,11 +1193,11 @@ class GameModeModule(BaseModule):
             self._off_pending = False
             self._start_off()
 
-    def _start(self, w: Worker) -> None:
+    def _start(self, w: Worker, track_resource: bool = True) -> None:
         """Track `w` until it finishes -- the enforce tick runs every minute
         for as long as Game Mode is on, so finished workers must not pile up."""
         self._workers.append(w)
-        if hasattr(self, "_tracker") and self._tracker is not None:
+        if track_resource and hasattr(self, "_tracker") and self._tracker is not None:
             self._tracker.track_worker(w)
 
         def _on_finished():

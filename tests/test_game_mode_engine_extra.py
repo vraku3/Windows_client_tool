@@ -250,3 +250,81 @@ def test_verify_restored_reports_a_service_left_stopped():
     issues = health_audit.verify_restored(
         system, [{"kind": "service_stop", "name": "svc", "label": "Svc", "done": True}])
     assert issues and "still stopped" in issues[0]
+
+
+def test_restore_registry_handles_unreadable_refusal():
+    from modules.game_mode.engine.session import _restore_registry
+
+    class UnreadableSys:
+        def reg_get(self, path, name, hive="HKCU"):
+            return (None, None, 0)
+
+    logged = []
+    e = {
+        "kind": "registry",
+        "hive": "HKCU",
+        "path": r"System\GameConfigStore",
+        "name": "GameDVR_Enabled",
+        "existed": False,
+        "value": None,
+        "type": 0,
+    }
+    ok = _restore_registry(UnreadableSys(), e, lambda lvl, txt: logged.append((lvl, txt)), {})
+    assert ok is False
+    assert any("registry unreadable" in txt for lvl, txt in logged)
+
+
+def test_restore_process_operations_safely_handle_process_exit_during_error():
+    from modules.game_mode.engine.session import (
+        _restore_priority,
+        _restore_affinity,
+        _restore_power_throttling,
+        _restore_io_priority,
+        BELOW_NORMAL,
+    )
+
+    class ExitedSys:
+        def __init__(self):
+            self.calls = 0
+
+        def alive(self, pid, create_time):
+            self.calls += 1
+            # Alive on initial check, but dead when checked after error
+            return self.calls <= 1
+
+        def priority(self, pid): return BELOW_NORMAL
+        def set_priority(self, pid, p): return "process not found"
+
+        def get_affinity(self, pid): return 0xFFFF
+        def set_affinity(self, pid, mask): return "access denied"
+
+        def power_throttling(self, pid): return True
+        def set_power_throttling(self, pid, v): return "device not ready"
+
+        def io_priority(self, pid): return 2
+        def set_io_priority(self, pid, v): return "process terminated"
+
+    sys_ = ExitedSys()
+    logged = []
+    say = lambda lvl, txt: logged.append((lvl, txt))
+
+    # Priority
+    sys_.calls = 0
+    p_entry = {"exe": "app.exe", "pid": 123, "create_time": 1, "before": 0x00000020, "after": BELOW_NORMAL}
+    assert _restore_priority(sys_, p_entry, say, {"priority": {}}) is True
+
+    # Affinity
+    sys_.calls = 0
+    a_entry = {"exe": "app.exe", "pid": 123, "create_time": 1, "before": 0x000F, "after": 0xFFFF}
+    assert _restore_affinity(sys_, a_entry, say, {}) is True
+
+    # Power Throttling
+    sys_.calls = 0
+    pt_entry = {"exe": "app.exe", "pid": 123, "create_time": 1, "before": False, "after": True}
+    assert _restore_power_throttling(sys_, pt_entry, say, {}) is True
+
+    # I/O Priority
+    sys_.calls = 0
+    io_entry = {"exe": "app.exe", "pid": 123, "create_time": 1, "before": 2, "after": 2}
+    assert _restore_io_priority(sys_, io_entry, say, {}) is True
+

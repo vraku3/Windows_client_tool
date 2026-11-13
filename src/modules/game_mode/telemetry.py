@@ -185,7 +185,7 @@ def _rotate_if_needed(file_path: Path) -> None:
 
 
 def record_wave_metric(wave_id: int, data: Dict[str, Any], folder: Optional[str] = None,
-                       notes: str = "") -> Dict[str, Any]:
+                       notes: str = "", **kwargs: Any) -> Dict[str, Any]:
     """Append a wave metric record to the rotating JSONLines file and text log."""
     target_dir = get_telemetry_dir(folder)
     jsonl_path = target_dir / METRICS_JSONL
@@ -202,8 +202,8 @@ def record_wave_metric(wave_id: int, data: Dict[str, Any], folder: Optional[str]
     ram_pct = float(data.get("ram_percent") or 0.0)
 
     # Status evaluation (aligns with run_game_mode_waves.ps1 upper bound)
-    status = "ok"
-    if handles is not None and handles > 350000:
+    status = data.get("status") or "ok"
+    if status not in ("bad", "error") and handles is not None and handles > 350000:
         status = "warn"
 
     record = {
@@ -293,7 +293,7 @@ def to_log_entries(metrics: List[Dict[str, Any]]) -> List[Any]:
 
         wave = m.get("wave", 0)
         status = m.get("status", "ok")
-        level = "Warning" if status == "warn" else "Info"
+        level = "Warning" if status in ("warn", "warning") else ("Error" if status in ("bad", "error") else "Info")
         handles = m.get("handles")
         h_str = f"{handles:,}" if isinstance(handles, int) else "N/A"
         cpu = m.get("cpu_percent", 0.0)
@@ -323,6 +323,7 @@ def run_wave_benchmark(
     log_cb: Optional[Callable[[str, str], None]] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
     cancel_check: Optional[Callable[[], bool]] = None,
+    **kwargs: Any,
 ) -> List[Dict[str, Any]]:
     """Execute consecutive test waves, capturing telemetry and cleaning up resources deterministically."""
     from core.resource_tracker import ResourceTracker
@@ -353,7 +354,11 @@ def run_wave_benchmark(
             progress_cb(i, wave_count)
 
         if interval_s > 0:
-            time.sleep(interval_s)
+            sleep_end = time.time() + interval_s
+            while time.time() < sleep_end:
+                if cancel_check and cancel_check():
+                    break
+                time.sleep(min(0.05, max(0.0, sleep_end - time.time())))
 
     if log_cb:
         log_cb("ok", f"Completed {len(results)}/{wave_count} waves successfully.")

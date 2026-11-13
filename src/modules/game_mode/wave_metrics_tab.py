@@ -69,6 +69,15 @@ class WaveMetricsTab(QWidget):
         if self._running_worker is not None:
             self._running_worker.cancel()
             self._running_worker = None
+        if hasattr(self, "_pane") and self._pane is not None:
+            if hasattr(self._pane, "cancel"):
+                self._pane.cancel()
+        if widget_is_valid(self):
+            if hasattr(self, "_pane") and hasattr(self._pane, "_progress") and widget_is_valid(self._pane._progress):
+                self._pane._progress.setVisible(False)
+            if self._run_btn and widget_is_valid(self._run_btn):
+                self._run_btn.setEnabled(True)
+                self._run_btn.setText("Run 40-Wave Test")
 
     def _build_toolbar(self, layout: QHBoxLayout, extra: dict) -> None:
         self._run_btn = QPushButton("Run 40-Wave Test", self)
@@ -142,7 +151,7 @@ class WaveMetricsTab(QWidget):
             self._pane.load(force=True)
 
     def _on_run_clicked(self) -> None:
-        if self._running_worker is not None:
+        if self._running_worker is not None or getattr(self.host, "_busy", False):
             return
 
         res = QMessageBox.question(
@@ -178,9 +187,10 @@ class WaveMetricsTab(QWidget):
 
         worker = Worker(_do_work)
         self._running_worker = worker
-        worker.signals.progress.connect(self._pane._progress.setValue)
+        worker.signals.progress.connect(self._on_benchmark_progress)
         worker.signals.result.connect(self._on_benchmark_done)
         worker.signals.error.connect(self._on_benchmark_error)
+        worker.signals.cancelled.connect(self._on_benchmark_cancelled)
 
         self._pane._progress.setValue(0)
         self._pane._progress.setVisible(True)
@@ -193,16 +203,34 @@ class WaveMetricsTab(QWidget):
         else:
             worker.run()
 
+    def _on_benchmark_progress(self, val: int) -> None:
+        if widget_is_valid(self) and hasattr(self, "_pane") and hasattr(self._pane, "_progress"):
+            if widget_is_valid(self._pane._progress):
+                self._pane._progress.setValue(val)
+
+    def _on_benchmark_cancelled(self) -> None:
+        self._running_worker = None
+        if not widget_is_valid(self):
+            return
+        if hasattr(self, "_pane") and hasattr(self._pane, "_progress") and widget_is_valid(self._pane._progress):
+            self._pane._progress.setVisible(False)
+        if self._run_btn and widget_is_valid(self._run_btn):
+            self._run_btn.setEnabled(True)
+            self._run_btn.setText("Run 40-Wave Test")
+
     def _on_benchmark_done(self, results: Any) -> None:
         self._running_worker = None
         if not widget_is_valid(self):
             return
-        self._pane._progress.setVisible(False)
-        if self._run_btn:
+        if hasattr(self, "_pane") and hasattr(self._pane, "_progress") and widget_is_valid(self._pane._progress):
+            self._pane._progress.setVisible(False)
+        if self._run_btn and widget_is_valid(self._run_btn):
             self._run_btn.setEnabled(True)
             self._run_btn.setText("Run 40-Wave Test")
 
-        self._pane.load(force=True)
+        if hasattr(self, "_pane") and self._pane is not None:
+            if not getattr(self.host, "_busy", False):
+                self._pane.load(force=True)
 
         if isinstance(results, list) and results:
             total_waves = len(results)
@@ -219,16 +247,19 @@ class WaveMetricsTab(QWidget):
                 f"• Cleanup Verification: Passed (Deterministic RAII)\n\n"
                 f"Metrics saved to:\n{log_dir / METRICS_JSONL}"
             )
-            QMessageBox.information(self, "Wave Benchmark Summary", msg)
-        else:
+            if self.isVisible() and not getattr(self.host, "_busy", False):
+                QMessageBox.information(self, "Wave Benchmark Summary", msg)
+        elif self.isVisible() and not getattr(self.host, "_busy", False):
             QMessageBox.warning(self, "Benchmark Incomplete", "The wave run was cancelled or returned no metrics.")
 
     def _on_benchmark_error(self, exc: Any) -> None:
         self._running_worker = None
         if not widget_is_valid(self):
             return
-        self._pane._progress.setVisible(False)
-        if self._run_btn:
+        if hasattr(self, "_pane") and hasattr(self._pane, "_progress") and widget_is_valid(self._pane._progress):
+            self._pane._progress.setVisible(False)
+        if self._run_btn and widget_is_valid(self._run_btn):
             self._run_btn.setEnabled(True)
             self._run_btn.setText("Run 40-Wave Test")
-        QMessageBox.critical(self, "Benchmark Error", f"Wave benchmark failed with error: {exc}")
+        if self.isVisible() and not getattr(self.host, "_busy", False):
+            QMessageBox.critical(self, "Benchmark Error", f"Wave benchmark failed with error: {exc}")

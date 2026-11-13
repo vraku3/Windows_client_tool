@@ -149,6 +149,7 @@ class Worker(QRunnable):
         self.signals = WorkerSignals()
         self._cancelled = False
         self._cancel_lock = Lock()
+        self._running_thread_ident = None
         # Set (on the worker thread) just before `finished` -- always the LAST
         # signal -- is emitted; `retire()` holds a worker until it is delivered.
         self.finished_emitted = False
@@ -159,11 +160,14 @@ class Worker(QRunnable):
         Emits progress updates, result, errors via signals.
         Always emits finished, even when cancelled before execution starts.
         """
+        import threading
+        self._running_thread_ident = threading.get_ident()
         with self._cancel_lock:
             if self._cancelled:
                 _emit(self.signals, "cancelled")
                 self.finished_emitted = True
                 _emit(self.signals, "finished")
+                self._running_thread_ident = None
                 return
 
         try:
@@ -183,6 +187,7 @@ class Worker(QRunnable):
             logger.exception("Worker error: %s", e)
             _emit(self.signals, "error", str(e))
         finally:
+            self._running_thread_ident = None
             self.finished_emitted = True
             _emit(self.signals, "finished")
 

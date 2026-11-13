@@ -174,3 +174,47 @@ def test_resource_tracker_invalid_handle_ignored(tmp_path):
     assert tracker.count == 3
     tracker.cleanup()
     assert tracker.count == 0
+
+
+def test_resource_tracker_untrack_disambiguates_identical_type_names(tmp_path):
+    tracker = ResourceTracker(base_dir=str(tmp_path))
+    w1 = MagicMock()
+    del w1.id
+    w2 = MagicMock()
+    del w2.id
+
+    tracker.track_worker(w1)
+    tracker.track_worker(w2)
+    assert tracker.count == 2
+
+    # Untracking w2 must remove w2, NOT w1
+    tracker.untrack_worker(w2)
+    assert tracker.count == 1
+    tracker.cleanup()
+    w1.cancel.assert_called_once()
+    w2.cancel.assert_not_called()
+
+
+def test_worker_running_thread_ident_and_self_cleanup_protection(tmp_path):
+    import threading
+    from core.worker import Worker
+
+    tracker = ResourceTracker(base_dir=str(tmp_path))
+    worker_cancelled_on_self = False
+    thread_ident_observed = None
+
+    def work(w):
+        nonlocal worker_cancelled_on_self, thread_ident_observed
+        thread_ident_observed = getattr(w, "_running_thread_ident", None)
+        tracker.track_worker(w)
+        # Calling cleanup from the worker's own thread
+        tracker.cleanup()
+        worker_cancelled_on_self = w.is_cancelled
+
+    w = Worker(work)
+    w.run()
+
+    assert thread_ident_observed is not None
+    assert getattr(w, "_running_thread_ident", None) is None
+    assert not worker_cancelled_on_self
+

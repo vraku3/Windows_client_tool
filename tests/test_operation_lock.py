@@ -16,12 +16,13 @@ from core import operation_lock as operations
 def isolated_lock(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setattr(operations, "MUTEX_NAME", "Local\\WCT_test_" + uuid.uuid4().hex)
+    monkeypatch.setattr(operations, "_sidecar", lambda: Path(tmp_path) / "WindowsTweaker" / "operation_lock.json")
     yield
     assert not operations.lock.held
 
 
 def sidecar():
-    return Path(os.environ["APPDATA"]) / "WindowsTweaker" / "operation_lock.json"
+    return operations._sidecar()
 
 
 def test_instances_cannot_reenter_and_owner_is_available():

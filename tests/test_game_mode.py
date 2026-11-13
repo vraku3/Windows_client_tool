@@ -781,6 +781,59 @@ def test_failed_off_ui_stays_on_with_recovery_banner(qapp, journal, monkeypatch)
         widget.deleteLater()
 
 
+def test_turn_off_success_restores_ui_responsive_state(qapp, journal, monkeypatch):
+    from modules.game_mode import game_mode_module as ui
+    m = ui.GameModeModule()
+    m._journal = journal
+    journal.begin()
+    widget = m.create_widget()
+    monkeypatch.setattr(ui, "_keep_awake", lambda _on: None)
+    monkeypatch.setattr(m, "_refresh_all", lambda: None)
+    run_calls = []
+    monkeypatch.setattr(m, "_run", lambda work, done, track_resource=True: run_calls.append((work, done, track_resource)))
+    try:
+        assert m._off_btn.isEnabled() and not m._on_btn.isEnabled()
+        m._turn_off()
+        assert m._busy is True
+        assert not m._off_btn.isEnabled() and not m._on_btn.isEnabled()
+        assert len(run_calls) == 1
+        work, done, track_resource = run_calls[0]
+        assert track_resource is False
+        assert done == m._off_done
+
+        # Simulate completion with no bad entries and journal closed
+        journal.finish([])
+        m._off_done([])
+        assert m._busy is False
+        assert m._on_btn.isEnabled() and not m._off_btn.isEnabled()
+        assert "Game Mode is OFF" in m._state.text()
+    finally:
+        widget.deleteLater()
+
+
+def test_turn_off_cancelled_restores_ui_responsive_state(qapp, journal, monkeypatch):
+    from modules.game_mode import game_mode_module as ui
+    m = ui.GameModeModule()
+    m._journal = journal
+    journal.begin()
+    widget = m.create_widget()
+    monkeypatch.setattr(ui, "_keep_awake", lambda _on: None)
+    monkeypatch.setattr(m, "_refresh_all", lambda: None)
+    try:
+        m._busy = True
+        m._off_pending = True
+        m._show_state()
+        assert not m._on_btn.isEnabled() and not m._off_btn.isEnabled()
+
+        m._on_worker_cancelled(m._off_done)
+        assert m._busy is False
+        assert m._off_pending is False
+        assert m._off_btn.isEnabled()
+    finally:
+        widget.deleteLater()
+
+
+
 def test_confirmation_warns_of_lost_work_and_defaults_to_cancel(qapp, monkeypatch):
     from PyQt6.QtWidgets import QDialogButtonBox
     from modules.game_mode.confirm_dialog import PreflightDialog

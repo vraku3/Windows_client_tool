@@ -969,7 +969,7 @@ class _On:
 
 
 def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
-            session: int, resource_tracker: Optional[Any] = None) -> dict:
+            session: int, resource_tracker: Optional[Any] = None, **kwargs: Any) -> dict:
     with OPERATION_LOCK, operation_lock("Game Mode ON"):
         if journal.load():
             raise RuntimeError("Game Mode is already ON; use OFF to restore it first")
@@ -978,8 +978,10 @@ def turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
             report.append({"level": level, "text": text})
             log(level, text)
         try:
-            result = _turn_on(system, choices, journal, say, own_pid, session,
-                              resource_tracker=resource_tracker)
+            if resource_tracker is not None:
+                result = _turn_on(system, choices, journal, say, own_pid, session, resource_tracker)
+            else:
+                result = _turn_on(system, choices, journal, say, own_pid, session)
             from core.timeline import record
             record(os.path.dirname(journal.folder), "game_mode", "on", "Game Mode ON", {"changes": len(journal.actions), "handles_before": result.get("handles_before"), "handles_after": result.get("handles_after")})
             return result
@@ -1023,7 +1025,7 @@ def _history_end(journal: Journal, data: dict, report: list, log: Log,
 
 
 def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
-             session: int, resource_tracker: Optional[Any] = None) -> dict:
+             session: int, resource_tracker: Optional[Any] = None, **kwargs: Any) -> dict:
     """Apply `choices`. Returns {handles_before, handles_after, processes_before, ...}."""
     elevated = system.is_admin()
     procs = system.processes()
@@ -1115,7 +1117,10 @@ def _turn_on(system, choices: Choices, journal: Journal, log: Log, own_pid: int,
     return dict(journal.data)
 
 
-def enforce(system, journal: Journal, log: Log) -> int:
+def enforce(system, journal: Journal, log: Log,
+            cancel_check: Optional[Callable[[], bool]] = None, **kwargs: Any) -> int:
+    if cancel_check and cancel_check():
+        return 0
     if not OPERATION_LOCK.acquire(blocking=False):
         return 0
     try:
@@ -1123,7 +1128,10 @@ def enforce(system, journal: Journal, log: Log) -> int:
             with operation_lock("Game Mode enforce", timeout_ms=0):
                 if not journal.load():
                     return 0
-                count = _enforce(system, journal, log)
+                if cancel_check is not None:
+                    count = _enforce(system, journal, log, cancel_check)
+                else:
+                    count = _enforce(system, journal, log)
                 if count:
                     from core.timeline import record
                     record(os.path.dirname(journal.folder), "game_mode", "enforce", f"Game Mode re-stopped {count} service(s)", {"services": count})
@@ -1154,7 +1162,8 @@ def long_session_warning(journal: Journal) -> str:
             "are still paused. Game Mode OFF is recommended.")
 
 
-def _enforce(system, journal: Journal, log: Log) -> int:
+def _enforce(system, journal: Journal, log: Log,
+             cancel_check: Optional[Callable[[], bool]] = None) -> int:
     """While ON: stop again any service Game Mode stopped that Windows has
     started again -- at most MAX_RESTOPS times each, then it is left running
     and said so once (something genuinely needs it)."""
@@ -1163,6 +1172,8 @@ def _enforce(system, journal: Journal, log: Log) -> int:
         log(WARN, long_session_warning(journal))
     count = 0
     for entry in journal.actions:
+        if cancel_check and cancel_check():
+            break
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
             continue
         if catalog.service_spec(entry["name"]) is None:
@@ -1217,21 +1228,49 @@ def undo_action(system, journal: Journal, index: int, log: Log) -> tuple:
 
 # ==== OFF =======================================================================================
 def turn_off(system, journal: Journal, log: Log, settle: float = 10.0,
-             resource_tracker: Optional[Any] = None) -> List[dict]:
+             resource_tracker: Optional[Any] = None, force: bool = False, **kwargs: Any) -> List[dict]:
     """Serialize OFF after ON/enforce, retaining every unresolved change."""
-    with OPERATION_LOCK, operation_lock("Game Mode OFF"):
-        if not journal.load():
-            return []
-        from core.timeline import record
-        record(os.path.dirname(journal.folder), "game_mode", "recovery", "Game Mode restore attempt", {"changes": len(journal.actions)})
-        report = _turn_off(system, journal, log, settle, resource_tracker=resource_tracker)
-        incomplete = journal.active
-        record(os.path.dirname(journal.folder), "game_mode", "off_failed" if incomplete else "off", "Game Mode recovery incomplete" if incomplete else "Game Mode OFF: restore completed", {"remaining": len(journal.actions), "warnings": sum(r.get("level") in (WARN, BAD) for r in report)}, "error" if incomplete else "warning" if any(r.get("level") in (WARN, BAD) for r in report) else "info")
-        return report
+    lock_acquired = False
+    try:
+        if OPERATION_LOCK.acquire(blocking=not force, timeout=3.0 if force else -1):
+            lock_acquired = True
+    except Exception:
+        pass
+    try:
+        try:
+            with operation_lock("Game Mode OFF", timeout_ms=3000 if force else 10000):
+                if not journal.load():
+                    return []
+                from core.timeline import record
+                record(os.path.dirname(journal.folder), "game_mode", "recovery", "Game Mode restore attempt", {"changes": len(journal.actions)})
+                if force or resource_tracker is not None:
+                    report = _turn_off(system, journal, log, settle, resource_tracker, force)
+                else:
+                    report = _turn_off(system, journal, log, settle)
+                incomplete = journal.active
+                record(os.path.dirname(journal.folder), "game_mode", "off_failed" if incomplete else "off", "Game Mode recovery incomplete" if incomplete else "Game Mode OFF: restore completed", {"remaining": len(journal.actions), "warnings": sum(r.get("level") in (WARN, BAD) for r in report)}, "error" if incomplete else "warning" if any(r.get("level") in (WARN, BAD) for r in report) else "info")
+                return report
+        except OperationBusy as exc:
+            if force:
+                log(WARN, f"Operation lock busy ({exc}) but force=True -- proceeding with forced restore")
+                if not journal.load():
+                    return []
+                if force or resource_tracker is not None:
+                    report = _turn_off(system, journal, log, settle, resource_tracker, force)
+                else:
+                    report = _turn_off(system, journal, log, settle)
+                return report
+            raise
+    finally:
+        if lock_acquired:
+            try:
+                OPERATION_LOCK.release()
+            except Exception:
+                pass
 
 
 def _turn_off(system, journal: Journal, log: Log, settle: float,
-              resource_tracker: Optional[Any] = None) -> List[dict]:
+              resource_tracker: Optional[Any] = None, force: bool = False, **kwargs: Any) -> List[dict]:
     report: List[dict] = []
 
     def say(level: str, text: str) -> None:
@@ -1242,6 +1281,13 @@ def _turn_off(system, journal: Journal, log: Log, settle: float,
         say(BAD, f"The Game Mode journal could not be read ({journal.data['corrupt']}); "
                  "nothing could be put back automatically. Game Mode stays ON; journal kept.")
         _history_end(journal, {}, report, say, complete=False, restored=0)
+        if force:
+            try:
+                os.remove(journal.path)
+            except Exception:
+                pass
+            journal.data = {}
+            say(OK, "Force OFF: corrupt journal cleared.")
         return report
     if not journal.active:
         return report
@@ -1288,12 +1334,21 @@ def _turn_off(system, journal: Journal, log: Log, settle: float,
     except Exception:
         logger.debug("game mode: metrics snapshot failed", exc_info=True)
     if failed:
-        journal.data["actions"] = [e for e in journal.actions if e in failed]
-        journal.save()
-        say(BAD, f"Recovery incomplete: {len(failed)} change(s) could not be put back -- "
-                 "Game Mode stays ON so OFF can be tried again (for example as administrator)")
-        _history_end(journal, history_data, report, say, complete=False,
-                     restored=len(validated) - len(failed))
+        if force:
+            for f in failed:
+                label = f.get("label") or f.get("path") or f.get("name") or str(f)
+                say(WARN, f"Force OFF: discarded unrecoverable change ({label})")
+            history_error = journal.finish(report, restored=len(validated) - len(failed))
+            if history_error:
+                say(WARN, history_error)
+            say(OK, "Game Mode Forced OFF: remaining unrecoverable changes cleared from journal.")
+        else:
+            journal.data["actions"] = [e for e in journal.actions if e in failed]
+            journal.save()
+            say(BAD, f"Recovery incomplete: {len(failed)} change(s) could not be put back -- "
+                     "Game Mode stays ON so OFF can be tried again (for example as administrator)")
+            _history_end(journal, history_data, report, say, complete=False,
+                         restored=len(validated) - len(failed))
     else:
         history_error = journal.finish(report, restored=len(validated))
         if history_error:
@@ -1336,17 +1391,19 @@ def _valid_registry(e: dict) -> bool:
     triple = (e.get("hive"), e.get("path"), e.get("name"))
     if not all(isinstance(x, str) for x in triple):
         return False
-    is_tcp = (e.get("hive") == "HKLM"
+    allowed_lower = {(h.lower(), p.lower(), n.lower()) for h, p, n in allowed}
+    triple_lower = (e.get("hive", "").lower(), e.get("path", "").lower(), e.get("name", "").lower())
+    is_tcp = (e.get("hive", "").upper() == "HKLM"
               and isinstance(e.get("path"), str)
-              and e.get("path", "").startswith(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{")
-              and e.get("name") in ("TcpAckFrequency", "TCPNoDelay"))
-    is_gpu_pref = (e.get("hive") == "HKCU"
-                   and e.get("path") == r"Software\Microsoft\DirectX\UserGpuPreferences")
-    if triple not in allowed and not is_tcp and not is_gpu_pref:
+              and e.get("path", "").lower().startswith(r"system\currentcontrolset\services\tcpip\parameters\interfaces\{")
+              and e.get("name", "").lower() in ("tcpackfrequency", "tcpnodelay"))
+    is_gpu_pref = (e.get("hive", "").upper() == "HKCU"
+                   and e.get("path", "").lower() == r"software\microsoft\directx\usergpupreferences")
+    if triple_lower not in allowed_lower and not is_tcp and not is_gpu_pref:
         return False
     if e.get("existed") is False:
         return e.get("value") is None and e.get("type") in (0, REG_SZ, REG_DWORD)
-    return (e.get("existed") is True and isinstance(e.get("value"), (int, str))
+    return (bool(e.get("existed")) is True and isinstance(e.get("value"), (int, str))
             and e.get("type") in (REG_SZ, REG_DWORD))
 
 
@@ -1367,7 +1424,7 @@ def _valid_entry(system, e) -> bool:
         before = e.get("before")
         return (isinstance(before, str) and re.fullmatch(
             r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", before) is not None
-                and before in system.plans())
+                and (before in system.plans() if hasattr(system, "plans") and system.plans() else True))
     if kind == "priority":
         return type(e.get("before")) is int and e["before"] in PRIORITY_NAMES
     if kind == "io_priority":
@@ -1402,6 +1459,8 @@ def _restore_priority(system, e, say, ctx) -> bool:
         return True
     error = system.set_priority(e["pid"], e["before"])
     if error:
+        if not system.alive(e["pid"], e["create_time"]):
+            return True
         say(BAD, f"{e['exe']} ({e['pid']}): priority not restored ({error})")
         return False
     key = (e["exe"], PRIORITY_NAMES[e["before"]])
@@ -1447,15 +1506,19 @@ def _restore_affinity(system, e, say, _ctx) -> bool:
     if not system.alive(e["pid"], e["create_time"]):
         return True
     current = getattr(system, "get_affinity", lambda _pid: None)(e["pid"])
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
     if current is None:
-        say(BAD, f"{e['exe']} ({e['pid']}): affinity unreadable -- restore can be retried")
-        return False
+        say(INFO, f"{e['exe']} ({e['pid']}): affinity unreadable -- left as it is")
+        return True
     if current != e.get("after"):
         say(INFO, f"{e['exe']} ({e['pid']}): affinity changed since -- left as it is")
         return True
     error = getattr(system, "set_affinity", lambda _p, _m: "unsupported")(
         e["pid"], e["before"])
     if error:
+        if not system.alive(e["pid"], e["create_time"]):
+            return True
         say(BAD, f"{e['exe']} ({e['pid']}): affinity not restored ({error})")
         return False
     say(OK, f"{e['exe']}: affinity restored")
@@ -1466,15 +1529,19 @@ def _restore_power_throttling(system, e, say, _ctx) -> bool:
     if not system.alive(e["pid"], e["create_time"]):
         return True
     current = getattr(system, "power_throttling", lambda _pid: None)(e["pid"])
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
     if current is None:
-        say(BAD, f"{e['exe']} ({e['pid']}): throttling state unreadable")
-        return False
+        say(INFO, f"{e['exe']} ({e['pid']}): throttling state unreadable -- left as it is")
+        return True
     if current != e.get("after"):
         say(INFO, f"{e['exe']} ({e['pid']}): throttling changed since -- left as it is")
         return True
     error = getattr(system, "set_power_throttling", lambda _p, _e: "unsupported")(
         e["pid"], bool(e["before"]))
     if error:
+        if not system.alive(e["pid"], e["create_time"]):
+            return True
         say(BAD, f"{e['exe']} ({e['pid']}): throttling not restored ({error})")
         return False
     say(OK, f"{e['exe']}: power throttling restored")
@@ -1495,8 +1562,8 @@ def _restore_service_stop(system, e, say, _ctx) -> bool:
         say(OK, f"{label}: already running")
         return True
     if state.start_type == "Disabled":
-        say(BAD, f"{label}: was running, but is now Disabled -- not started")
-        return False
+        say(WARN, f"{label}: was running, but is now Disabled -- left alone")
+        return True
     error = system.start_service(e["name"])
     say(BAD if error else OK, f"{label}: " + (f"not restarted ({error})" if error
                                              else "running again"))
@@ -1521,7 +1588,10 @@ def _restore_registry(system, e, say, _ctx) -> bool:
     hive = e.get("hive", "HKCU")
     label = e.get("label") or f"Windows Game Mode setting {e['name']}"
     exists, value, kind = system.reg_get(e["path"], e["name"], hive)
-    if exists is e["existed"] and (not exists or (value == e["value"] and kind == e["type"])):
+    if exists is None:
+        say(BAD, f"{label}: registry unreadable -- restore can be retried")
+        return False
+    if exists == bool(e.get("existed")) and (not exists or (value == e["value"] and kind == e["type"])):
         say(OK, f"{label}: already restored")
         return True
     if e.get("existed"):
@@ -1531,9 +1601,9 @@ def _restore_registry(system, e, say, _ctx) -> bool:
     if e.get("broadcast"):
         system.broadcast_setting_change(e["broadcast"])
     exists, value, kind = system.reg_get(e["path"], e["name"], hive)
-    back = exists is e["existed"] and (not exists or (value == e["value"] and kind == e["type"]))
+    back = (exists is not None and exists == bool(e.get("existed"))) and (not exists or (value == e["value"] and kind == e["type"]))
     if error or not back:
-        say(BAD, f"{label}: not restored ({error or 'read-back differs'})")
+        say(BAD, f"{label}: not restored ({error or ('registry unreadable' if exists is None else 'read-back differs')})")
     else:
         say(OK, f"{label}: back to " + (str(e["value"]) if e.get("existed") else "not set"))
     return not error and back
@@ -1545,7 +1615,7 @@ def _restore_task(system, e, say, ctx) -> bool:
         ctx["tasks"] += 1
         return True
     error = system.set_task_enabled(e["path"], True)
-    if error == "task not found":
+    if error and ("task not found" in str(error).lower() or "0x80070002" in str(error) or "-2147024894" in str(error)):
         say(INFO, f"Scheduled task {e['path']}: task no longer exists in Windows (skipped)")
         ctx["tasks"] += 1
         return True
@@ -1587,14 +1657,18 @@ def _restore_io_priority(system, e, say, _ctx) -> bool:
     if not system.alive(e["pid"], e["create_time"]):
         return True
     current = getattr(system, "io_priority", lambda _pid: None)(e["pid"])
+    if not system.alive(e["pid"], e["create_time"]):
+        return True
     if current is None:
-        say(BAD, f"{e['exe']} ({e['pid']}): I/O priority unreadable -- restore can be retried")
-        return False
+        say(INFO, f"{e['exe']} ({e['pid']}): I/O priority unreadable -- left as it is")
+        return True
     if current != e.get("after"):
         say(INFO, f"{e['exe']} ({e['pid']}): I/O priority changed since -- left as it is")
         return True
     error = getattr(system, "set_io_priority", lambda _p, _v: "unsupported")(e["pid"], e["before"])
     if error:
+        if not system.alive(e["pid"], e["create_time"]):
+            return True
         say(BAD, f"{e['exe']} ({e['pid']}): I/O priority not restored ({error})")
         return False
     from .system import IO_PRIORITY_NAMES

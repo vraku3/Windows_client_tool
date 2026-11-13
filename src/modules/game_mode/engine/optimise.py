@@ -30,7 +30,6 @@ from core.system_paths import powershell_exe
 from core.operation_lock import operation_lock
 import json
 import logging
-import os
 import re
 import subprocess
 import threading

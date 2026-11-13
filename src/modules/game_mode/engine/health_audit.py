@@ -81,7 +81,8 @@ def verify_restored(system, actions: List[dict]) -> List[str]:
             if enabled is False:
                 issues.append(f"{label}: task still disabled after restore")
             elif enabled is None:
-                if hasattr(system, "set_task_enabled") and system.set_task_enabled(path, True) == "task not found":
+                err = system.set_task_enabled(path, True) if hasattr(system, "set_task_enabled") else ""
+                if err and ("task not found" in str(err).lower() or "0x80070002" in str(err) or "-2147024894" in str(err)):
                     pass  # Task was removed from Windows while Game Mode was ON; not left disabled
                 else:
                     issues.append(f"{label}: task state unreadable after restore")

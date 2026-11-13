@@ -72,7 +72,10 @@ class ResourceTracker:
 
     def get_snapshot(self) -> List[dict]:
         with self._lock:
-            return list(self._snapshot)
+            return [
+                {k: v for k, v in item.items() if not k.startswith("_")}
+                for item in self._snapshot
+            ]
 
     # ---------------------------------------------------------------------
     # Public registration helpers – each stores a lambda that knows how to
@@ -96,8 +99,14 @@ class ResourceTracker:
 
     def track_worker(self, worker: Any) -> None:
         """Register a ``Worker`` instance. ``worker.cancel()`` is called on cleanup."""
+        if worker is None:
+            return
+
         def _cancel():
             try:
+                import threading
+                if getattr(worker, "_running_thread_ident", None) == threading.get_ident():
+                    return
                 if hasattr(worker, "cancel"):
                     worker.cancel()
             except Exception as e:
@@ -112,20 +121,31 @@ class ResourceTracker:
             self._snapshot.append({
                 "type": "worker",
                 "id": worker_id or str(type(worker).__name__),
+                "_worker": worker,
             })
 
     def untrack_worker(self, worker: Any) -> None:
         """Unregister a finished worker to prevent memory accumulation across cycles."""
+        if worker is None:
+            return
         with self._lock:
             self._cleanup_actions = [a for a in self._cleanup_actions if getattr(a, "_worker", None) is not worker]
             worker_id = getattr(worker, "id", None)
             if worker_id is not None and not isinstance(worker_id, (str, int, float, bool)):
                 worker_id = str(worker_id)
             target_id = worker_id or str(type(worker).__name__)
+            found_idx = -1
             for i, item in enumerate(self._snapshot):
-                if item.get("type") == "worker" and item.get("id") == target_id:
-                    self._snapshot.pop(i)
+                if item.get("type") == "worker" and item.get("_worker") is worker:
+                    found_idx = i
                     break
+            if found_idx == -1:
+                for i, item in enumerate(self._snapshot):
+                    if item.get("type") == "worker" and item.get("id") == target_id:
+                        found_idx = i
+                        break
+            if found_idx != -1:
+                self._snapshot.pop(found_idx)
 
     def track_timer(self, timer_obj: Any, description: str = "timer") -> None:
         """Register a timer resolution object or callable restore function."""
@@ -187,7 +207,10 @@ class ResourceTracker:
             if wave_id is not None:
                 self._wave_id = wave_id
             actions = list(self._cleanup_actions)
-            snapshot_items = list(self._snapshot)
+            snapshot_items = [
+                {k: v for k, v in item.items() if not k.startswith("_")}
+                for item in self._snapshot
+            ]
             active_wave = self._wave_id
 
         # Run actions in reverse order of registration – mirrors RAII.

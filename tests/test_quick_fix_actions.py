@@ -447,3 +447,17 @@ def test_flush_and_register_dns(ran, output):
     assert ["ipconfig", "/registerdns"] in ran
     assert any("refreshed" in l.lower() for l in lines)
 
+
+def test_flush_arp_cache(ran, output):
+    lines, cb = output
+    fix_actions.flush_arp_cache(cb)
+    assert ["netsh", "interface", "ip", "delete", "arpcache"] in ran
+    assert any("arp cache" in l.lower() for l in lines)
+
+
+def test_reset_firewall(ran, output):
+    lines, cb = output
+    fix_actions.reset_firewall(cb)
+    assert ["netsh", "advfirewall", "reset"] in ran
+    assert any("firewall" in l.lower() for l in lines)
+

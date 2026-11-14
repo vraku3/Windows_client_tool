@@ -220,26 +220,43 @@ def _build_traceroute_card() -> _ToolCard:
         table.setRowCount(0)
         status_label.setText("Tracing route… (this may take up to 30s)")
 
-        card._worker = Worker(lambda _w: network_tools.traceroute(host))
-
-        def _on_result(hops):
+        def _on_hop_line(line: str) -> None:
             if not _widget_valid(table):
                 return
-            table.setRowCount(0)
-            for hop_num, ip, time_str in hops:
+            parts = line.split("|", 2)
+            if len(parts) == 3:
+                hop_num, ip, time_str = parts
                 row_idx = table.rowCount()
                 table.insertRow(row_idx)
                 table.setItem(row_idx, 0, item_help(centered_item(str(hop_num)), table, 0))
                 table.setItem(row_idx, 1, item_help(centered_item(ip), table, 1))
                 table.setItem(row_idx, 2, item_help(centered_item(time_str), table, 2))
+                if _widget_valid(status_label):
+                    status_label.setText(f"Tracing… hop {hop_num}: {ip} ({time_str})")
+
+        def _do_trace(w):
+            return network_tools.traceroute(
+                host,
+                on_hop=lambda h, ip, t: w.signals.log_line.emit(f"{h}|{ip}|{t}"),
+                is_cancelled=lambda: w.is_cancelled,
+            )
+
+        worker = Worker(_do_trace)
+        card._worker = worker
+
+        def _on_result(hops):
             if _widget_valid(status_label):
-                status_label.setText(f"Done — {len(hops)} hops.")
+                if worker.is_cancelled:
+                    status_label.setText(f"Tracing cancelled ({len(hops)} hops discovered).")
+                else:
+                    status_label.setText(f"Done — {len(hops)} hops.")
             if _widget_valid(trace_btn):
                 trace_btn.setEnabled(True)
 
-        card._worker.signals.result.connect(_on_result)
-        card._worker.signals.error.connect(lambda e: (status_label.setText(f"Error: {e}") if _widget_valid(status_label) else None, trace_btn.setEnabled(True) if _widget_valid(trace_btn) else None))
-        QThreadPool.globalInstance().start(card._worker)
+        worker.signals.log_line.connect(_on_hop_line)
+        worker.signals.result.connect(_on_result)
+        worker.signals.error.connect(lambda e: (status_label.setText(f"Error: {e}") if _widget_valid(status_label) else None, trace_btn.setEnabled(True) if _widget_valid(trace_btn) else None))
+        QThreadPool.globalInstance().start(worker)
 
     trace_btn.clicked.connect(_run_trace)
 
@@ -409,7 +426,7 @@ def _build_port_scanner_card() -> _ToolCard:
             return network_tools.scan_ports(
                 host, start, end,
                 on_progress=_on_progress,
-                is_cancelled=lambda: _cancelled[0],
+                is_cancelled=lambda: _cancelled[0] or _w.is_cancelled,
             )
 
         progress_timer = QTimer()

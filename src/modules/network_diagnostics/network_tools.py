@@ -38,45 +38,73 @@ def ping(host: str, count: int = 4) -> str:
     return result.stdout + result.stderr
 
 
-def traceroute(host: str) -> List[Tuple[int, str, str]]:
-    """Run tracert and return list of (hop_num, ip, time_ms)."""
-    result = subprocess.run(
-        ["tracert", "-d", "-w", "1000", host],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        creationflags=CREATE_NO_WINDOW,
-        timeout=120,
-    )
+def parse_tracert_line(line: str) -> Optional[Tuple[int, str, str]]:
+    """Parse a single tracert output line into (hop_num, ip, time_str) or None."""
+    m = re.match(r"^\s*(\d+)\s+", line)
+    if not m:
+        return None
+    hop_num = int(m.group(1))
+    tokens = line.split()
+    ip = tokens[-1] if tokens else "*"
+    if ip.endswith("."):
+        ip = ip[:-1]
+    time_str = "*"
+    for i, tok in enumerate(tokens[1:], 1):
+        if tok == "*":
+            time_str = "*"
+            break
+        if tok.endswith("ms"):
+            time_str = tok
+            break
+        if re.match(r"^[<\d]", tok):
+            if i + 1 < len(tokens) and tokens[i + 1].lower() == "ms":
+                time_str = f"{tok} ms"
+            else:
+                time_str = tok
+            break
+    return (hop_num, ip, time_str)
+
+
+def traceroute(
+    host: str,
+    on_hop: Optional[Callable[[int, str, str], None]] = None,
+    is_cancelled: Optional[Callable[[], bool]] = None,
+) -> List[Tuple[int, str, str]]:
+    """Run tracert and return list of (hop_num, ip, time_ms).
+    Streams each discovered hop via on_hop callback and supports is_cancelled.
+    """
     hops = []
-    for line in result.stdout.splitlines():
-        # Match lines that start with a hop number, e.g.:
-        #   1    <1 ms    <1 ms    <1 ms  192.168.1.1
-        #   2     *        *        *     Request timed out.
-        m = re.match(r"^\s*(\d+)\s+", line)
-        if not m:
-            continue
-        hop_num = int(m.group(1))
-        tokens = line.split()
-        # Last token is either an IP or "out." / "out"
-        ip = tokens[-1] if tokens else "*"
-        # Clean up trailing period from "timed out."
-        if ip.endswith("."):
-            ip = ip[:-1]
-        # Time: find first numeric ms value or "<1"
-        time_str = "*"
-        for tok in tokens[1:]:
-            if tok == "*":
-                time_str = "*"
+    try:
+        proc = subprocess.Popen(
+            ["tracert", "-d", "-w", "1000", host],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except Exception as exc:
+        logger.warning("Failed to start tracert: %s", exc)
+        return []
+
+    try:
+        for line in proc.stdout:
+            if is_cancelled and is_cancelled():
+                proc.kill()
                 break
-            if re.match(r"^[<\d]", tok) and "ms" not in tok:
-                time_str = tok
-                break
-            if tok.endswith("ms"):
-                time_str = tok
-                break
-        hops.append((hop_num, ip, time_str))
+            hop = parse_tracert_line(line)
+            if hop:
+                hops.append(hop)
+                if on_hop:
+                    on_hop(*hop)
+        proc.wait(timeout=10)
+    except Exception as exc:
+        logger.warning("Error during traceroute execution: %s", exc)
+        try:
+            proc.kill()
+        except Exception as kill_exc:
+            logger.debug("Could not kill tracert process: %s", kill_exc)
     return hops
 
 

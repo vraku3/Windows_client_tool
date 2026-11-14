@@ -382,17 +382,24 @@ class RemoteToolsModule(BaseModule):
 
         def work(worker):
             results = []
-            with ThreadPoolExecutor(max_workers=50) as pool:
+            pool = ThreadPoolExecutor(max_workers=16)
+            try:
                 futures = {pool.submit(_ping_host, h): h for h in hosts}
                 for fut in as_completed(futures):
                     if worker.is_cancelled:
+                        pool.shutdown(wait=False, cancel_futures=True)
                         break
                     h = futures[fut]
-                    alive = fut.result()
+                    try:
+                        alive = fut.result()
+                    except Exception:
+                        alive = False
                     results.append((h, alive))
                     done[0] += 1
                     worker.signals.progress.emit(done[0])
-            results.sort(key=lambda t: tuple(int(x) for x in t[0].split(".")))
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
+            results.sort(key=lambda t: [int(x) if x.isdigit() else 0 for x in t[0].split(".")])
             return results
 
         def on_result(results):
@@ -411,6 +418,7 @@ class RemoteToolsModule(BaseModule):
         w = Worker(work)
         w.signals.result.connect(on_result)
         w.signals.finished.connect(on_done)
+        w.signals.error.connect(lambda e: logger.warning("Ping sweep error: %s", e))
         w.signals.progress.connect(self._sweep_progress.setValue)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)

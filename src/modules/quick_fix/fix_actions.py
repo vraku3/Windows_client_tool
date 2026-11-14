@@ -237,6 +237,26 @@ def ip_release_renew(output_cb: Callable[[str], None]) -> None:
     _run_cmd(["ipconfig", "/renew"], output_cb)
 
 
+def flush_arp_cache(output_cb: Callable[[str], None]) -> None:
+    """Flush IPv4 ARP cache to remove stale IP-to-MAC mappings."""
+    output_cb("Flushing ARP cache (netsh interface ip delete arpcache)...")
+    rc = _run_cmd(["netsh", "interface", "ip", "delete", "arpcache"], output_cb)
+    if rc == 0:
+        output_cb("ARP cache flushed successfully.")
+    else:
+        output_cb(f"ARP cache flush finished with code {rc}.")
+
+
+def reset_firewall(output_cb: Callable[[str], None]) -> None:
+    """Reset Windows Defender Firewall to its factory default state."""
+    output_cb("Resetting Windows Firewall to factory defaults (netsh advfirewall reset)...")
+    rc = _run_cmd(["netsh", "advfirewall", "reset"], output_cb)
+    if rc == 0:
+        output_cb("Windows Firewall configuration restored to default.")
+    else:
+        output_cb(f"Firewall reset finished with code {rc}.")
+
+
 def reset_windows_update(output_cb: Callable[[str], None]) -> None:
     """Microsoft's documented reset: stop the services, RENAME
     SoftwareDistribution and catroot2 (Windows recreates both), start them
@@ -828,6 +848,15 @@ ALL_ACTIONS: List[FixAction] = [
                            "Network adapters may briefly disconnect. This cannot be undone. Continue?"),
     FixAction("ip_renew", "IP Release/Renew", "Release and renew IP address",
               "Network", fn=ip_release_renew),
+    FixAction("flush_arp", "Flush ARP Cache",
+              "Purge all cached IP-to-MAC address mappings to resolve network conflicts",
+              "Network", fn=flush_arp_cache),
+    FixAction("reset_firewall", "Reset Windows Firewall",
+              "Restore Windows Defender Firewall to factory default rules and settings",
+              "Network", fn=reset_firewall,
+              confirm_text="This will reset Windows Defender Firewall to its default configuration. "
+                           "Custom inbound and outbound firewall rules added by third-party applications "
+                           "will be removed. Continue?"),
     FixAction("network_reset", "Network Reset", "Reset all network adapters to default (reboot required)",
               "Network", reboot_required=True, fn=network_reset,
               confirm_text="This will reset Winsock and the TCP/IP stack. "

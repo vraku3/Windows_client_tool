@@ -201,7 +201,59 @@ class _ResultsView(QWidget):
         fit_table(self.volume_table, stretch=[1], content=[0, 2, 3, 4, 5, 6, 7, 8])
         _fill_volumes(self.volume_table, self.report)
         fit_table_height(self.volume_table)
+        self.volume_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.volume_table.customContextMenuRequested.connect(self._volume_context_menu)
+        self.volume_table.doubleClicked.connect(self._on_volume_double_clicked)
         box.addWidget(self.volume_table)
+
+    def _volume_context_menu(self, pos):
+        item = self.volume_table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        vol_item = self.volume_table.item(row, 0)
+        if not vol_item:
+            return
+        letter = vol_item.text().strip()
+        if not letter:
+            return
+        target = f"{letter}:\\" if len(letter) == 1 else (letter if letter.endswith("\\") else f"{letter}\\")
+        from PyQt6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        ts_act = menu.addAction("Analyze in TreeSize")
+        ts_act.setToolTip(f"Jump to TreeSize and scan volume {target}")
+        exp_act = menu.addAction("Open in Explorer")
+        exp_act.setToolTip(f"Open volume {target} in File Explorer")
+        copy_act = menu.addAction("Copy volume path")
+        chosen = menu.exec(self.volume_table.viewport().mapToGlobal(pos))
+        if chosen == ts_act:
+            self._open_in_treesize(target)
+        elif chosen == exp_act:
+            import os
+            try:
+                os.startfile(target)
+            except Exception:
+                pass
+        elif chosen == copy_act:
+            QApplication.clipboard().setText(target)
+
+    def _on_volume_double_clicked(self, index):
+        vol_item = self.volume_table.item(index.row(), 0)
+        if not vol_item:
+            return
+        letter = vol_item.text().strip()
+        target = f"{letter}:\\" if len(letter) == 1 else (letter if letter.endswith("\\") else f"{letter}\\")
+        self._open_in_treesize(target)
+
+    def _open_in_treesize(self, path: str):
+        try:
+            from app import App
+            app = App.get()
+            if app and app.event_bus:
+                app.event_bus.publish("navigate_to_module", {"name": "TreeSize", "path": path})
+        except Exception:
+            pass
 
     def selected_disk(self) -> Optional[dr.PhysicalDiskInfo]:
         rows = self.drive_table.selectionModel().selectedRows()

@@ -1099,6 +1099,8 @@ class _ScanTab(QWidget):
         menu.setToolTipsVisible(True)
         open_act = menu.addAction("Open in Explorer")
         open_act.setToolTip("Open this location in File Explorer")
+        treesize_act = menu.addAction("Analyze in TreeSize")
+        treesize_act.setToolTip("Open and analyze this folder in TreeSize")
         copy_act = menu.addAction("Copy path")
         copy_act.setToolTip("Copy the full path to the clipboard")
         exclude_act = menu.addAction("Exclude this path from all scans…")
@@ -1106,10 +1108,24 @@ class _ScanTab(QWidget):
         chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
         if chosen == open_act:
             self._open_folder(si.path if si.is_dir else os.path.dirname(si.path))
+        elif chosen == treesize_act:
+            self._open_treesize(si.path if si.is_dir else os.path.dirname(si.path))
         elif chosen == copy_act:
             self._copy_path(si.path)
         elif chosen == exclude_act:
             self._exclude_path(si.path)
+
+    def _open_treesize(self, path: str):
+        if not path:
+            return
+        target = path if os.path.isdir(path) else os.path.dirname(path)
+        try:
+            from app import App
+            app = App.get()
+            if app and app.event_bus:
+                app.event_bus.publish("navigate_to_module", {"name": "TreeSize", "path": target})
+        except Exception as exc:
+            logger.warning("Could not navigate to TreeSize: %s", exc)
 
     def _open_folder(self, path: str):
         target = path if os.path.isdir(path) else os.path.dirname(path)
@@ -1331,6 +1347,7 @@ class _ScanTab(QWidget):
         self._detail.setToolTip("Explanation, paths and research sources for the "
                                 "selected row (F1)")
         self._detail.open_folder.connect(self._open_folder)
+        self._detail.open_treesize.connect(self._open_treesize)
         self._detail.copy_path.connect(self._copy_path)
         self._detail.exclude_path.connect(self._exclude_path)
 

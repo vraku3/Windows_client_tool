@@ -13,6 +13,7 @@ from ui.elided_path import ElidedPathLabel as _PathLabel
 
 class DetailPane(QWidget):
     open_folder = pyqtSignal(str)
+    open_treesize = pyqtSignal(str)
     copy_path = pyqtSignal(str)
     exclude_path = pyqtSignal(str)
 
@@ -110,6 +111,7 @@ class DetailPane(QWidget):
             line.addWidget(label, 1)
             for caption, signal in (
                 ("Open folder", self.open_folder),
+                ("TreeSize", self.open_treesize),
                 ("Copy path", self.copy_path),
                 ("Exclude…", self.exclude_path),
             ):

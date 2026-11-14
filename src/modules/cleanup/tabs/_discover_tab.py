@@ -400,6 +400,7 @@ class _DiscoverTab(QWidget):
 
         self._detail = DetailPane()
         self._detail.open_folder.connect(self._open_path)
+        self._detail.open_treesize.connect(self._open_treesize)
         self._detail.copy_path.connect(self._copy_text)
         self._detail.browser.setPlainText(
             "Select a folder to see why it is listed, who probably owns it and what is known "
@@ -571,6 +572,18 @@ class _DiscoverTab(QWidget):
             if button.text().startswith("Exclude"):
                 button.hide()
         self._detail.browser.setHtml(detail_markup(row, entry))
+
+    def _open_treesize(self, path):
+        if not widget_is_valid(self) or not path:
+            return
+        target = path if os.path.isdir(path) else os.path.dirname(path)
+        try:
+            from app import App
+            app = App.get()
+            if app and app.event_bus:
+                app.event_bus.publish("navigate_to_module", {"name": "TreeSize", "path": target})
+        except Exception as exc:
+            logger.warning("Could not navigate to TreeSize: %s", exc)
 
     def _open_path(self, path):
         if not widget_is_valid(self) or not path:

@@ -46,6 +46,9 @@ FIXES: Dict[str, FixSpec] = {
     "renew_dhcp": FixSpec("renew_dhcp", "Renew DHCP lease", "Renew DHCP leases?",
                           "Releases and re-requests the address on every DHCP adapter. Connections drop for a few seconds and the "
                           "IP address may change. Remote sessions over this adapter can be cut off.", True),
+    "flush_arp": FixSpec("flush_arp", "Flush ARP cache", "Flush ARP cache?",
+                         "Clears dynamic IP-to-physical address mappings from the local ARP table. "
+                         "Resolves stale gateway or local subnet IP conflicts.", True),
     "reset_winsock": FixSpec("reset_winsock", "Reset Winsock", "Reset Winsock catalog?",
                              "Rebuilds the Winsock catalog to defaults. This removes third-party network filters (VPN/AV layered service "
                              "providers) and REQUIRES A REBOOT to take effect. Use only after simpler fixes failed.", True, True),
@@ -135,6 +138,42 @@ def reset_winsock(run: Callable = _run) -> FixResult:
     return FixResult(True, "Command completed; a restart is still required and the result cannot be read back.", None, True)
 
 
+def arp_cache_count() -> Optional[int]:
+    """Number of dynamic entries in the ARP cache, or None if unreadable."""
+    try:
+        r = _run(["arp", "-a"], 15)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.warning("arp -a failed: %s", e)
+        return None
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode != 0 or refused(out):
+        return None
+    return len(re.findall(r"\bdynamic\b", r.stdout or "", re.I))
+
+
+def flush_arp(run: Callable = _run, count: Callable = arp_cache_count) -> FixResult:
+    before = count()
+    try:
+        r = run(["netsh", "interface", "ip", "delete", "arpcache"])
+    except (OSError, subprocess.SubprocessError) as e:
+        return FixResult(False, f"Could not run netsh: {e}")
+    out = (r.stdout or "") + (r.stderr or "")
+    if refused(out):
+        return FixResult(False, "Refused (needs an elevated app): " + (out.strip().splitlines() or ["access denied"])[0])
+    if r.returncode != 0:
+        first = (out.strip().splitlines() or [f"exit {r.returncode}"])[0]
+        return FixResult(False, f"netsh delete arpcache failed: {first}", False)
+    after = count()
+    if before is None or after is None:
+        return FixResult(r.returncode == 0, "ARP cache cleared; could not read back to confirm count.", None)
+    if after < before or after == 0:
+        return FixResult(True, f"ARP cache flushed ({before} -> {after} dynamic entries).", True)
+    return FixResult(False, f"Windows accepted the command but the ARP cache still holds {after} dynamic entries.", False)
+
+
 RUNNERS: Dict[str, Callable[[], FixResult]] = {
-    "flush_dns": flush_dns, "renew_dhcp": renew_dhcp, "reset_winsock": reset_winsock,
+    "flush_dns": flush_dns,
+    "renew_dhcp": renew_dhcp,
+    "flush_arp": flush_arp,
+    "reset_winsock": reset_winsock,
 }

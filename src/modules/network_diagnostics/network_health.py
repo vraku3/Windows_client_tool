@@ -424,7 +424,8 @@ def _f_gateway(snap: Dict[str, Any], probes: Dict[str, Any]) -> List[Finding]:
             out.append(Finding(f"gw:{gw}", OK, f"Gateway {gw} reachable", f"Replied in {p['rtt_ms']:.0f} ms."))
         else:
             out.append(Finding(f"gw:{gw}", ERROR, f"Gateway {gw} does not answer ping",
-                               "No ICMP reply. The gateway may be down or may block ping; if browsing works the latter is likely."))
+                               "No ICMP reply. The gateway may be down or may block ping; if browsing works the latter is likely.",
+                               fix="flush_arp"))
     return out
 
 
@@ -635,8 +636,10 @@ def _f_events(snap: Dict[str, Any]) -> List[Finding]:
         subject = f"interface {group.index}" if group.index else group.provider
         title = f"{group.provider}: event {group.event_id}" + (f" x{group.count}" if group.count > 1 else "")
         detail = group.meaning + f" Most recent: {group.latest}."
+        fix = "renew_dhcp" if group.event_id == 4199 else None
         out.append(Finding(f"netevt:{group.provider}:{group.event_id}:{group.index}",
-                           ERROR if group.is_error else WARNING, f"{subject} - {title}", detail))
+                           ERROR if group.is_error else WARNING, f"{subject} - {title}", detail,
+                           fix=fix))
     return out
 
 

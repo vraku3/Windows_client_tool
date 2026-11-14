@@ -64,6 +64,7 @@ CARDS = {
 FIX_HELP = {
     "flush_dns": "Runs ipconfig /flushdns after confirmation to discard remembered DNS answers. The cache refills on use; the app compares counts to verify clearing where readable, but cannot restore old entries. Windows may require administrator rights.",
     "renew_dhcp": "Runs ipconfig /renew after confirmation for all DHCP adapters, without running /release first. The address may change and remote sessions may drop; administrator rights are required. Lease times are read back, and there is no automatic undo.",
+    "flush_arp": "Runs netsh interface ip delete arpcache after confirmation to purge dynamic address mappings from the local ARP table. The table refills as network traffic flows; requires administrator rights.",
     "reset_winsock": "Runs netsh winsock reset after confirmation, restoring the catalog and removing custom layered service providers used by some networking software. Requires administrator rights and a restart; the result cannot be verified immediately and this app has no undo.",
 }
 

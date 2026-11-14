@@ -35,7 +35,7 @@ def _button_help(button, context):
         return QUICK_HELP[label]
     for key, text in FIX_HELP.items():
         expected = {"flush_dns": "Flush DNS cache", "renew_dhcp": "Renew DHCP lease",
-                    "reset_winsock": "Reset Winsock"}[key]
+                    "flush_arp": "Flush ARP cache", "reset_winsock": "Reset Winsock"}[key]
         if label.startswith(expected):
             return text
     if label == "Save":

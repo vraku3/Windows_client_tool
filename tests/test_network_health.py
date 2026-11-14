@@ -5,7 +5,7 @@ from datetime import datetime
 
 import pytest
 
-from modules.network_diagnostics import dns_client, network_fixes, network_health as h
+from modules.network_diagnostics import dns_client, network_events as ne, network_fixes, network_health as h
 from modules.network_diagnostics.ping_stats import PingStats
 
 
@@ -302,6 +302,46 @@ def test_winsock_reset_never_claims_verification():
     r = network_fixes.reset_winsock(run=lambda c, *a: cp("Successfully reset the Winsock Catalog. You must restart the computer"))
     assert r.ok and r.reboot_needed and r.verified is None
     assert not network_fixes.reset_winsock(run=lambda c, *a: cp("Access is denied", 1)).ok
+
+
+def test_flush_arp_verified_by_readback():
+    counts = iter([12, 0])
+    r = network_fixes.flush_arp(run=lambda c, *a: cp("ok"), count=lambda: next(counts))
+    assert r.ok and r.verified is True
+    assert "12 -> 0" in r.message
+
+
+def test_flush_arp_accepted_but_count_unchanged():
+    counts = iter([12, 12])
+    r = network_fixes.flush_arp(run=lambda c, *a: cp("ok"), count=lambda: next(counts))
+    assert not r.ok and r.verified is False
+
+
+def test_flush_arp_refusal_and_unreadable_cache():
+    assert not network_fixes.flush_arp(run=lambda c, *a: cp("The requested operation requires elevation (Run as administrator)."), count=lambda: 5).ok
+    r = network_fixes.flush_arp(run=lambda c, *a: cp("ok"), count=lambda: None)
+    assert r.ok and r.verified is None
+
+
+def test_gateway_ping_failure_suggests_flush_arp():
+    s = snap(adapters=[{"InterfaceIndex": 1, "Status": "Up", "Name": "Eth"}],
+             routes=[{"InterfaceIndex": 1, "DestinationPrefix": "0.0.0.0/0", "NextHop": "192.168.1.1", "RouteMetric": 1}])
+    p = {"gw:192.168.1.1": {"ok": False, "error": None}}
+    findings = h._f_gateway(s, p)
+    assert len(findings) == 1
+    assert findings[0].severity == h.ERROR
+    assert findings[0].fix == "flush_arp"
+
+
+def test_ip_conflict_event_suggests_renew_dhcp():
+    events = [
+        ne.NetworkEvent("Tcpip", 4199, "Error", "2026-11-14 20:00:00", "8", "Conflict", "IP address conflict")
+    ]
+    s = snap(events=events)
+    findings = h._f_events(s)
+    assert len(findings) == 1
+    assert findings[0].severity == h.ERROR
+    assert findings[0].fix == "renew_dhcp"
 
 
 def test_every_fix_has_a_runner_and_destructive_ones_say_so():

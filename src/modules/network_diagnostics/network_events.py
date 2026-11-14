@@ -58,6 +58,8 @@ _PROVIDERS = ("Tcpip", "Microsoft-Windows-WLAN-AutoConfig")
 #: due to all such ports being in use", both usually meaning a port-exhaustion
 #: condition or, per Microsoft's own guidance, a possible SYN-flood attack).
 EVENT_MEANINGS: Dict[Tuple[str, int], str] = {
+    ("Tcpip", 4199): "An IP address conflict was detected on the network -- "
+                      "another system is using the same IPv4 address as this adapter.",
     ("Tcpip", 4207): "A TCP/IP interface failed to bind to its provider -- "
                       "usually a Teredo/6to4/VPN virtual adapter racing the "
                       "IPv6 stack at startup or link change.",
@@ -79,10 +81,10 @@ EVENT_MEANINGS: Dict[Tuple[str, int], str] = {
         "trigger).",
 }
 
-#: Severity classification -- 4207 and 4231 are logged by Windows itself as
+#: Severity classification -- 4199, 4207 and 4231 are logged by Windows itself as
 #: Error/hard-failure; 4227, 10002 and 4003 are Warning-level recoveries or
 #: near-misses.
-_ERROR_IDS = {("Tcpip", 4207), ("Tcpip", 4231)}
+_ERROR_IDS = {("Tcpip", 4199), ("Tcpip", 4207), ("Tcpip", 4231)}
 
 _INDEX_RE = re.compile(r"index\s+(\d+)")
 

@@ -73,6 +73,12 @@ def test_index_not_extracted_when_message_has_none():
     assert groups[0].index is None
 
 
+def test_ip_conflict_event_classification():
+    assert ("Tcpip", 4199) in ne.EVENT_MEANINGS
+    assert ("Tcpip", 4199) in ne._ERROR_IDS
+    assert "conflict" in ne.EVENT_MEANINGS[("Tcpip", 4199)].lower()
+
+
 def test_real_network_events_are_readable_on_this_machine():
     events = ne.read_network_events()
     assert events is not None

@@ -66,6 +66,18 @@ def test_group_events_collapses_repeats_and_keeps_the_latest_time():
     assert dup_group.count == 2 and dup_group.latest == "2026-09-27 20:28:43"
 
 
+def test_index_not_extracted_when_message_has_none():
+    pass
+
+
+def test_delayed_write_and_flush_events():
+    assert 50 in de.EVENT_MEANINGS
+    assert 57 in de.EVENT_MEANINGS
+    assert 50 in de._ERROR_IDS
+    assert 57 in de._ERROR_IDS
+    assert "delayed-write" in de.EVENT_MEANINGS[50].lower()
+
+
 def test_real_disk_events_are_readable_on_this_machine():
     events = de.read_disk_events()
     assert events is not None

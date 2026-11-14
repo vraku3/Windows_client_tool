@@ -32,9 +32,11 @@ EVENT_MEANINGS: Dict[int, str] = {
     9: "The device did not respond in time (a controller timeout).",
     11: "The driver detected a controller error.",
     15: "The device was not ready for an operation.",
+    50: "{Lost Delayed-Write Data} Failed to write cached data from memory to disk -- data loss occurred.",
     51: "A paging I/O operation failed -- Windows retried a page-file read/write.",
     52: "An error was reported by the file system while updating a bad-cluster list.",
     55: "The file system structure on the disk is corrupt and unusable. A chkdsk repair is required.",
+    57: "Failed to flush data to the transaction log -- file system corruption may occur.",
     98: "Volume was scanned by NTFS/ReFS self-healing.",
     129: "The storage adapter reset a device that stopped responding (a timeout).",
     130: "The file system structure was repaired online by NTFS self-healing.",
@@ -47,9 +49,9 @@ EVENT_MEANINGS: Dict[int, str] = {
 }
 
 #: Severity classification -- errors that reflect data actually being at
-#: risk right now (154, 157, 11, 15, 55, 140, 144) versus warnings that are a signal worth
+#: risk right now (11, 15, 50, 55, 57, 140, 144, 154, 157) versus warnings that are a signal worth
 #: reading but not yet proof of loss.
-_ERROR_IDS = {11, 15, 55, 140, 144, 154, 157}
+_ERROR_IDS = {11, 15, 50, 55, 57, 140, 144, 154, 157}
 
 _DISK_RE = re.compile(r"[Dd]isk\s+(\d+)")
 

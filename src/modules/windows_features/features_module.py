@@ -29,6 +29,11 @@ PINNED_FEATURES = {
     "ServicesForNFS-ClientOnly", "DirectPlay",
 }
 
+INSECURE_LEGACY_FEATURES = {
+    "smb1protocol", "microsoftwindowspowershellv2", "microsoftwindowspowershellv2root",
+    "telnetclient", "tftp", "simpletcp", "directplay", "iis-webserverrole", "iis-ftpserver",
+}
+
 
 def _parse_features(output: str) -> List[Tuple[str, str]]:
     """Parse dism /get-features /format:table output. Returns [(name, state)]."""
@@ -265,7 +270,7 @@ class WindowsFeaturesModule(BaseModule):
         filter_edit.setPlaceholderText("Filter features...")
         status_lbl = QLabel("Click Refresh to load features.")
         state_combo = QComboBox()
-        state_combo.addItems(["All states", "Enabled", "Disabled", "Pending restart", "Unknown / unreadable"])
+        state_combo.addItems(["All states", "Enabled", "Disabled", "Pending restart", "Insecure / Legacy (Audit)", "Unknown / unreadable"])
         state_combo.setToolTip("Filter optional features by their Windows-reported state, including changes pending a restart.")
         for tile, state in zip(self._glance.tiles, ("Enabled", "Disabled", "Pending restart", "Unknown / unreadable")):
             tile.clicked.connect(lambda target=state: state_combo.setCurrentText(target))
@@ -345,7 +350,11 @@ class WindowsFeaturesModule(BaseModule):
             for feat_name, state in features:
                 if ft and ft not in feat_name.lower():
                     continue
-                if want != "All states" and _feature_group(state) != want:
+                if want == "Insecure / Legacy (Audit)":
+                    fn_low = feat_name.lower()
+                    if not any(fn_low.startswith(p) or p in fn_low for p in INSECURE_LEGACY_FEATURES):
+                        continue
+                elif want != "All states" and _feature_group(state) != want:
                     continue
                 if feat_name in PINNED_FEATURES:
                     pinned.append((feat_name, state))

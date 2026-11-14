@@ -556,3 +556,57 @@ def test_wer_queue_buildup(tmp_path, monkeypatch):
     f_warn = check_wer_queue(max_reports=1)
     assert f_warn is not None
     assert f_warn.severity == "warning"
+
+
+def test_check_vss_writers(monkeypatch):
+    from modules.system_health.findings import check_vss_writers
+    import subprocess
+
+    sample_output = (
+        "Writer name: 'System Writer'\n"
+        "   Writer Id: {e81069a3-c424-4971-8c43-7f61ca658f33}\n"
+        "   State: [1] Stable\n"
+        "   Last error: No error\n"
+        "\n"
+        "Writer name: 'SqlServerWriter'\n"
+        "   Writer Id: {a65faa63-5ea8-4ebc-9dbd-a0c4db26912a}\n"
+        "   State: [5] Waiting for completion\n"
+        "   Last error: Timed out\n"
+    )
+
+    class MockProc:
+        returncode = 0
+        stdout = sample_output
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: MockProc())
+    findings = check_vss_writers()
+    assert len(findings) == 1
+    assert "SqlServerWriter" in findings[0].title
+    assert findings[0].severity == "error"
+    assert "Timed out" in findings[0].detail
+
+
+def test_check_trim_status(monkeypatch):
+    from modules.system_health.findings import check_trim_status
+    import subprocess
+
+    class MockProcEnabled:
+        returncode = 0
+        stdout = "NTFS DisableDeleteNotify = 0\nReFS DisableDeleteNotify = 0\n"
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: MockProcEnabled())
+    assert check_trim_status() is None
+
+    class MockProcDisabled:
+        returncode = 0
+        stdout = "NTFS DisableDeleteNotify = 1\nReFS DisableDeleteNotify = 0\n"
+        stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: MockProcDisabled())
+    f = check_trim_status()
+    assert f is not None
+    assert f.id == "ssd_trim_disabled"
+    assert "NTFS" in f.title
+    assert f.severity == "warning"

@@ -644,6 +644,38 @@ def reset_crypto_bits(output_cb: Callable[[str], None]) -> None:
     output_cb("Cryptographic Services and BITS restarted.")
 
 
+def reset_vss_writers(output_cb: Callable[[str], None]) -> None:
+    """Restart Volume Shadow Copy (VSS) and Software Shadow Copy Provider (swprv) to clear stuck writers."""
+    output_cb("Stopping Volume Shadow Copy and Provider services...")
+    _stop_service("swprv", output_cb)
+    _stop_service("vss", output_cb)
+    output_cb("Starting Volume Shadow Copy and Provider services...")
+    _start_service("vss", output_cb)
+    _start_service("swprv", output_cb)
+    output_cb("VSS services restarted. Writers reset to stable state.")
+
+
+def enable_tcp_autotuning(output_cb: Callable[[str], None]) -> None:
+    """Enable TCP Window Auto-Tuning to normal via netsh."""
+    output_cb("Enabling TCP Window Auto-Tuning...")
+    cmd = ["netsh", "int", "tcp", "set", "global", "autotuninglevel=normal"]
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if res.returncode == 0:
+            output_cb("TCP Window Auto-Tuning set to 'normal'. Full network throughput restored.")
+        else:
+            output_cb(f"netsh failed (exit {res.returncode}): {res.stderr or res.stdout}")
+    except Exception as exc:
+        logger.debug("enable_tcp_autotuning failed: %s", exc)
+        output_cb(f"Error configuring TCP Auto-Tuning: {exc}")
+
+
 def _print_queue_precondition() -> Optional[str]:
     """Check if spool folder exists and has queued print files."""
     from core.windows_utils import system_root
@@ -697,6 +729,10 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("reset_crypto_bits", "Reset Cryptographic & BITS",
               "Restart Cryptographic Services and BITS to clear stuck background downloads",
               "System Repairs", fn=reset_crypto_bits),
+    FixAction("reset_vss_writers", "Reset VSS Writers",
+              "Restart Volume Shadow Copy and provider services to unblock stuck writers",
+              "System Repairs", reboot_required=False, fn=reset_vss_writers,
+              confirm_text="This will restart the Volume Shadow Copy and Shadow Provider services to clear any stuck writers. Continue?"),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,
@@ -735,6 +771,9 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("sync_time", "Synchronize System Clock",
               "Force immediate time synchronization with NTP time server via w32tm",
               "Network", fn=sync_system_clock),
+    FixAction("enable_tcp_autotuning", "Enable TCP Auto-Tuning",
+              "Set TCP Window Auto-Tuning to normal to restore full broadband throughput",
+              "Network", reboot_required=False, fn=enable_tcp_autotuning),
     # Windows Update
     FixAction("wu_reset", "Reset Windows Update",
               "Stop WU services, clear caches, restart",

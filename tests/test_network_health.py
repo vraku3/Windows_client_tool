@@ -345,6 +345,22 @@ def test_dns_search_list_findings():
     assert f_none["dns-searchlist"].severity == h.UNKNOWN
 
 
+def test_tcp_autotuning_findings():
+    s_disabled = snap(tcp_global={"receive window auto-tuning level": "disabled"})
+    f_dis = by_id(h.evaluate(s_disabled, {}))
+    assert "tcp-autotuning" in f_dis
+    assert f_dis["tcp-autotuning"].severity == h.WARNING
+
+    s_restr = snap(tcp_global={"receive window auto-tuning level": "restricted"})
+    f_res = by_id(h.evaluate(s_restr, {}))
+    assert "tcp-autotuning" in f_res
+    assert f_res["tcp-autotuning"].severity == h.INFO
+
+    s_normal = snap(tcp_global={"receive window auto-tuning level": "normal"})
+    f_norm = by_id(h.evaluate(s_normal, {}))
+    assert "tcp-autotuning" not in f_norm
+
+
 # ---- real machine (read-only) ----------------------------------------------
 def test_real_snapshot_is_plausible():
     s = h.collect_snapshot()

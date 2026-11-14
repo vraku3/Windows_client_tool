@@ -172,6 +172,23 @@ def read_dns_search_list() -> Optional[List[str]]:
         return None
 
 
+def read_tcp_global() -> Optional[Dict[str, str]]:
+    """Query TCP global parameters via netsh int tcp show global."""
+    try:
+        r = _run(["netsh", "int", "tcp", "show", "global"], 15)
+        if r.returncode != 0:
+            return None
+        params: Dict[str, str] = {}
+        for line in r.stdout.splitlines():
+            if ":" in line:
+                k, v = line.split(":", 1)
+                params[k.strip().lower()] = v.strip().lower()
+        return params
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("netsh int tcp show global failed: %s", exc)
+        return None
+
+
 def collect_snapshot() -> Dict[str, Any]:
     """Read configuration. ``errors`` lists what could not be read and why."""
     snap: Dict[str, Any] = {"errors": [], "taken": datetime.now().isoformat(timespec="seconds")}
@@ -190,6 +207,7 @@ def collect_snapshot() -> Dict[str, Any]:
     snap["events"] = network_events.read_network_events()
     snap["winsock"] = winsock_catalog.read_catalog()
     snap["dns_search_list"] = read_dns_search_list()
+    snap["tcp_global"] = read_tcp_global()
     return snap
 
 
@@ -661,12 +679,39 @@ def _f_dns_search_list(snap: Dict[str, Any]) -> List[Finding]:
     return []
 
 
+def _f_tcp_autotuning(snap: Dict[str, Any]) -> List[Finding]:
+    if "tcp_global" not in snap:
+        return []
+    tcp = snap.get("tcp_global")
+    if tcp is None:
+        return []
+    level = tcp.get("receive window auto-tuning level", "")
+    if level == "disabled":
+        return [Finding(
+            "tcp-autotuning",
+            WARNING,
+            "TCP Window Auto-Tuning is disabled",
+            "Receive Window Auto-Tuning is disabled. Network throughput over broadband and gigabit connections is severely throttled (often capped below 20-30 Mbps).",
+            items=["netsh: autotuninglevel = disabled", "Use Quick Fix 'Enable TCP Auto-Tuning' to set it to normal"],
+        )]
+    if level in ("highlyrestricted", "restricted"):
+        return [Finding(
+            "tcp-autotuning",
+            INFO,
+            f"TCP Window Auto-Tuning is restricted ({level})",
+            f"Receive Window Auto-Tuning is set to '{level}'. This limits TCP receive window scaling.",
+            items=[f"netsh: autotuninglevel = {level}"],
+        )]
+    return []
+
+
 def evaluate(snap: Dict[str, Any], probes: Dict[str, Any], now: Optional[datetime] = None) -> List[Finding]:
     now = now or datetime.now()
     out: List[Finding] = [Finding("read", UNKNOWN, "Could not read some configuration", e) for e in snap.get("errors", [])]
     for part in (_f_gateway(snap, probes), _f_multi_route(snap), _f_apipa(snap), _f_dns(snap, probes),
                  _f_proxy(snap), _f_hosts(snap), _f_dhcp(snap, now), _f_links(snap), _f_mtu(snap, probes),
-                 _f_time_v6(probes), _f_events(snap), _f_winsock(snap), _f_dns_search_list(snap)):
+                 _f_time_v6(probes), _f_events(snap), _f_winsock(snap), _f_dns_search_list(snap),
+                 _f_tcp_autotuning(snap)):
         out.extend(part)
     out.sort(key=lambda f: SEVERITY_ORDER[f.severity])
     return out

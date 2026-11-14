@@ -34,7 +34,12 @@ EVENT_MEANINGS: Dict[int, str] = {
     15: "The device was not ready for an operation.",
     51: "A paging I/O operation failed -- Windows retried a page-file read/write.",
     52: "An error was reported by the file system while updating a bad-cluster list.",
+    55: "The file system structure on the disk is corrupt and unusable. A chkdsk repair is required.",
+    98: "Volume was scanned by NTFS/ReFS self-healing.",
     129: "The storage adapter reset a device that stopped responding (a timeout).",
+    130: "The file system structure was repaired online by NTFS self-healing.",
+    140: "Failed to flush data to the transaction log -- corruption may occur.",
+    144: "File system metadata was verified and NTFS self-healing was unable to repair all issues.",
     153: "An I/O operation was retried after an error.",
     154: "An I/O operation failed due to a hardware error.",
     157: "The disk was surprise-removed (unplugged or lost connection without warning).",
@@ -42,9 +47,9 @@ EVENT_MEANINGS: Dict[int, str] = {
 }
 
 #: Severity classification -- errors that reflect data actually being at
-#: risk right now (154, 157, 11, 15) versus warnings that are a signal worth
+#: risk right now (154, 157, 11, 15, 55, 140, 144) versus warnings that are a signal worth
 #: reading but not yet proof of loss.
-_ERROR_IDS = {11, 15, 154, 157}
+_ERROR_IDS = {11, 15, 55, 140, 144, 154, 157}
 
 _DISK_RE = re.compile(r"[Dd]isk\s+(\d+)")
 

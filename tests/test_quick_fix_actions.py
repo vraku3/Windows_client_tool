@@ -403,3 +403,30 @@ def test_reset_crypto_bits(monkeypatch, output):
     assert "cryptsvc" in started and "bits" in started
     assert any("restarted" in l.lower() for l in lines)
 
+
+def test_reset_vss_writers(monkeypatch, output):
+    lines, cb = output
+    stopped = []
+    started = []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, cb: stopped.append(name))
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, cb: started.append(name))
+
+    fix_actions.reset_vss_writers(cb)
+    assert "swprv" in stopped and "vss" in stopped
+    assert "vss" in started and "swprv" in started
+    assert any("restarted" in l.lower() for l in lines)
+
+
+def test_enable_tcp_autotuning(monkeypatch, output):
+    lines, cb = output
+    ran = []
+    class MockProc:
+        returncode = 0
+        stdout = "Ok."
+        stderr = ""
+    monkeypatch.setattr(fix_actions.subprocess, "run", lambda cmd, **kw: ran.append(cmd) or MockProc())
+
+    fix_actions.enable_tcp_autotuning(cb)
+    assert any("autotuninglevel=normal" in " ".join(cmd) for cmd in ran)
+    assert any("restored" in l.lower() or "normal" in l.lower() for l in lines)
+

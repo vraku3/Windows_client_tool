@@ -735,6 +735,111 @@ def check_safeboot_active() -> Optional[Finding]:
         return None
 
 
+def check_vss_writers() -> List[Finding]:
+    """Check live status of VSS writers via vssadmin list writers.
+
+    A failed or waiting VSS writer causes System Restore point creation and
+    Windows servicing backup/restore transactions to fail.
+    """
+    import subprocess
+    cmd = ["vssadmin", "list", "writers"]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("vssadmin list writers could not be run: %s", exc)
+        return []
+
+    if proc.returncode != 0:
+        logger.debug("vssadmin list writers refused (exit %d): %s", proc.returncode, proc.stderr.strip()[:100])
+        return []
+
+    findings = []
+    current_writer = None
+    current_state = None
+    current_error = None
+
+    for line in proc.stdout.splitlines():
+        s = line.strip()
+        if s.startswith("Writer name:"):
+            if current_writer and (current_state != "[1] Stable" or current_error != "No error"):
+                safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", current_writer).lower()[:32]
+                findings.append(Finding(
+                    id=f"vss_writer_failed_{safe_id}",
+                    title=f"VSS Writer '{current_writer}' in error state",
+                    detail=f"VSS writer '{current_writer}' reported state '{current_state}' with error '{current_error}'. Backups and restore points will fail until restarted.",
+                    severity="error" if current_error != "No error" else "warning",
+                    evidence=f"vssadmin: State={current_state}, Last error={current_error}",
+                    jump="Quick Fix",
+                ))
+            current_writer = s.split(":", 1)[1].strip().strip("'\"")
+            current_state = None
+            current_error = None
+        elif s.startswith("State:"):
+            current_state = s.split(":", 1)[1].strip()
+        elif s.startswith("Last error:"):
+            current_error = s.split(":", 1)[1].strip()
+
+    if current_writer and (current_state != "[1] Stable" or current_error != "No error"):
+        safe_id = re.sub(r"[^a-zA-Z0-9_]", "_", current_writer).lower()[:32]
+        findings.append(Finding(
+            id=f"vss_writer_failed_{safe_id}",
+            title=f"VSS Writer '{current_writer}' in error state",
+            detail=f"VSS writer '{current_writer}' reported state '{current_state}' with error '{current_error}'. Backups and restore points will fail until restarted.",
+            severity="error" if current_error != "No error" else "warning",
+            evidence=f"vssadmin: State={current_state}, Last error={current_error}",
+            jump="Quick Fix",
+        ))
+
+    return findings
+
+
+def check_trim_status() -> Optional[Finding]:
+    """Check whether TRIM is enabled on the system via fsutil.
+
+    When DisableDeleteNotify is 1, TRIM operations are blocked, causing SSD
+    performance and lifespan degradation.
+    """
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["fsutil", "behavior", "query", "DisableDeleteNotify"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("fsutil DisableDeleteNotify failed: %s", exc)
+        return None
+
+    if proc.returncode != 0:
+        logger.debug("fsutil DisableDeleteNotify refused: %s", proc.stderr.strip()[:100])
+        return None
+
+    disabled_fs = []
+    for line in proc.stdout.splitlines():
+        if "DisableDeleteNotify = 1" in line:
+            fs_name = "NTFS" if "NTFS" in line else ("ReFS" if "ReFS" in line else "Storage")
+            disabled_fs.append(fs_name)
+
+    if disabled_fs:
+        return Finding(
+            id="ssd_trim_disabled",
+            title=f"SSD TRIM is disabled ({', '.join(disabled_fs)})",
+            detail=f"TRIM (Delete Notification) is currently disabled for {', '.join(disabled_fs)}. SSD drive wear leveling and write performance are degraded.",
+            severity="warning",
+            evidence=f"fsutil: DisableDeleteNotify=1 for {', '.join(disabled_fs)}",
+            jump="Tweaks",
+        )
+    return None
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
@@ -749,6 +854,10 @@ def all_findings() -> List[Finding]:
     findings.extend(check_crash_control())
     findings.extend(check_print_queue())
     findings.extend(check_vss_services())
+    findings.extend(check_vss_writers())
+    trim_finding = check_trim_status()
+    if trim_finding:
+        findings.append(trim_finding)
     uptime_finding = check_fast_startup_uptime()
     if uptime_finding:
         findings.append(uptime_finding)

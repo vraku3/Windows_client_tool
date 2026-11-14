@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from modules.system_health.findings import Finding
 from core.windows_utils import system_root
@@ -394,6 +394,85 @@ def check_services() -> List[Finding]:
     return evaluate_services(rows, service_audit.read_failure_counts())
 
 
+# ---- problem devices (yellow bangs) ---------------------------------------------
+
+_PROBLEM_CODE_DESCRIPTIONS: Dict[int, str] = {
+    1: "Device not configured correctly",
+    3: "Driver may be corrupted",
+    10: "Device cannot start",
+    14: "Reboot required to function",
+    18: "Reinstall drivers for this device",
+    19: "Configuration information incomplete or damaged",
+    21: "Device is being removed",
+    22: "Device is disabled",
+    24: "Device not present or drivers not installed",
+    28: "Drivers for this device are not installed",
+    31: "Device not working: Windows cannot load driver",
+    32: "Driver for this device was disabled",
+    37: "Driver initialization failed",
+    39: "Driver corrupted or missing",
+    43: "Stopped because it reported problems",
+}
+
+
+def evaluate_problem_devices(rows: List[Dict[str, Any]]) -> List[Finding]:
+    """Evaluate Win32_PnPEntity devices reporting ConfigManagerErrorCode != 0."""
+    valid_rows = [r for r in rows if isinstance(r, dict) and (r.get("ConfigManagerErrorCode") or 0) != 0]
+    if not valid_rows:
+        return []
+
+    lines = []
+    all_disabled = True
+    for r in valid_rows:
+        code = int(r.get("ConfigManagerErrorCode") or 0)
+        name = r.get("Name") or r.get("DeviceID") or "Unknown device"
+        desc = _PROBLEM_CODE_DESCRIPTIONS.get(code, f"Error code {code}")
+        lines.append(f"- {name}: Code {code} ({desc})")
+        if code != 22:
+            all_disabled = False
+
+    severity = "info" if all_disabled else "warning"
+    count = len(valid_rows)
+    if count == 1:
+        single_name = valid_rows[0].get("Name") or valid_rows[0].get("DeviceID") or "device"
+        single_code = valid_rows[0].get("ConfigManagerErrorCode")
+        title = f"Problem device: {single_name} (Code {single_code})"
+    else:
+        title = f"{count} devices reporting hardware/driver errors"
+
+    evidence = "\n".join(lines[:15])
+    if len(lines) > 15:
+        evidence += f"\n... and {len(lines) - 15} more device(s)"
+
+    detail = (
+        "Windows Device Manager reports error codes for these devices. They may fail to "
+        "function, crash on use, or lack necessary drivers. View and troubleshoot in Driver Manager."
+    )
+    if all_disabled:
+        detail = "These devices are currently disabled by the user or Windows policy."
+
+    return [Finding(
+        id="problem_devices",
+        title=title,
+        detail=detail,
+        severity=severity,
+        evidence=evidence,
+        jump="Driver Manager",
+    )]
+
+
+def check_problem_devices() -> List[Finding]:
+    """Query Win32_PnPEntity for devices with ConfigManagerErrorCode != 0."""
+    rows, why = _ps_json(
+        "Get-CimInstance Win32_PnPEntity -Filter 'ConfigManagerErrorCode != 0' "
+        "| Select-Object Name, DeviceID, ConfigManagerErrorCode | ConvertTo-Json -Compress",
+        30,
+    )
+    if rows is None:
+        return [_unknown("problem_devices", "problem devices", why or "", jump="Driver Manager")]
+    return evaluate_problem_devices(rows)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -403,6 +482,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("WMI repository", check_wmi_repository),
     ("commit charge", check_commit),
     ("CBS log", check_cbs_log),
+    ("problem devices", check_problem_devices),
     ("services", check_services),
 )
 

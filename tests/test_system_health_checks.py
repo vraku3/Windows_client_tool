@@ -111,6 +111,43 @@ def test_service_findings():
     assert any(f.id == "service_failures:unknown" for f in unknown)
 
 
+def test_evaluate_problem_devices_clean():
+    assert h.evaluate_problem_devices([]) == []
+    assert h.evaluate_problem_devices([{"Name": "Good", "ConfigManagerErrorCode": 0}]) == []
+
+
+def test_evaluate_problem_devices_warning():
+    rows = [
+        {"Name": "Audio Controller", "DeviceID": "PCI\\VEN_1234", "ConfigManagerErrorCode": 28},
+        {"Name": "GPU", "DeviceID": "PCI\\VEN_5678", "ConfigManagerErrorCode": 43},
+    ]
+    out = h.evaluate_problem_devices(rows)
+    assert len(out) == 1
+    assert out[0].id == "problem_devices"
+    assert out[0].severity == "warning"
+    assert "2 devices" in out[0].title
+    assert "Audio Controller" in out[0].evidence
+    assert "Code 28" in out[0].evidence
+    assert "Code 43" in out[0].evidence
+    assert out[0].jump == "Driver Manager"
+
+
+def test_evaluate_problem_devices_single():
+    rows = [{"Name": "Bad Device", "ConfigManagerErrorCode": 10}]
+    out = h.evaluate_problem_devices(rows)
+    assert len(out) == 1
+    assert "Problem device: Bad Device (Code 10)" in out[0].title
+    assert out[0].severity == "warning"
+
+
+def test_evaluate_problem_devices_all_disabled():
+    rows = [{"Name": "Disabled Cam", "ConfigManagerErrorCode": 22}]
+    out = h.evaluate_problem_devices(rows)
+    assert len(out) == 1
+    assert out[0].severity == "info"
+    assert "disabled" in out[0].detail.lower()
+
+
 def test_run_all_turns_a_crashing_check_into_an_unknown_finding():
     def boom():
         raise RuntimeError("x")

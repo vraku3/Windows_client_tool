@@ -39,6 +39,7 @@ from modules.driver_manager.driver_search_provider import DriverSearchProvider
 from modules.driver_manager.vendor_updates.provider import (
     provider_for, no_provider_reason, NoProviderReason, is_held_driver, HELD_REASON, HELD_STATUS,
 )
+from modules.driver_manager.vendor_updates.vendor_id import vendor_for_hardware_id
 from modules.driver_manager.vendor_updates import pipeline as vendor_pipeline
 from modules.driver_manager.vendor_updates.nvidia_provider import NvidiaProvider  # noqa: F401 -- import registers the provider
 from ui.error_banner import ErrorBanner
@@ -341,7 +342,7 @@ class DriverModule(BaseModule):
         self._refresh_btn = QPushButton("Refresh")
         self._export_btn = QPushButton("Export CSV")
         self._export_inventory_btn = QPushButton("Export Inventory")
-        snapshots_btn = QPushButton("Snapshots â–¾")
+        snapshots_btn = QPushButton("Snapshots ▾")
         snapshots_menu = QMenu(snapshots_btn)
         snapshots_menu.addAction("Save Baseline...", self._save_baseline_action)
         snapshots_menu.addAction("Diff Against...", self._diff_against_baseline_action)
@@ -2049,7 +2050,7 @@ class DriverModule(BaseModule):
         # call, no WMI/COM involved (core/worker.py's own guidance).
         if self._restore_points_btn:
             self._restore_points_btn.setEnabled(False)
-            self._restore_points_btn.setText("Loadingâ€¦")
+            self._restore_points_btn.setText("Loading…")
 
         worker = Worker(lambda _w: list_restore_points())
 
@@ -2074,7 +2075,7 @@ class DriverModule(BaseModule):
             # unconditionally on module switch, and list_restore_points()
             # can legitimately still be running (up to its own 30s
             # subprocess timeout) when that happens. Without this handler
-            # the button stayed stuck on "Loadingâ€¦"/disabled forever --
+            # the button stayed stuck on "Loading…"/disabled forever --
             # the same class of bug _backup_drivers's
             # `signals.cancelled.connect(self._on_backup_cancelled)`
             # exists to prevent. No message box here, just recovery: a
@@ -2208,7 +2209,7 @@ class DriverModule(BaseModule):
             act_instances.triggered.connect(
                 lambda: self._show_group_instances(group))
         menu.addSeparator()
-        act_uninstall = menu.addAction("Uninstall driver packageâ€¦")
+        act_uninstall = menu.addAction("Uninstall driver package…")
         act_uninstall.setEnabled(bool(published))
         act_uninstall.setToolTip(
             "" if published else
@@ -2216,7 +2217,7 @@ class DriverModule(BaseModule):
             "OEM package — remove it from Device Manager instead.")
         act_uninstall.triggered.connect(
             lambda: self._do_uninstall_driver(published, device_name))
-        act_export_one = menu.addAction("Export this driverâ€¦")
+        act_export_one = menu.addAction("Export this driver…")
         act_export_one.setEnabled(bool(published))
         act_export_one.triggered.connect(
             lambda: self._export_one_driver(published))
@@ -2224,7 +2225,7 @@ class DriverModule(BaseModule):
         act_copy_hwid.setEnabled(bool(driver and driver.hardware_id))
         act_copy_hwid.triggered.connect(
             lambda: self._copy_hardware_id(driver.hardware_id if driver else ""))
-        act_rollback = menu.addAction("Roll back to previous versionâ€¦")
+        act_rollback = menu.addAction("Roll back to previous version…")
         act_rollback.setToolTip(
             "Checks whether Windows still has an older version of this "
             "driver cached in the driver store, then offers to open "
@@ -2325,7 +2326,14 @@ class DriverModule(BaseModule):
         if self._status_lbl:
             self._status_lbl.setText(f"Exporting drivers to {folder}...")
 
-        exportable = [d for d in self._drivers_ref[0] if published_name_for(d.inf_name)]
+        # Deduplicate exportable by published INF name so pnputil is called once per package
+        seen_infs = set()
+        exportable = []
+        for d in self._drivers_ref[0]:
+            published = published_name_for(d.inf_name)
+            if published and published.lower() not in seen_infs:
+                seen_infs.add(published.lower())
+                exportable.append(d)
         if self._progress:
             self._progress.setRange(0, len(exportable))
             self._progress.setValue(0)

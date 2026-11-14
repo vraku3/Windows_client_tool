@@ -768,8 +768,8 @@ class GameModeModule(BaseModule):
             os.makedirs(self._journal.folder, exist_ok=True)
             with open(state_path, "w", encoding="utf-8") as f:
                 json.dump(state_data, f, indent=2)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not write game_mode_state.json: %s", exc)
 
     def _numbers_text(self, handles: Optional[int], processes: Optional[int]) -> str:
         d = self._journal.data
@@ -807,8 +807,8 @@ class GameModeModule(BaseModule):
             os.makedirs(self._journal.folder, exist_ok=True)
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(full_line + "\n")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not append to game_mode.log: %s", exc)
 
         # Python logger
         if level == session.BAD:
@@ -955,26 +955,26 @@ class GameModeModule(BaseModule):
         if self._preflight_worker is not None:
             try:
                 self._preflight_worker.cancel()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not cancel preflight worker: %s", exc)
             self._preflight_worker = None
         if self._enforce_worker is not None:
             try:
                 self._enforce_worker.cancel()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not cancel enforce worker: %s", exc)
             self._enforce_worker = None
         if hasattr(self, "_wave_metrics_tab") and self._wave_metrics_tab is not None:
             if hasattr(self._wave_metrics_tab, "cancel"):
                 try:
                     self._wave_metrics_tab.cancel()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug("Could not cancel wave metrics tab: %s", exc)
         for w in list(self._workers):
             try:
                 w.cancel()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not cancel worker %s: %s", w, exc)
         self._workers.clear()
         self._off_pending = False
 

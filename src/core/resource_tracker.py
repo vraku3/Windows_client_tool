@@ -44,8 +44,8 @@ _APP_DATA_DIR = os.getenv("APPDATA") or tempfile.gettempdir()
 _BASE_DIR = os.path.join(_APP_DATA_DIR, "WindowsTweaker", "GameMode")
 try:
     os.makedirs(_BASE_DIR, exist_ok=True)
-except Exception:
-    pass
+except Exception as exc:
+    logger.debug("Could not create GameMode base directory %s: %s", _BASE_DIR, exc)
 
 
 class ResourceTracker:
@@ -62,8 +62,8 @@ class ResourceTracker:
         self._base_dir = base_dir or _BASE_DIR
         try:
             os.makedirs(self._base_dir, exist_ok=True)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not create base dir %s: %s", self._base_dir, exc)
 
     @property
     def count(self) -> int:

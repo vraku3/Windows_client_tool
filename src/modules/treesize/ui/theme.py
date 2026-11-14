@@ -12,7 +12,10 @@ These are taken from the dark screenshots referenced in spec 1.1. Where a value
 could not be read off a screenshot it follows the neighbouring sampled tone
 rather than a Qt default, and is marked below.
 """
+import logging
 import winreg
+
+logger = logging.getLogger(__name__)
 
 DARK = {
     "bg": "#1F1F1F",
@@ -315,5 +318,5 @@ def _repaint_custom_views(widget, colors: dict) -> None:
         if hasattr(child, "set_theme_colors") and callable(child.set_theme_colors):
             try:
                 child.set_theme_colors(colors)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed setting theme colors on %s: %s", child, exc)

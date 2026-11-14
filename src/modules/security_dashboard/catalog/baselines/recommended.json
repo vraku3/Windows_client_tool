@@ -101,6 +101,8 @@
     "service_xbox_game_save": false,
     "service_xbox_live": false,
     "smartscreen": true,
+    "smb_guest_auth": false,
+    "smb_server_signing": true,
     "smb_signing": true,
     "smbv1": false,
     "system_log_size": true,
@@ -109,7 +111,9 @@
     "test_signing": false,
     "uac": true,
     "usb_storage": false,
+    "vulnerable_driver_blocklist": true,
     "wdigest_credential_caching": false,
-    "winrm_service": false
+    "winrm_service": false,
+    "wpad_auto_detect": false
   }
 }

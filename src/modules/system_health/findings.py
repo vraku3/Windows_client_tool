@@ -571,6 +571,27 @@ def check_fast_startup_uptime() -> Optional[Finding]:
     import ctypes
 
     try:
+        # Check whether hibernation is enabled first. Fast Startup relies on
+        # hiberfil.sys to write kernel state. If hibernation is disabled,
+        # Fast Startup cannot function even if HiberbootEnabled is 1.
+        system_drive = os.environ.get("SystemDrive", "C:")
+        hiberfil = os.path.join(system_drive + "\\", "hiberfil.sys")
+        hibernation_enabled = os.path.exists(hiberfil)
+        if not hibernation_enabled:
+            try:
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\Power",
+                    0,
+                    winreg.KEY_READ,
+                ) as kp:
+                    h_val, _ = winreg.QueryValueEx(kp, "HibernateEnabled")
+                    hibernation_enabled = bool(h_val)
+            except (FileNotFoundError, OSError) as exc:
+                logger.debug("HibernateEnabled key/value not found: %s", exc)
+        if not hibernation_enabled:
+            return None
+
         fast_startup_enabled = True
         try:
             with winreg.OpenKey(

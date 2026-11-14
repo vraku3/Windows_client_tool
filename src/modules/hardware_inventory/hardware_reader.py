@@ -81,6 +81,70 @@ def get_overview(worker=None):
     return rows
 
 
+def get_cpu_ccd_topology() -> list:
+    """Detect CPU CCDs and L3 Cache hierarchy via GetLogicalProcessorInformationEx.
+
+    Identifies asymmetrical multi-CCD CPUs (e.g. AMD Ryzen 9 9950X3D, 7950X3D, 7900X3D)
+    showing 3D V-Cache vs Frequency CCD partitioning and core masks.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    RelationCache = 2
+    size = wintypes.DWORD(0)
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetLogicalProcessorInformationEx(RelationCache, None, ctypes.byref(size))
+    if not size.value:
+        return []
+    buf = ctypes.create_string_buffer(size.value)
+    if not kernel32.GetLogicalProcessorInformationEx(RelationCache, buf, ctypes.byref(size)):
+        return []
+
+    offset = 0
+    l3_caches = []
+    while offset < size.value:
+        length = int.from_bytes(buf[offset + 4 : offset + 8], "little")
+        data = bytes(buf[offset : offset + length])
+        level = data[8]
+        cache_size = int.from_bytes(data[12:16], "little")
+        if level == 3:
+            mask = int.from_bytes(data[40:48], "little")
+            threads = [i for i in range(64) if (mask & (1 << i))]
+            l3_caches.append({
+                "size_mb": cache_size // (1024 * 1024),
+                "size_bytes": cache_size,
+                "mask": hex(mask),
+                "threads": threads,
+            })
+        offset += length
+
+    if not l3_caches:
+        return []
+
+    l3_caches.sort(key=lambda c: c["threads"][0] if c["threads"] else 0)
+    sizes = [c["size_mb"] for c in l3_caches]
+    is_asymmetric = (len(set(sizes)) > 1) if len(l3_caches) > 1 else False
+    max_size = max(sizes) if sizes else 0
+
+    results = []
+    for idx, c in enumerate(l3_caches):
+        tag = ""
+        if is_asymmetric:
+            tag = " (3D V-Cache)" if c["size_mb"] == max_size else " (Frequency)"
+
+        start_core = c["threads"][0] // 2
+        end_core = c["threads"][-1] // 2
+        t_start = c["threads"][0]
+        t_end = c["threads"][-1]
+        results.append({
+            "name": f"CCD {idx}{tag}",
+            "l3_size": f"{c['size_mb']} MB",
+            "cores": f"Cores {start_core}–{end_core} (Threads {t_start}–{t_end})",
+            "mask": c["mask"],
+        })
+    return results
+
+
 def get_cpu_info(worker=None):
     rows = []
     rows.append(("Physical Cores", str(psutil.cpu_count(logical=False))))
@@ -98,6 +162,14 @@ def get_cpu_info(worker=None):
         rows.append(("L3 Cache", f"{cpu.L3CacheSize} KB" if cpu.L3CacheSize else "N/A"))
     except Exception as e:
         logger.debug("WMI CPU info not available: %s", e)
+    try:
+        topology = get_cpu_ccd_topology()
+        if len(topology) > 1:
+            rows.append(("Topology", f"{len(topology)} CCDs detected"))
+            for ccd in topology:
+                rows.append((ccd["name"], f"{ccd['l3_size']} L3  ·  {ccd['cores']}"))
+    except Exception as e:
+        logger.debug("Could not read CPU CCD topology: %s", e)
     return rows
 
 

@@ -1642,7 +1642,8 @@ def check_netbios_tcpip() -> Dict[str, Any]:
             disabled = val == 2
             status_text = node_label
 
-        details = [("NetBIOS NodeType", node_label)]
+        details = [("NetBIOS NodeType", node_label),
+                   ("Scope", "P-node uses WINS; NetBIOS over TCP/IP remains controlled per adapter")]
 
         # Audit per-adapter NetbiosOptions
         try:
@@ -2542,7 +2543,8 @@ def check_tpm_details() -> Dict[str, Any]:
 
 def check_bios_mode() -> Dict[str, Any]:
     try:
-        uefi = os.path.exists(r"C:\Windows\System32\winload.efi")
+        from core.windows_utils import system_root
+        uefi = os.path.exists(os.path.join(system_root(), "System32", "winload.efi"))
         return {"status": "UEFI" if uefi else "Legacy BIOS",
                 "color": "green" if uefi else "amber",
                 "details": [("Firmware", "UEFI" if uefi else "Legacy")], "enabled": uefi}

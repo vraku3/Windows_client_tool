@@ -426,6 +426,7 @@ def _build_port_scanner_card() -> _ToolCard:
         card._progress_timer = progress_timer
 
         worker = Worker(_worker_fn)
+        card._worker = worker
 
         def _on_result(open_ports) -> None:
             if not _widget_valid(table):
@@ -467,6 +468,9 @@ def _build_port_scanner_card() -> _ToolCard:
     def _stop_scan() -> None:
         nonlocal progress_timer
         _cancelled[0] = True
+        w = getattr(card, "_worker", None)
+        if w is not None:
+            w.cancel()
         if progress_timer is not None:
             progress_timer.stop()
         status_label.setText("Cancelling…")
@@ -1061,7 +1065,7 @@ class NetworkToolsModule(BaseModule):
                 continue
             for attr in ("_auto_timer", "_adapter_timer"):
                 t = getattr(card, attr, None)
-                if t is not None:
+                if t is not None and t.isActive():
                     t.stop()
                     t.start()
 

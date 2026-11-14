@@ -59,7 +59,12 @@ def run_cmd_stream(cmd: List[str], output_cb) -> int:
                                  creationflags=CREATE_NO_WINDOW)
         for line in proc.stdout:
             output_cb(line.rstrip())
-        proc.wait()
+        try:
+            proc.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            output_cb("Command timed out after 60s.")
+            return -1
         return proc.returncode
     except Exception as e:
         output_cb(f"Error: {e}")

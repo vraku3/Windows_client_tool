@@ -84,14 +84,6 @@ class EventDetailDialog(QDialog):
         self._text.setReadOnly(True)
         self._text.setFont(QFont("Consolas", 9))
         self._text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
-        self._text.setStyleSheet("""
-            QTextEdit {
-                background: #252525;
-                border: 1px solid #3c3c3c;
-                border-radius: 4px;
-                padding: 8px;
-            }
-        """)
         self._text.setHtml(self._format_html())
         layout.addWidget(self._text, 1)
 
@@ -99,7 +91,6 @@ class EventDetailDialog(QDialog):
         if entry.raw:
             raw_sep = QFrame()
             raw_sep.setFrameShape(QFrame.Shape.HLine)
-            raw_sep.setStyleSheet("color: #3c3c3c;")
             layout.addWidget(raw_sep)
 
             raw_label = QLabel("<b style='font-size:12px;'>RAW DATA</b>")
@@ -110,15 +101,6 @@ class EventDetailDialog(QDialog):
             self._raw_text.setFont(QFont("Consolas", 9))
             self._raw_text.setMaximumHeight(160)
             self._raw_text.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-            self._raw_text.setStyleSheet("""
-                QTextEdit {
-                    background: #1e1e1e;
-                    border: 1px solid #3c3c3c;
-                    border-radius: 4px;
-                    padding: 8px;
-                    color: #b0b0b0;
-                }
-            """)
             self._raw_text.setPlainText(self._format_raw())
             layout.addWidget(self._raw_text)
 
@@ -160,7 +142,7 @@ class EventDetailDialog(QDialog):
             <span style='color:#888;'>Level     :</span> <b>{entry.level}</b><br>
             <br>
             <span style='color:#888;'>─ Message ─</span><br>
-            <div style='background:#1e1e1e; padding:8px; border-radius:4px; margin-top:4px;'>
+            <div style='padding:8px; border-radius:4px; margin-top:4px;'>
                 {message_html}
             </div>
         </div>

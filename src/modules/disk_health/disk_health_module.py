@@ -233,8 +233,8 @@ class _ResultsView(QWidget):
             import os
             try:
                 os.startfile(target)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to open path %s: %s", target, exc)
         elif chosen == copy_act:
             QApplication.clipboard().setText(target)
 
@@ -252,8 +252,8 @@ class _ResultsView(QWidget):
             app = App.get()
             if app and app.event_bus:
                 app.event_bus.publish("navigate_to_module", {"name": "TreeSize", "path": path})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not publish navigate_to_module TreeSize for %s: %s", path, exc)
 
     def selected_disk(self) -> Optional[dr.PhysicalDiskInfo]:
         rows = self.drive_table.selectionModel().selectedRows()

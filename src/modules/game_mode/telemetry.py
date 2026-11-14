@@ -40,8 +40,8 @@ def get_telemetry_dir(folder: Optional[str] = None) -> Path:
         p = Path(app_data) / "WindowsTweaker" / "game_mode"
     try:
         p.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not create telemetry dir %s: %s", p, exc)
     return p
 
 
@@ -81,8 +81,8 @@ def get_disk_latency_ms() -> float:
         if delta_ops > 0:
             return round(delta_ms / delta_ops, 2)
         return 0.0
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed calculating disk latency: %s", exc)
     return 0.0
 
 
@@ -105,8 +105,8 @@ def get_gpu_percent() -> float:
                 return round(max_pct, 1)
         finally:
             sampler.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed sampling GPU: %s", exc)
     return 0.0
 
 
@@ -144,8 +144,8 @@ def collect_system_telemetry(system: Any = None) -> Dict[str, Any]:
                     if h:
                         total_h += h
                     count_p += 1
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
+                except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+                    logger.debug("Process handle access denied or exited: %s", exc)
             out["handles"] = total_h
             out["processes"] = count_p
         except Exception as exc:
@@ -258,7 +258,8 @@ def load_wave_metrics(folder: Optional[str] = None, limit: int = 100) -> List[Di
                     continue
                 try:
                     records.append(json.loads(line))
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    logger.debug("Skipping malformed telemetry metric line: %s", exc)
                     continue
     except Exception as exc:
         logger.warning("Error reading wave metrics: %s", exc)
@@ -274,8 +275,8 @@ def clear_wave_metrics(folder: Optional[str] = None) -> None:
         if p.exists():
             try:
                 p.unlink()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not unlink metric file %s: %s", p, exc)
 
 
 def to_log_entries(metrics: List[Dict[str, Any]]) -> List[Any]:
@@ -288,8 +289,8 @@ def to_log_entries(metrics: List[Dict[str, Any]]) -> List[Any]:
         if ts_str:
             try:
                 dt = datetime.fromisoformat(ts_str)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not parse metric timestamp %s: %s", ts_str, exc)
 
         wave = m.get("wave", 0)
         status = m.get("status", "ok")

@@ -553,6 +553,10 @@ QLabel#noticeBanner {
     border-radius: 4px;
     padding: 6px 10px;
 }
+QWidget#adminBanner {
+    background-color: #ffe082;
+    padding: 4px;
+}
 QLabel#monitorActive   { color: #00695c; }
 QLabel#monitorInactive { color: #5f5f5f; }
 

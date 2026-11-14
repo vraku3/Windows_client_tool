@@ -1234,8 +1234,8 @@ def turn_off(system, journal: Journal, log: Log, settle: float = 10.0,
     try:
         if OPERATION_LOCK.acquire(blocking=not force, timeout=3.0 if force else -1):
             lock_acquired = True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Could not acquire OPERATION_LOCK: %s", exc)
     try:
         try:
             with operation_lock("Game Mode OFF", timeout_ms=3000 if force else 10000):
@@ -1265,8 +1265,8 @@ def turn_off(system, journal: Journal, log: Log, settle: float = 10.0,
         if lock_acquired:
             try:
                 OPERATION_LOCK.release()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not release OPERATION_LOCK: %s", exc)
 
 
 def _turn_off(system, journal: Journal, log: Log, settle: float,
@@ -1284,8 +1284,8 @@ def _turn_off(system, journal: Journal, log: Log, settle: float,
         if force:
             try:
                 os.remove(journal.path)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not remove corrupt journal %s: %s", journal.path, exc)
             journal.data = {}
             say(OK, "Force OFF: corrupt journal cleared.")
         return report
@@ -1361,8 +1361,8 @@ def _turn_off(system, journal: Journal, log: Log, settle: float,
     elif getattr(system, "_resource_tracker", None):
         try:
             system._resource_tracker.cleanup()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Could not cleanup system resource tracker: %s", exc)
     return report
 
 

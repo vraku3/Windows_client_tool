@@ -313,8 +313,36 @@ def clear_print_queue(output_cb: Callable[[str], None]) -> None:
     output_cb("Print queue cleared.")
 
 
+def _ensure_disk_cleanup_flags() -> None:
+    """Set StateFlags0001 = 2 for standard safe volume cache handlers.
+    Without this, cleanmgr /sagerun:1 finds 0 flags configured and cleans nothing."""
+    import winreg
+    safe_caches = (
+        "Active Setup Temp Folders",
+        "Downloaded Program Files",
+        "Internet Cache Files",
+        "Old ChkDsk Files",
+        "Recycle Bin",
+        "System error memory dump files",
+        "System error minidump files",
+        "Temporary Files",
+        "Temporary Setup Files",
+        "Thumbnail Cache",
+        "Windows Error Reporting Files",
+    )
+    base = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
+    for name in safe_caches:
+        try:
+            with winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, f"{base}\\{name}") as k:
+                winreg.SetValueEx(k, "StateFlags0001", 0, winreg.REG_DWORD, 2)
+        except OSError as exc:
+            logger.debug("Could not set cleanmgr flag for %s: %s", name, exc)
+
+
 def run_disk_cleanup(output_cb: Callable[[str], None]) -> None:
     """Run cleanmgr /d C: /sagerun:1 with predefined cleanup."""
+    output_cb("Configuring safe cleanup targets for cleanmgr...")
+    _ensure_disk_cleanup_flags()
     output_cb("Starting Disk Cleanup on C: ...")
     try:
         # Use predefined SAGERUN value to auto-select recommended cleanup
@@ -451,17 +479,47 @@ def clear_clipboard(output_cb: Callable[[str], None]) -> None:
 
 
 def reset_search(output_cb: Callable[[str], None]) -> None:
-    """Ported from Quick Cleanup's _reset_search."""
+    """Restart the Windows Search service and reset its catalog database flag so Windows rebuilds it."""
+    output_cb("Stopping Windows Search service (WSearch)...")
     _stop_service("WSearch", output_cb)
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows Search", 0, winreg.KEY_SET_VALUE) as k:
+            winreg.SetValueEx(k, "SetupCompletedSuccessfully", 0, winreg.REG_DWORD, 0)
+        output_cb("Reset SetupCompletedSuccessfully = 0 (triggers fresh catalog database build).")
+    except OSError as exc:
+        output_cb(f"Could not reset search registry flag: {exc}")
+    output_cb("Starting Windows Search service...")
     _start_service("WSearch", output_cb)
-    output_cb("Windows Search reset.")
+    output_cb("Windows Search reset: catalog database rebuild initiated.")
 
 
 def clear_font_cache(output_cb: Callable[[str], None]) -> None:
-    """Ported from Quick Cleanup's _clear_font_cache."""
+    """Flush the Windows Font Cache service and purge cached font files."""
+    output_cb("Stopping Windows Font Cache service...")
     _stop_service("FontCache", output_cb)
+    local = os.environ.get("LOCALAPPDATA", "")
+    font_cache_dir = os.path.join(local, "FontCache")
+    purged = 0
+    if os.path.isdir(font_cache_dir):
+        for f in _glob.glob(os.path.join(font_cache_dir, "*")):
+            try:
+                if os.path.isfile(f):
+                    os.remove(f)
+                    purged += 1
+            except OSError as exc:
+                logger.debug("Could not purge font cache file %s: %s", f, exc)
+    windir = os.environ.get("SystemRoot", r"C:\Windows")
+    fntcache_dat = os.path.join(windir, "System32", "FNTCACHE.DAT")
+    if os.path.exists(fntcache_dat):
+        try:
+            os.remove(fntcache_dat)
+            purged += 1
+        except OSError as exc:
+            logger.debug("Could not purge %s: %s", fntcache_dat, exc)
+    output_cb("Starting Windows Font Cache service...")
     _start_service("FontCache", output_cb)
-    output_cb("Font cache cleared.")
+    output_cb(f"Font cache cleared ({purged} cache file(s) purged).")
 
 
 def salvage_wmi_repository(output_cb: Callable[[str], None]) -> None:
@@ -538,23 +596,66 @@ def _hibernation_precondition() -> Optional[str]:
     return None
 
 
+def restart_audio_service(output_cb: Callable[[str], None]) -> None:
+    """Restart Windows Audio and Audio Endpoint Builder to resolve glitches and stuck sound endpoints."""
+    output_cb("Stopping Windows Audio Endpoint Builder (AudioEndpointBuilder)...")
+    _stop_service("AudioEndpointBuilder", output_cb)
+    output_cb("Stopping Windows Audio (Audiosrv)...")
+    _stop_service("Audiosrv", output_cb)
+    output_cb("Starting Windows Audio Endpoint Builder...")
+    _start_service("AudioEndpointBuilder", output_cb)
+    output_cb("Starting Windows Audio...")
+    _start_service("Audiosrv", output_cb)
+    output_cb("Windows Audio engine restarted.")
+
+
+def clear_store_cache(output_cb: Callable[[str], None]) -> None:
+    """Reset Microsoft Store cache with wsreset to fix stuck app downloads and package store errors."""
+    output_cb("Running wsreset to purge Microsoft Store cache...")
+    rc = _run_cmd(["wsreset.exe", "-i"], output_cb, tolerate_failure=True)
+    if rc != 0:
+        rc = _run_cmd(["wsreset.exe"], output_cb, tolerate_failure=True)
+    output_cb("Microsoft Store cache reset completed.")
+
+
+def sync_system_clock(output_cb: Callable[[str], None]) -> None:
+    """Force immediate time synchronization with NTP time server via w32tm."""
+    output_cb("Ensuring Windows Time service (w32time) is running...")
+    _start_service("w32time", output_cb)
+    output_cb("Resynchronizing system clock (w32tm /resync /force)...")
+    rc = _run_cmd(["w32tm", "/resync", "/force"], output_cb, tolerate_failure=True)
+    if rc == 0:
+        output_cb("System clock synchronized successfully.")
+    else:
+        output_cb("Refreshing time service configuration...")
+        _run_cmd(["w32tm", "/config", "/update"], output_cb, tolerate_failure=True)
+        _run_cmd(["w32tm", "/resync"], output_cb, tolerate_failure=True)
+        output_cb("Time synchronization request submitted.")
+
+
+def reset_crypto_bits(output_cb: Callable[[str], None]) -> None:
+    """Restart Cryptographic Services (CryptSvc) and BITS to clear stuck background transfers and catalog locks."""
+    output_cb("Stopping BITS and CryptSvc...")
+    _stop_service("bits", output_cb)
+    _stop_service("cryptsvc", output_cb)
+    output_cb("Starting CryptSvc and BITS...")
+    _start_service("cryptsvc", output_cb)
+    _start_service("bits", output_cb)
+    output_cb("Cryptographic Services and BITS restarted.")
+
+
 def _print_queue_precondition() -> Optional[str]:
-    """Check if there are any spool files before allowing clear."""
+    """Check if spool folder exists and has queued print files."""
     from core.windows_utils import system_root
     spool_dir = os.path.join(system_root(), "System32", "spool", "PRINTERS")
     if not os.path.isdir(spool_dir):
         return "Spool folder does not exist"
     try:
-        entries = os.listdir(spool_dir)
-        spool_files = [
-            f for f in entries
-            if f.lower().endswith((".shd", ".spl", ".tmp"))
-            and os.path.isfile(os.path.join(spool_dir, f))
-        ]
-        if not spool_files:
-            return "Print queue is empty — no lingering spool files found"
-    except OSError as e:
-        return f"Spool folder unreadable: {e}"
+        files = [f for f in os.listdir(spool_dir) if os.path.isfile(os.path.join(spool_dir, f))]
+        if not files:
+            return "Print queue is already empty — nothing to clear"
+    except OSError as exc:
+        logger.debug("Could not inspect spool directory %s: %s", spool_dir, exc)
     return None
 
 
@@ -569,7 +670,8 @@ def _servicing_precondition() -> Optional[str]:
 
 
 def _wu_reset_precondition() -> Optional[str]:
-    """Prevent resetting Windows Update cache while a reboot is pending."""
+    """Matches Windows Update reset precondition:
+    WU client reset should not run if a reboot is pending."""
     from core.windows_utils import is_reboot_pending
     if is_reboot_pending():
         return "A reboot is pending for Windows Update — reboot before resetting cache"
@@ -588,6 +690,13 @@ ALL_ACTIONS: List[FixAction] = [
               "System Repairs", fn=salvage_wmi_repository,
               confirm_text="This will scan and salvage the WMI repository using winmgmt /salvagerepository. "
                            "Management tools and services depending on WMI will be refreshed. Continue?"),
+    FixAction("audio_restart", "Restart Audio Engine",
+              "Restart Windows Audio and Audio Endpoint Builder to resolve sound glitches",
+              "System Repairs", fn=restart_audio_service,
+              confirm_text="This will restart Windows Audio services. Active sound playback will briefly pause. Continue?"),
+    FixAction("reset_crypto_bits", "Reset Cryptographic & BITS",
+              "Restart Cryptographic Services and BITS to clear stuck background downloads",
+              "System Repairs", fn=reset_crypto_bits),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,
@@ -602,6 +711,10 @@ ALL_ACTIONS: List[FixAction] = [
               "Cache & UI", reboot_required=False, fn=clear_prefetch),
     FixAction("recent_clear", "Clear Recent Files", "Clear recent documents and jump lists",
               "Cache & UI", fn=clear_recent_files),
+    FixAction("wsreset", "Clear Microsoft Store Cache",
+              "Reset Windows Store cache with wsreset to fix stuck app downloads",
+              "Cache & UI", fn=clear_store_cache,
+              confirm_text="This runs wsreset to clear the Microsoft Store cache. Continue?"),
     # Network
     FixAction("flush_dns", "Flush DNS", "Clear the DNS resolver cache",
               "Network", fn=flush_dns),
@@ -619,6 +732,9 @@ ALL_ACTIONS: List[FixAction] = [
               "Network", reboot_required=True, fn=network_reset,
               confirm_text="This will reset Winsock and the TCP/IP stack. "
                            "Your network connection will briefly drop. This cannot be undone. Continue?"),
+    FixAction("sync_time", "Synchronize System Clock",
+              "Force immediate time synchronization with NTP time server via w32tm",
+              "Network", fn=sync_system_clock),
     # Windows Update
     FixAction("wu_reset", "Reset Windows Update",
               "Stop WU services, clear caches, restart",
@@ -626,7 +742,7 @@ ALL_ACTIONS: List[FixAction] = [
               precondition=_wu_reset_precondition,
               confirm_text="This will reset the Windows Update client, clear the "
                            "SoftwareDistribution and catroot2 caches, and restart the "
-                           "affected services. This cannot be undone. Continue?"),
+                           "affected services. Incomplete downloads will be reset. Continue?"),
     FixAction("wu_dlls", "Re-register WU DLLs",
               "Re-register all Windows Update DLL files",
               "Windows Update", fn=reregister_wu_dlls),
@@ -664,15 +780,15 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("clear_clipboard", "Clear Clipboard", "Clear the Windows clipboard content",
               "Cleanup", fn=clear_clipboard),
     FixAction("reset_search", "Reset Windows Search",
-              "Restart the Windows Search service and clear its database",
+              "Restart the Windows Search service and reset its catalog database",
               "Cleanup", fn=reset_search,
-              confirm_text="This will restart the Windows Search service and clear its "
-                           "database. Search may be briefly unavailable. Continue?"),
+              confirm_text="This will restart the Windows Search service and reset its "
+                           "catalog database so Windows rebuilds it. Continue?"),
     FixAction("clear_font_cache", "Clear Font Cache",
-              "Flush the Windows Font Cache service",
+              "Flush the Windows Font Cache service and purge cached font files",
               "Cleanup", fn=clear_font_cache,
-              confirm_text="This will flush the Windows Font Cache by stopping the "
-                           "FontCache service. Applications may briefly re-render text. Continue?"),
+              confirm_text="This will flush the Windows Font Cache and remove cached "
+                           "font files. Applications may briefly re-render text. Continue?"),
     FixAction("resize_hibernation", "Right-size Hibernation File",
               "Shrink hiberfil.sys to 50% of RAM without disabling hibernation",
               "Cleanup", fn=resize_hibernation, precondition=_hibernation_precondition,

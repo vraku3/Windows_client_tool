@@ -48,7 +48,12 @@ class LogStatus:
         """Days of history kept, or None when the oldest event is not known."""
         if self.oldest is None:
             return None
-        return (now - self.oldest).total_seconds() / 86400.0
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        oldest = self.oldest
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        return (now - oldest).total_seconds() / 86400.0
 
 
 def _default_run(args: List[str]) -> Tuple[int, str, str]:

@@ -152,7 +152,6 @@ class _FixCard(QFrame):
 
         def do_work(_w):
             from modules.quick_fix import fix_actions
-            self._worker = _w
             fix_actions.begin_tracking()
             try:
                 action.fn(append)

@@ -56,9 +56,24 @@ $result | ConvertTo-Json -Compress -Depth 2
 
 _PS_CMD_DRIVERLESS = r"""
 $devices = Get-CimInstance -ClassName Win32_PnPEntity |
-    Where-Object { $_.ConfigManagerErrorCode -ne 0 -and $_.Name }
-$devices | Select-Object Name, ConfigManagerErrorCode, PNPClass |
-    ConvertTo-Json -Compress -Depth 2
+    Where-Object { $_.ConfigManagerErrorCode -ne 0 -and ($_.Name -or $_.Description -or $_.DeviceID) }
+$result = foreach ($dev in $devices) {
+    $hwId = ''
+    if ($dev.HardWareID -is [array]) {
+        $hwId = [string]$dev.HardWareID[0]
+    } elseif ($dev.HardWareID) {
+        $hwId = [string]$dev.HardWareID
+    }
+    [PSCustomObject]@{
+        Name                   = [string]($dev.Name -replace '\s+', ' ')
+        Description            = [string]$dev.Description
+        ConfigManagerErrorCode = [int]($dev.ConfigManagerErrorCode -as [int])
+        PNPClass               = [string]$dev.PNPClass
+        DeviceID               = [string]$dev.DeviceID
+        HardWareID             = $hwId
+    }
+}
+$result | ConvertTo-Json -Compress -Depth 2
 """
 
 _PS_CMD_RESTORE_POINTS = (
@@ -241,6 +256,7 @@ def _merge_driverless_devices(drivers: List[DriverInfo],
     -- needs a second query, or this "driver manager" never shows the
     machine's actual problem devices."""
     have_names = {d.device_name for d in drivers}
+    have_ids = {d.device_id for d in drivers if d.device_id}
     if not driverless_raw.strip():
         return drivers
     try:
@@ -251,15 +267,23 @@ def _merge_driverless_devices(drivers: List[DriverInfo],
         raw_devices = [raw_devices]
     extra = []
     for dev in raw_devices:
-        name = dev.get("Name") or ""
+        dev_id = dev.get("DeviceID") or ""
+        if dev_id and dev_id in have_ids:
+            continue
+        name = dev.get("Name") or dev.get("Description") or dev_id or "Unknown Device"
         if not name or name in have_names:
             continue
         code = int(dev.get("ConfigManagerErrorCode") or 0)
+        hw_id_raw = dev.get("HardWareID") or ""
+        hw_id = hw_id_raw.split(";")[0] if hw_id_raw else ""
         extra.append(DriverInfo(
             device_name=name, driver_class=dev.get("PNPClass") or "",
             version="", date="", publisher="", signed=False,
             error_code=code,
-            flags=f"🔴 No driver installed: {decode_error_code(code)}"))
+            flags=f"🔴 No driver installed: {decode_error_code(code)}",
+            device_id=dev_id,
+            hardware_id=hw_id,
+        ))
     return drivers + extra
 
 

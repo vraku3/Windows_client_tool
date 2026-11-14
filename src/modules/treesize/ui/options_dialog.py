@@ -47,10 +47,58 @@ class OptionsDialog(QDialog):
         self._settings.update(settings or {})
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self._build_display_group())
+        layout.addWidget(self._build_scanning_group())
 
+        views = QGroupBox("Views", self)
+        view_form = QFormLayout(views)
+        self.treemap_depth = QSpinBox(views)
+        describe_control(self.treemap_depth, 'treemap_depth')
+        self.treemap_depth.setRange(1, 12)
+        self.treemap_depth.setValue(int(self._settings["treemap_depth"]))
+        self.treemap_depth.setToolTip(
+            "How many levels the treemap draws. Deeper is slower and, past a "
+            "point, smaller than a pixel.")
+        view_form.addRow("Treemap depth:", self.treemap_depth)
+
+        self.top_files_limit = QSpinBox(views)
+        describe_control(self.top_files_limit, 'top_files_limit')
+        self.top_files_limit.setRange(10, 1000)
+        self.top_files_limit.setSingleStep(10)
+        self.top_files_limit.setValue(int(self._settings["top_files_limit"]))
+        view_form.addRow("Top Files count:", self.top_files_limit)
+        layout.addWidget(views)
+
+        safety = QGroupBox("Safety", self)
+        safety_form = QFormLayout(safety)
+        self.confirm_permanent = QCheckBox(
+            "Confirm before deleting permanently", safety)
+        describe_control(self.confirm_permanent, 'confirm_permanent')
+        self.confirm_permanent.setChecked(
+            bool(self._settings["confirm_permanent_delete"]))
+        safety_form.addRow(self.confirm_permanent)
+        note = QLabel("Protected system locations always require an explicit "
+                      "override, whatever is set here.", safety)
+        note.setWordWrap(True)
+        note.setObjectName("optionsNote")
+        safety_form.addRow(note)
+        layout.addWidget(safety)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+            | QDialogButtonBox.StandardButton.RestoreDefaults, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(
+            QDialogButtonBox.StandardButton.RestoreDefaults
+        ).clicked.connect(self.restore_defaults)
+        layout.addWidget(buttons)
+        explain_widget(self)
+
+    def _build_display_group(self) -> QGroupBox:
         display = QGroupBox("Display", self)
         form = QFormLayout(display)
-
         self.theme = QComboBox(display)
         describe_control(self.theme, 'theme')
         self.theme.addItem("Dark (default)", "dark")
@@ -80,12 +128,12 @@ class OptionsDialog(QDialog):
             self.mode.addItem(mode.value, mode.value)
         self.mode.setCurrentIndex(max(0, self.mode.findData(self._settings["mode"])))
         form.addRow("Default mode:", self.mode)
-        layout.addWidget(display)
+        return display
 
+    def _build_scanning_group(self) -> QGroupBox:
         scanning = QGroupBox("Scanning", self)
         scan_form = QFormLayout(scanning)
-        self.charge_hardlinks = QCheckBox(
-            "Charge every hard link its full size", scanning)
+        self.charge_hardlinks = QCheckBox("Charge every hard link its full size", scanning)
         describe_control(self.charge_hardlinks, 'charge_hardlinks')
         self.charge_hardlinks.setChecked(bool(self._settings["charge_all_hardlinks"]))
         self.charge_hardlinks.setToolTip(
@@ -94,8 +142,7 @@ class OptionsDialog(QDialog):
             "exceed the space actually used.")
         scan_form.addRow(self.charge_hardlinks)
 
-        self.collect_owners = QCheckBox(
-            "Determine the owner of every file (slower)", scanning)
+        self.collect_owners = QCheckBox("Determine the owner of every file (slower)", scanning)
         describe_control(self.collect_owners, 'collect_owners')
         self.collect_owners.setChecked(bool(self._settings["collect_owners"]))
         self.collect_owners.setToolTip(
@@ -111,14 +158,13 @@ class OptionsDialog(QDialog):
 
         self.exclude_patterns = QLineEdit(scanning)
         describe_control(self.exclude_patterns, 'exclude_patterns')
-        self.exclude_patterns.setText(
-            ", ".join(self._settings.get("exclude_patterns") or ()))
+        self.exclude_patterns.setText(", ".join(self._settings.get("exclude_patterns") or ()))
         self.exclude_patterns.setPlaceholderText("node_modules, *.iso, *.tmp")
         self.exclude_patterns.setToolTip(
             "Applied to every scan and kept between sessions, unlike the "
             "Exclude menu on the Scan tab, which lasts one scan.")
         scan_form.addRow("Always exclude:", self.exclude_patterns)
-        layout.addWidget(scanning)
+        return scanning
 
         views = QGroupBox("Views", self)
         view_form = QFormLayout(views)

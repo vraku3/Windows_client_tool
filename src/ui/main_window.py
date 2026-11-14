@@ -243,11 +243,10 @@ class MainWindow(QMainWindow):
 
     def _create_admin_banner(self) -> QWidget:
         banner = QWidget()
-        banner.setStyleSheet("background-color: #805500; padding: 4px;")
+        banner.setObjectName("adminBanner")
         layout = QHBoxLayout(banner)
         layout.setContentsMargins(8, 4, 8, 4)
         label = QLabel("Some features require administrator privileges.")
-        label.setStyleSheet("color: white;")
         layout.addWidget(label)
         layout.addStretch()
         btn = QPushButton("Restart as Admin")

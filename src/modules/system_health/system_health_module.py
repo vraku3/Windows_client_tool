@@ -334,6 +334,7 @@ class SystemHealthModule(BaseModule):
         self._findings_worker = Worker(_run)
         self._findings_worker.signals.result.connect(_done)
         self._findings_worker.signals.error.connect(_err)
+        self._workers.append(self._findings_worker)
         self.app.thread_pool.start(self._findings_worker)
 
     def _current_finding(self):

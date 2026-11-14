@@ -353,3 +353,53 @@ def test_clear_wer_queue_and_precondition(tmp_path, monkeypatch, output):
     fix_actions.clear_wer_queue(cb)
     assert not report.exists()
     assert any("cleared" in l.lower() for l in lines)
+
+
+def test_restart_audio_service(monkeypatch, output):
+    lines, cb = output
+    stopped = []
+    started = []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, cb: stopped.append(name))
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, cb: started.append(name))
+
+    fix_actions.restart_audio_service(cb)
+    assert stopped == ["AudioEndpointBuilder", "Audiosrv"]
+    assert started == ["AudioEndpointBuilder", "Audiosrv"]
+    assert any("restarted" in l.lower() for l in lines)
+
+
+def test_clear_store_cache(monkeypatch, output):
+    lines, cb = output
+    ran = []
+    monkeypatch.setattr(fix_actions, "_run_cmd", lambda cmd, cb, tolerate_failure=False: ran.append(cmd) or 0)
+
+    fix_actions.clear_store_cache(cb)
+    assert ["wsreset.exe", "-i"] in ran
+    assert any("completed" in l.lower() for l in lines)
+
+
+def test_sync_system_clock(monkeypatch, output):
+    lines, cb = output
+    started = []
+    ran = []
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, cb: started.append(name))
+    monkeypatch.setattr(fix_actions, "_run_cmd", lambda cmd, cb, tolerate_failure=False: ran.append(cmd) or 0)
+
+    fix_actions.sync_system_clock(cb)
+    assert "w32time" in started
+    assert ["w32tm", "/resync", "/force"] in ran
+    assert any("synchronized successfully" in l.lower() for l in lines)
+
+
+def test_reset_crypto_bits(monkeypatch, output):
+    lines, cb = output
+    stopped = []
+    started = []
+    monkeypatch.setattr(fix_actions, "_stop_service", lambda name, cb: stopped.append(name))
+    monkeypatch.setattr(fix_actions, "_start_service", lambda name, cb: started.append(name))
+
+    fix_actions.reset_crypto_bits(cb)
+    assert "bits" in stopped and "cryptsvc" in stopped
+    assert "cryptsvc" in started and "bits" in started
+    assert any("restarted" in l.lower() for l in lines)
+

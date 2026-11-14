@@ -18,14 +18,15 @@ from PyQt6.QtWidgets import (
 
 from core.types import LogEntry
 from core.table_ui import center_header
+from core.semantic_colors import semantic
 
 logger = logging.getLogger(__name__)
 
 # Row colors by level
 LEVEL_COLORS = {
-    "Error": QColor("#6e1e1e"),
-    "Warning": QColor("#805500"),
-    "Critical": QColor("#8b0000"),
+    "Error": QColor(semantic("error")),
+    "Warning": QColor(semantic("warning")),
+    "Critical": QColor(semantic("error")),
 }
 
 #: Widths the first four columns start with, so a timestamp is never cut to

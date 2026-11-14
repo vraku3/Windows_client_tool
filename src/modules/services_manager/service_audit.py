@@ -65,6 +65,19 @@ def hijack_candidates(image_path: str) -> List[str]:
     return [" ".join(parts[:i]) + ".exe" for i in range(1, len(parts))]
 
 
+def quote_image_path(image_path: str) -> str:
+    """Quote the executable path in an unquoted ImagePath while preserving arguments."""
+    text = (image_path or "").strip()
+    if not is_unquoted_path(text):
+        return text
+    program = executable_of(text)
+    if not program:
+        return text
+    rest = text[len(program):].lstrip()
+    quoted = f'"{program}"'
+    return f"{quoted} {rest}" if rest else quoted
+
+
 def unquoted_services(services: List[Dict]) -> List[Dict]:
     return [s for s in services if is_unquoted_path(str(s.get("Path") or ""))]
 

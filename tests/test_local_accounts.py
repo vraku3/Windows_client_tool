@@ -57,6 +57,15 @@ def test_unreadable_administrators_group_is_unknown():
     assert [x.severity for x in f] == ["unknown"]
 
 
+def test_orphaned_sid_in_administrators_is_flagged(monkeypatch):
+    monkeypatch.setenv("COMPUTERNAME", "PC")
+    accounts = [mk("Administrator", 0x200, rid=500)]
+    orphaned_sid = "S-1-5-21-1234567890-1234567890-1234567890-1005"
+    snap = acc.Snapshot(accounts, {"Administrators": (["PC\\Administrator", orphaned_sid], "")})
+    f = acc.findings(snap, NOW)
+    assert any(x.severity == "warning" and orphaned_sid in x.message for x in f)
+
+
 class FakeNet:
     def NetUserEnum(self, *a):
         return [{"name": "u1", "flags": 0x200, "user_id": 1001}, {"name": "u2", "flags": 0x200, "user_id": 1002}], 0, 0

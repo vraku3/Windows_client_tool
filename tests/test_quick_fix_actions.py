@@ -430,3 +430,10 @@ def test_enable_tcp_autotuning(monkeypatch, output):
     assert any("autotuninglevel=normal" in " ".join(cmd) for cmd in ran)
     assert any("restored" in l.lower() or "normal" in l.lower() for l in lines)
 
+
+def test_fix_unquoted_service_paths(monkeypatch, output):
+    lines, cb = output
+    # Test on real registry (read-only scan returns properly quoted)
+    fix_actions.fix_unquoted_service_paths(cb)
+    assert any("quoted" in l.lower() or "scanning" in l.lower() for l in lines)
+

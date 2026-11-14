@@ -161,3 +161,11 @@ def test_real_machine_rpcss_dependents_are_not_blocked():
     start_types = sv.start_type_map(rows)
     assert start_types.get("rpcss", "").lower() != "disabled"
     assert a.blocked_dependencies(["RpcSs", "AppID"], start_types) == []
+
+
+def test_quote_image_path():
+    assert a.quote_image_path(r"C:\Program Files\App\svc.exe") == r'"C:\Program Files\App\svc.exe"'
+    assert a.quote_image_path(r"C:\Program Files\App\svc.exe -k run") == r'"C:\Program Files\App\svc.exe" -k run'
+    assert a.quote_image_path(r'"C:\Program Files\App\svc.exe" -k run') == r'"C:\Program Files\App\svc.exe" -k run'
+    assert a.quote_image_path(r"C:\Windows\System32\svchost.exe -k run") == r"C:\Windows\System32\svchost.exe -k run"
+    assert a.quote_image_path("") == ""

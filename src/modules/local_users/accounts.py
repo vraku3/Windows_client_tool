@@ -179,6 +179,13 @@ def findings(snap: Snapshot, now: Optional[float] = None) -> List[Finding]:
         extra = []
         computer = (os.environ.get("COMPUTERNAME") or "").lower()
         for m in admins_group[0]:
+            if m.startswith("S-1-"):
+                out.append(Finding(
+                    "warning", "Administrators",
+                    f"Orphaned/unresolved SID '{m}' has local administrative privileges. "
+                    "The associated account was deleted or cannot be resolved, but its group entry remains active."
+                ))
+                continue
             # Only THIS computer's accounts are local: DOMAIN\alice is not the
             # disabled local alice, and must not be hidden because of her.
             prefix, _sep, short = m.rpartition("\\")

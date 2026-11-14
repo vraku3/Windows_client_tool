@@ -676,6 +676,50 @@ def enable_tcp_autotuning(output_cb: Callable[[str], None]) -> None:
         output_cb(f"Error configuring TCP Auto-Tuning: {exc}")
 
 
+def fix_unquoted_service_paths(output_cb: Callable[[str], None]) -> None:
+    """Scan and quote any unquoted service ImagePath values in HKLM\\SYSTEM\\CurrentControlSet\\Services."""
+    import winreg
+    from modules.services_manager.service_audit import is_unquoted_path, quote_image_path
+    output_cb("Scanning services for unquoted executable paths...")
+    key_path = r"SYSTEM\CurrentControlSet\Services"
+    fixed = []
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_READ) as root:
+            idx = 0
+            while True:
+                try:
+                    svc_name = winreg.EnumKey(root, idx)
+                    idx += 1
+                except OSError:
+                    logger.debug("Enumerated all services under %s (total: %d)", key_path, idx)
+                    break
+                try:
+                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{key_path}\\{svc_name}", 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as sk:
+                        try:
+                            val, vtype = winreg.QueryValueEx(sk, "ImagePath")
+                        except FileNotFoundError:
+                            logger.debug("Service %s has no ImagePath", svc_name)
+                            continue
+                        if isinstance(val, str) and is_unquoted_path(val):
+                            new_val = quote_image_path(val)
+                            winreg.SetValueEx(sk, "ImagePath", 0, vtype, new_val)
+                            fixed.append(svc_name)
+                            output_cb(f"Quoted ImagePath for service '{svc_name}': {new_val}")
+                except PermissionError:
+                    logger.debug("Access denied opening service key %s for writing", svc_name)
+                except OSError as exc:
+                    logger.debug("Error checking service %s: %s", svc_name, exc)
+    except Exception as exc:
+        logger.debug("Error scanning services key: %s", exc)
+        output_cb(f"Error scanning services: {exc}")
+        return
+
+    if fixed:
+        output_cb(f"Successfully quoted ImagePath for {len(fixed)} service(s): {', '.join(fixed)}.")
+    else:
+        output_cb("All Windows service executable paths are already properly quoted. No changes needed.")
+
+
 def _print_queue_precondition() -> Optional[str]:
     """Check if spool folder exists and has queued print files."""
     from core.windows_utils import system_root
@@ -733,6 +777,10 @@ ALL_ACTIONS: List[FixAction] = [
               "Restart Volume Shadow Copy and provider services to unblock stuck writers",
               "System Repairs", reboot_required=False, fn=reset_vss_writers,
               confirm_text="This will restart the Volume Shadow Copy and Shadow Provider services to clear any stuck writers. Continue?"),
+    FixAction("quote_service_paths", "Fix Unquoted Service Paths",
+              "Enclose unquoted service executable paths in quotes to eliminate privilege escalation risks",
+              "System Repairs", reboot_required=False, fn=fix_unquoted_service_paths,
+              confirm_text="This will scan all installed Windows services and enclose any unquoted paths containing spaces in double quotes. Continue?"),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,

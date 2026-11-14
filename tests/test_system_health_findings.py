@@ -610,3 +610,33 @@ def test_check_trim_status(monkeypatch):
     assert f.id == "ssd_trim_disabled"
     assert "NTFS" in f.title
     assert f.severity == "warning"
+
+
+def test_check_nvme_wear(monkeypatch):
+    from modules.system_health.findings import check_nvme_wear
+    from modules.disk_health import physical_disks as pd
+
+    class MockScan:
+        available = True
+        disks = [
+            pd.PhysicalDiskInfo(
+                device_id="0", friendly_name="Samsung SSD 990 PRO 2TB", serial="S123",
+                media_type="SSD", bus_type="NVMe", health_status="Healthy",
+                operational_status="OK", size_gb=1863.0, pool_name=None,
+                wear_pct=92, read_errors_uncorrected=0,
+            ),
+            pd.PhysicalDiskInfo(
+                device_id="1", friendly_name="ADATA LEGEND 960", serial="A456",
+                media_type="SSD", bus_type="NVMe", health_status="Healthy",
+                operational_status="OK", size_gb=1863.0, pool_name=None,
+                wear_pct=15, read_errors_uncorrected=3,
+            ),
+        ]
+
+    monkeypatch.setattr(pd, "list_physical_disks", lambda: MockScan())
+    findings = check_nvme_wear()
+    assert len(findings) == 2
+    assert "Critical SSD wear" in findings[0].title
+    assert "92%" in findings[0].title
+    assert "Uncorrected read errors" in findings[1].title
+    assert findings[0].jump == "Disk Health"

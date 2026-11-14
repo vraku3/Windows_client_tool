@@ -25,8 +25,12 @@ def test_parses_a_pooled_disk_and_drops_primordial():
         "MediaType": "SSD", "BusType": "NVMe", "HealthStatus": "Healthy",
         "OperationalStatus": "OK", "SizeBytes": str(4_000_000_000_000),
         "Pools": "Primordial|Data Pool",
+        "Wear": "12", "Temperature": "45", "ReadErrorsUncorrected": "0",
     })
     assert out.pool_name == "Data Pool"
+    assert out.wear_pct == 12
+    assert out.temperature_c == 45
+    assert out.read_errors_uncorrected == 0
 
 
 def test_a_disk_only_in_the_primordial_pool_is_not_pooled():

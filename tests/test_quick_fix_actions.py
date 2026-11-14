@@ -23,7 +23,7 @@ def ran(monkeypatch):
     """Capture every command, and report success, without running any."""
     calls = []
 
-    def fake_run_cmd(cmd, output_cb, input_bytes=None):
+    def fake_run_cmd(cmd, output_cb, input_bytes=None, tolerate_failure=False):
         calls.append(list(cmd))
         output_cb(f"[stub] {' '.join(cmd)}")
         return 0
@@ -436,4 +436,14 @@ def test_fix_unquoted_service_paths(monkeypatch, output):
     # Test on real registry (read-only scan returns properly quoted)
     fix_actions.fix_unquoted_service_paths(cb)
     assert any("quoted" in l.lower() or "scanning" in l.lower() for l in lines)
+
+
+def test_flush_and_register_dns(ran, output):
+    lines, cb = output
+    fix_actions.flush_and_register_dns(cb)
+    assert ["ipconfig", "/flushdns"] in ran
+    assert ["nbtstat", "-R"] in ran
+    assert ["nbtstat", "-RR"] in ran
+    assert ["ipconfig", "/registerdns"] in ran
+    assert any("refreshed" in l.lower() for l in lines)
 

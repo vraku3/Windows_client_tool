@@ -79,6 +79,14 @@ def test_merge_driverless_devices_tolerates_empty_or_malformed_input():
     assert dr._merge_driverless_devices(existing, "{not valid json") == existing
 
 
+def test_driverless_devices_with_same_name_but_different_device_ids_are_both_kept():
+    raw = '[{"Name":"PCI Device","DeviceID":"PCI\\\\VEN_1022&DEV_1483","ConfigManagerErrorCode":28},{"Name":"PCI Device","DeviceID":"PCI\\\\VEN_1022&DEV_1484","ConfigManagerErrorCode":28}]'
+    merged = dr._merge_driverless_devices([], raw)
+    assert len(merged) == 2
+    assert merged[0].device_id == "PCI\\VEN_1022&DEV_1483"
+    assert merged[1].device_id == "PCI\\VEN_1022&DEV_1484"
+
+
 def test_old_threshold_days_is_configurable():
     recent = (dr.datetime.datetime.now() - dr.datetime.timedelta(days=10)).strftime("%Y%m%d")
     old_by_default_only = (dr.datetime.datetime.now() - dr.datetime.timedelta(days=100)).strftime("%Y%m%d")

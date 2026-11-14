@@ -209,6 +209,19 @@ def flush_dns(output_cb: Callable[[str], None]) -> None:
     _run_cmd(["ipconfig", "/flushdns"], output_cb)
 
 
+def flush_and_register_dns(output_cb: Callable[[str], None]) -> None:
+    """Flush DNS cache, purge NetBIOS names, and trigger dynamic DNS registration."""
+    output_cb("Flushing DNS resolver cache...")
+    _run_cmd(["ipconfig", "/flushdns"], output_cb)
+    output_cb("Purging and reloading remote NetBIOS name cache...")
+    _run_cmd(["nbtstat", "-R"], output_cb, tolerate_failure=True)
+    output_cb("Releasing and refreshing NetBIOS name registrations...")
+    _run_cmd(["nbtstat", "-RR"], output_cb, tolerate_failure=True)
+    output_cb("Triggering dynamic DNS registration (ipconfig /registerdns)...")
+    _run_cmd(["ipconfig", "/registerdns"], output_cb, tolerate_failure=True)
+    output_cb("DNS and NetBIOS resolution stack refreshed.")
+
+
 def reset_winsock(output_cb: Callable[[str], None]) -> None:
     _run_cmd(["netsh", "winsock", "reset"], output_cb)
     output_cb("Reboot required to complete.")
@@ -802,6 +815,9 @@ ALL_ACTIONS: List[FixAction] = [
     # Network
     FixAction("flush_dns", "Flush DNS", "Clear the DNS resolver cache",
               "Network", fn=flush_dns),
+    FixAction("flush_register_dns", "Flush & Register DNS/NetBIOS",
+              "Flush DNS cache, purge NetBIOS names, and trigger dynamic DNS registration",
+              "Network", fn=flush_and_register_dns),
     FixAction("winsock", "Reset Winsock", "Reset network socket catalog (reboot required)",
               "Network", reboot_required=True, fn=reset_winsock,
               confirm_text="This will reset the Winsock network socket catalog. "

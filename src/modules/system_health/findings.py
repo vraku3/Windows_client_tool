@@ -840,6 +840,43 @@ def check_trim_status() -> Optional[Finding]:
     return None
 
 
+def check_nvme_wear() -> List[Finding]:
+    """Check physical SSD and NVMe drives for critical wear (>=90%) or uncorrected errors."""
+    try:
+        from modules.disk_health import physical_disks as pd
+        scan = pd.list_physical_disks()
+        if not scan.available or not scan.disks:
+            return []
+        out: List[Finding] = []
+        for disk in scan.disks:
+            name = disk.friendly_name or f"Disk {disk.device_id}"
+            if disk.wear_pct is not None and disk.wear_pct >= 90:
+                out.append(Finding(
+                    id=f"nvme_wear_{disk.device_id}",
+                    title=f"Critical SSD wear ({disk.wear_pct}%) on {name}",
+                    detail=(
+                        f"{name} has reached {disk.wear_pct}% of its rated flash endurance. "
+                        "Drive replacement is recommended soon to prevent unexpected data loss."
+                    ),
+                    severity="warning",
+                    evidence=f"PhysicalDisk {disk.device_id}: Wear={disk.wear_pct}% Serial={disk.serial}",
+                    jump="Disk Health",
+                ))
+            if disk.read_errors_uncorrected is not None and disk.read_errors_uncorrected > 0:
+                out.append(Finding(
+                    id=f"nvme_read_errors_{disk.device_id}",
+                    title=f"Uncorrected read errors on {name}",
+                    detail=f"{name} reported {disk.read_errors_uncorrected} uncorrected read errors at the storage controller level.",
+                    severity="warning",
+                    evidence=f"PhysicalDisk {disk.device_id}: ReadErrorsUncorrected={disk.read_errors_uncorrected}",
+                    jump="Disk Health",
+                ))
+        return out
+    except Exception as exc:
+        logger.debug("check_nvme_wear error: %s", exc)
+        return []
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
@@ -858,6 +895,7 @@ def all_findings() -> List[Finding]:
     trim_finding = check_trim_status()
     if trim_finding:
         findings.append(trim_finding)
+    findings.extend(check_nvme_wear())
     uptime_finding = check_fast_startup_uptime()
     if uptime_finding:
         findings.append(uptime_finding)

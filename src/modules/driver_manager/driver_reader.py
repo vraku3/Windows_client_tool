@@ -268,11 +268,15 @@ def _merge_driverless_devices(drivers: List[DriverInfo],
     extra = []
     for dev in raw_devices:
         dev_id = dev.get("DeviceID") or ""
-        if dev_id and dev_id in have_ids:
-            continue
         name = dev.get("Name") or dev.get("Description") or dev_id or "Unknown Device"
-        if not name or name in have_names:
-            continue
+        if dev_id:
+            if dev_id in have_ids:
+                continue
+            have_ids.add(dev_id)
+        else:
+            if not name or name in have_names:
+                continue
+            have_names.add(name)
         code = int(dev.get("ConfigManagerErrorCode") or 0)
         hw_id_raw = dev.get("HardWareID") or ""
         hw_id = hw_id_raw.split(";")[0] if hw_id_raw else ""

@@ -48,6 +48,9 @@ class PhysicalDiskInfo:
     operational_status: str
     size_gb: float
     pool_name: Optional[str]   # non-Primordial pool this disk is a real member of, or None
+    wear_pct: Optional[int] = None
+    temperature_c: Optional[int] = None
+    read_errors_uncorrected: Optional[int] = None
 
 
 @dataclass
@@ -81,6 +84,16 @@ Get-PhysicalDisk | ForEach-Object {
         Write-Output "Pools=$([string]::Join('|', $pools))"
     } catch {
         Write-Output "Pools="
+    }
+    try {
+        $r = $d | Get-StorageReliabilityCounter -ErrorAction Stop
+        Write-Output "Wear=$($r.Wear)"
+        Write-Output "Temperature=$($r.Temperature)"
+        Write-Output "ReadErrorsUncorrected=$($r.ReadErrorsUncorrected)"
+    } catch {
+        Write-Output "Wear="
+        Write-Output "Temperature="
+        Write-Output "ReadErrorsUncorrected="
     }
     Write-Output "PDISK_END"
 }
@@ -143,7 +156,17 @@ def _build_physical_disk(d: dict) -> PhysicalDiskInfo:
         operational_status=d.get("OperationalStatus", "Unknown"),
         size_gb=_bytes_to_gb(d.get("SizeBytes", "0")),
         pool_name=real_pools[0] if real_pools else None,
+        wear_pct=_to_optional_int(d.get("Wear")),
+        temperature_c=_to_optional_int(d.get("Temperature")),
+        read_errors_uncorrected=_to_optional_int(d.get("ReadErrorsUncorrected")),
     )
+
+
+def _to_optional_int(v: Optional[str]) -> Optional[int]:
+    try:
+        return int(v) if v is not None and v != "" else None
+    except (ValueError, TypeError):
+        return None
 
 
 def _bytes_to_gb(v: str) -> float:

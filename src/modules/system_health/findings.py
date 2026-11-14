@@ -3,12 +3,13 @@ here is safe to call unelevated and safe to call from --unattended
 --stages health.
 """
 from core.system_paths import powershell_exe
+from datetime import datetime
 import logging
 import os
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from core.windows_utils import system_root
 
@@ -1002,6 +1003,171 @@ def check_pagefile_config() -> Optional[Finding]:
     return None
 
 
+def check_crash_dump_files(
+    min_warning_mb: float = 200.0,
+    memory_dmp_path: Optional[str] = None,
+    minidump_dir: Optional[str] = None,
+) -> List[Finding]:
+    """Check for previous crash dumps (MEMORY.DMP or Minidumps) on disk.
+
+    A kernel memory dump can take several gigabytes of SSD space and indicates
+    an unaddressed BSOD/system failure. Minidumps indicate previous bugchecks.
+    """
+    findings: List[Finding] = []
+
+    # 1. MEMORY.DMP
+    mem_path = memory_dmp_path or os.path.join(system_root(), "MEMORY.DMP")
+    try:
+        if os.path.isfile(mem_path):
+            size = os.path.getsize(mem_path)
+            mtime = os.path.getmtime(mem_path)
+            mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
+            if size >= 1024 * 1024 * 1024:
+                size_str = f"{size / (1024 ** 3):.2f} GB"
+            else:
+                size_str = f"{size / (1024 ** 2):.1f} MB"
+
+            size_mb = size / (1024 * 1024)
+            is_warn = size_mb >= min_warning_mb
+            findings.append(Finding(
+                id="memory_dump_file_present",
+                title=f"Kernel crash dump file present ({size_str} in MEMORY.DMP)",
+                detail=(
+                    f"A previous system crash (BSOD) saved a memory dump to '{mem_path}' "
+                    f"({size_str}) on {mtime_str}. Large crash dumps consume substantial system drive space. "
+                    "Analyze in Crash Dumps or clean up once resolved."
+                ),
+                severity="warning" if is_warn else "info",
+                evidence=f"Path: {mem_path}\nSize: {size:,} bytes ({size_str})\nDate: {mtime_str}",
+                jump="Diagnose",
+            ))
+    except OSError as exc:
+        logger.debug("MEMORY.DMP check failed: %s", exc)
+
+    # 2. Minidump directory
+    mini_dir = minidump_dir or os.path.join(system_root(), "Minidump")
+    try:
+        if os.path.isdir(mini_dir):
+            entries = [f for f in os.listdir(mini_dir) if f.lower().endswith(".dmp")]
+            if entries:
+                total_bytes = 0
+                newest_mtime = 0.0
+                for fname in entries:
+                    fpath = os.path.join(mini_dir, fname)
+                    try:
+                        fstat = os.stat(fpath)
+                        total_bytes += fstat.st_size
+                        if fstat.st_mtime > newest_mtime:
+                            newest_mtime = fstat.st_mtime
+                    except OSError as exc:
+                        logger.debug("Minidump file stat failed for %s: %s", fname, exc)
+                        continue
+
+                total_mb = total_bytes / (1024 * 1024)
+                if total_bytes >= 1024 * 1024 * 1024:
+                    total_str = f"{total_bytes / (1024 ** 3):.2f} GB"
+                else:
+                    total_str = f"{total_mb:.1f} MB"
+
+                newest_str = (
+                    datetime.fromtimestamp(newest_mtime).strftime("%Y-%m-%d %H:%M")
+                    if newest_mtime else "unknown"
+                )
+                is_warn = len(entries) >= 3 or total_mb >= 50.0
+                findings.append(Finding(
+                    id="minidump_files_present",
+                    title=f"{len(entries)} kernel minidump file(s) present ({total_str})",
+                    detail=(
+                        f"{len(entries)} crash minidump(s) from previous Blue Screen (BSOD) bugchecks "
+                        f"were found in '{mini_dir}'. Analyze them in Crash Dumps to identify faulting drivers."
+                    ),
+                    severity="warning" if is_warn else "info",
+                    evidence=(
+                        f"Directory: {mini_dir}\nFiles: {len(entries)}\n"
+                        f"Total size: {total_bytes:,} bytes ({total_str})\nMost recent: {newest_str}"
+                    ),
+                    jump="Diagnose",
+                ))
+    except OSError as exc:
+        logger.debug("Minidump dir check failed: %s", exc)
+
+    return findings
+
+
+_CRITICAL_HOST_PATTERN = re.compile(
+    r"(^|\.)(microsoft|windowsupdate|msftconnecttest|live|office|bing)\.com$", re.IGNORECASE
+)
+
+
+def check_hosts_file(hosts_path: Optional[str] = None) -> Optional[Finding]:
+    """Check the Windows hosts file for domain overrides or redirections.
+
+    Detects if system domains (Microsoft, Windows Update) or other destinations
+    are intercepted in %SystemRoot%\\System32\\drivers\\etc\\hosts.
+    """
+    path = hosts_path or os.path.join(system_root(), "System32", "drivers", "etc", "hosts")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            raw_lines = f.readlines()
+    except OSError as exc:
+        logger.debug("hosts file unreadable: %s", exc)
+        return None
+
+    mappings: List[Tuple[str, str]] = []
+    intercepted_critical: List[str] = []
+
+    for raw in raw_lines:
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) >= 2:
+            ip = parts[0]
+            for host in parts[1:]:
+                host_clean = host.strip().lower()
+                if not host_clean or host_clean in ("localhost", "localhost.localdomain", "broadcasthost"):
+                    continue
+                mappings.append((ip, host_clean))
+                if _CRITICAL_HOST_PATTERN.search(host_clean):
+                    intercepted_critical.append(f"{ip} -> {host_clean}")
+
+    if intercepted_critical:
+        sample = "\n".join(intercepted_critical[:8])
+        return Finding(
+            id="hosts_file_critical_redirect",
+            title=f"Hosts file redirects {len(intercepted_critical)} Microsoft/Windows Update domain(s)",
+            detail=(
+                "The Windows hosts file contains active redirections for critical Microsoft or "
+                "Windows Update domains. This can block Windows updates, activation, or telemetry, "
+                "or indicate a malicious DNS hijack."
+            ),
+            severity="warning",
+            evidence=f"File: {path}\nActive redirects:\n{sample}",
+            jump="Network Diagnostics",
+        )
+
+    if mappings:
+        count = len(mappings)
+        sample = "\n".join(f"{ip} -> {h}" for ip, h in mappings[:8])
+        if count > 8:
+            sample += f"\n... and {count - 8} more"
+        return Finding(
+            id="hosts_file_custom_entries",
+            title=f"Hosts file contains {count} custom domain mapping(s)",
+            detail=(
+                f"The Windows hosts file has {count} active host-to-IP overrides. "
+                "Ensure these mappings are expected (e.g., local dev or ad-blocking) and not unwanted redirects."
+            ),
+            severity="info",
+            evidence=f"File: {path}\nEntries:\n{sample}",
+            jump="Network Diagnostics",
+        )
+
+    return None
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
@@ -1020,6 +1186,10 @@ def all_findings() -> List[Finding]:
     findings.extend(check_orphaned_services())
     findings.extend(check_hardware_errors())
     findings.extend(check_crash_control())
+    findings.extend(check_crash_dump_files())
+    hosts_finding = check_hosts_file()
+    if hosts_finding:
+        findings.append(hosts_finding)
     findings.extend(check_print_queue())
     findings.extend(check_vss_services())
     findings.extend(check_vss_writers())

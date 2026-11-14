@@ -714,3 +714,93 @@ def test_check_pagefile_config_disabled(monkeypatch):
     assert finding.id == "pagefile_disabled"
     assert finding.severity == "warning"
     assert finding.jump == "Tweaks"
+
+
+def test_check_crash_dump_files_absent(tmp_path):
+    from modules.system_health.findings import check_crash_dump_files
+    mem_p = str(tmp_path / "MEMORY.DMP")
+    mini_p = str(tmp_path / "Minidump")
+    assert check_crash_dump_files(memory_dmp_path=mem_p, minidump_dir=mini_p) == []
+
+
+def test_check_crash_dump_files_memory_dmp(tmp_path):
+    from modules.system_health.findings import check_crash_dump_files
+    mem_file = tmp_path / "MEMORY.DMP"
+    mem_file.write_bytes(b"x" * 1024)
+    # Warning threshold 0.0001 MB so 1KB triggers warning
+    findings = check_crash_dump_files(min_warning_mb=0.0001, memory_dmp_path=str(mem_file))
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.id == "memory_dump_file_present"
+    assert f.severity == "warning"
+    assert f.jump == "Diagnose"
+    assert "MEMORY.DMP" in f.title
+
+    # Higher threshold triggers info
+    f_info = check_crash_dump_files(min_warning_mb=500.0, memory_dmp_path=str(mem_file))[0]
+    assert f_info.severity == "info"
+
+
+def test_check_crash_dump_files_minidumps(tmp_path):
+    from modules.system_health.findings import check_crash_dump_files
+    mini_dir = tmp_path / "Minidump"
+    mini_dir.mkdir()
+    for i in range(4):
+        (mini_dir / f"mini_{i}.dmp").write_bytes(b"DUMP" * 256)
+    (mini_dir / "not_a_dump.txt").write_text("ignore me")
+
+    findings = check_crash_dump_files(minidump_dir=str(mini_dir))
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.id == "minidump_files_present"
+    assert f.severity == "warning"
+    assert "4 kernel minidump" in f.title
+    assert f.jump == "Diagnose"
+
+
+def test_check_hosts_file_clean(tmp_path):
+    from modules.system_health.findings import check_hosts_file
+    hosts = tmp_path / "hosts"
+    hosts.write_text(
+        "# Sample hosts file\n"
+        "# 127.0.0.1 localhost\n"
+        "127.0.0.1 localhost\n"
+        "::1 localhost\n",
+        encoding="utf-8"
+    )
+    assert check_hosts_file(str(hosts)) is None
+
+
+def test_check_hosts_file_custom_entries(tmp_path):
+    from modules.system_health.findings import check_hosts_file
+    hosts = tmp_path / "hosts"
+    hosts.write_text(
+        "# Dev entries\n"
+        "192.168.1.50 myserver.lan # local dev\n"
+        "10.0.0.2 database.local\n",
+        encoding="utf-8"
+    )
+    finding = check_hosts_file(str(hosts))
+    assert finding is not None
+    assert finding.id == "hosts_file_custom_entries"
+    assert finding.severity == "info"
+    assert finding.jump == "Network Diagnostics"
+    assert "2 custom domain mapping(s)" in finding.title
+    assert "myserver.lan" in finding.evidence
+
+
+def test_check_hosts_file_critical_redirect(tmp_path):
+    from modules.system_health.findings import check_hosts_file
+    hosts = tmp_path / "hosts"
+    hosts.write_text(
+        "# Block updates\n"
+        "0.0.0.0 windowsupdate.microsoft.com\n"
+        "127.0.0.1 login.live.com\n",
+        encoding="utf-8"
+    )
+    finding = check_hosts_file(str(hosts))
+    assert finding is not None
+    assert finding.id == "hosts_file_critical_redirect"
+    assert finding.severity == "warning"
+    assert finding.jump == "Network Diagnostics"
+    assert "windowsupdate.microsoft.com" in finding.evidence

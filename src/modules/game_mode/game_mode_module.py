@@ -743,6 +743,12 @@ class GameModeModule(BaseModule):
         optimise_busy = self._optimise_tab is not None and self._optimise_tab.busy
         self._on_btn.setEnabled(not on and not self._busy and not optimise_busy)
         self._off_btn.setEnabled(on and not self._busy)
+        if on:
+            set_role(self._on_btn, "")
+            set_role(self._off_btn, "accentButton")
+        else:
+            set_role(self._on_btn, "accentButton")
+            set_role(self._off_btn, "")
         if hasattr(self, "_force_off_btn") and widget_is_valid(self._force_off_btn):
             self._force_off_btn.setEnabled(on)
             self._force_off_btn.setVisible(on)
@@ -838,8 +844,10 @@ class GameModeModule(BaseModule):
             self._preflight_dialog.reject()
 
     def _turn_on(self) -> None:
+        logger.info("game mode: _turn_on triggered (busy=%s, active=%s)", self._busy, self._journal.active)
         if (self._busy or self._journal.active
                 or (self._optimise_tab is not None and self._optimise_tab.busy)):
+            logger.warning("game mode: _turn_on aborted because busy or already active")
             return
         reasons = []
         try:
@@ -979,9 +987,13 @@ class GameModeModule(BaseModule):
         self._off_pending = False
 
     def _turn_off(self, force: bool = False) -> None:
+        logger.info("game mode: _turn_off triggered (force=%s, active=%s, busy=%s, enforce_worker=%s)",
+                    force, self._journal.active, self._busy, self._enforce_worker is not None)
         if not self._journal.active and not force:
+            logger.warning("game mode: _turn_off aborted because journal is not active")
             return
         if self._busy and not force:
+            logger.warning("game mode: _turn_off aborted because game mode is busy")
             return
         self._busy = True
         self._show_state()

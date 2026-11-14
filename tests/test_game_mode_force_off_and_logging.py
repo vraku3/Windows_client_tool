@@ -84,3 +84,24 @@ def test_turn_off_force_clears_failed_entries_and_finishes_journal(tmp_path):
     report = session.turn_off(system, journal, log, settle=0.1, force=True)
     assert journal.active is False
     assert any("Forced OFF" in r["text"] for r in report)
+
+
+def test_game_mode_button_roles_toggle_with_state(qapp, tmp_path):
+    m = GameModeModule()
+    m._journal = Journal(folder=str(tmp_path))
+    m.create_widget()
+
+    # Initial state: Game Mode is OFF
+    assert m._on_btn.objectName() == "accentButton"
+    assert m._on_btn.isEnabled() is True
+    assert m._off_btn.objectName() == ""
+    assert m._off_btn.isEnabled() is False
+
+    # When active: Game Mode is ON
+    m._journal.begin()
+    m._show_state()
+    assert m._on_btn.objectName() == ""
+    assert m._on_btn.isEnabled() is False
+    assert m._off_btn.objectName() == "accentButton"
+    assert m._off_btn.isEnabled() is True
+

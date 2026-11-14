@@ -395,6 +395,12 @@ QPushButton#accentButton:hover {
     background-color: #0a5a8f;
 }
 
+QPushButton#accentButton:disabled {
+    background-color: #2d2d30;
+    color: #666666;
+    border: 1px solid #3c3c3c;
+}
+
 QLabel#infoNote {
     background-color: #252526;
     color: #858585;

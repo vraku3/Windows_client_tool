@@ -678,3 +678,39 @@ def test_check_winre_status(tmp_path):
     f_mis = check_winre_status(str(missing_file))
     assert f_mis is not None
     assert f_mis.id == "winre_missing"
+
+
+def test_check_pagefile_config_real_machine():
+    from modules.system_health.findings import check_pagefile_config
+    # On this healthy real machine, pagefile is configured
+    assert check_pagefile_config() is None
+
+
+def test_check_pagefile_config_disabled(monkeypatch):
+    import winreg
+    from modules.system_health.findings import check_pagefile_config
+
+    class FakeKey:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    def fake_open(key, subkey, reserved, access):
+        return FakeKey()
+
+    def fake_query(key, val_name):
+        if val_name == "PagingFiles":
+            return ([], winreg.REG_MULTI_SZ)
+        if val_name == "ExistingPageFiles":
+            raise FileNotFoundError("ExistingPageFiles not found")
+        raise FileNotFoundError(val_name)
+
+    monkeypatch.setattr(winreg, "OpenKey", fake_open)
+    monkeypatch.setattr(winreg, "QueryValueEx", fake_query)
+
+    finding = check_pagefile_config()
+    assert finding is not None
+    assert finding.id == "pagefile_disabled"
+    assert finding.severity == "warning"
+    assert finding.jump == "Tweaks"

@@ -102,3 +102,12 @@ def test_real_machine_scan_is_plausible():
     recent = rs.scan("HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon",
                      modified_since=datetime.datetime(2000, 1, 1))
     assert recent.hits and recent.hits[0].last_write.year >= 2000
+
+
+def test_bookmarks_structure():
+    assert "Run (HKLM)" in rs.BOOKMARKS
+    assert "StartupApproved (HKCU)" in rs.BOOKMARKS
+    assert "Network Interfaces (TCP/IP)" in rs.BOOKMARKS
+    assert "Windows Update Policy" in rs.BOOKMARKS
+    for label, path in rs.BOOKMARKS.items():
+        assert path.startswith("HKEY_")

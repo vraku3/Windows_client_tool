@@ -761,6 +761,34 @@ def enable_winre(output_cb: Callable[[str], None]) -> None:
     _run_cmd(["reagentc", "/info"], output_cb, tolerate_failure=True)
 
 
+def enable_task_history(output_cb: Callable[[str], None]) -> None:
+    """Enable Task Scheduler operational history logging via wevtutil."""
+    output_cb("Enabling Task Scheduler operational history logging...")
+    rc = _run_cmd(["wevtutil", "sl", "Microsoft-Windows-TaskScheduler/Operational", "/e:true"], output_cb)
+    if rc == 0:
+        output_cb("Task Scheduler history logging enabled successfully.")
+    else:
+        output_cb("Failed to enable Task Scheduler history logging.")
+
+
+def _task_history_precondition() -> Optional[str]:
+    """Check if Task Scheduler operational logging is already enabled."""
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT\Channels\Microsoft-Windows-TaskScheduler/Operational",
+            0,
+            winreg.KEY_READ,
+        ) as k:
+            enabled, _ = winreg.QueryValueEx(k, "Enabled")
+            if enabled == 1:
+                return "Task Scheduler history logging is already enabled"
+    except OSError as exc:
+        logger.debug("Could not read TaskScheduler channel Enabled flag: %s", exc)
+    return None
+
+
 def _print_queue_precondition() -> Optional[str]:
     """Check if spool folder exists and has queued print files."""
     from core.windows_utils import system_root
@@ -827,6 +855,12 @@ ALL_ACTIONS: List[FixAction] = [
               "System Repairs", reboot_required=False, fn=enable_winre,
               confirm_text="This will enable the Windows Recovery Environment (WinRE) on this PC so that "
                            "automatic startup repair, diagnostic recovery, and servicing updates can function. Continue?"),
+    FixAction("enable_task_history", "Enable Task History",
+              "Enable detailed operational history logging for all Scheduled Tasks",
+              "System Repairs", reboot_required=False, fn=enable_task_history,
+              precondition=_task_history_precondition,
+              confirm_text="This will enable the Microsoft-Windows-TaskScheduler/Operational log channel "
+                           "so that task runs, failures, and return codes are permanently recorded. Continue?"),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,

@@ -947,6 +947,61 @@ def check_winre_status(reagent_path: Optional[str] = None) -> Optional[Finding]:
     return None
 
 
+def check_pagefile_config() -> Optional[Finding]:
+    """Audit whether a Windows paging file (virtual memory) is configured.
+
+    If paging is disabled, Windows cannot write crash dumps on BSOD, and
+    exhaustion of physical RAM triggers immediate process termination.
+    Pure registry read from HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management.
+    """
+    import winreg
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management",
+            0,
+            winreg.KEY_READ,
+        ) as key:
+            try:
+                paging_files, _ = winreg.QueryValueEx(key, "PagingFiles")
+            except FileNotFoundError:
+                paging_files = None
+            try:
+                existing, _ = winreg.QueryValueEx(key, "ExistingPageFiles")
+            except FileNotFoundError:
+                existing = None
+    except OSError as exc:
+        logger.debug("could not read Memory Management registry: %s", exc)
+        return None
+
+    configured = []
+    if isinstance(paging_files, list):
+        configured = [p for p in paging_files if p and p.strip()]
+    elif isinstance(paging_files, str) and paging_files.strip():
+        configured = [paging_files.strip()]
+
+    existing_files = []
+    if isinstance(existing, list):
+        existing_files = [p for p in existing if p and p.strip()]
+    elif isinstance(existing, str) and existing.strip():
+        existing_files = [existing.strip()]
+
+    if not configured and not existing_files:
+        return Finding(
+            id="pagefile_disabled",
+            title="Paging file (virtual memory) is disabled",
+            detail=(
+                "No paging file is configured or active on the system. Running without a "
+                "paging file prevents Windows from writing memory crash dumps (BSOD dumps) "
+                "and causes applications to crash immediately if physical RAM is exhausted."
+            ),
+            severity="warning",
+            evidence="Memory Management: PagingFiles is empty or absent",
+            jump="Tweaks",
+        )
+    return None
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
@@ -958,6 +1013,9 @@ def all_findings() -> List[Finding]:
     winre_finding = check_winre_status()
     if winre_finding:
         findings.append(winre_finding)
+    pagefile_finding = check_pagefile_config()
+    if pagefile_finding:
+        findings.append(pagefile_finding)
     findings.extend(check_orphaned_scheduled_tasks())
     findings.extend(check_orphaned_services())
     findings.extend(check_hardware_errors())

@@ -469,3 +469,19 @@ def test_enable_winre(ran, output):
     assert ["reagentc", "/info"] in ran
     assert any("enabling" in l.lower() for l in lines)
 
+
+def test_enable_task_history(ran, output):
+    lines, cb = output
+    fix_actions.enable_task_history(cb)
+    assert ["wevtutil", "sl", "Microsoft-Windows-TaskScheduler/Operational", "/e:true"] in ran
+    assert any("enabling" in l.lower() for l in lines)
+
+
+def test_task_history_action_registered():
+    by_key = {a.key: a for a in fix_actions.ALL_ACTIONS}
+    assert "enable_task_history" in by_key
+    action = by_key["enable_task_history"]
+    assert action.category == "System Repairs"
+    assert action.fn is fix_actions.enable_task_history
+    assert action.precondition is fix_actions._task_history_precondition
+

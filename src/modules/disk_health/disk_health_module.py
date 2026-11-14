@@ -109,6 +109,13 @@ def detail_text(d: dr.PhysicalDiskInfo, elevated: bool) -> str:
         f"Type: {d.media or '?'} over {d.bus or '?'}    Size: {d.size_text}",
         f"Power-on time: {dr.power_on_text(d.power_on_hours)}",
     ]
+    if d.wear_percent is not None:
+        remaining = 100 - d.wear_percent if d.wear_percent <= 100 else 0
+        lines.append(f"Flash endurance: {d.wear_percent}% used ({remaining}% remaining)")
+    if d.read_errors_uncorrected is not None or d.write_errors_uncorrected is not None:
+        r_err = d.read_errors_uncorrected if d.read_errors_uncorrected is not None else "n/a"
+        w_err = d.write_errors_uncorrected if d.write_errors_uncorrected is not None else "n/a"
+        lines.append(f"Uncorrected controller errors: {r_err} read, {w_err} write")
     if d.temperature and not d.is_virtual:
         warn, crit = dr.temperature_limits(d)
         lines.append(f"Temperature: {d.temperature} C (warns at {warn} C, critical {crit} C)")

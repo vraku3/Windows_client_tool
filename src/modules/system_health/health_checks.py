@@ -142,13 +142,13 @@ def evaluate_time_sync(rc: Optional[int], text: str, now: Optional[datetime] = N
     now = now or datetime.now()
     lowered = text.lower()
     if rc is None:
-        return [_unknown("time_sync", "time synchronisation", text, jump="Services")]
+        return [_unknown("time_sync", "time synchronisation", text, jump="Quick Fix")]
     if rc != 0 or "service has not been started" in lowered or "0x80070426" in lowered:
         return [Finding(
             id="time_sync", title="The Windows Time service is not answering",
             detail="Clock drift breaks Kerberos, TLS and log correlation. Start the Windows Time "
                    "service (W32Time), then run w32tm /resync.",
-            severity="warning", evidence=text[:300], jump="Services")]
+            severity="warning", evidence=text[:300], jump="Quick Fix")]
     fields = parse_w32tm_status(text)
     source = fields.get("Source", "")
     last = fields.get("Last Successful Sync Time", "")
@@ -170,7 +170,7 @@ def evaluate_time_sync(rc: Optional[int], text: str, now: Optional[datetime] = N
         detail="Clock drift breaks Kerberos, TLS and log correlation. Check the W32Time service "
                "and the configured peers (w32tm /query /peers), then w32tm /resync.",
         severity="warning", evidence="\n".join(problems + ["", *text.splitlines()[:8]]),
-        jump="Services")]
+        jump="Quick Fix")]
 
 
 def _parse_when(text: str) -> Optional[datetime]:

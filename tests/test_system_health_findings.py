@@ -804,3 +804,77 @@ def test_check_hosts_file_critical_redirect(tmp_path):
     assert finding.severity == "warning"
     assert finding.jump == "Network Diagnostics"
     assert "windowsupdate.microsoft.com" in finding.evidence
+
+
+def test_orphaned_startup_entries_clean(tmp_path):
+    from modules.system_health.findings import check_orphaned_startup_entries
+    real_exe = tmp_path / "app.exe"
+    real_exe.write_text("binary", encoding="utf-8")
+
+    from modules.startup_manager.persistence import Item
+    items = [
+        Item(name="GoodApp", command=str(real_exe), source="Run", scope="User",
+             location=r"HKCU\Run", enabled=True)
+    ]
+    findings = check_orphaned_startup_entries(run_items=items, folders=[])
+    assert findings == []
+
+
+def test_orphaned_startup_entries_missing_run_key(tmp_path):
+    from modules.system_health.findings import check_orphaned_startup_entries
+    missing = tmp_path / "deleted.exe"
+
+    from modules.startup_manager.persistence import Item
+    items = [
+        Item(name="GhostApp", command=f'"{missing}" --minimized', source="Run", scope="User",
+             location=r"HKCU\Run", enabled=True),
+        Item(name="DisabledGhost", command=f'"{missing}"', source="Run", scope="Machine",
+             location=r"HKLM\Run", enabled=False),
+    ]
+    findings = check_orphaned_startup_entries(run_items=items, folders=[])
+    assert len(findings) == 2
+
+    # Active orphan -> warning
+    assert findings[0].id == "orphaned_startup:Run:User:GhostApp"
+    assert findings[0].severity == "warning"
+    assert findings[0].jump == "Startup & Boot"
+    assert "GhostApp" in findings[0].title
+    assert str(missing) in findings[0].detail
+
+    # Disabled orphan -> info
+    assert findings[1].id == "orphaned_startup:Run:Machine:DisabledGhost"
+    assert findings[1].severity == "info"
+    assert findings[1].jump == "Startup & Boot"
+    assert "StartupApproved" in findings[1].detail
+
+
+def test_orphaned_startup_entries_startup_folder(tmp_path):
+    from modules.system_health.findings import check_orphaned_startup_entries
+    folder = tmp_path / "Startup"
+    folder.mkdir()
+    # Direct script/batch file that doesn't exist on disk vs one that does
+    orphan_cmd = folder / "nonexistent_target.bat"
+    # Create the file in Startup folder pointing to a deleted exe
+    orphan_cmd.write_text("exit 0", encoding="utf-8")
+
+    # If the file in startup folder is an exe that is present
+    findings = check_orphaned_startup_entries(run_items=[], folders=[("User", str(folder))])
+    # nonexistent_target.bat exists in the folder, so resolve_command finds it
+    assert findings == []
+
+    # Now simulate a batch script referencing a non-existent binary or an orphaned file
+    # If the file in the folder is removed but still enumerated, or resolves to missing
+    # Let's test a non-existent executable directly
+    ghost_folder = tmp_path / "MissingFolder"
+    findings_ghost = check_orphaned_startup_entries(run_items=[], folders=[("User", str(ghost_folder))])
+    assert findings_ghost == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows-only check")
+def test_real_orphaned_startup_entries_runs_without_raising():
+    from modules.system_health.findings import check_orphaned_startup_entries
+    findings = check_orphaned_startup_entries()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert f.jump == "Startup & Boot"
+

@@ -55,9 +55,9 @@ $result | ConvertTo-Json -Compress -Depth 2
 """
 
 _PS_CMD_DRIVERLESS = r"""
-$devices = Get-CimInstance -ClassName Win32_PnPEntity |
-    Where-Object { $_.ConfigManagerErrorCode -ne 0 -and ($_.Name -or $_.Description -or $_.DeviceID) }
+$devices = Get-CimInstance -ClassName Win32_PnPEntity -Filter "ConfigManagerErrorCode != 0"
 $result = foreach ($dev in $devices) {
+    if (-not ($dev.Name -or $dev.Description -or $dev.DeviceID)) { continue }
     $hwId = ''
     if ($dev.HardWareID -is [array]) {
         $hwId = [string]$dev.HardWareID[0]

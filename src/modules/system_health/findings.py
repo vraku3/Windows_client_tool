@@ -285,6 +285,100 @@ def _orphan_service_finding(name: str, image_path: str, program: str, start: Opt
     )
 
 
+def _orphan_startup_finding(
+    name: str,
+    source: str,
+    scope: str,
+    command: str,
+    exe: str,
+    enabled: Optional[bool],
+) -> Finding:
+    state_str = "enabled" if enabled is True else ("disabled" if enabled is False else "unknown")
+    is_active = enabled is not False
+    return Finding(
+        id=f"orphaned_startup:{source}:{scope}:{name}",
+        title=f"Startup item '{name}' points at a missing file",
+        detail=(
+            f"Startup item '{name}' ({source}, {scope}) runs '{exe}', which does not exist on disk. "
+            + ("Because this startup item is active, Windows attempts to launch it at logon, "
+               "causing delayed shell startup or silent launch errors."
+               if is_active else
+               "The item is currently disabled in StartupApproved, but the entry remains in the "
+               "registry/startup folder as dead configuration.")
+        ),
+        severity="warning" if is_active else "info",
+        evidence=(
+            f"Name: {name}\n"
+            f"Source: {source} ({scope})\n"
+            f"Configured command: {command}\n"
+            f"Resolved executable: {exe}\n"
+            f"Status: {state_str}"
+        ),
+        jump="Startup & Boot",
+    )
+
+
+def check_orphaned_startup_entries(
+    run_items: Optional[List] = None,
+    folders: Optional[List[Tuple[str, str]]] = None,
+) -> List[Finding]:
+    """Audit Run keys and Startup folders for entries pointing to missing files.
+
+    When software is uninstalled, shortcuts and registry Run values often remain
+    behind. Active orphaned entries cause Windows to attempt launching non-existent
+    binaries at user logon, leading to shell delays or popup errors.
+    """
+    findings: List[Finding] = []
+    try:
+        from modules.startup_manager.persistence import (
+            Inventory, read_run_keys, startup_folders, lnk_target, resolve_command,
+        )
+    except Exception as exc:
+        logger.debug("Could not import persistence engine: %s", exc)
+        return findings
+
+    try:
+        if run_items is None:
+            inv = Inventory()
+            read_run_keys(inv)
+            items = inv.items
+        else:
+            items = run_items
+
+        for item in items:
+            exe, _ = resolve_command(item.command)
+            if exe and not os.path.isfile(exe):
+                findings.append(_orphan_startup_finding(
+                    name=item.name, source=item.source, scope=item.scope,
+                    command=item.command, exe=exe, enabled=item.enabled,
+                ))
+
+        target_folders = startup_folders() if folders is None else folders
+        for folder_scope, folder_path in target_folders:
+            if not os.path.isdir(folder_path):
+                continue
+            try:
+                folder_files = os.listdir(folder_path)
+            except OSError as exc:
+                logger.debug("Startup folder %s unreadable: %s", folder_path, exc)
+                continue
+            for f in folder_files:
+                if f.lower() == "desktop.ini":
+                    continue
+                full_path = os.path.join(folder_path, f)
+                target_cmd = lnk_target(full_path) if f.lower().endswith(".lnk") else full_path
+                exe, _ = resolve_command(target_cmd or full_path)
+                if exe and not os.path.isfile(exe):
+                    findings.append(_orphan_startup_finding(
+                        name=f, source="Startup folder", scope=folder_scope,
+                        command=target_cmd or full_path, exe=exe, enabled=True,
+                    ))
+    except Exception as exc:
+        logger.debug("Error auditing startup entries: %s", exc, exc_info=True)
+
+    return findings
+
+
 def check_hardware_errors(days: int = 30) -> List[Finding]:
     """Microsoft-Windows-WHEA-Logger events -- Windows' own standard channel
     for corrected and uncorrected hardware errors (failing RAM, CPU, PCIe
@@ -1184,6 +1278,7 @@ def all_findings() -> List[Finding]:
         findings.append(pagefile_finding)
     findings.extend(check_orphaned_scheduled_tasks())
     findings.extend(check_orphaned_services())
+    findings.extend(check_orphaned_startup_entries())
     findings.extend(check_hardware_errors())
     findings.extend(check_crash_control())
     findings.extend(check_crash_dump_files())

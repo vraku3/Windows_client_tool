@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 #: Providers that log disk/storage hardware and filesystem problems.
-_PROVIDERS = ("disk", "Disk", "volsnap", "stornvme", "storahci", "Ntfs")
+_PROVIDERS = ("disk", "Disk", "volsnap", "stornvme", "storahci", "Ntfs", "partmgr")
 
 #: The event IDs worth surfacing, and what each one actually means --
 #: sourced from Microsoft's own documentation for these providers, not
@@ -32,11 +32,14 @@ EVENT_MEANINGS: Dict[int, str] = {
     9: "The device did not respond in time (a controller timeout).",
     11: "The driver detected a controller error.",
     15: "The device was not ready for an operation.",
+    25: "The shadow copies of the volume were deleted because shadow copy storage could not grow.",
+    36: "The shadow copies of the volume were aborted due to disk I/O errors on the shadow storage volume.",
     50: "{Lost Delayed-Write Data} Failed to write cached data from memory to disk -- data loss occurred.",
     51: "A paging I/O operation failed -- Windows retried a page-file read/write.",
     52: "An error was reported by the file system while updating a bad-cluster list.",
     55: "The file system structure on the disk is corrupt and unusable. A chkdsk repair is required.",
     57: "Failed to flush data to the transaction log -- file system corruption may occur.",
+    58: "The disk has duplicate disk identifiers (signature collision with another disk) -- the disk was set offline.",
     98: "Volume was scanned by NTFS/ReFS self-healing.",
     129: "The storage adapter reset a device that stopped responding (a timeout).",
     130: "The file system structure was repaired online by NTFS self-healing.",
@@ -49,9 +52,9 @@ EVENT_MEANINGS: Dict[int, str] = {
 }
 
 #: Severity classification -- errors that reflect data actually being at
-#: risk right now (11, 15, 50, 55, 57, 140, 144, 154, 157) versus warnings that are a signal worth
+#: risk right now (11, 15, 36, 50, 55, 57, 58, 140, 144, 154, 157) versus warnings that are a signal worth
 #: reading but not yet proof of loss.
-_ERROR_IDS = {11, 15, 50, 55, 57, 140, 144, 154, 157}
+_ERROR_IDS = {11, 15, 36, 50, 55, 57, 58, 140, 144, 154, 157}
 
 _DISK_RE = re.compile(r"[Dd]isk\s+(\d+)")
 

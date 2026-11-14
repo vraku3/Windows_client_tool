@@ -45,12 +45,12 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 #: Providers that log network-adapter hardware/driver problems to the
 #: System log specifically (as opposed to a provider's own private channel).
-_PROVIDERS = ("Tcpip", "Microsoft-Windows-WLAN-AutoConfig")
+_PROVIDERS = ("Tcpip", "Microsoft-Windows-WLAN-AutoConfig", "Microsoft-Windows-DNS-Client", "NetBT")
 
 #: (provider, event id) -> what it actually means, and whether it reflects a
 #: problem happening right now (error) versus a recovery/degradation signal
 #: worth reading (warning). Every entry here is either captured live on this
-#: real machine (4207, 10002, 4003 -- see module docstring) or a real,
+#: real machine (4207, 10002, 4003, 1014 -- see module docstring) or a real,
 #: independently well-documented Windows event (4227/4231, the classic
 #: ephemeral-port-exhaustion pair: "TCP/IP failed to establish an outgoing
 #: connection because the selected local endpoint was recently used..." and
@@ -79,12 +79,17 @@ EVENT_MEANINGS: Dict[Tuple[str, int], str] = {
         "limited connectivity on the wireless adapter and attempted an "
         "automatic recovery (reassociate/renew/restart, depending on the "
         "trigger).",
+    ("Microsoft-Windows-DNS-Client", 1014): "DNS name resolution timed out -- "
+        "none of the configured DNS servers responded. Usually indicates DNS server "
+        "unreachability, packet loss, or a captive portal.",
+    ("NetBT", 4321): "A NetBIOS name collision was detected on the network -- "
+        "another computer refused this system claiming the computer or domain name.",
 }
 
-#: Severity classification -- 4199, 4207 and 4231 are logged by Windows itself as
-#: Error/hard-failure; 4227, 10002 and 4003 are Warning-level recoveries or
+#: Severity classification -- 4199, 4207, 4231 and 4321 are logged by Windows itself as
+#: Error/hard-failure; 4227, 10002, 4003 and 1014 are Warning-level recoveries or
 #: near-misses.
-_ERROR_IDS = {("Tcpip", 4199), ("Tcpip", 4207), ("Tcpip", 4231)}
+_ERROR_IDS = {("Tcpip", 4199), ("Tcpip", 4207), ("Tcpip", 4231), ("NetBT", 4321)}
 
 _INDEX_RE = re.compile(r"index\s+(\d+)")
 

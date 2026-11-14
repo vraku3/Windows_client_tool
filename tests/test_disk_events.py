@@ -78,6 +78,18 @@ def test_delayed_write_and_flush_events():
     assert "delayed-write" in de.EVENT_MEANINGS[50].lower()
 
 
+def test_volsnap_and_partmgr_events():
+    assert 25 in de.EVENT_MEANINGS
+    assert 36 in de.EVENT_MEANINGS
+    assert 58 in de.EVENT_MEANINGS
+    assert 36 in de._ERROR_IDS
+    assert 58 in de._ERROR_IDS
+    assert 25 not in de._ERROR_IDS  # Warning
+    assert "partmgr" in de._PROVIDERS
+    assert "shadow copies" in de.EVENT_MEANINGS[25].lower()
+    assert "shadow storage" in de.EVENT_MEANINGS[36].lower()
+
+
 def test_real_disk_events_are_readable_on_this_machine():
     events = de.read_disk_events()
     assert events is not None

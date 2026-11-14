@@ -79,6 +79,16 @@ def test_ip_conflict_event_classification():
     assert "conflict" in ne.EVENT_MEANINGS[("Tcpip", 4199)].lower()
 
 
+def test_dns_timeout_and_netbt_collision_classification():
+    assert ("Microsoft-Windows-DNS-Client", 1014) in ne.EVENT_MEANINGS
+    assert ("Microsoft-Windows-DNS-Client", 1014) not in ne._ERROR_IDS  # Warning
+    assert "timed out" in ne.EVENT_MEANINGS[("Microsoft-Windows-DNS-Client", 1014)].lower()
+
+    assert ("NetBT", 4321) in ne.EVENT_MEANINGS
+    assert ("NetBT", 4321) in ne._ERROR_IDS  # Error
+    assert "collision" in ne.EVENT_MEANINGS[("NetBT", 4321)].lower()
+
+
 def test_real_network_events_are_readable_on_this_machine():
     events = ne.read_network_events()
     assert events is not None

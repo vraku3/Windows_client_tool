@@ -344,6 +344,18 @@ def test_ip_conflict_event_suggests_renew_dhcp():
     assert findings[0].fix == "renew_dhcp"
 
 
+def test_dns_timeout_event_suggests_flush_dns():
+    events = [
+        ne.NetworkEvent("Microsoft-Windows-DNS-Client", 1014, "Warning", "2026-11-14 20:00:00", None, "Timeout", "DNS name resolution timed out")
+    ]
+    s = snap(events=events)
+    findings = h._f_events(s)
+    assert len(findings) == 1
+    assert findings[0].severity == h.WARNING
+    assert findings[0].fix == "flush_dns"
+    assert "Microsoft-Windows-DNS-Client: event 1014" in findings[0].title
+
+
 def test_every_fix_has_a_runner_and_destructive_ones_say_so():
     assert set(network_fixes.FIXES) == set(network_fixes.RUNNERS)
     assert network_fixes.FIXES["reset_winsock"].reboot and "REBOOT" in network_fixes.FIXES["reset_winsock"].confirm_text

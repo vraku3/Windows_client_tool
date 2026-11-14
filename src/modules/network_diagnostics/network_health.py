@@ -634,11 +634,20 @@ def _f_events(snap: Dict[str, Any]) -> List[Finding]:
     out: List[Finding] = []
     for group in network_events.group_events(events):
         subject = f"interface {group.index}" if group.index else group.provider
-        title = f"{group.provider}: event {group.event_id}" + (f" x{group.count}" if group.count > 1 else "")
+        count_suffix = f" x{group.count}" if group.count > 1 else ""
+        if group.index:
+            title = f"{subject} - {group.provider}: event {group.event_id}{count_suffix}"
+        else:
+            title = f"{group.provider}: event {group.event_id}{count_suffix}"
         detail = group.meaning + f" Most recent: {group.latest}."
-        fix = "renew_dhcp" if group.event_id == 4199 else None
+        if group.event_id == 1014:
+            fix = "flush_dns"
+        elif group.event_id in (4199, 4321):
+            fix = "renew_dhcp"
+        else:
+            fix = None
         out.append(Finding(f"netevt:{group.provider}:{group.event_id}:{group.index}",
-                           ERROR if group.is_error else WARNING, f"{subject} - {title}", detail,
+                           ERROR if group.is_error else WARNING, title, detail,
                            fix=fix))
     return out
 

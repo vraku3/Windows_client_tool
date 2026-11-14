@@ -877,6 +877,76 @@ def check_nvme_wear() -> List[Finding]:
         return []
 
 
+def parse_reagent_xml(xml_content: str) -> dict:
+    """Extract WinRE state facts from ReAgent.xml."""
+    import xml.etree.ElementTree as ET
+    facts = {}
+    try:
+        root = ET.fromstring(xml_content)
+        elem = root.find("InstallState")
+        if elem is not None:
+            facts["install_state"] = elem.attrib.get("state", "").strip()
+        loc = root.find("WinreLocation")
+        if loc is not None:
+            facts["winre_location"] = loc.attrib.get("path", "").strip()
+        bcd = root.find("WinreBCD")
+        if bcd is not None:
+            facts["winre_bcd"] = bcd.attrib.get("id", "").strip()
+    except Exception as exc:
+        logger.debug("Failed to parse ReAgent.xml: %s", exc)
+    return facts
+
+
+def check_winre_status(reagent_path: Optional[str] = None) -> Optional[Finding]:
+    """Check whether Windows Recovery Environment (WinRE) is enabled.
+
+    Reads C:\\Windows\\System32\\Recovery\\ReAgent.xml directly without needing elevation.
+    When InstallState is 0 or WinRE is unconfigured, automatic startup repair, recovery
+    environment boots on BSOD, and servicing recovery updates cannot run.
+    """
+    path = reagent_path or os.path.join(system_root(), "System32", "Recovery", "ReAgent.xml")
+    if not os.path.exists(path):
+        return Finding(
+            id="winre_missing",
+            title="Windows Recovery Environment (WinRE) is not configured",
+            detail="ReAgent.xml was not found in System32\\Recovery. Recovery features are absent or unconfigured.",
+            severity="warning",
+            evidence=f"File not found: {path}",
+            jump="Quick Fix",
+        )
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            content = fh.read()
+    except OSError as exc:
+        logger.debug("Could not read %s: %s", path, exc)
+        return Finding(
+            id="winre_unreadable",
+            title="Could not check Windows Recovery Environment (WinRE)",
+            detail=f"ReAgent.xml could not be opened: {exc}",
+            severity="info",
+            evidence=str(exc),
+            jump="Quick Fix",
+        )
+
+    facts = parse_reagent_xml(content)
+    state = facts.get("install_state", "")
+    if state == "0":
+        loc = facts.get("winre_location") or "unknown"
+        return Finding(
+            id="winre_disabled",
+            title="Windows Recovery Environment (WinRE) is disabled",
+            detail=(
+                "The Windows Recovery Environment is currently disabled. Automatic startup repair, "
+                "diagnostic recovery, and recovery partition updates will fail until it is enabled. "
+                "Enable it with 'reagentc /enable' in Quick Fix."
+            ),
+            severity="warning",
+            evidence=f"ReAgent.xml: InstallState={state} (Disabled), Location={loc}",
+            jump="Quick Fix",
+        )
+    return None
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
@@ -885,6 +955,9 @@ def all_findings() -> List[Finding]:
     safeboot = check_safeboot_active()
     if safeboot:
         findings.append(safeboot)
+    winre_finding = check_winre_status()
+    if winre_finding:
+        findings.append(winre_finding)
     findings.extend(check_orphaned_scheduled_tasks())
     findings.extend(check_orphaned_services())
     findings.extend(check_hardware_errors())

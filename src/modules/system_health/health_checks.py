@@ -275,12 +275,66 @@ def check_commit() -> List[Finding]:
 
 # ---- CBS corruption hints --------------------------------------------------------
 
-_CBS_HINTS = re.compile(r"(\[SR\] Cannot repair member file|CSI Payload Corrupt|Cannot repair.*store|"
-                        r"Component store is repairable|STATUS_SXS_COMPONENT_STORE_CORRUPT)", re.I)
+_CBS_HINTS = re.compile(
+    r"(\[SR\] Cannot repair member file|CSI Payload Corrupt|Cannot repair.*store|"
+    r"Component store is repairable|STATUS_SXS_COMPONENT_STORE_CORRUPT)",
+    re.I,
+)
+_CBS_CLEAN_REPAIR = re.compile(
+    r"(\[SR\] Verify and Repair Transaction completed|"
+    r"The restore operation completed successfully|"
+    r"Component store was repaired|"
+    r"Verification 100% complete\. Result: No integrity violations were found)",
+    re.I,
+)
 
 
 def scan_cbs_text(text: str) -> List[str]:
     return [line.strip()[:200] for line in text.splitlines() if _CBS_HINTS.search(line)]
+
+
+def evaluate_cbs_text(text: str, tail_bytes_mb: int = 8, path: str = "") -> List[Finding]:
+    lines = text.splitlines()
+    corrupt_indices: List[Tuple[int, str]] = []
+    repair_indices: List[Tuple[int, str]] = []
+
+    for idx, line in enumerate(lines):
+        clean = line.strip()[:200]
+        if _CBS_HINTS.search(clean):
+            corrupt_indices.append((idx, clean))
+        elif _CBS_CLEAN_REPAIR.search(clean):
+            repair_indices.append((idx, clean))
+
+    if not corrupt_indices:
+        return []
+
+    last_corrupt_idx, last_corrupt_line = corrupt_indices[-1]
+    last_repair_idx = repair_indices[-1][0] if repair_indices else -1
+
+    evidence_suffix = f"\n(last {tail_bytes_mb} MB of {path})" if path else ""
+
+    if last_repair_idx > last_corrupt_idx:
+        recent_repair = repair_indices[-1][1]
+        return [Finding(
+            id="cbs_resolved",
+            title="CBS log: component-store repairs succeeded",
+            detail="Component store corruptions were previously logged, but subsequent servicing operations "
+                   "reported clean verification or repair.",
+            severity="info",
+            evidence=f"Last corruption: {last_corrupt_line}\nSubsequent repair: {recent_repair}" + evidence_suffix,
+            jump="Diagnose",
+        )]
+
+    unresolved = [line for idx, line in corrupt_indices if idx > last_repair_idx]
+    return [Finding(
+        id="cbs_corruption",
+        title=f"CBS log mentions unresolved component-store corruption ({len(unresolved)} line(s))",
+        detail="Lines like these are what sfc/DISM write when a system file could not be repaired. "
+               "Run DISM RestoreHealth, then sfc /scannow (Servicing tab).",
+        severity="warning",
+        evidence="\n".join(unresolved[-5:]) + evidence_suffix,
+        jump="Diagnose",
+    )]
 
 
 def check_cbs_log(tail_bytes: int = 8 * 1024 * 1024) -> List[Finding]:
@@ -295,15 +349,7 @@ def check_cbs_log(tail_bytes: int = 8 * 1024 * 1024) -> List[Finding]:
         return []   # Windows 11 may keep only CbsPersist cabs; the Diagnose tab handles those
     except OSError as exc:
         return [_unknown("cbs_log", "the CBS log", str(exc), jump="Diagnose")]
-    hits = scan_cbs_text(text)
-    if not hits:
-        return []
-    return [Finding(
-        id="cbs_corruption", title=f"CBS log mentions component-store corruption ({len(hits)} line(s))",
-        detail="Lines like these are what sfc/DISM write when a system file could not be repaired. "
-               "Run DISM RestoreHealth, then sfc /scannow (Servicing tab).",
-        severity="warning", evidence="\n".join(hits[-5:]) + f"\n(last {tail_bytes // (1024 * 1024)} MB of {path})",
-        jump="Diagnose")]
+    return evaluate_cbs_text(text, tail_bytes // (1024 * 1024), path)
 
 
 # ---- services --------------------------------------------------------------------

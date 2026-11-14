@@ -640,3 +640,41 @@ def test_check_nvme_wear(monkeypatch):
     assert "92%" in findings[0].title
     assert "Uncorrected read errors" in findings[1].title
     assert findings[0].jump == "Disk Health"
+
+
+def test_check_winre_status(tmp_path):
+    from modules.system_health.findings import check_winre_status, parse_reagent_xml
+
+    xml_enabled = """<?xml version='1.0' encoding='utf-8'?>
+<WindowsRE version="2.0">
+  <WinreBCD id="{72ca7ff0-dc88-11f1-b38c-8fca09aa7346}"/>
+  <WinreLocation path="\\Recovery\\WindowsRE" id="0" offset="1999431008256" guid="{288382be-0949-4e03-ae41-5566ffd8f031}"/>
+  <InstallState state="1"/>
+</WindowsRE>"""
+    facts = parse_reagent_xml(xml_enabled)
+    assert facts["install_state"] == "1"
+    assert facts["winre_location"] == "\\Recovery\\WindowsRE"
+    assert facts["winre_bcd"] == "{72ca7ff0-dc88-11f1-b38c-8fca09aa7346}"
+
+    enabled_file = tmp_path / "ReAgent_enabled.xml"
+    enabled_file.write_text(xml_enabled, encoding="utf-8")
+    assert check_winre_status(str(enabled_file)) is None
+
+    xml_disabled = """<?xml version='1.0' encoding='utf-8'?>
+<WindowsRE version="2.0">
+  <WinreBCD id="{00000000-0000-0000-0000-000000000000}"/>
+  <WinreLocation path="" id="0" offset="0" guid="{00000000-0000-0000-0000-000000000000}"/>
+  <InstallState state="0"/>
+</WindowsRE>"""
+    disabled_file = tmp_path / "ReAgent_disabled.xml"
+    disabled_file.write_text(xml_disabled, encoding="utf-8")
+    f_dis = check_winre_status(str(disabled_file))
+    assert f_dis is not None
+    assert f_dis.id == "winre_disabled"
+    assert f_dis.severity == "warning"
+    assert f_dis.jump == "Quick Fix"
+
+    missing_file = tmp_path / "nonexistent.xml"
+    f_mis = check_winre_status(str(missing_file))
+    assert f_mis is not None
+    assert f_mis.id == "winre_missing"

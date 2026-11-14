@@ -461,3 +461,11 @@ def test_reset_firewall(ran, output):
     assert ["netsh", "advfirewall", "reset"] in ran
     assert any("firewall" in l.lower() for l in lines)
 
+
+def test_enable_winre(ran, output):
+    lines, cb = output
+    fix_actions.enable_winre(cb)
+    assert ["reagentc", "/enable"] in ran
+    assert ["reagentc", "/info"] in ran
+    assert any("enabling" in l.lower() for l in lines)
+

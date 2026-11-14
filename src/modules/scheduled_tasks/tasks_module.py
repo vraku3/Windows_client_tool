@@ -175,7 +175,7 @@ class TasksModule(BaseModule):
         self._table = QTableWidget(0, len(TASK_COLS))
         self._table.setHorizontalHeaderLabels(TASK_COLS)
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        for col, width in ((0, 230), (1, 170), (6, 150), (7, 150)):
+        for col, width in ((0, 230), (1, 170), (4, 190), (6, 150), (7, 150)):
             self._table.setColumnWidth(col, width)
         self._table.horizontalHeader().setStretchLastSection(True)
         center_header(self._table)
@@ -351,7 +351,8 @@ class TasksModule(BaseModule):
         d = task_view.details_of(t)
         folder = t.path.rpartition("\\")[0] or "\\"
         result = task_view.describe_result(t.last_result_code)
-        values = [t.name, folder, t.status, t.last_run, result.split(":")[0],
+        display_result = task_view.short_result(t.last_result_code)
+        values = [t.name, folder, t.status, t.last_run, display_result,
                   "-" if t.next_run == "Never" else t.next_run, d.run_as, ", ".join(d.triggers) or t.triggers, t.author]
         explanation = (task_help(t.path) + f"\nRuns as: {d.run_as or 'not reported'}"
                        + "\nCommands: " + "; ".join(f"{exe} {args}".strip() for exe, args in d.commands)

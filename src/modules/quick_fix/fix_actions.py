@@ -753,6 +753,14 @@ def fix_unquoted_service_paths(output_cb: Callable[[str], None]) -> None:
         output_cb("All Windows service executable paths are already properly quoted. No changes needed.")
 
 
+def enable_winre(output_cb: Callable[[str], None]) -> None:
+    """Enable Windows Recovery Environment (reagentc /enable)."""
+    output_cb("Enabling Windows Recovery Environment (reagentc /enable)...")
+    _run_cmd(["reagentc", "/enable"], output_cb)
+    output_cb("Querying WinRE status (reagentc /info)...")
+    _run_cmd(["reagentc", "/info"], output_cb, tolerate_failure=True)
+
+
 def _print_queue_precondition() -> Optional[str]:
     """Check if spool folder exists and has queued print files."""
     from core.windows_utils import system_root
@@ -814,6 +822,11 @@ ALL_ACTIONS: List[FixAction] = [
               "Enclose unquoted service executable paths in quotes to eliminate privilege escalation risks",
               "System Repairs", reboot_required=False, fn=fix_unquoted_service_paths,
               confirm_text="This will scan all installed Windows services and enclose any unquoted paths containing spaces in double quotes. Continue?"),
+    FixAction("enable_winre", "Enable Windows RE (Recovery)",
+              "Enable the Windows Recovery Environment (reagentc /enable) for startup recovery and repairs",
+              "System Repairs", reboot_required=False, fn=enable_winre,
+              confirm_text="This will enable the Windows Recovery Environment (WinRE) on this PC so that "
+                           "automatic startup repair, diagnostic recovery, and servicing updates can function. Continue?"),
     # Cache & UI
     FixAction("icon_cache", "Rebuild Icon Cache", "Delete and rebuild Windows icon cache",
               "Cache & UI", fn=rebuild_icon_cache,

@@ -76,6 +76,29 @@ def test_cbs_hints():
     assert h.scan_cbs_text("all good") == []
 
 
+def test_evaluate_cbs_text_unresolved_and_resolved():
+    corrupt_text = "2026-01-01 CSI Payload Corrupt file x\n[SR] Cannot repair member file [l:10]y"
+    findings = h.evaluate_cbs_text(corrupt_text, tail_bytes_mb=4, path="test.log")
+    assert len(findings) == 1
+    assert findings[0].id == "cbs_corruption"
+    assert findings[0].severity == "warning"
+    assert "2 line(s)" in findings[0].title
+
+    resolved_text = (
+        "2026-01-01 CSI Payload Corrupt file x\n"
+        "[SR] Cannot repair member file [l:10]y\n"
+        "2026-01-02 [SR] Verify and Repair Transaction completed. All files and registry keys listed in this transaction have been successfully repaired\n"
+    )
+    findings_resolved = h.evaluate_cbs_text(resolved_text, tail_bytes_mb=4, path="test.log")
+    assert len(findings_resolved) == 1
+    assert findings_resolved[0].id == "cbs_resolved"
+    assert findings_resolved[0].severity == "info"
+    assert "repairs succeeded" in findings_resolved[0].title
+
+    clean_text = "2026-01-01 All clear\n2026-01-02 Nothing bad"
+    assert h.evaluate_cbs_text(clean_text) == []
+
+
 def test_service_findings():
     rows = [{"Name": "A", "DisplayName": "Alpha", "PathName": r"C:\Program Files\A\a.exe",
              "StartMode": "Auto", "State": "Stopped"},

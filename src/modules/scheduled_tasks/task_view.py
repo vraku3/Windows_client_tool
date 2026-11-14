@@ -60,6 +60,50 @@ RESULT_WORDS: Dict[int, str] = {
     0xFFFD0000: "Not a valid Win32 program",
 }
 
+SHORT_RESULT_WORDS: Dict[int, str] = {
+    0x0: "Success",
+    0x1: "Exit code 1",
+    0x2: "File not found",
+    0x3: "Path not found",
+    0x5: "Access denied",
+    0xA: "Bad environment",
+    0x41300: "Ready",
+    0x41301: "Running",
+    0x41302: "Disabled",
+    0x41303: "Never run",
+    0x41304: "No more runs",
+    0x41305: "Not scheduled",
+    0x41306: "Terminated",
+    0x41307: "No valid triggers",
+    0x41308: "Event trigger",
+    0x8004130F: "No account info",
+    0x80041310: "Unsupported property",
+    0x80041314: "Corrupt registration",
+    0x80041315: "Service not running",
+    0x8004131F: "Already running",
+    0x80041320: "Schedule missed",
+    0x80041324: "Time missed",
+    0x800704C7: "Cancelled",
+    0x800704DD: "Not logged on",
+    0x8007010B: "Bad working dir",
+    0x80040154: "Class not registered",
+    0x80070002: "File not found",
+    0x80070005: "Access denied",
+    0x80070020: "File in use",
+    0x80070420: "Service running",
+    0x800710E0: "Admin refused",
+    0x8007052E: "Logon failure",
+    0x8007052F: "Account restriction",
+    0x80070533: "Account disabled",
+    0x8007052B: "Password change required",
+    0xC000013A: "Ctrl+C",
+    0xC0000005: "Access violation",
+    0xC0000135: "DLL missing",
+    0xC0000142: "DLL init failed",
+    0xC000004E: "Blocked",
+    0xFFFD0000: "Invalid binary",
+}
+
 _SUCCESS_CLASS = range(0x41300, 0x41320)
 
 
@@ -85,6 +129,25 @@ def describe_result(raw) -> str:
         else:
             words = "No description for this code"
     return f"0x{code:X}: {words}"
+
+
+def short_result(raw) -> str:
+    """A concise, table-friendly representation of LastTaskResult."""
+    code = to_code(raw)
+    if code is None:
+        return "Unknown"
+    short = SHORT_RESULT_WORDS.get(code)
+    if short is not None:
+        if code == 0:
+            return "Success (0x0)"
+        if code in (0x41300, 0x41301, 0x41302, 0x41303):
+            return f"{short} (0x{code:X})"
+        return f"0x{code:X} ({short})"
+    if code <= 0xFFFF:
+        return f"0x{code:X} (Exit {code})"
+    if code & 0xFFFF0000 == 0x80070000:
+        return f"0x{code:X} (WinErr {code & 0xFFFF})"
+    return f"0x{code:X}"
 
 
 def failed(raw) -> bool:

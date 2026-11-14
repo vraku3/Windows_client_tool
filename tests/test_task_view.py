@@ -27,6 +27,23 @@ def test_known_codes_are_decoded_in_words():
     assert v.describe_result("0x80070002").startswith("0x80070002: File not found")
 
 
+def test_short_result_formatting():
+    assert v.short_result(0) == "Success (0x0)"
+    assert v.short_result(0x41300) == "Ready (0x41300)"
+    assert v.short_result(0x41301) == "Running (0x41301)"
+    assert v.short_result(0x41303) == "Never run (0x41303)"
+    assert v.short_result(0x41306) == "0x41306 (Terminated)"
+    assert v.short_result(0x80070002) == "0x80070002 (File not found)"
+    assert v.short_result(-2147024894) == "0x80070002 (File not found)"
+    assert v.short_result(0x80070005) == "0x80070005 (Access denied)"
+    assert v.short_result(0xC0000005) == "0xC0000005 (Access violation)"
+    assert v.short_result(1) == "0x1 (Exit code 1)"
+    assert v.short_result(7) == "0x7 (Exit 7)"
+    assert v.short_result(0x800704D2) == "0x800704D2 (WinErr 1234)"
+    assert v.short_result(None) == "Unknown"
+    assert v.short_result("abc") == "Unknown"
+
+
 def test_unknown_codes_still_say_something_honest():
     assert "exited with code 7" in v.describe_result(7)
     assert "Windows error 1234" in v.describe_result(0x800704D2)

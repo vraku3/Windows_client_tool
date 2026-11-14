@@ -160,6 +160,45 @@ def test_finding_copy_text_has_evidence():
     assert "Evidence:\nE" in f.copy_text()
 
 
+def test_evaluate_certificates():
+    now = datetime(2026, 11, 14, 12, 0, 0)
+    rows = [
+        {
+            "Subject": "CN=Expired VPN Cert",
+            "Store": "CurrentUser\\My",
+            "NotAfter": "2026-11-01T10:00:00",
+            "Thumbprint": "A1B2C3D4E5F611223344",
+        },
+        {
+            "Subject": "CN=Expiring Server Cert",
+            "Store": "LocalMachine\\My",
+            "NotAfter": "2026-11-20T10:00:00",
+            "Thumbprint": "B2C3D4E5F6A155667788",
+        },
+        {
+            "Subject": "CN=Good Cert",
+            "Store": "LocalMachine\\My",
+            "NotAfter": "2027-11-14T10:00:00",
+            "Thumbprint": "C3D4E5F6A1B299001122",
+        },
+    ]
+    findings = h.evaluate_certificates(rows, now=now)
+    assert len(findings) == 2
+
+    expired = [f for f in findings if "expired" in f.id]
+    assert len(expired) == 1
+    assert expired[0].severity == "warning"
+    assert "Expired certificate in CurrentUser\\My" in expired[0].title
+    assert "Expired VPN Cert" in expired[0].title
+    assert expired[0].jump == "Certificates"
+
+    expiring = [f for f in findings if "expiring" in f.id]
+    assert len(expiring) == 1
+    assert expiring[0].severity == "warning"
+    assert "Certificate expiring in 5 day(s)" in expiring[0].title
+    assert expiring[0].jump == "Certificates"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

@@ -5,9 +5,10 @@ from modules.certificate_viewer.cert_reader import CertInfo, fetch_certs
 
 
 def mk(days=400, sig="sha256RSA", alg="RSA", size=2048, store="MY", selfs=False, key=False,
-       exportable=None):
-    return CertInfo("cn", "CN=cn", "iss", datetime.datetime.utcnow(), "AB CD", "N/A", key, b"",
-                    days, "", sig_algorithm=sig, key_algorithm=alg, key_size=size,
+       exportable=None, not_before=None):
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    return CertInfo("cn", "CN=cn", "iss", now, "AB CD", "N/A", key, b"",
+                    days, "", not_before=not_before, sig_algorithm=sig, key_algorithm=alg, key_size=size,
                     self_signed=selfs, store_name=store, key_exportable=exportable)
 
 
@@ -138,3 +139,22 @@ def test_real_machine_has_expired_root_anchors_still_trusted():
     expired_roots = [c for c in certs if cf.is_expired_root_anchor(c)]
     assert len(expired_roots) >= 1
     assert all("expired root CA still trusted" in cf.findings_text(c) for c in expired_roots)
+
+
+def test_future_not_before_is_not_yet_valid():
+    future = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=10)
+    c = mk(not_before=future)
+    assert cf.is_not_yet_valid(c)
+    assert "not yet valid (future NotBefore date)" in cf.weakness(c)
+
+    past = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=10)
+    c_valid = mk(not_before=past)
+    assert not cf.is_not_yet_valid(c_valid)
+
+
+def test_real_user_root_store_fetch():
+    certs = fetch_certs("ROOT", "user")
+    assert len(certs) > 5
+    assert all(c.store_name == "ROOT" for c in certs)
+    assert all(c.store_location == "user" for c in certs)
+    assert any("Bitdefender" in c.subject_cn or "Microsoft" in c.subject_cn for c in certs)

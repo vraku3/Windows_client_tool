@@ -17,11 +17,25 @@ MIN_RSA_BITS = 2048
 
 def is_weak_signature(sig_algorithm: str) -> bool:
     s = (sig_algorithm or "").lower()
-    return s.startswith("sha1") or s.startswith("md5") or s.startswith("md2") or s.startswith("md4")
+    return s.startswith(("sha1", "sha-1", "md5", "md4", "md2"))
 
 
 def is_weak_key(key_algorithm: str, key_size: int) -> bool:
     return (key_algorithm or "").upper().startswith("RSA") and 0 < key_size < MIN_RSA_BITS
+
+
+def is_not_yet_valid(c) -> bool:
+    """True when the certificate's NotBefore timestamp sits in the future."""
+    nb = getattr(c, "not_before", None)
+    if not nb:
+        return False
+    import datetime
+    now = (
+        datetime.datetime.now(datetime.timezone.utc)
+        if nb.tzinfo is not None
+        else datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    )
+    return nb > now
 
 
 def weakness(c) -> List[str]:
@@ -33,6 +47,8 @@ def weakness(c) -> List[str]:
         out.append(f"weak signature ({c.sig_algorithm})")
     if is_weak_key(c.key_algorithm, c.key_size):
         out.append(f"RSA key only {c.key_size} bits")
+    if is_not_yet_valid(c):
+        out.append("not yet valid (future NotBefore date)")
     return out
 
 

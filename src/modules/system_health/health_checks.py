@@ -473,6 +473,77 @@ def check_problem_devices() -> List[Finding]:
     return evaluate_problem_devices(rows)
 
 
+# ---- certificates ----------------------------------------------------------------
+
+def evaluate_certificates(rows: List[Dict[str, Any]], now: Optional[datetime] = None) -> List[Finding]:
+    """Evaluate Personal (MY) user and computer certificates for expiration or near-expiry (<14 days)."""
+    out: List[Finding] = []
+    if now is None:
+        now = datetime.now()
+
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        subject = str(r.get("Subject") or r.get("Thumbprint") or "Unknown certificate").strip()
+        store = str(r.get("Store") or "Personal").strip()
+        not_after_str = str(r.get("NotAfter") or "").strip()
+        if not not_after_str:
+            continue
+        clean_str = not_after_str.split(".")[0].rstrip("Z")
+        expiry = None
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                expiry = datetime.strptime(clean_str, fmt)
+                break
+            except ValueError as exc:
+                logger.debug("Certificate date format mismatch for %s (%s): %s", clean_str, fmt, exc)
+        if expiry is None:
+            continue
+
+        days_left = (expiry - now).total_seconds() / 86400.0
+        thumb = str(r.get("Thumbprint") or "")
+        short_sub = subject[:50] + ("..." if len(subject) > 50 else "")
+        evidence = f"Subject: {subject}\nStore: {store}\nExpiry: {expiry.strftime('%Y-%m-%d %H:%M')}\nThumbprint: {thumb}"
+
+        if days_left < 0:
+            days_ago = int(abs(days_left))
+            out.append(Finding(
+                id=f"cert_expired_{thumb[:12].lower() or 'unknown'}",
+                title=f"Expired certificate in {store}: {short_sub}",
+                detail=f"This certificate expired {days_ago} day(s) ago. Logins, VPN, or network auth relying on it will fail.",
+                severity="warning",
+                evidence=evidence,
+                jump="Certificates",
+            ))
+        elif days_left < 14:
+            days_int = max(0, int(days_left))
+            out.append(Finding(
+                id=f"cert_expiring_{thumb[:12].lower() or 'unknown'}",
+                title=f"Certificate expiring in {days_int} day(s): {short_sub}",
+                detail=f"This certificate in {store} expires on {expiry.strftime('%Y-%m-%d')}. Renew before it lapses.",
+                severity="warning",
+                evidence=evidence,
+                jump="Certificates",
+            ))
+
+    return out
+
+
+def check_certificates() -> List[Finding]:
+    """Check Personal (My) certificates in LocalMachine and CurrentUser for expiry."""
+    script = (
+        "$certs = @(Get-ChildItem Cert:\\LocalMachine\\My, Cert:\\CurrentUser\\My -ErrorAction SilentlyContinue); "
+        "if (-not $certs) { '[]'; exit 0 }; "
+        "@($certs | Select-Object @{n='Subject';e={$_.Subject}}, @{n='Thumbprint';e={$_.Thumbprint}}, "
+        "@{n='NotAfter';e={$_.NotAfter.ToString('yyyy-MM-ddTHH:mm:ss')}}, "
+        "@{n='Store';e={$_.PSParentPath.Split('::')[-1]}}) | ConvertTo-Json -Compress"
+    )
+    rows, why = _ps_json(script, 30)
+    if rows is None:
+        return [_unknown("certificates", "personal certificates", why or "", jump="Certificates")]
+    return evaluate_certificates(rows)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -484,6 +555,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("CBS log", check_cbs_log),
     ("problem devices", check_problem_devices),
     ("services", check_services),
+    ("certificates", check_certificates),
 )
 
 

@@ -132,6 +132,8 @@ TABS = {'Personal': 'Current user MY store: certificates associated with this Wi
              'user.',
  'Trusted Root': 'Machine root authorities Windows is configured to trust. This pane does not add '
                  'or remove trust.',
+ 'User Root': 'Current user ROOT store: root certificate authorities trusted within this user session. '
+              'Applications or proxies may install certificates here without administrator elevation.',
  'Intermediate CAs': 'Intermediate certificate authorities that help link a certificate to a '
                      'trusted root.',
  'Disallowed': "Certificates explicitly placed in Windows' disallowed store. Listing them does not "

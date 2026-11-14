@@ -35,6 +35,7 @@ STORES = [
     ("Personal",          "MY",   "user"),
     ("Computer",          "MY",   "machine"),
     ("Trusted Root",      "ROOT", "machine"),
+    ("User Root",         "ROOT", "user"),
     ("Intermediate CAs",  "CA",   "machine"),
     ("Disallowed",        "Disallowed", "machine"),
     ("Trusted Publishers", "TrustedPublisher", "machine"),

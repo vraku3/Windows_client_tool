@@ -199,7 +199,7 @@ def fetch_certs(store_name: str, store_location: str = "user") -> List[CertInfo]
     if isinstance(data, dict):
         data = [data]
 
-    today = datetime.datetime.utcnow()
+    today = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     certs: List[CertInfo] = []
     for item in data:
         try:

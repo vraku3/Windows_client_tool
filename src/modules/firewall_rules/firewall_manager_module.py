@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from core.table_ui import centered_item, center_header
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
@@ -714,6 +714,15 @@ class _GroupsDialog(QDialog):
         set_role(info, "muted")
         layout.addWidget(info)
 
+        search_row = QHBoxLayout()
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setObjectName("_filter_edit")
+        self._filter_edit.setPlaceholderText("Filter groups...")
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        describe_control(self._filter_edit, '_filter_edit')
+        search_row.addWidget(self._filter_edit)
+        layout.addLayout(search_row)
+
         self._table = QTableWidget(0, len(_GROUP_COLS))
         self._table.setHorizontalHeaderLabels(_GROUP_COLS)
         describe_headers(self._table)
@@ -755,13 +764,20 @@ class _GroupsDialog(QDialog):
 
     def set_groups(self, groups: List["fa.GroupInfo"]) -> None:
         self._groups = groups
-        self._table.setRowCount(len(groups))
-        for row, g in enumerate(groups):
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        query = self._filter_edit.text().strip().lower() if hasattr(self, "_filter_edit") else ""
+        filtered = [g for g in self._groups if not query or query in g.name.lower()]
+        self._table.setRowCount(len(filtered))
+        for row, g in enumerate(filtered):
             state = "Mixed" if g.mixed else ("On" if g.enabled else "Off")
             vals = [g.name, str(g.total), str(g.enabled), str(g.disabled), state]
             for col, val in enumerate(vals):
                 item = centered_item(val, sortable=(col == 0))
-                if col == 4:
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, g)
+                elif col == 4:
                     if g.mixed:
                         item.setForeground(QColor(semantic("warning")))
                     elif g.enabled:
@@ -777,6 +793,11 @@ class _GroupsDialog(QDialog):
         if not items:
             return None
         row = items[0].row()
+        item0 = self._table.item(row, 0)
+        if item0 is not None:
+            g = item0.data(Qt.ItemDataRole.UserRole)
+            if g is not None:
+                return g
         if row >= len(self._groups):
             return None
         return self._groups[row]
@@ -1817,7 +1838,7 @@ class FirewallManagerModule(BaseModule):
                 elif rule.action == "Block":
                     item.setForeground(QColor(semantic("error")))
                 if rule.enabled == "No":
-                    item.setForeground(QColor("#888888"))
+                    item.setForeground(QColor(chrome("text_muted")))
                 self._table.setItem(row, col, item)
                 describe_cell(self._table, col, self._table.item(row, col))
         self._table.setSortingEnabled(True)

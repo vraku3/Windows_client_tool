@@ -44,8 +44,9 @@ EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette so
 #: .qss role system both apply to nothing here). 262 once the Wi-Fi
 #: channel map's gradient bars became themed QProgressBars (4 literals).
 #: 176 after the 2026-10-21 Cleanup redesign moved charts and status colours
-#: to the shared semantic palette and theme roles.
-BUDGET = 176
+#: to the shared semantic palette and theme roles; 175 after firewall_manager_module
+#: moved disabled rule text colour to chrome("text_muted").
+BUDGET = 175
 
 
 def frozen_colour_literals():

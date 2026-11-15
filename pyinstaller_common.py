@@ -515,17 +515,3 @@ HIDDEN_IMPORTS = [
     "PIL", "PIL._imaging",
     "requests", "urllib3", "charset_normalizer", "idna",
 ]
-
-EXCLUDES = [
-    # Tkinter / Tcl: PyQt6 is the app's UI framework; tkinter is not used.
-    # Drops 921 data files (~3.8 MB) from the portable extraction payload.
-    "tkinter", "_tkinter", "tcl", "tk",
-    # Heavy optional cloud SDKs:
-    # botocore alone extracts 1,941 service JSON models (18 MB).
-    # googleapiclient extracts 605 API discovery documents (107 MB).
-    # TreeSize remote target handlers gracefully degrade when absent.
-    "boto3", "botocore",
-    "googleapiclient", "google", "google_auth_oauthlib",
-    # Test runners not needed in frozen release builds
-    "unittest", "pytest", "_pytest",
-]

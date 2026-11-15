@@ -5,7 +5,7 @@ import sys
 
 project_root = os.path.dirname(os.path.abspath(SPEC))
 sys.path.insert(0, project_root)
-from pyinstaller_common import get_main_script, get_datas, HIDDEN_IMPORTS, exclude_ambient_icu, EXCLUDES
+from pyinstaller_common import get_main_script, get_datas, HIDDEN_IMPORTS, exclude_ambient_icu
 
 a = Analysis(
     [get_main_script(project_root)],
@@ -16,7 +16,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=EXCLUDES,
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

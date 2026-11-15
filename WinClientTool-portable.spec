@@ -7,7 +7,7 @@ import sys
 project_root = os.path.dirname(os.path.abspath(SPEC))
 sys.path.insert(0, project_root)
 from pyinstaller_common import (get_main_script, get_datas, HIDDEN_IMPORTS,
-                                write_version_info, exclude_ambient_icu, EXCLUDES)
+                                write_version_info, exclude_ambient_icu)
 
 # Generated from version_info.txt.in + src/_version.py, so the exe's
 # Properties dialog cannot drift from the About pane.
@@ -22,7 +22,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=EXCLUDES,
+    excludes=[],
     noarchive=False,
     optimize=0,
 )

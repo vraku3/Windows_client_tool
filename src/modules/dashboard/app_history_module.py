@@ -9,15 +9,14 @@ needs no privilege. The network columns Task Manager shows for Store apps
 are deliberately absent (per-process network counters need a driver) -- the
 tab says so in its own header line.
 """
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from PyQt6.QtWidgets import QWidget
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
-if TYPE_CHECKING:
-    from .app_history_tab import AppHistoryTab
+from .app_history_tab import AppHistoryTab
 from ui.help.dashboard_ui import apply_help
 
 
@@ -30,13 +29,12 @@ class AppHistoryModule(BaseModule):
 
     def __init__(self) -> None:
         super().__init__()
-        self._widget: Optional[QWidget] = None
+        self._widget: Optional[AppHistoryTab] = None
 
     def on_start(self, app) -> None:
         self.app = app
 
     def create_widget(self) -> QWidget:
-        from .app_history_tab import AppHistoryTab
         self._widget = AppHistoryTab()
         self._widget.set_app(self.app)
         apply_help(self._widget, self.name)

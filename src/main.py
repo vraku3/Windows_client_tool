@@ -242,13 +242,6 @@ def _run_game_mode(command: str, profile: str) -> int:
 def main():
     args = _parse_args()
 
-    if args.unattended or args.game_mode or args.apply_security_batch:
-        try:
-            import pyi_splash
-            pyi_splash.close()
-        except (ImportError, Exception) as exc:
-            logger.debug("pyi_splash headless close: %s", exc)
-
     if args.unattended:
         _s("=== unattended mode ===")
         from modules.updates.unattended_runner import run_unattended
@@ -298,11 +291,6 @@ def main():
     qt_app.aboutToQuit.connect(app.shutdown)
 
     window.show()
-    try:
-        import pyi_splash
-        pyi_splash.close()
-    except (ImportError, Exception) as exc:
-        logger.debug("pyi_splash not active: %s", exc)
     sys.exit(qt_app.exec())
 
 

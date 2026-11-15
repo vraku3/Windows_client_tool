@@ -544,6 +544,121 @@ def check_certificates() -> List[Finding]:
     return evaluate_certificates(rows)
 
 
+# ---- Windows Update failures -----------------------------------------------------
+
+_WU_FAIL_RE = re.compile(
+    r"following update(?: with error (0x[0-9a-fA-F]+))?:\s*(.+?)\.?$", re.IGNORECASE
+)
+_KB_RE = re.compile(r"\bKB\d{6,8}\b", re.IGNORECASE)
+_STORE_APP_PREFIX = re.compile(r"^9[A-Z0-9]{11}-")
+_HRESULT_RE = re.compile(r"\b0[xX]([0-9a-fA-F]{8})\b")
+
+
+def _decode_wu_err(err_str: str) -> str:
+    if not err_str:
+        return ""
+    try:
+        from core.wu_error_codes import decode_wu_error
+        val = int(err_str, 16)
+        text = decode_wu_error(val)
+        if " - " in text:
+            return text.split(" - ", 1)[1]
+        return text
+    except (ValueError, TypeError):
+        return err_str
+
+
+def evaluate_windows_update_failures(rows: List[Dict[str, Any]]) -> List[Finding]:
+    """Evaluate System log event 20 records from Microsoft-Windows-WindowsUpdateClient."""
+    out: List[Finding] = []
+    os_failures: Dict[str, List[Tuple[str, str, str]]] = {}
+    store_failures: List[Tuple[str, str, str, str]] = []
+
+    for r in rows:
+        msg = str(r.get("Message") or "").strip()
+        if not msg:
+            continue
+        time_str = str(r.get("Time") or r.get("TimeCreated") or "").strip()
+        m = _WU_FAIL_RE.search(msg)
+        if m:
+            err_str = m.group(1) or ""
+            target = m.group(2).strip()
+        else:
+            code_m = _HRESULT_RE.search(msg)
+            err_str = code_m.group(0) if code_m else ""
+            target = msg
+
+        expl = _decode_wu_err(err_str)
+        if _STORE_APP_PREFIX.match(target):
+            store_failures.append((time_str, target, err_str, expl))
+        else:
+            os_failures.setdefault(target, []).append((time_str, err_str, expl))
+
+    for target, recs in os_failures.items():
+        count = len(recs)
+        latest_time, latest_err, latest_expl = recs[0]
+        kb_m = _KB_RE.search(target)
+        kb_tag = f"_{kb_m.group(0).lower()}" if kb_m else f"_{re.sub(r'[^a-zA-Z0-9_]', '_', target).lower()[:24]}"
+        err_hint = f" {latest_err}" if latest_err else ""
+        if latest_expl:
+            err_hint += f" ({latest_expl})"
+
+        title = (
+            f"Windows Update failed {count} time(s) installing {target[:55]}"
+            if count > 1 else f"Windows Update failed installing {target[:60]}"
+        )
+        detail = (
+            f"Windows Update failed to install {target}. Latest error:{err_hint}. "
+            "A servicing transaction conflict, corrupt component store, or cached download may cause this. "
+            "Resetting Windows Update components in Quick Fix or running DISM ScanHealth can repair it."
+        )
+        lines = [f"- {t}: error {e} ({x})" if x else f"- {t}: error {e}" for t, e, x in recs]
+        out.append(Finding(
+            id=f"wu_failed{kb_tag}",
+            title=title,
+            detail=detail,
+            severity="warning",
+            evidence="\n".join(lines[:10]),
+            jump="Updates",
+        ))
+
+    if store_failures:
+        distinct = sorted({r[1] for r in store_failures})
+        apps = [a.split("-", 1)[-1] for a in distinct]
+        app_summary = ", ".join(apps[:3])
+        if len(apps) > 3:
+            app_summary += f" and {len(apps) - 3} more"
+        lines = [f"- {t}: {a.split('-', 1)[-1]} (error {e})" for t, a, e, _ in store_failures]
+        out.append(Finding(
+            id="wu_failed_store_apps",
+            title=f"{len(distinct)} Store package update(s) failed in the background",
+            detail=f"Background package updates failed for {app_summary}. This frequently occurs when packages are in use during update.",
+            severity="info",
+            evidence="\n".join(lines[:10]),
+            jump="Updates",
+        ))
+
+    return out
+
+
+def check_windows_update_failures(days: int = 14) -> List[Finding]:
+    """Check the System log for WindowsUpdateClient installation failures (event 20)."""
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        f"$f = @{{LogName='System'; ProviderName='Microsoft-Windows-WindowsUpdateClient'; Id=20; "
+        f"StartTime=(Get-Date).AddDays(-{int(days)})}}; "
+        "try { $events = Get-WinEvent -FilterHashtable $f -MaxEvents 50 } "
+        "catch { if ($_.FullyQualifiedErrorId -like '*NoMatchingEventsFound*') { '[]'; exit 0 } else { throw } }; "
+        "@($events | Select-Object Id, "
+        "@{n='Time';e={$_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')}}, "
+        "Message) | ConvertTo-Json -Compress"
+    )
+    rows, why = _ps_json(script, 30)
+    if rows is None:
+        return [_unknown("windows_update_failures", "Windows Update installation history", why or "", jump="Updates")]
+    return evaluate_windows_update_failures(rows)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -556,6 +671,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("problem devices", check_problem_devices),
     ("services", check_services),
     ("certificates", check_certificates),
+    ("Windows Update failures", check_windows_update_failures),
 )
 
 

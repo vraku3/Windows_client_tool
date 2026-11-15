@@ -199,6 +199,66 @@ def test_evaluate_certificates():
     assert expiring[0].jump == "Certificates"
 
 
+def test_evaluate_windows_update_failures_empty_is_healthy():
+    assert h.evaluate_windows_update_failures([]) == []
+
+
+def test_evaluate_windows_update_failures_os_update_grouping():
+    rows = [
+        {
+            "Time": "2026-11-14 12:00:19",
+            "Message": "Installation Failure: Windows failed to install the following update with error 0x800F0991: 2026-11 Security Update (KB5132061) (26300.9974).",
+        },
+        {
+            "Time": "2026-11-13 17:49:38",
+            "Message": "Installation Failure: Windows failed to install the following update with error 0x800F0993: 2026-11 Security Update (KB5132061) (26300.9974).",
+        },
+    ]
+    findings = h.evaluate_windows_update_failures(rows)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.id == "wu_failed_kb5132061"
+    assert "failed 2 time(s)" in f.title
+    assert "KB5132061" in f.title
+    assert f.severity == "warning"
+    assert f.jump == "Updates"
+    assert "0x800F0991" in f.evidence
+    assert "0x800F0993" in f.evidence
+    assert "PSFX_E_APPLY_FORWARD_DELTA_FAILED" in f.evidence
+
+
+def test_evaluate_windows_update_failures_store_apps():
+    rows = [
+        {
+            "Time": "2026-11-09 14:45:15",
+            "Message": "Installation Failure: Windows failed to install the following update with error 0x80073D02: 9PC1H9VN18CM-Microsoft.StartExperiencesApp.",
+        },
+        {
+            "Time": "2026-11-09 14:24:57",
+            "Message": "Installation Failure: Windows failed to install the following update with error 0x80073D02: 9MSSGKG348SP-MicrosoftWindows.Client.WebExperience.",
+        },
+    ]
+    findings = h.evaluate_windows_update_failures(rows)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.id == "wu_failed_store_apps"
+    assert "2 Store package update(s) failed" in f.title
+    assert f.severity == "info"
+    assert f.jump == "Updates"
+    assert "StartExperiencesApp" in f.detail
+    assert "Client.WebExperience" in f.detail
+
+
+def test_check_windows_update_failures_refused_is_unknown(monkeypatch):
+    monkeypatch.setattr(h, "_ps_json", lambda script, timeout: (None, "access denied"))
+    findings = h.check_windows_update_failures()
+    assert len(findings) == 1
+    assert findings[0].id == "windows_update_failures:unknown"
+    assert findings[0].severity == "info"
+    assert findings[0].jump == "Updates"
+    assert "access denied" in findings[0].evidence
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

@@ -25,7 +25,13 @@ _FAILED_UPDATE = re.compile(
 EXTRA_CODES = {
     0x80240016: "install not allowed: another installation is in progress, or a restart is pending (WU_E_INSTALL_NOT_ALLOWED)",
     0x8024200B: "the update's installer reported a failure (WU_E_UH_INSTALLERFAILURE)",
+    0x800F081F: "source files could not be found (CBS_E_SOURCE_MISSING)",
     0x800F0820: "a servicing operation is pending; a restart is usually needed first (CBS_E_PENDING)",
+    0x800F0988: "delta compression mismatch (PSFX_E_INVALID_DELTA_COMBINATION)",
+    0x800F0990: "reverse/forward delta application failed (PSFX_E_APPLY_REVERSE_FORWARD_DELTA_FAILED)",
+    0x800F0991: "forward delta application failed — component store needs repair (PSFX_E_APPLY_FORWARD_DELTA_FAILED)",
+    0x800F0992: "missing forward delta required for installation (PSFX_E_MISSING_FORWARD_DELTA)",
+    0x800F0993: "reverse delta application failed during servicing rollback (PSFX_E_APPLY_REVERSE_DELTA_FAILED)",
     0x80073D02: "the package could not be installed because resources it modifies are in use - close the app and retry (ERROR_PACKAGES_IN_USE)",
 }
 

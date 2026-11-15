@@ -405,13 +405,8 @@ def test_evaluate_storage_events_hardware_and_corruption_errors():
 
 
 def test_check_storage_events_refused_is_unknown(monkeypatch):
-    import sys
-    from types import SimpleNamespace
-    fake_disk_events = SimpleNamespace(
-        read_disk_events=lambda days=14: None,
-        group_events=lambda evts: [],
-    )
-    monkeypatch.setitem(sys.modules, "modules.disk_health.disk_events", fake_disk_events)
+    from modules.disk_health import disk_events
+    monkeypatch.setattr(disk_events, "read_disk_events", lambda days=14: None)
     findings = h.check_storage_events()
     assert len(findings) == 1
     assert findings[0].id == "storage_events:unknown"

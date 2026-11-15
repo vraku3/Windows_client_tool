@@ -12,7 +12,7 @@ import os
 import re
 import subprocess
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from modules.system_health.findings import Finding
 from core.windows_utils import system_root
@@ -214,6 +214,111 @@ def check_disks() -> List[Finding]:
     if data is None:
         return [_unknown("disk_health", "physical disk health", why or "", jump="Disk Health")]
     return evaluate_physical_disks(data)
+
+
+def evaluate_storage_events(groups: Sequence[Any]) -> List[Finding]:
+    """Classify grouped disk/storage events into actionable findings.
+
+    Real-machine evidence: Disk 5 and Disk 6 repeatedly log Event 158
+    ("The disk has duplicate disk identifiers") on this PC -- completely invisible
+    to Get-PhysicalDisk which continues reporting 'Healthy'.
+    """
+    out: List[Finding] = []
+    for g in groups:
+        event_id = getattr(g, "event_id", None)
+        if event_id is None and isinstance(g, dict):
+            event_id = g.get("event_id")
+        disk = getattr(g, "disk", None)
+        if disk is None and isinstance(g, dict):
+            disk = g.get("disk")
+        count = getattr(g, "count", 1)
+        if isinstance(g, dict):
+            count = g.get("count", 1)
+        latest = getattr(g, "latest", "")
+        if isinstance(g, dict):
+            latest = g.get("latest", "")
+        meaning = getattr(g, "meaning", "")
+        if isinstance(g, dict):
+            meaning = g.get("meaning", "")
+        is_error = getattr(g, "is_error", False)
+        if isinstance(g, dict):
+            is_error = g.get("is_error", False)
+
+        if event_id in (98, 130):
+            continue
+
+        disk_label = f"Disk {disk}" if disk else "Storage subsystem"
+        severity = "danger" if (is_error or event_id in (50, 55, 144, 154)) else "warning"
+
+        if event_id in (58, 158):
+            title = f"{disk_label} has duplicate disk identifier collision (Event {event_id})"
+            detail = (
+                "Windows detected the same disk identifier on more than one disk (KB2983588). "
+                "This typically happens after cloning a disk or attaching duplicate VHD/USB drives. "
+                "The disk may be marked offline or become unaddressable by VSS."
+            )
+        elif event_id == 154:
+            title = f"{disk_label} hardware I/O error (Event 154)"
+            detail = (
+                "An I/O operation failed due to a hardware error. This indicates a failing drive, "
+                "faulty cable, or controller malfunction. Back up critical data immediately."
+            )
+        elif event_id in (55, 144):
+            title = f"{disk_label} file system corruption (Event {event_id})"
+            detail = (
+                "The file system structure is corrupted and unusable. Run chkdsk to repair."
+            )
+        elif event_id == 50:
+            title = f"{disk_label} delayed-write data loss (Event 50)"
+            detail = (
+                "Windows failed to write cached data from memory to disk. Data loss has occurred. "
+                "Check disk connectivity and controller stability."
+            )
+        elif event_id == 7:
+            title = f"{disk_label} bad block remapped (Event 7)"
+            detail = (
+                "The drive detected a bad block and remapped a sector. Drive degradation is occurring."
+            )
+        elif event_id in (9, 11, 129):
+            title = f"{disk_label} controller timeout / reset (Event {event_id})"
+            detail = (
+                "The storage adapter or device timed out and was reset. "
+                "Check storage drivers, NVMe/SATA cables, and power delivery."
+            )
+        elif event_id == 157:
+            title = f"{disk_label} surprise removal (Event 157)"
+            detail = (
+                "The disk was disconnected or surprise-removed without warning."
+            )
+        else:
+            title = f"{disk_label} error (Event {event_id})"
+            detail = meaning or "A storage error was recorded in the System log."
+
+        evidence = f"{count} event(s) in last 14 days, latest at {latest}" if latest else f"{count} event(s)"
+        finding_id = f"storage_event:{event_id}:{disk or 'all'}"
+        out.append(Finding(
+            id=finding_id,
+            title=title,
+            detail=detail,
+            severity=severity,
+            evidence=evidence,
+            jump="Disk Health",
+        ))
+    return out
+
+
+def check_storage_events() -> List[Finding]:
+    try:
+        from modules.disk_health import disk_events
+        events = disk_events.read_disk_events(days=14)
+    except Exception as exc:
+        logger.warning("Could not read storage events: %s", exc)
+        return [_unknown("storage_events", "storage and disk event history", str(exc), jump="Disk Health")]
+    if events is None:
+        return [_unknown("storage_events", "storage and disk event history",
+                         "Failed to read disk events from System log", jump="Disk Health")]
+    groups = disk_events.group_events(events)
+    return evaluate_storage_events(groups)
 
 
 # ---- WMI repository --------------------------------------------------------------
@@ -787,6 +892,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("pending reboot", check_pending_reboot),
     ("time sync", check_time_sync),
     ("physical disks", check_disks),
+    ("storage errors", check_storage_events),
     ("WMI repository", check_wmi_repository),
     ("commit charge", check_commit),
     ("CBS log", check_cbs_log),

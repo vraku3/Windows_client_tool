@@ -329,6 +329,96 @@ def test_check_tpm_attestation_events_refused_is_unknown(monkeypatch):
     assert "access denied" in findings[0].evidence
 
 
+def test_evaluate_storage_events_empty_is_healthy():
+    assert h.evaluate_storage_events([]) == []
+
+
+def test_evaluate_storage_events_duplicate_disk_identifiers():
+    groups = [
+        {
+            "event_id": 158,
+            "disk": "6",
+            "count": 6,
+            "latest": "2026-11-09 23:59:11",
+            "meaning": "Windows sees the same disk identifiers on more than one disk",
+            "is_error": False,
+        },
+        {
+            "event_id": 158,
+            "disk": "5",
+            "count": 4,
+            "latest": "2026-11-14 11:53:36",
+            "meaning": "Windows sees the same disk identifiers on more than one disk",
+            "is_error": False,
+        },
+    ]
+    findings = h.evaluate_storage_events(groups)
+    assert len(findings) == 2
+    f0 = findings[0]
+    assert f0.id == "storage_event:158:6"
+    assert "Disk 6 has duplicate disk identifier collision (Event 158)" in f0.title
+    assert f0.severity == "warning"
+    assert f0.jump == "Disk Health"
+    assert "KB2983588" in f0.detail
+    assert "6 event(s)" in f0.evidence
+
+
+def test_evaluate_storage_events_hardware_and_corruption_errors():
+    groups = [
+        {
+            "event_id": 154,
+            "disk": "1",
+            "count": 3,
+            "latest": "2026-11-14 10:00:00",
+            "meaning": "An I/O operation failed due to a hardware error.",
+            "is_error": True,
+        },
+        {
+            "event_id": 55,
+            "disk": "0",
+            "count": 1,
+            "latest": "2026-11-14 09:00:00",
+            "meaning": "The file system structure on the disk is corrupt and unusable.",
+            "is_error": True,
+        },
+        {
+            "event_id": 98,
+            "disk": "0",
+            "count": 5,
+            "latest": "2026-11-14 08:00:00",
+            "meaning": "Volume was scanned by NTFS/ReFS self-healing.",
+            "is_error": False,
+        },
+    ]
+    findings = h.evaluate_storage_events(groups)
+    assert len(findings) == 2
+    f154 = findings[0]
+    assert f154.id == "storage_event:154:1"
+    assert f154.severity == "danger"
+    assert "hardware error" in f154.detail
+    assert f154.jump == "Disk Health"
+
+    f55 = findings[1]
+    assert f55.id == "storage_event:55:0"
+    assert f55.severity == "danger"
+    assert "chkdsk" in f55.detail
+
+
+def test_check_storage_events_refused_is_unknown(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    fake_disk_events = SimpleNamespace(
+        read_disk_events=lambda days=14: None,
+        group_events=lambda evts: [],
+    )
+    monkeypatch.setitem(sys.modules, "modules.disk_health.disk_events", fake_disk_events)
+    findings = h.check_storage_events()
+    assert len(findings) == 1
+    assert findings[0].id == "storage_events:unknown"
+    assert findings[0].severity == "info"
+    assert findings[0].jump == "Disk Health"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

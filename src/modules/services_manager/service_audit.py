@@ -84,27 +84,32 @@ def unquoted_services(services: List[Dict]) -> List[Dict]:
 
 # ---- failure history -------------------------------------------------------------
 
-#: 7031 "terminated unexpectedly", 7034 the same for a service that crashed
-#: with no recovery action, 7023 "terminated with the following error".
-FAILURE_EVENT_IDS = (7031, 7034, 7023)
+#: 7000 "failed to start", 7009 "timeout waiting to connect", 7023 "terminated with error",
+#: 7031 "terminated unexpectedly", 7034 "crashed with no recovery", 7038 "unable to log on".
+FAILURE_EVENT_IDS = (7000, 7009, 7023, 7031, 7034, 7038)
 
-_SERVICE_NAME_IN_MESSAGE = re.compile(r"The (.+?) service (?:terminated|failed)", re.I)
+_SERVICE_NAME_IN_MESSAGE = re.compile(
+    r"(?:The (.+?) service (?:terminated|failed|was unable to log on))|"
+    r"(?:while waiting for the (.+?) service to connect)",
+    re.I,
+)
 
 
 def parse_failure_counts(records: List[Dict]) -> Dict[str, int]:
-    """Count failures per DISPLAY name from [{'Message': ..., 'Id': ...}] rows."""
+    """Count failures per name from [{'Message': ..., 'Id': ...}] rows."""
     counts: Dict[str, int] = {}
     for rec in records:
         match = _SERVICE_NAME_IN_MESSAGE.search(str(rec.get("Message") or ""))
         if match:
-            key = match.group(1).strip().lower()
+            raw_name = match.group(1) or match.group(2)
+            key = raw_name.strip().lower()
             counts[key] = counts.get(key, 0) + 1
     return counts
 
 
 def read_failure_counts(days: int = 30, timeout: int = 60) -> Optional[Dict[str, int]]:
     """Service failures from the System log in the last `days`, keyed by
-    lower-cased display name. None if the log could not be read (a quiet
+    lower-cased display name or service name. None if the log could not be read (a quiet
     machine returns {})."""
     ids = ",".join(str(i) for i in FAILURE_EVENT_IDS)
     script = (
@@ -135,11 +140,15 @@ def read_failure_counts(days: int = 30, timeout: int = 60) -> Optional[Dict[str,
     return parse_failure_counts(data)
 
 
-def failures_for(counts: Optional[Dict[str, int]], display_name: str) -> Optional[int]:
+def failures_for(counts: Optional[Dict[str, int]], display_name: str, service_name: str = "") -> Optional[int]:
     """Failures for one service; None when the history could not be read."""
     if counts is None:
         return None
-    return counts.get((display_name or "").strip().lower(), 0)
+    d_count = counts.get((display_name or "").strip().lower(), 0)
+    s_count = counts.get((service_name or "").strip().lower(), 0) if service_name else 0
+    if display_name and service_name and display_name.strip().lower() != service_name.strip().lower():
+        return d_count + s_count
+    return d_count or s_count
 
 
 # ---- recovery actions (sc qfailure) ---------------------------------------------

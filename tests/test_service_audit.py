@@ -38,11 +38,22 @@ def test_failure_counts_by_display_name():
     rows = [{"Message": "The Print Spooler service terminated unexpectedly.  It has done this 1 time(s)."},
             {"Message": "The Print Spooler service terminated unexpectedly."},
             {"Message": "The Foo service terminated with the following error: x"},
+            {"Message": "The Autodesk Desktop Licensing Service service failed to start due to the following error: logon failure"},
+            {"Message": "A timeout was reached (30000 milliseconds) while waiting for the Visual Studio Standard Collector Service 150 service to connect."},
+            {"Message": "The AdskLicensingService service was unable to log on as NT AUTHORITY\\LocalService with the currently configured password due to: The request is not supported."},
             {"Message": "unrelated"}]
     counts = a.parse_failure_counts(rows)
-    assert counts == {"print spooler": 2, "foo": 1}
+    assert counts["print spooler"] == 2
+    assert counts["foo"] == 1
+    assert counts["autodesk desktop licensing service"] == 1
+    assert counts["visual studio standard collector service 150"] == 1
+    assert counts["adsklicensingservice"] == 1
     assert a.failures_for(counts, "Print Spooler") == 2
     assert a.failures_for(counts, "Other") == 0
+    # Checks fallback to service name
+    assert a.failures_for(counts, "Autodesk Licensing", "adsklicensingservice") == 1
+    # Both names present with different counts sum together
+    assert a.failures_for(counts, "Autodesk Desktop Licensing Service", "adsklicensingservice") == 2
 
 
 def test_unreadable_history_is_none_not_zero():

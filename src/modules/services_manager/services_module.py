@@ -578,7 +578,9 @@ class ServicesModule(BaseModule):
         if key == "unquoted":
             return service_audit.is_unquoted_path(svc.get("Path", ""))
         if key == "crashed":
-            return bool(service_audit.failures_for(self._failures, svc.get("Display Name", "")))
+            return bool(service_audit.failures_for(
+                self._failures, svc.get("Display Name", ""), svc.get("Name", "")
+            ))
         return service_view.passes(key, svc)
 
     def _on_selection_changed(self):
@@ -725,7 +727,9 @@ class ServicesModule(BaseModule):
 
     def _apply_audit(self, recovery: Optional[Dict], blocked: Optional[List[str]] = None) -> None:
         svc = self._get_selected_service() or {}
-        failures = service_audit.failures_for(self._failures, svc.get("Display Name", ""))
+        failures = service_audit.failures_for(
+            self._failures, svc.get("Display Name", ""), svc.get("Name", "")
+        )
         lines = [f"[{sev}] {text}" for sev, text in service_audit.audit_lines(svc, failures)]
         if blocked:
             lines.append("[warning] Depends on disabled service(s): " + ", ".join(blocked)

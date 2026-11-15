@@ -259,6 +259,44 @@ def test_check_windows_update_failures_refused_is_unknown(monkeypatch):
     assert "access denied" in findings[0].evidence
 
 
+def test_evaluate_driver_load_failures_empty_is_healthy():
+    assert h.evaluate_driver_load_failures([]) == []
+
+
+def test_evaluate_driver_load_failures_generates_warning_finding():
+    rows = [
+        {
+            "Time": "2026-11-14 11:53:37",
+            "Message": "The driver \\Driver\\WUDFRd failed to load.\r\nDevice: HID\\VID_1395&PID_005C&MI_03&Col03\\c&2385ed86&0&0002\r\nStatus: 0xC0000365",
+        },
+        {
+            "Time": "2026-11-13 09:09:55",
+            "Message": "The driver \\Driver\\WUDFRd failed to load.\r\nDevice: HID\\VID_1395&PID_005C&MI_03&Col03\\c&2385ed86&0&0002\r\nStatus: 0xC0000365",
+        },
+    ]
+    findings = h.evaluate_driver_load_failures(rows)
+    assert len(findings) == 1
+    f = findings[0]
+    assert "driver_load_failed" in f.id
+    assert f.severity == "warning"
+    assert f.jump == "Driver Manager"
+    assert "WUDFRd" in f.title
+    assert "failed to load" in f.title
+    assert "2 time(s)" in f.title
+    assert "0xC0000365" in f.evidence
+    assert "STATUS_DEVICE_NOT_READY" in f.evidence
+
+
+def test_check_driver_load_failures_refused_is_unknown(monkeypatch):
+    monkeypatch.setattr(h, "_ps_json", lambda script, timeout: (None, "access denied"))
+    findings = h.check_driver_load_failures()
+    assert len(findings) == 1
+    assert findings[0].id == "driver_load_failures:unknown"
+    assert findings[0].severity == "info"
+    assert findings[0].jump == "Driver Manager"
+    assert "access denied" in findings[0].evidence
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

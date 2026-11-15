@@ -85,3 +85,53 @@ def test_suggested_actions_cover_exactly_the_known_error_codes():
     # code in driver_reader's _ERROR_CODE_MEANINGS has its OWN curated entry.
     from modules.driver_manager.driver_reader import _ERROR_CODE_MEANINGS
     assert set(dd._SUGGESTED_ACTIONS.keys()) == set(_ERROR_CODE_MEANINGS.keys())
+
+
+def test_parse_driver_load_failures():
+    events = [
+        {
+            "Time": "2026-11-14 11:53:37",
+            "Message": "The driver \\Driver\\WUDFRd failed to load.\r\nDevice: HID\\VID_1395&PID_005C&MI_03&Col03\\c&2385ed86&0&0002\r\nStatus: 0xC0000365",
+        },
+        {
+            "Time": "2026-11-13 09:09:55",
+            "Message": "The driver \\Driver\\WUDFRd failed to load.\r\nDevice: HID\\VID_1395&PID_005C&MI_03&Col03\\c&2385ed86&0&0002\r\nStatus: 0xC0000365",
+        },
+        {
+            "Time": "2026-11-14 11:53:26",
+            "Message": "The driver \\Driver\\WUDFRd failed to load.\r\nDevice: ROOT\\WINDOWSHELLOFACESOFTWAREDRIVER\\0000\r\nStatus: 0xC0000365",
+        },
+    ]
+    failures = dd.parse_driver_load_failures(events)
+    assert len(failures) == 2
+
+    # Grouped by (driver, device)
+    hid_fail = next(f for f in failures if "1395" in f.device_id)
+    assert hid_fail.driver == "\\Driver\\WUDFRd"
+    assert hid_fail.count == 2
+    assert hid_fail.status == "0xC0000365"
+    assert "STATUS_DEVICE_NOT_READY" in hid_fail.status_meaning
+    assert len(hid_fail.sample_times) == 2
+
+    face_fail = next(f for f in failures if "WINDOWSHELLO" in f.device_id)
+    assert face_fail.count == 1
+
+
+def test_ntstatus_meaning_known_and_unknown():
+    assert "STATUS_DEVICE_NOT_READY" in dd.ntstatus_meaning("0xC0000365")
+    assert "STATUS_INVALID_IMAGE_HASH" in dd.ntstatus_meaning("0xC0000428")
+    assert dd.ntstatus_meaning("0x12345678") == "0x12345678"
+
+
+def test_driver_load_failures_for():
+    f1 = dd.DriverLoadFailure(
+        driver="\\Driver\\WUDFRd",
+        device_id="HID\\VID_1395&PID_005C",
+        status="0xC0000365",
+        status_meaning="Not ready",
+        count=1,
+        most_recent="2026-11-14",
+    )
+    assert dd.driver_load_failures_for("VID_1395", [f1]) == [f1]
+    assert dd.driver_load_failures_for("OtherDevice", [f1]) == []
+    assert dd.driver_load_failures_for("", [f1]) == []

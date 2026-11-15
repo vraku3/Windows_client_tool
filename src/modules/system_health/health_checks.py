@@ -659,6 +659,85 @@ def check_windows_update_failures(days: int = 14) -> List[Finding]:
     return evaluate_windows_update_failures(rows)
 
 
+# ---- Driver load failures --------------------------------------------------------
+
+def evaluate_driver_load_failures(rows: List[Dict[str, Any]]) -> List[Finding]:
+    """Evaluate System log event 219 records from Microsoft-Windows-Kernel-PnP."""
+    from modules.driver_manager.driver_diagnostics import parse_driver_load_failures
+    failures = parse_driver_load_failures(rows)
+    if not failures:
+        return []
+
+    wudfrd_start = None
+    if any("wudfrd" in f.driver.lower() for f in failures):
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Services\WudfRd") as k:
+                wudfrd_start, _ = winreg.QueryValueEx(k, "Start")
+        except OSError as exc:
+            logger.debug("WudfRd service key unreadable: %s", exc)
+
+    out: List[Finding] = []
+    for f in failures:
+        clean_driver = f.driver.lstrip("\\").replace("Driver\\", "")
+        short_dev = f.device_id.split("\\", 1)[-1] if "\\" in f.device_id else f.device_id
+        if len(short_dev) > 40:
+            short_dev = short_dev[:37] + "..."
+
+        remedy_hint = ""
+        if "wudfrd" in clean_driver.lower() and "365" in f.status:
+            if wudfrd_start == 3:
+                remedy_hint = (
+                    " The WudfRd service (User-mode Driver Framework Reflector) is set to Manual (3) "
+                    "startup: switching it to Automatic (2) prevents devices from timing out at early boot."
+                )
+            else:
+                remedy_hint = (
+                    " The User-mode Driver Framework Reflector (WudfRd) failed to initialize in time "
+                    "for this device at early boot."
+                )
+
+        title = f"Driver {clean_driver} failed to load for {short_dev} ({f.count} time(s))"
+        detail = (
+            f"Kernel-PnP logged event 219 indicating Windows failed to load {f.driver} for device "
+            f"'{f.device_id}'. Latest status: {f.status} ({f.status_meaning}).{remedy_hint}"
+        )
+        safe_dev = re.sub(r"[^a-zA-Z0-9_]", "_", short_dev).lower()[:24]
+        safe_drv = re.sub(r"[^a-zA-Z0-9_]", "_", clean_driver).lower()[:16]
+        evidence_lines = [f"- {t}: Status {f.status} ({f.status_meaning})" for t in f.sample_times]
+        if wudfrd_start is not None and "wudfrd" in clean_driver.lower():
+            evidence_lines.append(f"WudfRd service Start={wudfrd_start}")
+
+        out.append(Finding(
+            id=f"driver_load_failed_{safe_drv}_{safe_dev}",
+            title=title,
+            detail=detail,
+            severity="warning",
+            evidence="\n".join(evidence_lines),
+            jump="Driver Manager",
+        ))
+
+    return out
+
+
+def check_driver_load_failures(days: int = 14) -> List[Finding]:
+    """Check the System log for Kernel-PnP driver load failures (event 219)."""
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        f"$f = @{{LogName='System'; ProviderName='Microsoft-Windows-Kernel-PnP'; Id=219; "
+        f"StartTime=(Get-Date).AddDays(-{int(days)})}}; "
+        "try { $events = Get-WinEvent -FilterHashtable $f -MaxEvents 50 } "
+        "catch { if ($_.FullyQualifiedErrorId -like '*NoMatchingEventsFound*') { '[]'; exit 0 } else { throw } }; "
+        "@($events | Select-Object Id, "
+        "@{n='Time';e={$_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')}}, "
+        "Message) | ConvertTo-Json -Compress"
+    )
+    rows, why = _ps_json(script, 30)
+    if rows is None:
+        return [_unknown("driver_load_failures", "driver load failure events", why or "", jump="Driver Manager")]
+    return evaluate_driver_load_failures(rows)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -672,6 +751,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("services", check_services),
     ("certificates", check_certificates),
     ("Windows Update failures", check_windows_update_failures),
+    ("driver load failures", check_driver_load_failures),
 )
 
 

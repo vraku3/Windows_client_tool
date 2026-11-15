@@ -239,6 +239,14 @@ class _PathPane(QWidget):
                               "user-writable folders early in the system PATH.")
         set_role(self._status, "muted")
         head.addWidget(self._status, 1)
+        self._findings_rows: List[tuple] = []
+        self._search = QLineEdit()
+        self._search.setObjectName("_search")
+        self._search.setPlaceholderText("Filter findings...")
+        self._search.setMaximumWidth(180)
+        self._search.textChanged.connect(self._render_rows)
+        describe_control(self._search, '_search')
+        head.addWidget(self._search)
         self._btn = QPushButton("Analyse PATH")
         describe_control(self._btn, '_btn')
         self._btn.clicked.connect(self.run)
@@ -288,15 +296,27 @@ class _PathPane(QWidget):
                 rows.append((scope, "", "unknown", f"Could not read: {why}"))
                 continue
             rows.extend((scope, str(f.entry_index + 1), f.kind, f.message) for f in rep.findings)
-        self._table.setRowCount(len(rows))
-        for r, row in enumerate(rows):
+        self._findings_rows = rows
+        self._render_rows()
+        self._status.setText(f"{len(rows)} finding(s)" if rows else "No findings.")
+
+    def _render_rows(self) -> None:
+        query = self._search.text().strip().lower() if hasattr(self, "_search") else ""
+        rows = getattr(self, "_findings_rows", [])
+        filtered = [
+            r for r in rows
+            if not query or any(query in str(c).lower() for c in r)
+        ]
+        self._table.setRowCount(len(filtered))
+        for r, row in enumerate(filtered):
             for c, txt in enumerate(row):
                 item = QTableWidgetItem(txt)
-                if row[2] in ("writable", "missing", "unexpanded"):
+                if row[2] in ("writable", "missing"):
+                    item.setForeground(QColor(semantic("error")))
+                elif row[2] in ("unexpanded", "duplicate"):
                     item.setForeground(QColor(semantic("warning")))
                 self._table.setItem(r, c, item)
                 describe_cell(self._table, c, self._table.item(r, c))
-        self._status.setText(f"{len(rows)} finding(s)" if rows else "No findings.")
 
 
 class _EffectivePane(QWidget):
@@ -326,6 +346,13 @@ class _EffectivePane(QWidget):
         set_role(self._status, "muted")
         self._status.setWordWrap(True)
         head.addWidget(self._status, 1)
+        self._search = QLineEdit()
+        self._search.setObjectName("_search")
+        self._search.setPlaceholderText("Filter variable...")
+        self._search.setMaximumWidth(180)
+        self._search.textChanged.connect(self._refresh)
+        describe_control(self._search, '_search')
+        head.addWidget(self._search)
         self._only_stale = QPushButton("Show only stale")
         describe_control(self._only_stale, '_only_stale')
         self._only_stale.setCheckable(True)
@@ -362,6 +389,15 @@ class _EffectivePane(QWidget):
     def _refresh(self, *_a) -> None:
         self._rows = effective_env.compare(self._sys_panel.variables(), self._usr_panel.variables())
         rows = effective_env.stale_rows(self._rows) if self._only_stale.isChecked() else self._rows
+        query = self._search.text().strip().lower() if hasattr(self, "_search") else ""
+        if query:
+            rows = [
+                r for r in rows
+                if query in r.name.lower()
+                or (r.system_value and query in r.system_value.lower())
+                or (r.user_value and query in r.user_value.lower())
+                or (r.process_value and query in r.process_value.lower())
+            ]
         self._table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             state = "stale" if row.is_stale else ("process-only" if row.process_only else "current")
@@ -370,6 +406,10 @@ class _EffectivePane(QWidget):
             _secret_row(self._table, r, row.name, values, (1, 2, 3), 5)
             if state == "stale":
                 self._table.item(r, 4).setForeground(QColor(semantic("warning")))
+            elif state == "current":
+                self._table.item(r, 4).setForeground(QColor(semantic("success")))
+            elif state == "process-only":
+                self._table.item(r, 4).setForeground(QColor(semantic("info")))
         self._status.setText(
             f"{len(rows)} row(s) shown. Stale rows need a new process to take effect."
             if not self._only_stale.isChecked() else

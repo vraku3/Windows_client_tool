@@ -4,8 +4,10 @@ from typing import List, Dict, Optional
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTabWidget, QLabel,
-    QProgressBar, QStackedWidget, QScrollArea)
-from ui.help.network_ui import explain_tabs, item_help
+    QProgressBar, QStackedWidget, QScrollArea, QLineEdit)
+from PyQt6.QtGui import QColor
+from ui.help.network_ui import explain_tabs, item_help, control_help
+from core.semantic_colors import semantic
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker, retire
@@ -150,7 +152,26 @@ def _fill_table(table: QTableWidget, rows: List[Dict], columns: List[str]):
     table.setRowCount(len(rows))
     for r, row in enumerate(rows):
         for c, col in enumerate(columns):
-            table.setItem(r, c, item_help(centered_item(str(row.get(col, ""))), table, c))
+            val_str = str(row.get(col, ""))
+            item = centered_item(val_str)
+            if col == "Severity":
+                sev = val_str.lower()
+                if sev in ("high", "error"):
+                    item.setForeground(QColor(semantic("error")))
+                elif sev in ("medium", "warning"):
+                    item.setForeground(QColor(semantic("warning")))
+                elif sev in ("low", "ok"):
+                    item.setForeground(QColor(semantic("success")))
+                elif sev == "info":
+                    item.setForeground(QColor(semantic("info")))
+            elif col == "Encrypted":
+                if val_str.lower() in ("yes", "true", "on"):
+                    item.setText("🔒 " + val_str)
+                    item.setForeground(QColor(semantic("success")))
+                elif val_str.lower() in ("no", "false", "off"):
+                    item.setText("⚠️ " + val_str)
+                    item.setForeground(QColor(semantic("warning")))
+            table.setItem(r, c, item_help(item, table, c))
 
 class _RefreshTab(QWidget):
     def __init__(self, loader_fn, columns, thread_pool, parent=None):
@@ -162,16 +183,24 @@ class _RefreshTab(QWidget):
         self._scanning = False
         self._loaded = False
         self._workers = []
+        self._all_rows: List[Dict] = []
         layout = QVBoxLayout(self)
         self._glance = add_glance(layout, self._summary_specs())
         toolbar = QHBoxLayout()
         self._refresh_btn = QPushButton("Refresh")
+        self._search = QLineEdit()
+        self._search.setObjectName("share_search")
+        self._search.setPlaceholderText("Filter rows...")
+        self._search.setMaximumWidth(200)
+        control_help(self._search, "share_search")
+        self._search.textChanged.connect(self._apply_filter)
         self._status = QLabel("Click Refresh to load.")
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setFixedHeight(4)
         self._progress.hide()
         toolbar.addWidget(self._refresh_btn)
+        toolbar.addWidget(self._search)
         toolbar.addStretch()
         toolbar.addWidget(self._status)
         layout.addLayout(toolbar)
@@ -245,11 +274,22 @@ class _RefreshTab(QWidget):
         self._progress.hide()
         self._empty.action_button.setEnabled(True)
 
+    def _apply_filter(self):
+        query = self._search.text().strip().lower() if hasattr(self, "_search") else ""
+        rows = getattr(self, "_all_rows", [])
+        filtered = [
+            r for r in rows
+            if not query or any(query in str(v).lower() for v in r.values())
+        ]
+        _fill_table(self._table, filtered, self._columns)
+        self._status.setText(f'{len(filtered)} / {len(self._all_rows)} item(s).' if query else f'{len(self._all_rows)} item(s).')
+        self._content.setCurrentWidget(self._table if filtered else self._empty)
+
     def _show_rows(self, rows):
         self._finish_read()
         self._loaded = True
-        _fill_table(self._table, rows, self._columns)
-        self._status.setText(f'{len(rows)} item(s).')
+        self._all_rows = rows
+        self._apply_filter()
         values = {'items': len(rows), 'clients': len({r.get('Client') for r in rows if r.get('Client')}),
                   'users': len({r.get('User') for r in rows if r.get('User')}),
                   'attention': sum(r.get('Severity', '').lower() in ('high', 'medium', 'error', 'warning') for r in rows),

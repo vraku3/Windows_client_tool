@@ -500,6 +500,27 @@ def check_hvci() -> Dict[str, Any]:
                 "details": [("HVCI", "Check failed")]}
 
 
+def is_credential_guard_licensed() -> bool:
+    """Returns True if the current Windows edition is licensed for Credential Guard.
+
+    Credential Guard requires Windows Enterprise, Education, IoT Enterprise, or Server.
+    On Windows Professional and Home, Credential Guard is unlicensed and LsaSrv logs
+    Event 6147 ("Credential Guard is configured to run, but is not licensed").
+    """
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as k:
+            edition, _ = winreg.QueryValueEx(k, "EditionID")
+            ed_lower = str(edition).strip().lower()
+            licensed_keywords = ("enterprise", "education", "server", "iotenterprise", "cloudedition")
+            if any(kw in ed_lower for kw in licensed_keywords):
+                return True
+            return False
+    except OSError as exc:
+        logger.debug("Could not read EditionID for Credential Guard licensing: %s", exc)
+        return True
+
+
 def check_credential_guard() -> Dict[str, Any]:
     try:
         rc, out, err = _ps(
@@ -523,6 +544,11 @@ def check_credential_guard() -> Dict[str, Any]:
                     "available": True, "enabled": True,
                     "details": [("Credential Guard", "Active")]}
         elif cg_configured:
+            if not is_credential_guard_licensed():
+                return {"status": "Configured (unlicensed)", "color": "amber",
+                        "available": True, "enabled": False,
+                        "details": [("Credential Guard", "Configured in policy/registry"),
+                                    ("License", "Unlicensed on this Windows edition (requires Enterprise or Education)")]}
             return {"status": "Configured (needs reboot)", "color": "amber",
                     "available": True, "enabled": False,
                     "details": [("Credential Guard", "Configured, reboot required")]}

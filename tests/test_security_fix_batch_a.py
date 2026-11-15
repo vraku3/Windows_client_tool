@@ -198,7 +198,17 @@ def test_registry_dependent_checks_report_refusal(monkeypatch, name):
 def test_credential_guard_service_ids_are_not_bitmasks(monkeypatch, configured, running, status):
     monkeypatch.setattr(sr, '_ps', lambda *a, **k: (0, json.dumps({
         'SecurityServicesConfigured': configured, 'SecurityServicesRunning': running}), ''))
+    monkeypatch.setattr(sr, 'is_credential_guard_licensed', lambda: True)
     assert sr.check_credential_guard()['status'] == status
+
+
+def test_credential_guard_unlicensed(monkeypatch):
+    monkeypatch.setattr(sr, '_ps', lambda *a, **k: (0, json.dumps({
+        'SecurityServicesConfigured': [1], 'SecurityServicesRunning': [2]}), ''))
+    monkeypatch.setattr(sr, 'is_credential_guard_licensed', lambda: False)
+    res = sr.check_credential_guard()
+    assert res['status'] == 'Configured (unlicensed)'
+    assert any('Unlicensed' in d[1] for d in res['details'])
 
 
 def test_task_query_failure_is_unknown_coverage(monkeypatch):

@@ -228,21 +228,38 @@ class _CertTab(QWidget):
             vals = [
                 c.subject_cn, c.issuer, expiry_str, str(c.days_until_expiry),
                 c.thumbprint, c.key_usage,
-                "Yes" if c.has_private_key else "No",
+                ("🔑 Yes" if c.has_private_key else "No"),
                 c.flag, cf.findings_text(c),
             ]
             problem = c.days_until_expiry < 0 or bool(cf.weakness(c))
             soon = (c.days_until_expiry < 90 or cf.self_signed_non_root(c)
                     or cf.has_exportable_private_key(c))
-            fg = None
-            if problem:
-                fg = QColor(semantic("error"))
-            elif soon:
-                fg = QColor(semantic("warning"))
             for col, val in enumerate(vals):
                 item = centered_item(str(val))
-                if fg is not None:
-                    item.setForeground(fg)
+                if col in (0, 7):  # Subject CN or Status
+                    if problem:
+                        item.setForeground(QColor(semantic("error")))
+                    elif soon:
+                        item.setForeground(QColor(semantic("warning")))
+                    else:
+                        item.setForeground(QColor(semantic("success")))
+                elif col == 3:  # Days until expiry
+                    if c.days_until_expiry < 0:
+                        item.setForeground(QColor(semantic("error")))
+                    elif c.days_until_expiry < 90:
+                        item.setForeground(QColor(semantic("warning")))
+                    else:
+                        item.setForeground(QColor(semantic("success")))
+                elif col == 6 and c.has_private_key:  # Has Private Key
+                    if cf.has_exportable_private_key(c):
+                        item.setForeground(QColor(semantic("warning")))
+                    else:
+                        item.setForeground(QColor(semantic("info")))
+                elif col == 8:  # Findings
+                    if problem:
+                        item.setForeground(QColor(semantic("error")))
+                    elif soon:
+                        item.setForeground(QColor(semantic("warning")))
                 self._table.setItem(r, col, item)
                 describe_cell(self._table, col, self._table.item(r, col))
 

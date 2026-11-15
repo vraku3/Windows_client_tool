@@ -300,19 +300,45 @@ class _SoftwarePane(QWidget):
         installed = row.installed.toordinal() if row.installed else None
         category = ("System component" if e.system_component else "Update" if e.is_update
                     else row.family or "Application")
+        note_text = sa._note(row)
+        if row.uninstaller_missing is True:
+            display_note = f"⚠️ {note_text}" if note_text else ""
+        elif row.eol is not None and (row.eol_days_left or 0) < 0:
+            display_note = f"⛔ {note_text}" if note_text else ""
+        elif row.winget_available:
+            display_note = f"⬆️ {note_text}" if note_text else ""
+        elif row.superseded_by:
+            display_note = f"↺ {note_text}" if note_text else ""
+        else:
+            display_note = note_text
+
         cells = [
             centered_item(e.name), centered_item(e.version),
             centered_item(e.publisher),
             numeric_item(row.installed.isoformat() if row.installed else (e.install_date or "n/a"), installed),
             numeric_item("n/a" if age is None else f"{age:g} y", age),
             numeric_item(e.size_mb or "n/a", _size_mb(e.size_mb)),
-            centered_item(e.type_), centered_item(category), centered_item(sa._note(row)),
+            centered_item(e.type_), centered_item(category), centered_item(display_note),
         ]
         cells[0].setData(Qt.ItemDataRole.UserRole, row)
+
+        # Style Note
         if row.uninstaller_missing is True or (row.eol is not None and (row.eol_days_left or 0) < 0):
             paint_severity(cells[8], "warning")
         elif row.winget_available or row.superseded_by:
             paint_severity(cells[8], "info")
+
+        # Style Type & Category
+        if e.type_ == "32-bit":
+            paint_severity(cells[6], "warning")
+        elif e.type_ == "User":
+            paint_severity(cells[6], "info")
+
+        if e.system_component:
+            paint_severity(cells[7], "info")
+        elif row.family:
+            paint_severity(cells[7], "ok")
+
         for c, item in enumerate(cells):
             self.table.setItem(r, c, item)
             describe_cell(self.table, c, self.table.item(r, c))

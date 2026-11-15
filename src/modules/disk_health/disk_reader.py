@@ -71,6 +71,7 @@ class VolumeInfo:
     label: str = ""
     filesystem: str = ""
     health: str = ""
+    operational: str = "OK"
     size_bytes: int = 0
     free_bytes: int = 0
     bitlocker: Optional[str] = None      # "On" | "Off" | "Suspended" ... None = unread
@@ -206,6 +207,7 @@ def parse_disk_json(text: str) -> DiskReport:
             label=_clean(v.get("Label")),
             filesystem=_clean(v.get("Fs")),
             health=_clean(v.get("Health")),
+            operational=_clean(v.get("Operational") or v.get("Op") or "OK"),
             size_bytes=_opt_int(v.get("Size")) or 0,
             free_bytes=_opt_int(v.get("Free")) or 0,
             bitlocker=None if bl is None else _BITLOCKER.get(bl, f"state {bl}"),
@@ -262,7 +264,7 @@ try {
       try { $bl = $sh.NameSpace("$($_.DriveLetter):").Self.ExtendedProperty('System.Volume.BitLockerProtection') } catch { $bl = $null }
     }
     [pscustomobject]@{ Letter=[string]$_.DriveLetter; Label=$_.FileSystemLabel; Fs=$_.FileSystem
-      Health=[string]$_.HealthStatus; Size=[int64]$_.Size; Free=[int64]$_.SizeRemaining; BitLocker=$bl }
+      Health=[string]$_.HealthStatus; Operational=[string]$_.OperationalStatus; Size=[int64]$_.Size; Free=[int64]$_.SizeRemaining; BitLocker=$bl }
   })
 } catch { $out.volumes_error = $_.Exception.Message }
 try {
@@ -356,6 +358,7 @@ def _read_volumes_win32() -> List[VolumeInfo]:
             label=label,
             filesystem=fs,
             health="Healthy",
+            operational="OK",
             size_bytes=total_bytes.value,
             free_bytes=free_bytes.value,
             bitlocker=bl_status,
@@ -511,6 +514,11 @@ def volume_findings(vol: VolumeInfo) -> List[Finding]:
     if vol.health and vol.health.lower() != "healthy":
         out.append(Finding("error", vol.display, f"Volume health: {vol.health}",
                            "Run chkdsk (read-only first) and check the disk's own health."))
+    if vol.operational and vol.operational.upper() not in ("OK", "", "UNKNOWN"):
+        sev = "error" if any(x in vol.operational for x in ("Needed", "Error", "Degraded")) else "warning"
+        out.append(Finding(sev, vol.display, f"File system status: {vol.operational}",
+                           f"Windows reported operational status '{vol.operational}'. "
+                           "Run 'chkdsk /scan' or investigate file system integrity."))
     pct = vol.free_percent
     if pct is not None and vol.letter:
         if pct < 5:

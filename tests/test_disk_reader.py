@@ -187,6 +187,22 @@ def test_read_disk_report_failure_is_an_exception_not_empty(monkeypatch):
 
 
 @pytest.mark.real_machine
+def test_volume_findings_operational_status():
+    v_clean = dr.VolumeInfo(letter="C", health="Healthy", operational="OK", size_bytes=100*1024**3, free_bytes=50*1024**3)
+    assert not any("File system status" in f.title for f in dr.volume_findings(v_clean))
+
+    v_scan = dr.VolumeInfo(letter="D", health="Healthy", operational="Scan Needed", size_bytes=100*1024**3, free_bytes=50*1024**3)
+    f_scan = [f for f in dr.volume_findings(v_scan) if "File system status" in f.title]
+    assert len(f_scan) == 1
+    assert f_scan[0].severity == "error"
+    assert "Scan Needed" in f_scan[0].detail
+
+    v_degraded = dr.VolumeInfo(letter="E", health="Healthy", operational="Degraded", size_bytes=100*1024**3, free_bytes=50*1024**3)
+    f_deg = [f for f in dr.volume_findings(v_degraded) if "File system status" in f.title]
+    assert len(f_deg) == 1
+    assert f_deg[0].severity == "error"
+
+
 def test_real_machine_report_is_plausible():
     try:
         rep = dr.read_disk_report()

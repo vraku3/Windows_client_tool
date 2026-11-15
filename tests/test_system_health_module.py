@@ -66,6 +66,61 @@ def test_refresh_findings_populates_the_list(qapp, monkeypatch):
         app.shutdown()
 
 
+def test_findings_filter_by_search_and_severity(qapp, monkeypatch):
+    from modules.system_health.findings import Finding
+
+    module, app = _module(qapp)
+    try:
+        fake_findings = [
+            Finding(id="err1", title="Critical BlueScreen Crash", detail="nvlddmkm error", severity="error", jump="Diagnose"),
+            Finding(id="warn1", title="Disk Space Low", detail="Drive C has 5% free", severity="warning", jump="Disk Health"),
+            Finding(id="info1", title="Firmware UEFI", detail="Platform timer is optimal", severity="info"),
+        ]
+        monkeypatch.setattr("modules.system_health.findings.full_findings", lambda **kw: fake_findings)
+
+        module._refresh_findings()
+        from PyQt6.QtCore import QThreadPool
+        import time
+        QThreadPool.globalInstance().waitForDone(5000)
+        deadline = time.time() + 1
+        while time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        # All 3 initially shown
+        assert module._findings_list.count() == 3
+        assert "All (3)" in module._filter_all_btn.text()
+        assert "Errors (1)" in module._filter_errors_btn.text()
+        assert "Warnings (1)" in module._filter_warnings_btn.text()
+        assert "Info (1)" in module._filter_info_btn.text()
+
+        # Filter by error severity pill
+        module._set_severity_filter("error")
+        assert module._findings_list.count() == 1
+        assert "Critical BlueScreen" in module._findings_list.item(0).text()
+
+        # Filter by warning severity pill
+        module._set_severity_filter("warning")
+        assert module._findings_list.count() == 1
+        assert "Disk Space Low" in module._findings_list.item(0).text()
+
+        # Filter back to all and search query
+        module._set_severity_filter("all")
+        assert module._findings_list.count() == 3
+
+        module._findings_search.setText("nvlddmkm")
+        assert module._findings_list.count() == 1
+        assert "Critical BlueScreen" in module._findings_list.item(0).text()
+
+        module._findings_search.setText("nonexistentquery")
+        assert module._findings_list.count() == 0
+
+        module._findings_search.clear()
+        assert module._findings_list.count() == 3
+    finally:
+        app.shutdown()
+
+
 def test_on_activate_triggers_a_findings_refresh(qapp, monkeypatch):
     module, app = _module(qapp)
     try:

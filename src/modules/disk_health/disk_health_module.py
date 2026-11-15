@@ -83,6 +83,7 @@ def _fill_volumes(table: QTableWidget, report: dr.DiskReport) -> None:
     for r, v in enumerate(vols):
         pct = v.free_percent
         trim = report.trim_enabled.get(v.filesystem)
+        health_str = f"{v.health} ({v.operational})" if (v.operational and v.operational != "OK") else (v.health or "?")
         cells = [
             centered_item(v.display), centered_item(v.label), centered_item(v.filesystem),
             numeric_item(dr.format_size(v.size_bytes), v.size_bytes),
@@ -90,12 +91,18 @@ def _fill_volumes(table: QTableWidget, report: dr.DiskReport) -> None:
             numeric_item("n/a" if pct is None else f"{pct:.0f}%", pct),
             centered_item(v.bitlocker or "not read"),
             centered_item({True: "on", False: "OFF", None: "n/a"}[trim]),
-            centered_item(v.health or "?"),
+            centered_item(health_str),
         ]
         if pct is not None and pct < 5:
             paint_severity(cells[5], "error")
         elif pct is not None and pct < 10:
             paint_severity(cells[5], "warning")
+
+        if v.operational and v.operational != "OK":
+            sev = "error" if any(x in v.operational for x in ("Error", "Chkdsk", "Failed")) else "warning"
+            paint_severity(cells[8], sev)
+        elif v.health and v.health.lower() in ("healthy", "ok"):
+            paint_severity(cells[8], "success")
         for c, item in enumerate(cells):
             table.setItem(r, c, item)
             describe_cell(table, c, table.item(r, c))

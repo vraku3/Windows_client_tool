@@ -12,7 +12,7 @@ import logging
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit,
 )
 
@@ -100,6 +100,7 @@ class SystemHealthModule(BaseModule):
     def _build_findings_tab(self) -> QWidget:
         tab = QWidget()
         lay = QVBoxLayout(tab)
+        lay.setSpacing(6)
 
         toolbar = QHBoxLayout()
         self._refresh_findings_btn = QPushButton("🔄  Refresh Findings")
@@ -121,11 +122,43 @@ class SystemHealthModule(BaseModule):
         toolbar.insertWidget(1, self._copy_finding_btn)
         toolbar.insertWidget(2, self._jump_btn)
 
+        # Filter bar: Search + Severity filter pills
+        filter_bar = QHBoxLayout()
+        self._findings_search = QLineEdit()
+        self._findings_search.setPlaceholderText("Filter findings by title, detail, or evidence…")
+        self._findings_search.setClearButtonEnabled(True)
+        self._findings_search.textChanged.connect(self._apply_findings_filter)
+        filter_bar.addWidget(self._findings_search, 1)
+
+        self._severity_filter = "all"
+        self._filter_all_btn = QPushButton("All (0)")
+        self._filter_errors_btn = QPushButton("Errors (0)")
+        self._filter_warnings_btn = QPushButton("Warnings (0)")
+        self._filter_info_btn = QPushButton("Info (0)")
+
+        for btn in (self._filter_all_btn, self._filter_errors_btn, self._filter_warnings_btn, self._filter_info_btn):
+            btn.setCheckable(True)
+
+        self._filter_all_btn.setChecked(True)
+        self._filter_all_btn.clicked.connect(lambda: self._set_severity_filter("all"))
+        self._filter_errors_btn.clicked.connect(lambda: self._set_severity_filter("error"))
+        self._filter_warnings_btn.clicked.connect(lambda: self._set_severity_filter("warning"))
+        self._filter_info_btn.clicked.connect(lambda: self._set_severity_filter("info"))
+
+        filter_bar.addWidget(self._filter_all_btn)
+        filter_bar.addWidget(self._filter_errors_btn)
+        filter_bar.addWidget(self._filter_warnings_btn)
+        filter_bar.addWidget(self._filter_info_btn)
+        lay.addLayout(filter_bar)
+
         self._findings_data = []
+        self._filtered_findings = []
         self._findings_list = QListWidget()
         self._findings_list.setWordWrap(True)
         self._findings_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._findings_list.currentRowChanged.connect(self._on_finding_selected)
+        self._findings_list.itemDoubleClicked.connect(lambda _item: self._jump_to_finding())
+
         self._finding_detail = QPlainTextEdit()
         self._finding_detail.setReadOnly(True)
         self._finding_detail.setMaximumHeight(200)
@@ -314,17 +347,28 @@ class SystemHealthModule(BaseModule):
                 return
             self._refresh_findings_btn.setEnabled(True)
             self._findings_data = list(results)
-            self._findings_list.clear()
-            for finding in results:
-                icon = "⚠️" if finding.severity == "warning" else "ℹ️"
-                item = QListWidgetItem(f"{icon}  {finding.title}\n{finding.detail}")
-                item.setToolTip(finding.copy_text())
-                color = semantic("warning") if finding.severity == "warning" else semantic("info")
-                item.setForeground(QColor(color))
-                self._findings_list.addItem(item)
+
+            errors = sum(1 for f in results if f.severity in ("error", "critical"))
             warnings = sum(1 for f in results if f.severity == "warning")
-            self._findings_status_lbl.setText(
-                f"{len(results)} finding(s), {warnings} warning(s)" if results else "No issues found")
+            infos = sum(1 for f in results if f.severity == "info")
+
+            if hasattr(self, "_filter_all_btn"):
+                self._filter_all_btn.setText(f"All ({len(results)})")
+                self._filter_errors_btn.setText(f"Errors ({errors})")
+                self._filter_warnings_btn.setText(f"Warnings ({warnings})")
+                self._filter_info_btn.setText(f"Info ({infos})")
+
+            summary_parts = []
+            if errors:
+                summary_parts.append(f"{errors} error(s)")
+            if warnings:
+                summary_parts.append(f"{warnings} warning(s)")
+            if infos:
+                summary_parts.append(f"{infos} info(s)")
+            status_text = f"{len(results)} finding(s): {', '.join(summary_parts)}" if results else "No issues found"
+            self._findings_status_lbl.setText(status_text)
+
+            self._apply_findings_filter()
 
         def _err(e: str):
             if widget_is_valid(self._findings_list):
@@ -337,9 +381,63 @@ class SystemHealthModule(BaseModule):
         self._workers.append(self._findings_worker)
         self.app.thread_pool.start(self._findings_worker)
 
+    def _set_severity_filter(self, sev: str) -> None:
+        self._severity_filter = sev
+        if hasattr(self, "_filter_all_btn"):
+            self._filter_all_btn.setChecked(sev == "all")
+            self._filter_errors_btn.setChecked(sev == "error")
+            self._filter_warnings_btn.setChecked(sev == "warning")
+            self._filter_info_btn.setChecked(sev == "info")
+        self._apply_findings_filter()
+
+    def _apply_findings_filter(self) -> None:
+        if not widget_is_valid(self._findings_list):
+            return
+        query = self._findings_search.text().strip().lower() if hasattr(self, "_findings_search") else ""
+        sev_filter = getattr(self, "_severity_filter", "all")
+
+        self._filtered_findings = []
+        self._findings_list.clear()
+
+        for finding in self._findings_data:
+            if sev_filter == "error" and finding.severity not in ("error", "critical"):
+                continue
+            if sev_filter == "warning" and finding.severity != "warning":
+                continue
+            if sev_filter == "info" and finding.severity != "info":
+                continue
+
+            if query:
+                haystack = f"{finding.title} {finding.detail} {finding.evidence} {finding.jump}".lower()
+                if query not in haystack:
+                    continue
+
+            self._filtered_findings.append(finding)
+            if finding.severity in ("error", "critical"):
+                icon = "⛔"
+                color = semantic("error")
+            elif finding.severity == "warning":
+                icon = "⚠️"
+                color = semantic("warning")
+            else:
+                icon = "ℹ️"
+                color = semantic("info")
+
+            jump_suffix = f"   [→ {finding.jump}]" if finding.jump else ""
+            item = QListWidgetItem(f"{icon}  {finding.title}{jump_suffix}\n{finding.detail}")
+            item.setToolTip(finding.copy_text())
+            item.setForeground(QColor(color))
+            self._findings_list.addItem(item)
+
+        if self._filtered_findings:
+            self._findings_list.setCurrentRow(0)
+        else:
+            self._on_finding_selected(-1)
+
     def _current_finding(self):
         row = self._findings_list.currentRow()
-        return self._findings_data[row] if 0 <= row < len(self._findings_data) else None
+        data = getattr(self, "_filtered_findings", self._findings_data)
+        return data[row] if 0 <= row < len(data) else None
 
     def _on_finding_selected(self, _row: int) -> None:
         finding = self._current_finding()

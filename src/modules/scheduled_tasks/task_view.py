@@ -58,6 +58,17 @@ RESULT_WORDS: Dict[int, str] = {
     0xC0000142: "A DLL failed to initialise",
     0xC000004E: "The program was blocked",
     0xFFFD0000: "Not a valid Win32 program",
+    0x8007042B: "The process terminated unexpectedly (process aborted / killed)",
+    0x8004EE04: "Network connection to update service failed (update server unreachable)",
+    0x80040111: "Operation exceeded execution deadline or timed out",
+    0x40010004: "Process was terminated by debugger or diagnostic system",
+    0x80070102: "Execution wait timed out",
+    0x8004131B: "The task is not ready to run",
+    0x8004131C: "The task is disabled",
+    0x8004131D: "The task has no valid triggers",
+    0x8007000E: "Insufficient memory resources to complete the task",
+    0x80070057: "The parameter is incorrect",
+    0x80070001: "Incorrect function / invalid system call",
 }
 
 SHORT_RESULT_WORDS: Dict[int, str] = {
@@ -102,6 +113,17 @@ SHORT_RESULT_WORDS: Dict[int, str] = {
     0xC0000142: "DLL init failed",
     0xC000004E: "Blocked",
     0xFFFD0000: "Invalid binary",
+    0x8007042B: "Process aborted",
+    0x8004EE04: "Update unreachable",
+    0x80040111: "Deadline exceeded",
+    0x40010004: "Terminated",
+    0x80070102: "Wait timeout",
+    0x8004131B: "Not ready",
+    0x8004131C: "Disabled",
+    0x8004131D: "No valid triggers",
+    0x8007000E: "Out of memory",
+    0x80070057: "Invalid parameter",
+    0x80070001: "Invalid function",
 }
 
 _SUCCESS_CLASS = range(0x41300, 0x41320)

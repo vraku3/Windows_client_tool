@@ -483,6 +483,42 @@ def test_check_firewall_exposure_real_machine():
         assert f.jump == "Firewall Rules"
 
 
+def test_evaluate_scheduled_task_failures_clean():
+    class DummyTask:
+        enabled = True
+        last_result_code = 0
+        path = r"\Vendor\Task"
+    assert h.evaluate_scheduled_task_failures([DummyTask()]) == []
+
+
+def test_evaluate_scheduled_task_failures_categorization():
+    from types import SimpleNamespace
+    tasks = [
+        SimpleNamespace(enabled=True, last_result_code=1, path=r"\Vendor\CustomBackup"),
+        SimpleNamespace(enabled=True, last_result_code=0x8007042B, path=r"\Microsoft\Windows\SystemRestore\SR"),
+        SimpleNamespace(enabled=False, last_result_code=1, path=r"\Disabled\Task"),  # ignored because disabled
+    ]
+    findings = h.evaluate_scheduled_task_failures(tasks)
+    assert len(findings) == 2
+    f_third = [f for f in findings if f.id == "scheduled_tasks:failed_third_party"][0]
+    assert f_third.severity == "warning"
+    assert "CustomBackup" in f_third.evidence
+    assert f_third.jump == "Scheduled Tasks"
+
+    f_win = [f for f in findings if f.id == "scheduled_tasks:failed_windows"][0]
+    assert f_win.severity == "info"
+    assert "SystemRestore" in f_win.evidence
+    assert f_win.jump == "Scheduled Tasks"
+
+
+def test_check_scheduled_task_failures_real_machine():
+    findings = h.check_scheduled_task_failures()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Scheduled Tasks"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

@@ -952,6 +952,62 @@ def check_firewall_exposure() -> List[Finding]:
     return evaluate_firewall_exposure(snap)
 
 
+# ---- Scheduled task failures -----------------------------------------------------
+
+def evaluate_scheduled_task_failures(tasks: List[Any]) -> List[Finding]:
+    """Turn failed scheduled task instances into actionable findings."""
+    from modules.scheduled_tasks.task_view import failed, describe_result, is_microsoft
+
+    failed_tasks = [t for t in tasks if getattr(t, "enabled", False) and failed(getattr(t, "last_result_code", None))]
+    if not failed_tasks:
+        return []
+
+    third_party = [t for t in failed_tasks if not is_microsoft(t)]
+    windows = [t for t in failed_tasks if is_microsoft(t)]
+
+    out: List[Finding] = []
+    if third_party:
+        lines = [f"{t.path}: {describe_result(t.last_result_code)}" for t in third_party]
+        out.append(Finding(
+            id="scheduled_tasks:failed_third_party",
+            title=f"{len(third_party)} third-party scheduled task(s) failed on last run",
+            detail="Enabled third-party tasks reported an abnormal exit code or error.",
+            severity="warning",
+            evidence="\n".join(lines[:10]),
+            jump="Scheduled Tasks",
+        ))
+
+    if windows:
+        lines = [f"{t.path}: {describe_result(t.last_result_code)}" for t in windows]
+        out.append(Finding(
+            id="scheduled_tasks:failed_windows",
+            title=f"{len(windows)} Windows scheduled task(s) failed on last run",
+            detail="Enabled Windows background tasks reported a non-zero exit code or error.",
+            severity="info",
+            evidence="\n".join(lines[:10]),
+            jump="Scheduled Tasks",
+        ))
+
+    return out
+
+
+def check_scheduled_task_failures() -> List[Finding]:
+    """Audit enabled scheduled tasks for last run execution failures."""
+    try:
+        import pythoncom
+        from modules.scheduled_tasks.tasks_reader import get_tasks_in_folder, ALL_FOLDERS
+        pythoncom.CoInitialize()
+        try:
+            tasks = get_tasks_in_folder(ALL_FOLDERS)
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as exc:
+        logger.warning("scheduled task failure check failed: %s", exc)
+        return [_unknown("scheduled_tasks_failure", "scheduled tasks execution status", str(exc), jump="Scheduled Tasks")]
+
+    return evaluate_scheduled_task_failures(tasks)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -969,6 +1025,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("driver load failures", check_driver_load_failures),
     ("TPM attestation", check_tpm_attestation_events),
     ("firewall exposure", check_firewall_exposure),
+    ("scheduled task failures", check_scheduled_task_failures),
 )
 
 

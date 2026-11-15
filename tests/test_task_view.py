@@ -20,6 +20,20 @@ def task(**kw):
     return SimpleNamespace(**base)
 
 
+def test_expanded_error_codes_are_decoded():
+    assert "aborted" in v.describe_result(0x8007042B).lower()
+    assert v.short_result(0x8007042B) == "0x8007042B (Process aborted)"
+
+    assert "update" in v.describe_result(0x8004EE04).lower()
+    assert v.short_result(0x8004EE04) == "0x8004EE04 (Update unreachable)"
+
+    assert "deadline" in v.describe_result(0x80040111).lower()
+    assert v.short_result(0x80040111) == "0x80040111 (Deadline exceeded)"
+
+    assert "terminated" in v.describe_result(0x40010004).lower()
+    assert v.short_result(0x40010004) == "0x40010004 (Terminated)"
+
+
 def test_known_codes_are_decoded_in_words():
     assert "not run yet" in v.describe_result(0x41303).lower()
     assert "terminated" in v.describe_result(0x41306).lower()

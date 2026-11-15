@@ -126,6 +126,8 @@ AUDIT_HELP = {'any': 'Show every service matching the other filters. No service 
              'to inspect; it does not prove the path is exploitable or that malware is present.',
  'crashed': 'Show services matched to failure events in the last 30 days. Missing or refused log '
             'evidence can leave no matches; this is not proof no crashes occurred.',
+ 'blocked': 'Show services that depend on one or more disabled services, preventing them from starting normally.',
+ 'missing_bin': 'Show services whose registered executable path does not exist on disk, indicating an orphaned or broken installation.',
  'autostopped': 'Automatic but currently stopped. Trigger-start, delayed start or a completed one-time '
                 'job can make this normal; it is not automatically a fault.',
  'thirdparty': 'Binary path is outside the Windows folder according to this tool. This is a path '

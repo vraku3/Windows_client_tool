@@ -282,6 +282,8 @@ _AUDIT_FILTERS = (
     ("any", "Any"),
     ("unquoted", "Unquoted path"),
     ("crashed", "Crashed (30 d)"),
+    ("blocked", "Blocked dependency"),
+    ("missing_bin", "Missing binary"),
     ("autostopped", "Auto, not running"),
     ("thirdparty", "Third-party"),
     ("account", "Custom account"),
@@ -308,6 +310,9 @@ class ServicesModule(BaseModule):
         self._refreshing = False
         self._failures: Optional[Dict[str, int]] = None
         self._failures_requested = False
+        self._blocked_services: set[str] = set()
+        self._missing_bin_services: set[str] = set()
+        self._reg_audit_requested = False
 
     def create_widget(self) -> QWidget:
         outer = QWidget()
@@ -556,13 +561,27 @@ class ServicesModule(BaseModule):
                 svc["Display Name"], svc["Name"], svc["Status"],
                 svc["Start Type"], svc["Impact"],
             ]
+            svc_name_lower = svc.get("Name", "").lower()
+            tip_parts = [escape(service_help(svc))]
+            if svc_name_lower in self._blocked_services:
+                tip_parts.append("[Warning] Blocked dependency: relies on disabled service(s).")
+            if svc_name_lower in self._missing_bin_services:
+                tip_parts.append("[Error] Missing binary: service executable path not found on disk.")
+            tip_html = "<qt>" + "<br>".join(tip_parts).replace("\n", "<br>") + "</qt>"
+
             for c, val in enumerate(values):
                 item = centered_item(val)
-                item.setToolTip("<qt>" + escape(service_help(svc)).replace("\n", "<br>") + "</qt>")
+                item.setToolTip(tip_html)
                 if c == 2:  # Status
                     color = status_colour(svc["Status"])
                     if color:
                         item.setForeground(QColor(color))
+                elif c == 3:  # Start Type
+                    st = (svc.get("Start Type") or "").lower()
+                    if st == "disabled":
+                        item.setForeground(QColor(semantic("warning")))
+                    elif st.startswith("auto"):
+                        item.setForeground(QColor(semantic("info")))
                 elif c == 4:  # Impact
                     color = impact_colour(svc["Impact"])
                     if color:
@@ -581,6 +600,10 @@ class ServicesModule(BaseModule):
             return bool(service_audit.failures_for(
                 self._failures, svc.get("Display Name", ""), svc.get("Name", "")
             ))
+        if key == "blocked":
+            return svc.get("Name", "").lower() in self._blocked_services
+        if key == "missing_bin":
+            return svc.get("Name", "").lower() in self._missing_bin_services
         return service_view.passes(key, svc)
 
     def _on_selection_changed(self):
@@ -761,6 +784,24 @@ class ServicesModule(BaseModule):
         if hasattr(self, "_audit_combo"):
             self._apply_filter()
 
+    def _load_registry_audit(self) -> None:
+        def do_audit(_w):
+            return service_audit.audit_service_registry()
+        worker = Worker(do_audit)
+        worker.signals.result.connect(self._on_registry_audit)
+        worker.signals.error.connect(lambda e: logger.warning("registry audit: %s", e))
+        self._workers.append(worker)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_registry_audit(self, res) -> None:
+        if not res:
+            return
+        blocked, missing = res
+        self._blocked_services = {svc.lower() for svc, _ in blocked}
+        self._missing_bin_services = {svc.lower() for svc, _ in missing}
+        if hasattr(self, "_audit_combo"):
+            self._apply_filter()
+
     def _apply_detail_error(self, err: str):
         self._detail_type_value.setText("-")
         self._detail_start_type_value.setText("-")
@@ -895,6 +936,9 @@ class ServicesModule(BaseModule):
         if self._failures is None and not self._failures_requested:
             self._failures_requested = True
             self._load_failures()
+        if not self._reg_audit_requested:
+            self._reg_audit_requested = True
+            self._load_registry_audit()
         self._refresh_btn.setEnabled(True)
         self._progress.hide()
         self._apply_filter()

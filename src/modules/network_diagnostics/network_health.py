@@ -64,6 +64,7 @@ $o.routes=@(Try-Get routes { Get-NetRoute | Where-Object { $_.DestinationPrefix 
 $o.dns=@(Try-Get dns { Get-DnsClientServerAddress | Select-Object InterfaceIndex,AddressFamily,ServerAddresses })
 $o.ifaces=@(Try-Get ifaces { Get-NetIPInterface | Select-Object InterfaceIndex,AddressFamily,Dhcp,InterfaceMetric,NlMtu })
 $o.dhcp=@(Try-Get dhcp { Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'DHCPEnabled=True' | Select-Object InterfaceIndex,DHCPServer,@{n='LeaseObtained';e={if($_.DHCPLeaseObtained){$_.DHCPLeaseObtained.ToString('o')}}},@{n='LeaseExpires';e={if($_.DHCPLeaseExpires){$_.DHCPLeaseExpires.ToString('o')}}} })
+$o.stats=@(Try-Get stats { Get-NetAdapterStatistics | Select-Object Name,ReceivedBytes,SentBytes,ReceivedDiscardedPackets,OutboundDiscardedPackets,ReceivedPacketErrors,OutboundPacketErrors })
 $o.failed=@($global:failed)
 $o | ConvertTo-Json -Depth 4 -Compress
 """
@@ -71,7 +72,7 @@ $o | ConvertTo-Json -Depth 4 -Compress
 # Sections a failed query left empty. An empty list there is "could not
 # read", never "none configured": a refused Get-NetRoute had read as "No
 # default gateway on any connected adapter".
-_SECTIONS = ("adapters", "addresses", "routes", "dns", "ifaces", "dhcp")
+_SECTIONS = ("adapters", "addresses", "routes", "dns", "ifaces", "dhcp", "stats")
 
 
 def _unread(snap: Dict[str, Any], *keys: str) -> bool:
@@ -717,13 +718,45 @@ def _f_tcp_autotuning(snap: Dict[str, Any]) -> List[Finding]:
     return []
 
 
+def _f_adapter_statistics(snap: Dict[str, Any]) -> List[Finding]:
+    """Flag physical or virtual network adapters with hardware errors or excessive discards."""
+    if _unread(snap, "stats"):
+        return [Finding("stats-unread", UNKNOWN, "Network adapter statistics could not be read")]
+    out: List[Finding] = []
+    for s in snap.get("stats", []):
+        name = s.get("Name") or "Adapter"
+        rx_err = int(s.get("ReceivedPacketErrors") or 0)
+        tx_err = int(s.get("OutboundPacketErrors") or 0)
+        if rx_err > 0 or tx_err > 0:
+            out.append(Finding(
+                f"adapter-errors-{name}",
+                ERROR,
+                f"Packet errors detected on {name}",
+                f"The adapter recorded {rx_err + tx_err} hardware packet error(s) (Rx: {rx_err}, Tx: {tx_err}). "
+                "Hardware packet errors are commonly caused by damaged cabling, a faulty switch port, or duplex mismatch.",
+                items=[f"{name}: Rx errors={rx_err}, Tx errors={tx_err}"],
+            ))
+        rx_disc = int(s.get("ReceivedDiscardedPackets") or 0)
+        tx_disc = int(s.get("OutboundDiscardedPackets") or 0)
+        if rx_disc > 100 or tx_disc > 100:
+            out.append(Finding(
+                f"adapter-discards-{name}",
+                WARNING,
+                f"Elevated packet discards on {name}",
+                f"The adapter discarded {rx_disc + tx_disc} packet(s) (Rx: {rx_disc}, Tx: {tx_disc}). "
+                "Discards typically indicate queue or buffer overflow under network congestion.",
+                items=[f"{name}: Rx discards={rx_disc}, Tx discards={tx_disc}"],
+            ))
+    return out
+
+
 def evaluate(snap: Dict[str, Any], probes: Dict[str, Any], now: Optional[datetime] = None) -> List[Finding]:
     now = now or datetime.now()
     out: List[Finding] = [Finding("read", UNKNOWN, "Could not read some configuration", e) for e in snap.get("errors", [])]
     for part in (_f_gateway(snap, probes), _f_multi_route(snap), _f_apipa(snap), _f_dns(snap, probes),
                  _f_proxy(snap), _f_hosts(snap), _f_dhcp(snap, now), _f_links(snap), _f_mtu(snap, probes),
                  _f_time_v6(probes), _f_events(snap), _f_winsock(snap), _f_dns_search_list(snap),
-                 _f_tcp_autotuning(snap)):
+                 _f_tcp_autotuning(snap), _f_adapter_statistics(snap)):
         out.extend(part)
     out.sort(key=lambda f: SEVERITY_ORDER[f.severity])
     return out

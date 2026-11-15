@@ -413,6 +413,53 @@ def test_tcp_autotuning_findings():
     assert "tcp-autotuning" not in f_norm
 
 
+def test_adapter_statistics_findings():
+    s_err = snap(stats=[{
+        "Name": "Ethernet",
+        "ReceivedBytes": 1000,
+        "SentBytes": 1000,
+        "ReceivedDiscardedPackets": 0,
+        "OutboundDiscardedPackets": 0,
+        "ReceivedPacketErrors": 5,
+        "OutboundPacketErrors": 0,
+    }])
+    f_err = by_id(h.evaluate(s_err, {}))
+    assert "adapter-errors-Ethernet" in f_err
+    assert f_err["adapter-errors-Ethernet"].severity == h.ERROR
+    assert "5 hardware packet error(s)" in f_err["adapter-errors-Ethernet"].detail
+
+    s_disc = snap(stats=[{
+        "Name": "Wi-Fi",
+        "ReceivedBytes": 1000,
+        "SentBytes": 1000,
+        "ReceivedDiscardedPackets": 250,
+        "OutboundDiscardedPackets": 0,
+        "ReceivedPacketErrors": 0,
+        "OutboundPacketErrors": 0,
+    }])
+    f_disc = by_id(h.evaluate(s_disc, {}))
+    assert "adapter-discards-Wi-Fi" in f_disc
+    assert f_disc["adapter-discards-Wi-Fi"].severity == h.WARNING
+    assert "250 packet(s)" in f_disc["adapter-discards-Wi-Fi"].detail
+
+    s_clean = snap(stats=[{
+        "Name": "Ethernet",
+        "ReceivedBytes": 1000,
+        "SentBytes": 1000,
+        "ReceivedDiscardedPackets": 0,
+        "OutboundDiscardedPackets": 0,
+        "ReceivedPacketErrors": 0,
+        "OutboundPacketErrors": 0,
+    }])
+    f_clean = by_id(h.evaluate(s_clean, {}))
+    assert not any(k.startswith("adapter-errors") or k.startswith("adapter-discards") for k in f_clean)
+
+    s_unread = snap(unread=["stats"])
+    f_unread = by_id(h.evaluate(s_unread, {}))
+    assert "stats-unread" in f_unread
+    assert f_unread["stats-unread"].severity == h.UNKNOWN
+
+
 # ---- real machine (read-only) ----------------------------------------------
 def test_real_snapshot_is_plausible():
     s = h.collect_snapshot()

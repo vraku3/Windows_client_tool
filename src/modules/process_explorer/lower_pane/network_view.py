@@ -10,6 +10,7 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot, QTimer
 from PyQt6.QtGui import QColor, QBrush
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget, QHeaderView
 
+from core.semantic_colors import semantic
 from core.table_ui import centered_item, center_header
 from core.widget_life import widget_is_valid
 from ui.help.dashboard_ui import apply_help
@@ -21,7 +22,6 @@ _HEADERS = ["Protocol", "Local Address", "Local Port", "Remote Address", "Remote
 # Connection states worth flagging — pile-ups here often indicate a stuck or
 # misbehaving process (lingering half-closed sockets, retried connects, etc.)
 _WARN_STATES = {"CLOSE_WAIT", "TIME_WAIT", "LAST_ACK", "CLOSING", "SYN_SENT"}
-_WARN_BRUSH = QBrush(QColor("#ffcc66"))
 
 _widget_valid = widget_is_valid
 
@@ -107,6 +107,8 @@ class NetworkView(QWidget):
 
         self._table.setRowCount(len(rows))
         warn_count = 0
+        warn_brush = QBrush(QColor(semantic("warning")))
+        ok_brush = QBrush(QColor(semantic("success")))
         for r, conn in enumerate(rows):
             proto = "TCP" if conn.type == socket.SOCK_STREAM else "UDP"
             laddr = conn.laddr.ip if conn.laddr else ""
@@ -115,12 +117,15 @@ class NetworkView(QWidget):
             rport = str(conn.raddr.port) if conn.raddr else ""
             state = conn.status or ""
             is_warn = state in _WARN_STATES
+            is_ok = state == "ESTABLISHED"
             if is_warn:
                 warn_count += 1
             for c, val in enumerate([proto, laddr, lport, raddr, rport, state]):
                 item = centered_item(val)
                 if is_warn:
-                    item.setForeground(_WARN_BRUSH)
+                    item.setForeground(warn_brush)
+                elif is_ok and c == 5:
+                    item.setForeground(ok_brush)
                 self._table.setItem(r, c, item)
 
         if _widget_valid(self._summary_label):

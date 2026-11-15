@@ -13,9 +13,11 @@ import threading
 from typing import Optional
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (QHeaderView, QHBoxLayout, QLabel, QLineEdit,
+                             QTableWidget, QVBoxLayout, QWidget)
 
+from core.semantic_colors import semantic
 from core.table_ui import centered_item, center_header
 from ui.help.dashboard_ui import apply_help
 
@@ -60,12 +62,21 @@ class DllView(QWidget):
         self._ready.connect(self._populate)
         self._pid: int = -1
         self._thread: Optional[threading.Thread] = None
+        self._modules: list = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        top_row = QHBoxLayout()
         self._label = QLabel("Select a process to view its modules")
         self._label.setWordWrap(True)
-        layout.addWidget(self._label)
+        top_row.addWidget(self._label, 1)
+        self._search = QLineEdit()
+        self._search.setObjectName("dll_search")
+        self._search.setPlaceholderText("Filter modules...")
+        self._search.setMaximumWidth(200)
+        self._search.textChanged.connect(self._apply_filter)
+        top_row.addWidget(self._search)
+        layout.addLayout(top_row)
         self._table = QTableWidget(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(_HEADERS)
         header = self._table.horizontalHeader()
@@ -120,6 +131,7 @@ class DllView(QWidget):
             # NOT an empty table: a running process has loaded libraries by
             # definition, so "none" would be a claim we cannot make.
             self._table.setRowCount(0)
+            self._modules = []
             # Win32 reasons already end in a full stop ("Access is
             # denied."), so appending one gives "denied.. Running".
             why = (reason or "access denied").rstrip(".")
@@ -128,8 +140,29 @@ class DllView(QWidget):
                 f"Running elevated resolves most of these.")
             return
 
-        self._table.setRowCount(len(modules))
-        for index, module in enumerate(modules):
+        self._modules = modules
+        self._apply_filter()
+
+    def _apply_filter(self) -> None:
+        modules = getattr(self, "_modules", None) or []
+        query = self._search.text().strip().lower()
+        if query:
+            filtered = [
+                m for m in modules
+                if query in (m.name or "").lower()
+                or query in (m.description or "").lower()
+                or query in (m.company or "").lower()
+                or query in (m.path or "").lower()
+            ]
+        else:
+            filtered = modules
+
+        self._table.setRowCount(len(filtered))
+        ok_color = QColor(semantic("success"))
+        warn_color = QColor(semantic("warning"))
+        err_color = QColor(semantic("error"))
+
+        for index, module in enumerate(filtered):
             cells = [
                 module.name,
                 module.description or "—",
@@ -141,7 +174,22 @@ class DllView(QWidget):
                 _signed(module.signature),
             ]
             for column, text in enumerate(cells):
-                self._table.setItem(index, column, centered_item(text))
+                item = centered_item(text)
+                if column == 7:
+                    if module.signature == "valid":
+                        item.setForeground(ok_color)
+                    elif module.signature == "not_signed":
+                        item.setForeground(warn_color)
+                    elif module.signature == "invalid":
+                        item.setForeground(err_color)
+                self._table.setItem(index, column, item)
+
         signed = sum(1 for module in modules if module.signature == "valid")
-        self._label.setText(
-            f"{len(modules):,} modules · {signed:,} signed")
+        if query:
+            self._label.setText(
+                f"{len(filtered):,} of {len(modules):,} modules · {signed:,} signed"
+            )
+        else:
+            self._label.setText(
+                f"{len(modules):,} modules · {signed:,} signed"
+            )

@@ -6,6 +6,7 @@ is `None`, never an empty answer.
 """
 from core.system_paths import powershell_exe
 import logging
+import os
 import re
 import subprocess
 import winreg
@@ -276,6 +277,80 @@ def blocked_dependencies(dep_names: List[str], start_types: Dict[str, str]) -> L
         if start and start.lower() == "disabled":
             out.append(dep)
     return out
+
+
+def audit_service_registry() -> Tuple[List[Tuple[str, List[str]]], List[Tuple[str, str]]]:
+    """Audit HKLM\\SYSTEM\\CurrentControlSet\\Services for blocked dependencies and missing binaries.
+
+    Returns:
+        (blocked_dependencies, missing_binaries)
+        where blocked_dependencies is [(service_name, [disabled_dep_names])]
+        and missing_binaries is [(service_name, missing_path)]
+    """
+    try:
+        root = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, _SERVICES_KEY, 0, winreg.KEY_READ)
+    except OSError as exc:
+        logger.debug("Cannot open Services registry key: %s", exc)
+        return [], []
+
+    start_types: Dict[str, str] = {}
+    deps_map: Dict[str, List[str]] = {}
+    binaries: List[Tuple[str, int, str]] = []
+
+    with root:
+        i = 0
+        while True:
+            try:
+                name = winreg.EnumKey(root, i)
+                i += 1
+            except OSError as exc:
+                logger.debug("Services enum finished at index %d: %s", i, exc)
+                break
+            try:
+                with winreg.OpenKey(root, name, 0, winreg.KEY_READ) as key:
+                    start = None
+                    try:
+                        start_val, _ = winreg.QueryValueEx(key, "Start")
+                        start = int(start_val)
+                        start_types[name.lower()] = "disabled" if start == 4 else ("auto" if start == 2 else "manual")
+                    except (OSError, ValueError, TypeError) as exc:
+                        logger.debug("Service %s missing or invalid Start: %s", name, exc)
+
+                    try:
+                        deps, _ = winreg.QueryValueEx(key, "DependOnService")
+                        if isinstance(deps, list):
+                            deps_map[name] = deps
+                        elif isinstance(deps, str):
+                            deps_map[name] = [deps]
+                    except OSError as exc:
+                        logger.debug("Service %s missing DependOnService: %s", name, exc)
+
+                    if start in (2, 3):
+                        try:
+                            image, _ = winreg.QueryValueEx(key, "ImagePath")
+                            binaries.append((name, start, str(image)))
+                        except OSError as exc:
+                            logger.debug("Service %s missing ImagePath: %s", name, exc)
+            except OSError as exc:
+                logger.debug("Could not open service key %s: %s", name, exc)
+                continue
+
+    blocked: List[Tuple[str, List[str]]] = []
+    for svc, deps in deps_map.items():
+        if start_types.get(svc.lower()) in ("auto", "manual"):
+            bad = blocked_dependencies(deps, start_types)
+            if bad:
+                blocked.append((svc, bad))
+
+    missing: List[Tuple[str, str]] = []
+    for svc, start, raw_image in binaries:
+        exe = executable_of(raw_image)
+        expanded = os.path.expandvars(exe)
+        if expanded.lower().endswith(".exe") and not expanded.startswith("\\"):
+            if not os.path.isfile(expanded):
+                missing.append((svc, expanded))
+
+    return blocked, missing
 
 
 def audit_lines(svc: Dict, failures: Optional[int]) -> List[Tuple[str, str]]:

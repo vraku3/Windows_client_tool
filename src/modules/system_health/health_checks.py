@@ -459,7 +459,12 @@ def check_cbs_log(tail_bytes: int = 8 * 1024 * 1024) -> List[Finding]:
 
 # ---- services --------------------------------------------------------------------
 
-def evaluate_services(rows: List[Dict], failures: Optional[Dict[str, int]]) -> List[Finding]:
+def evaluate_services(
+    rows: List[Dict],
+    failures: Optional[Dict[str, int]],
+    blocked_deps: Optional[List[Tuple[str, List[str]]]] = None,
+    missing_binaries: Optional[List[Tuple[str, str]]] = None,
+) -> List[Finding]:
     from modules.services_manager import service_audit
     out: List[Finding] = []
     unquoted = [r for r in rows if service_audit.is_unquoted_path(str(r.get("PathName") or ""))]
@@ -472,6 +477,33 @@ def evaluate_services(rows: List[Dict], failures: Optional[Dict[str, int]]) -> L
                    "who can write to one of those locations gets code run as the service. Fix: put quotes "
                    "around the path in the service's ImagePath (HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name>).",
             severity="warning", evidence=evidence, jump="Services"))
+
+    if blocked_deps:
+        evidence = "\n".join(f"• {svc}: depends on disabled service(s) [{', '.join(deps)}]" for svc, deps in blocked_deps[:10])
+        if len(blocked_deps) > 10:
+            evidence += f"\n... and {len(blocked_deps) - 10} more"
+        out.append(Finding(
+            id="services:blocked_dependencies",
+            title=f"{len(blocked_deps)} service(s) cannot start due to disabled dependencies",
+            detail="Windows Service Control Manager will refuse to start a service when any of its required dependency services is set to Disabled (ERROR_SERVICE_DEPENDENCY_DELETED or ERROR_SERVICE_DEPENDENCY_FAIL).",
+            severity="warning",
+            evidence=evidence,
+            jump="Services",
+        ))
+
+    if missing_binaries:
+        evidence = "\n".join(f"• {svc}: missing file {path}" for svc, path in missing_binaries[:10])
+        if len(missing_binaries) > 10:
+            evidence += f"\n... and {len(missing_binaries) - 10} more"
+        out.append(Finding(
+            id="services:missing_binary",
+            title=f"{len(missing_binaries)} service(s) point to non-existent executables",
+            detail="The service is registered in Windows to start automatically or manually, but its ImagePath executable file was not found on disk.",
+            severity="warning",
+            evidence=evidence,
+            jump="Services",
+        ))
+
     if failures is None:
         out.append(_unknown("service_failures", "service crash history", "System log unreadable", jump="Services"))
         return out
@@ -496,7 +528,12 @@ def check_services() -> List[Finding]:
                          "| ConvertTo-Json -Compress", 90)
     if rows is None:
         return [_unknown("services", "services", why or "", jump="Services")]
-    return evaluate_services(rows, service_audit.read_failure_counts())
+    try:
+        blocked, missing = service_audit.audit_service_registry()
+    except Exception as exc:
+        logger.debug("Failed auditing service registry: %s", exc)
+        blocked, missing = [], []
+    return evaluate_services(rows, service_audit.read_failure_counts(), blocked, missing)
 
 
 # ---- problem devices (yellow bangs) ---------------------------------------------

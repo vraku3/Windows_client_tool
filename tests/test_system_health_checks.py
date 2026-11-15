@@ -110,6 +110,13 @@ def test_service_findings():
     unknown = h.evaluate_services(rows, None)
     assert any(f.id == "service_failures:unknown" for f in unknown)
 
+    # Blocked dependencies and missing binaries
+    f_extra = h.evaluate_services([], {}, blocked_deps=[("TestSvc", ["BadDep"])], missing_binaries=[("OrphanSvc", "C:\\missing.exe")])
+    extra_ids = {f.id for f in f_extra}
+    assert "services:blocked_dependencies" in extra_ids
+    assert "services:missing_binary" in extra_ids
+    assert all(f.jump == "Services" for f in f_extra)
+
 
 def test_evaluate_problem_devices_clean():
     assert h.evaluate_problem_devices([]) == []

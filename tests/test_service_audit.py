@@ -180,3 +180,9 @@ def test_quote_image_path():
     assert a.quote_image_path(r'"C:\Program Files\App\svc.exe" -k run') == r'"C:\Program Files\App\svc.exe" -k run'
     assert a.quote_image_path(r"C:\Windows\System32\svchost.exe -k run") == r"C:\Windows\System32\svchost.exe -k run"
     assert a.quote_image_path("") == ""
+
+
+def test_audit_service_registry_real_machine():
+    blocked, missing = a.audit_service_registry()
+    assert isinstance(blocked, list)
+    assert isinstance(missing, list)

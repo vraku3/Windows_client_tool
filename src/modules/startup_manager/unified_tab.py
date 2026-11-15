@@ -306,16 +306,37 @@ class UnifiedStartupTab(QWidget):
         state = centered_item(P.state_text(item))
         if item.enabled is False:
             state.setForeground(QBrush(QColor(semantic("error"))))
+        elif item.enabled is True:
+            state.setForeground(QBrush(QColor(semantic("success"))))
+
         impact = _NumItem(f"{item.impact_ms / 1000:.1f} s" if item.impact_ms else "", item.impact_ms or 0)
+        if item.impact_ms:
+            if item.impact_ms >= 5000:
+                impact.setForeground(QBrush(QColor(semantic("error"))))
+            elif item.impact_ms >= 2000:
+                impact.setForeground(QBrush(QColor(semantic("warning"))))
+
         seen = ""
         if item.first_seen:
             seen = "first scan" if item.baseline else f"{item.first_seen:%Y-%m-%d}"
+
+        trust_cell = centered_item(P.trust_text(item))
+        from modules.startup_manager import trust as trustlib
+        if item.trust in (trustlib.SIGNED, trustlib.SIGNED_CATALOG):
+            trust_cell.setForeground(QBrush(QColor(semantic("success"))))
+        elif item.trust == trustlib.UNSIGNED:
+            trust_cell.setForeground(QBrush(QColor(semantic("warning"))))
+        elif item.trust == trustlib.INVALID or item.exists is False:
+            trust_cell.setForeground(QBrush(QColor(semantic("error"))))
+
         findings = centered_item("; ".join(n.code for n in item.notes) if item.notes else "")
         findings.setToolTip("\n".join(n.text for n in item.notes))
         if item.flagged:
-            findings.setForeground(QBrush(QColor(semantic("warning"))))
+            has_err = any(n.severity == "error" for n in item.notes)
+            findings.setForeground(QBrush(QColor(semantic("error" if has_err else "warning"))))
+
         for column, cell in enumerate((name, state, centered_item(item.source), centered_item(item.scope),
-                                       centered_item(item.publisher or ""), centered_item(P.trust_text(item)),
+                                       centered_item(item.publisher or ""), trust_cell,
                                        impact, centered_item(seen), findings)):
             if column != 8:
                 cell.setToolTip("<qt>" + escape(detail_text(item)).replace("\n", "<br>") + "</qt>")

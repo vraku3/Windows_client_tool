@@ -51,6 +51,14 @@ def test_every_cell_of_every_row_is_filled_and_boot_impact_sorts_numerically(qap
         tab._table.sortByColumn(6, tab._table.horizontalHeader().sortIndicatorOrder())
         tab._table.sortByColumn(6, __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.SortOrder.DescendingOrder)
         assert tab._table.item(0, 0).text() == "Charlie"
+
+        # Verify semantic color painting on state, trust, and impact
+        alpha_row = _names(tab).index("Alpha")
+        assert tab._table.item(alpha_row, 1).foreground().color().isValid()
+        assert tab._table.item(alpha_row, 5).foreground().color().isValid()
+        charlie_row = _names(tab).index("Charlie")
+        assert tab._table.item(charlie_row, 5).foreground().color().isValid()
+        assert tab._table.item(charlie_row, 6).foreground().color().isValid()
     finally:
         tab.deleteLater()
 

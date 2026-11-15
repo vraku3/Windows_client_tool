@@ -1008,6 +1008,94 @@ def check_scheduled_task_failures() -> List[Finding]:
     return evaluate_scheduled_task_failures(tasks)
 
 
+# ---- Local accounts & security policy --------------------------------------------
+
+def evaluate_local_accounts(account_findings: List[Any]) -> List[Finding]:
+    """Turn accounts.findings into System Health findings."""
+    out: List[Finding] = []
+    for f in account_findings:
+        sev = "warning" if getattr(f, "severity", "") == "warning" else "info"
+        f_id = f"local_accounts:{getattr(f, 'account', 'policy')}".replace(" ", "_").lower()
+        msg = getattr(f, "message", "")
+        acct = getattr(f, "account", "")
+        short_title = msg if len(msg) <= 70 else (msg[:67] + "...")
+        out.append(Finding(
+            id=f_id,
+            title=f"{acct}: {short_title}" if acct else short_title,
+            detail=msg,
+            severity=sev,
+            evidence=f"{acct}\n{msg}",
+            jump="Local Users & Groups",
+        ))
+    return out
+
+
+def check_local_accounts() -> List[Finding]:
+    """Audit local accounts, administrators group, and local password policy."""
+    try:
+        from modules.local_users import accounts
+        snap = accounts.read_snapshot()
+        f_list = accounts.findings(snap)
+    except Exception as exc:
+        logger.warning("local accounts check failed: %s", exc)
+        return [_unknown("local_accounts", "local accounts policy", str(exc), jump="Local Users & Groups")]
+    return evaluate_local_accounts(f_list)
+
+
+# ---- PATH environment ------------------------------------------------------------
+
+def evaluate_path_environment(missing: List[str], writable: List[str]) -> List[Finding]:
+    """Turn missing PATH entries and writable folders into actionable findings."""
+    out: List[Finding] = []
+    if writable:
+        out.append(Finding(
+            id="path:writable",
+            title=f"{len(writable)} user-writable directory(ies) in System PATH",
+            detail="Standard users have write permissions to a directory in System PATH, presenting a binary planting risk (CWE-426).",
+            severity="warning",
+            evidence="\n".join(writable),
+            jump="Environment Variables",
+        ))
+    if missing:
+        out.append(Finding(
+            id="path:missing",
+            title=f"{len(missing)} missing directory(ies) in PATH environment",
+            detail="Directories listed in PATH do not exist on disk, causing wasted disk lookups during command resolution.",
+            severity="info",
+            evidence="\n".join(missing),
+            jump="Environment Variables",
+        ))
+    return out
+
+
+def check_path_environment() -> List[Finding]:
+    """Audit System and User PATH for non-existent directories and writable planting risks."""
+    import winreg
+    from modules.env_vars import path_analysis
+
+    missing: List[str] = []
+    writable: List[str] = []
+    for is_sys, hive, path_key in (
+        (True, winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+        (False, winreg.HKEY_CURRENT_USER, r"Environment"),
+    ):
+        try:
+            with winreg.OpenKey(hive, path_key) as k:
+                val, _ = winreg.QueryValueEx(k, "Path")
+            rep = path_analysis.analyse(val, is_system=is_sys)
+            for f in rep.findings:
+                if f.kind == "missing":
+                    missing.append(f.message)
+                elif f.kind == "writable":
+                    writable.append(f.message)
+        except FileNotFoundError:
+            logger.debug("PATH registry key not found: %s", path_key)
+        except OSError as exc:
+            logger.debug("Could not read PATH key %s: %s", path_key, exc)
+
+    return evaluate_path_environment(missing, writable)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -1026,6 +1114,8 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("TPM attestation", check_tpm_attestation_events),
     ("firewall exposure", check_firewall_exposure),
     ("scheduled task failures", check_scheduled_task_failures),
+    ("local accounts", check_local_accounts),
+    ("PATH environment", check_path_environment),
 )
 
 

@@ -519,6 +519,55 @@ def test_check_scheduled_task_failures_real_machine():
         assert f.jump == "Scheduled Tasks"
 
 
+def test_evaluate_local_accounts():
+    from types import SimpleNamespace
+    raw = [
+        SimpleNamespace(severity="warning", account="Local Security Policy", message="Password history is 0"),
+        SimpleNamespace(severity="info", account="iorda", message="Administrator whose password never expires"),
+    ]
+    findings = h.evaluate_local_accounts(raw)
+    assert len(findings) == 2
+    assert findings[0].severity == "warning"
+    assert findings[0].jump == "Local Users & Groups"
+    assert "Password history" in findings[0].detail
+
+    assert findings[1].severity == "info"
+    assert findings[1].jump == "Local Users & Groups"
+
+
+def test_check_local_accounts_real_machine():
+    findings = h.check_local_accounts()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Local Users & Groups"
+
+
+def test_evaluate_path_environment():
+    clean = h.evaluate_path_environment([], [])
+    assert clean == []
+
+    f_writable = h.evaluate_path_environment([], ["C:\\Users\\Public\\bin is writable"])
+    assert len(f_writable) == 1
+    assert f_writable[0].id == "path:writable"
+    assert f_writable[0].severity == "warning"
+    assert f_writable[0].jump == "Environment Variables"
+
+    f_missing = h.evaluate_path_environment(["Folder does not exist: C:\\old\\bin"], [])
+    assert len(f_missing) == 1
+    assert f_missing[0].id == "path:missing"
+    assert f_missing[0].severity == "info"
+    assert f_missing[0].jump == "Environment Variables"
+
+
+def test_check_path_environment_real_machine():
+    findings = h.check_path_environment()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Environment Variables"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

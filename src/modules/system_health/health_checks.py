@@ -1096,6 +1096,39 @@ def check_path_environment() -> List[Finding]:
     return evaluate_path_environment(missing, writable)
 
 
+# ---- Software inventory health ---------------------------------------------------
+
+def evaluate_software_health(software_findings: List[Any]) -> List[Finding]:
+    """Turn software_analysis.software_findings into System Health findings."""
+    out: List[Finding] = []
+    for f in software_findings:
+        if getattr(f, "severity", "") == "warning":
+            f_id = "software:" + ("broken_uninstaller" if "uninstall" in getattr(f, "title", "").lower() else "eol")
+            out.append(Finding(
+                id=f_id,
+                title=getattr(f, "title", ""),
+                detail=getattr(f, "detail", ""),
+                severity="warning",
+                evidence=getattr(f, "detail", ""),
+                jump="Software Inventory",
+            ))
+    return out
+
+
+def check_software_health() -> List[Finding]:
+    """Audit installed software for broken uninstallers and EOL packages."""
+    try:
+        from modules.software_inventory import software_reader as sr
+        from modules.software_inventory import software_analysis as sa
+        entries = sr.fetch_software_all()
+        rows = sa.analyze(entries)
+        f_list = sa.software_findings(rows)
+    except Exception as exc:
+        logger.warning("software health check failed: %s", exc)
+        return [_unknown("software_health", "installed software inventory", str(exc), jump="Software Inventory")]
+    return evaluate_software_health(f_list)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -1116,6 +1149,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("scheduled task failures", check_scheduled_task_failures),
     ("local accounts", check_local_accounts),
     ("PATH environment", check_path_environment),
+    ("software inventory", check_software_health),
 )
 
 

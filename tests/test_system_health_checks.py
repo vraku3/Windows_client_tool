@@ -568,6 +568,27 @@ def test_check_path_environment_real_machine():
         assert f.jump == "Environment Variables"
 
 
+def test_evaluate_software_health():
+    from types import SimpleNamespace
+    raw = [
+        SimpleNamespace(severity="warning", title="1 uninstall entry points to missing program", detail="App gone"),
+        SimpleNamespace(severity="info", title="Duplicates found", detail="Two versions"),
+    ]
+    findings = h.evaluate_software_health(raw)
+    assert len(findings) == 1
+    assert findings[0].id == "software:broken_uninstaller"
+    assert findings[0].severity == "warning"
+    assert findings[0].jump == "Software Inventory"
+
+
+def test_check_software_health_real_machine():
+    findings = h.check_software_health()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Software Inventory"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

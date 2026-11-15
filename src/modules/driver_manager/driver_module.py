@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTableWidget, QHeaderView, QLineEdit, QLabel,
+    QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit, QLabel,
     QProgressBar, QFileDialog, QCheckBox, QApplication, QMenu,
     QStackedWidget, QComboBox, QMessageBox, QInputDialog,
 )
@@ -109,6 +109,16 @@ def _update_status_text(driver: DriverInfo, history_by_id: Dict[str, "update_his
     if provider_for(driver) is None:
         return "—"
     return update_history.status_label(driver.version, history_by_id.get(driver.device_id))
+
+
+def _style_status_cell(item: QTableWidgetItem, text: str) -> None:
+    t_lower = text.lower()
+    if "available" in t_lower or "newer" in t_lower:
+        item.setForeground(QColor(semantic("warning")))
+    elif "up to date" in t_lower or "current" in t_lower:
+        item.setForeground(QColor(semantic("success")))
+    elif "failed" in t_lower or "error" in t_lower:
+        item.setForeground(QColor(semantic("error")))
 
 
 def _date_sort_value(date_str: str) -> float:
@@ -608,6 +618,16 @@ class DriverModule(BaseModule):
                     cell = self._table.item(r, c)
                     if cell:
                         cell.setForeground(QColor(semantic("error")))
+            else:
+                signed_cell = self._table.item(r, 6)
+                if signed_cell and d.signed:
+                    signed_cell.setForeground(QColor(semantic("success")))
+                flags_cell = self._table.item(r, 7)
+                if flags_cell and "Old" in group.flags:
+                    flags_cell.setForeground(QColor(semantic("warning")))
+                status_cell = self._table.item(r, 8)
+                if status_cell:
+                    _style_status_cell(status_cell, status_cell.text())
 
     def _on_group_toggled(self) -> None:
         if self._table is None:
@@ -991,7 +1011,9 @@ class DriverModule(BaseModule):
             if item0.data(Qt.ItemDataRole.UserRole) == device_id or in_group:
                 text = (HELD_STATUS if is_held_driver(driver) else
                         update_history.status_label(driver.version, update_history.get(device_id)))
-                self._table.setItem(r, status_col, centered_item(text))
+                item = centered_item(text)
+                _style_status_cell(item, text)
+                self._table.setItem(r, status_col, item)
                 return
 
     def _reread_driver_version(self, driver: DriverInfo) -> Optional[str]:

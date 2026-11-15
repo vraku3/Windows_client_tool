@@ -15,7 +15,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QProgressBar,
-    QPushButton, QTableWidget, QVBoxLayout, QWidget, QComboBox,
+    QPushButton, QTableWidget, QVBoxLayout, QWidget, QComboBox, QLineEdit,
 )
 
 from core.admin_utils import is_admin
@@ -171,9 +171,19 @@ class RestoreManagerModule(BaseModule):
         apply_table_style(self._drive_table, size_columns=(2, 3, 4), numeric_columns=(5,))
         layout.addWidget(self._drive_table)
 
+        rp_header_row = QHBoxLayout()
         head2 = QLabel("Restore points")
         set_role(head2, "heading")
-        layout.addWidget(head2)
+        rp_header_row.addWidget(head2)
+        rp_header_row.addStretch()
+        self._point_search = QLineEdit()
+        self._point_search.setObjectName("_point_search")
+        self._point_search.setPlaceholderText("Filter restore points...")
+        self._point_search.setMaximumWidth(220)
+        self._point_search.textChanged.connect(self._apply_point_filter)
+        describe_control(self._point_search, '_point_search')
+        rp_header_row.addWidget(self._point_search)
+        layout.addLayout(rp_header_row)
         self._table = QTableWidget()
         self._table.setColumnCount(len(POINT_COLUMNS))
         self._table.setHorizontalHeaderLabels(POINT_COLUMNS)
@@ -318,6 +328,9 @@ class RestoreManagerModule(BaseModule):
         self._update_delete_buttons()
         self._verify_pending()
 
+    def _apply_point_filter(self) -> None:
+        self._fill_points()
+
     def _fill_points(self) -> None:
         raw_by_seq = {}
         for pt in self._restore_points:
@@ -326,8 +339,13 @@ class RestoreManagerModule(BaseModule):
             except (TypeError, ValueError):
                 logger.debug("point without sequence number kept unaddressable")
         self._table.setSortingEnabled(False)
-        self._table.setRowCount(len(self._infos))
-        for row, p in enumerate(self._infos):
+        query = self._point_search.text().strip().lower() if hasattr(self, "_point_search") else ""
+        filtered = [
+            p for p in self._infos
+            if not query or query in (p.description or "").lower() or query in (p.kind or "").lower()
+        ]
+        self._table.setRowCount(len(filtered))
+        for row, p in enumerate(filtered):
             name_item = centered_item(p.description)
             if p.sequence is not None:
                 name_item.setData(Qt.ItemDataRole.UserRole, p.sequence)
@@ -344,10 +362,16 @@ class RestoreManagerModule(BaseModule):
             describe_cell(self._table, 1, self._table.item(row, 1))
             self._table.setItem(row, 2, centered_item(p.kind))
             describe_cell(self._table, 2, self._table.item(row, 2))
-            self._table.setItem(row, 3, numeric_item("n/a" if age is None else f"{age:g} d", age))
+            age_item = numeric_item("n/a" if age is None else f"{age:g} d", age)
+            if age is not None and age > 60:
+                paint_severity(age_item, "warning")
+            self._table.setItem(row, 3, age_item)
             describe_cell(self._table, 3, self._table.item(row, 3))
             gap = None if p.gap_days is None else round(p.gap_days, 1)
-            self._table.setItem(row, 4, numeric_item("-" if gap is None else f"{gap:g} d", gap))
+            gap_item = numeric_item("-" if gap is None else f"{gap:g} d", gap)
+            if gap is not None and gap > 14:
+                paint_severity(gap_item, "warning")
+            self._table.setItem(row, 4, gap_item)
             describe_cell(self._table, 4, self._table.item(row, 4))
         self._table.setSortingEnabled(True)
 

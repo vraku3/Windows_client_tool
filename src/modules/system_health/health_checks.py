@@ -1169,6 +1169,203 @@ def check_firmware_security() -> List[Finding]:
     return evaluate_firmware_security(mode, sb, reason)
 
 
+# ---- Crash Dumps & BugCheck History -----------------------------------------------
+
+def evaluate_crash_history(
+    dump_enabled: Optional[int],
+    bsod_incidents: List[dict],
+    whea_incidents: List[dict],
+    live_incidents: List[dict],
+    power_cut_count: int = 0,
+    days: int = 30,
+) -> List[Finding]:
+    """Turn crash dump policy and correlated incident history into actionable health findings."""
+    out: List[Finding] = []
+    if dump_enabled == 0:
+        out.append(Finding(
+            id="crash:dumps_disabled",
+            title="Crash dump generation is disabled in Windows",
+            detail=(
+                "CrashDumpEnabled is set to 0 in HKLM\\SYSTEM\\CurrentControlSet\\Control\\CrashControl. "
+                "If the machine experiences a blue screen (BSOD), no diagnostic dump file will be created "
+                "to identify the root cause."
+            ),
+            severity="warning",
+            evidence="HKLM\\SYSTEM\\CurrentControlSet\\Control\\CrashControl\\CrashDumpEnabled = 0",
+            jump="Diagnose",
+        ))
+
+    if bsod_incidents:
+        n = len(bsod_incidents)
+        lines = []
+        for inc in bsod_incidents[:5]:
+            ts = inc.get("timestamp", "")
+            lbl = inc.get("bugcheck_label") or "BugCheck"
+            code = inc.get("bugcheck_code")
+            code_str = f" (0x{code:X})" if isinstance(code, int) else (f" ({code})" if code else "")
+            mod = inc.get("faulting_module")
+            mod_str = f" [module: {mod}]" if mod else ""
+            lines.append(f"• {ts}: {lbl}{code_str}{mod_str}")
+        if n > 5:
+            lines.append(f"... and {n - 5} more crash event{'s' if n - 5 > 1 else ''}")
+        out.append(Finding(
+            id="crash:recent_bsod",
+            title=f"{n} system crash{'es' if n > 1 else ''} (BSOD) detected in the last {days} days",
+            detail=(
+                "Windows recorded unhandled kernel bugcheck(s) or abnormal crash restarts. "
+                "Examine the dump files and bugcheck parameters to identify the failing driver or hardware subsystem."
+            ),
+            severity="error",
+            evidence="\n".join(lines),
+            jump="Diagnose",
+        ))
+
+    if whea_incidents:
+        n = len(whea_incidents)
+        lines = []
+        for inc in whea_incidents[:5]:
+            ts = inc.get("timestamp", "")
+            title = inc.get("title") or "WHEA Hardware Error"
+            apic = inc.get("apic_id")
+            apic_str = f" [APIC ID {apic}]" if apic is not None else ""
+            lines.append(f"• {ts}: {title}{apic_str}")
+        if n > 5:
+            lines.append(f"... and {n - 5} more hardware error{'s' if n - 5 > 1 else ''}")
+        out.append(Finding(
+            id="crash:hardware_whea",
+            title=f"{n} hardware error (WHEA) event{'s' if n > 1 else ''} in the last {days} days",
+            detail=(
+                "Windows Hardware Error Architecture (WHEA) recorded hardware errors from CPU cores, cache, memory, or PCIe bus. "
+                "Clustered errors often point to unstable core voltages, PCIe link degradation, or failing RAM."
+            ),
+            severity="warning",
+            evidence="\n".join(lines),
+            jump="Diagnose",
+        ))
+
+    if live_incidents:
+        n = len(live_incidents)
+        lines = [f"• {inc.get('timestamp', '')}: {inc.get('title', 'Watchdog timeout')}" for inc in live_incidents[:5]]
+        if n > 5:
+            lines.append(f"... and {n - 5} more live dump{'s' if n - 5 > 1 else ''}")
+        out.append(Finding(
+            id="crash:live_kernel_dumps",
+            title=f"{n} live kernel watchdog/timeout event{'s' if n > 1 else ''} in the last {days} days",
+            detail=(
+                "Windows captured live kernel dumps while running because a driver subsystem (e.g. graphics driver TDR, USB, Wi-Fi) "
+                "reported an unresponsive timeout. The system recovered without a blue screen, but repeated events indicate driver instability."
+            ),
+            severity="warning",
+            evidence="\n".join(lines),
+            jump="Diagnose",
+        ))
+
+    if power_cut_count >= 2:
+        out.append(Finding(
+            id="crash:power_cut",
+            title=f"{power_cut_count} dirty shutdown(s) / sudden power cuts in the last {days} days",
+            detail=(
+                "The system rebooted without cleanly shutting down first. This can indicate power supply instability, "
+                "thermal cut-off, or physical resets."
+            ),
+            severity="warning",
+            evidence=f"Kernel-Power Event 41 power-cut events in 30 days: {power_cut_count}",
+            jump="Diagnose",
+        ))
+
+    return out
+
+
+def check_crash_history() -> List[Finding]:
+    """Audit Windows crash dump configuration and recent BSOD / WHEA / live kernel incidents."""
+    import winreg
+    from modules.crash_dumps import crash_dump_reader as cdr
+    from modules.crash_dumps.rca_engine import correlate_incidents
+
+    dump_enabled = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\CrashControl") as key:
+            val, _ = winreg.QueryValueEx(key, "CrashDumpEnabled")
+            dump_enabled = int(val)
+    except OSError as exc:
+        logger.debug("Could not read CrashDumpEnabled from registry: %s", exc)
+
+    entries = []
+    # 1. Minidumps
+    try:
+        mds, _ = cdr._scan_dir(cdr.MINIDUMP_DIR, "Minidump")
+        entries.extend(mds)
+    except Exception as exc:
+        logger.debug("Failed scanning minidumps: %s", exc)
+
+    # 2. BugCheck 1001 events
+    try:
+        bcs, _ = cdr._bugcheck_events(days=30)
+        entries.extend(bcs)
+    except Exception as exc:
+        logger.debug("Failed querying bugcheck events: %s", exc)
+
+    # 3. Kernel-Power 41 events
+    try:
+        kps, _ = cdr._kernel_power_events(days=30)
+        entries.extend(kps)
+    except Exception as exc:
+        logger.debug("Failed querying kernel power events: %s", exc)
+
+    # 4. WHEA events
+    try:
+        whea, _ = cdr._whea_events(days=30)
+        entries.extend(whea)
+    except Exception as exc:
+        logger.debug("Failed querying WHEA events: %s", exc)
+
+    # 5. Live kernel reports
+    try:
+        live, _ = cdr._scan_live_reports(cdr.LIVE_REPORTS_DIR)
+        entries.extend(live)
+    except Exception as exc:
+        logger.debug("Failed scanning live kernel reports: %s", exc)
+
+    try:
+        overview = correlate_incidents(entries)
+    except Exception as exc:
+        logger.warning("Failed correlating crash incidents: %s", exc)
+        return evaluate_crash_history(dump_enabled, [], [], [], 0)
+
+    bsod_dicts = [
+        {
+            "timestamp": str(inc.timestamp),
+            "bugcheck_label": inc.bugcheck_label,
+            "bugcheck_code": inc.bugcheck_code,
+            "faulting_module": inc.faulting_module,
+        }
+        for inc in overview.incidents if inc.category == "bsod"
+    ]
+    whea_dicts = [
+        {
+            "timestamp": str(inc.timestamp),
+            "title": inc.title,
+            "apic_id": inc.apic_id,
+        }
+        for inc in overview.incidents if inc.category == "hardware_whea"
+    ]
+    live_dicts = [
+        {
+            "timestamp": str(inc.timestamp),
+            "title": inc.title,
+        }
+        for inc in overview.incidents if inc.category == "live_hang"
+    ]
+
+    return evaluate_crash_history(
+        dump_enabled,
+        bsod_dicts,
+        whea_dicts,
+        live_dicts,
+        power_cut_count=overview.power_cut_count,
+    )
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -1191,6 +1388,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("PATH environment", check_path_environment),
     ("software inventory", check_software_health),
     ("firmware security", check_firmware_security),
+    ("crash history", check_crash_history),
 )
 
 

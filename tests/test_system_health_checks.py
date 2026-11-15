@@ -615,6 +615,47 @@ def test_check_firmware_security_real_machine():
         assert isinstance(f, Finding)
 
 
+def test_evaluate_crash_history():
+    # Clean machine
+    assert h.evaluate_crash_history(3, [], [], [], power_cut_count=0) == []
+
+    # Dumps disabled
+    f_off = h.evaluate_crash_history(0, [], [], [])
+    assert len(f_off) == 1
+    assert f_off[0].id == "crash:dumps_disabled"
+    assert f_off[0].severity == "warning"
+    assert f_off[0].jump == "Diagnose"
+
+    # BSOD detected
+    bsod = [{"timestamp": "2026-11-10 14:00", "bugcheck_label": "DRIVER_IRQL_NOT_LESS_OR_EQUAL",
+             "bugcheck_code": 0xD1, "faulting_module": "nvlddmkm.sys"}]
+    f_bsod = h.evaluate_crash_history(3, bsod, [], [])
+    assert len(f_bsod) == 1
+    assert f_bsod[0].id == "crash:recent_bsod"
+    assert f_bsod[0].severity == "error"
+    assert "DRIVER_IRQL_NOT_LESS_OR_EQUAL" in f_bsod[0].evidence
+    assert "nvlddmkm.sys" in f_bsod[0].evidence
+    assert f_bsod[0].jump == "Diagnose"
+
+    # WHEA, Live hang, and dirty shutdown
+    whea = [{"timestamp": "2026-11-11 10:00", "title": "Processor Core Error", "apic_id": 4}]
+    live = [{"timestamp": "2026-11-12 12:00", "title": "GPU TDR Watchdog"}]
+    f_all = h.evaluate_crash_history(3, [], whea, live, power_cut_count=3)
+    assert len(f_all) == 3
+    ids = {f.id for f in f_all}
+    assert "crash:hardware_whea" in ids
+    assert "crash:live_kernel_dumps" in ids
+    assert "crash:power_cut" in ids
+
+
+def test_check_crash_history_real_machine():
+    findings = h.check_crash_history()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Diagnose"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

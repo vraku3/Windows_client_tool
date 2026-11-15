@@ -29,6 +29,18 @@ def test_health_measures_counts_latency_and_dns_and_filters(qapp):
     pane._glance['errors'].clicked.emit()
     assert pane._table.rowCount() == 1
     assert pane._table.item(0, 1).text() == 'Bad route'
+    assert "⛔" in pane._table.item(0, 0).text()
+
+    # Search filter testing
+    pane._chips.chips['all'].setChecked(True)
+    assert pane._table.rowCount() == 2
+    pane._search.setText("Slow")
+    assert pane._table.rowCount() == 1
+    assert pane._table.item(0, 1).text() == 'Slow link'
+    assert "⚠️" in pane._table.item(0, 0).text()
+    pane._search.clear()
+    assert pane._table.rowCount() == 2
+
     pane._failed('Access denied')
     assert all(t.value.text() == '\u2014' for t in pane._glance.values())
 

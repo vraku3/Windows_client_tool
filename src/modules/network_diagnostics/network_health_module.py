@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 PUBLIC_RESOLVERS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
 _SEV_COLOUR = {network_health.ERROR: "error", network_health.WARNING: "warning",
                network_health.OK: "success", network_health.INFO: "info", network_health.UNKNOWN: "warning"}
-_SEV_LABEL = {network_health.ERROR: "Error", network_health.WARNING: "Warning", network_health.OK: "OK",
-              network_health.INFO: "Info", network_health.UNKNOWN: "Unknown"}
+_SEV_LABEL = {network_health.ERROR: "⛔ Error", network_health.WARNING: "⚠️ Warning", network_health.OK: "✅ OK",
+              network_health.INFO: "ℹ️ Info", network_health.UNKNOWN: "❓ Unknown"}
 
 
 def _alive(w: Any) -> bool:
@@ -89,10 +89,15 @@ class _HealthPane(QWidget):
         self._copy_btn.setEnabled(False)
         self._hide_ok = QCheckBox("Hide passing checks")
         self._hide_ok.toggled.connect(self._fill)
+        self._search = QLineEdit()
+        control_help(self._search, 'self._search')
+        self._search.setPlaceholderText("Filter findings…")
+        self._search.textChanged.connect(lambda _: self._fill())
         self._summary = QLabel("Not run yet")
         bar.addWidget(self._run_btn)
         bar.addWidget(self._copy_btn)
         bar.addWidget(self._hide_ok)
+        bar.addWidget(self._search)
         bar.addWidget(self._summary, 1)
         lay.addLayout(bar)
 
@@ -201,8 +206,19 @@ class _HealthPane(QWidget):
         selected = self._chips.selected()
         severity = {'errors': network_health.ERROR, 'warnings': network_health.WARNING,
                     'unknown': network_health.UNKNOWN}.get(selected[0] if selected else 'all')
-        return [f for f in self._findings if not (hide and f.severity == network_health.OK)
-                and (severity is None or f.severity == severity)]
+        query = self._search.text().strip().lower() if hasattr(self, "_search") else ""
+        out = []
+        for f in self._findings:
+            if hide and f.severity == network_health.OK:
+                continue
+            if severity is not None and f.severity != severity:
+                continue
+            if query:
+                haystack = f"{f.title} {f.detail} {' '.join(f.items)}".lower()
+                if query not in haystack:
+                    continue
+            out.append(f)
+        return out
 
     def _fill(self) -> None:
         rows = self._visible()

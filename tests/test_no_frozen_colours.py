@@ -46,8 +46,9 @@ EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette so
 #: 176 after the 2026-10-21 Cleanup redesign moved charts and status colours
 #: to the shared semantic palette and theme roles; 175 after firewall_manager_module
 #: moved disabled rule text colour to chrome("text_muted"); 174 after
-#: network_view replaced _WARN_BRUSH hex literal with semantic("warning").
-BUDGET = 174
+#: network_view replaced _WARN_BRUSH hex literal with semantic("warning");
+#: 172 after debloat_module moved _STATUS_COLOR hex literals to semantic palette.
+BUDGET = 172
 
 
 def frozen_colour_literals():

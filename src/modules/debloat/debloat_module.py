@@ -54,11 +54,27 @@ _STATUS_GLYPH = {
     te.APPLIED: "●", te.NOT_APPLIED: "○", te.PARTIAL: "◑",
     te.NOT_APPLICABLE: "–", te.UNKNOWN: "❓",
 }
-_STATUS_COLOR = {
-    te.APPLIED: semantic("success"), te.NOT_APPLIED: "#e0e0e0",
-    te.PARTIAL: semantic("warning"), te.NOT_APPLICABLE: "#888888",
-    te.UNKNOWN: semantic("error"),
-}
+def _status_color(status: str) -> str:
+    if status == te.APPLIED:
+        return semantic("success")
+    if status == te.PARTIAL:
+        return semantic("warning")
+    if status == te.NOT_APPLICABLE:
+        return chrome("text_muted")
+    if status == te.UNKNOWN:
+        return semantic("error")
+    return chrome("text")
+
+
+class _StatusColorMap(dict):
+    def __getitem__(self, key):
+        return _status_color(key)
+
+    def get(self, key, default=None):
+        return _status_color(key)
+
+
+_STATUS_COLOR = _StatusColorMap()
 
 #: T01's color coding extended to Risk. Every risk field across all six
 #: tweak-definition files this module loads (privacy/telemetry/services/
@@ -608,6 +624,10 @@ class DebloatToolsModule(BaseModule):
                     "first removal.")
             elif pkg in PROTECTED_APPS:
                 status_item.setForeground(QColor(semantic("warning")))
+            elif present:
+                status_item.setForeground(QColor(semantic("info")))
+            else:
+                status_item.setForeground(QColor(chrome("text_muted")))
             self._apps_table.setItem(row, 3, status_item)
             if present:
                 bind_row(self._apps_table, row, AppKey(name=entry.get("name", pkg),
@@ -1263,8 +1283,11 @@ class DebloatToolsModule(BaseModule):
             return
         query = search.text().strip().lower()
         for r in range(table.rowCount()):
-            name = table.item(r, 1).text().lower()
-            table.setRowHidden(r, bool(query) and query not in name)
+            name = table.item(r, 1).text().lower() if table.item(r, 1) else ""
+            category = table.item(r, 2).text().lower() if table.item(r, 2) else ""
+            risk = table.item(r, 3).text().lower() if table.item(r, 3) else ""
+            match = (not query) or (query in name or query in category or query in risk)
+            table.setRowHidden(r, not match)
 
     def _on_tweaks_select_all(self, tab_type: str) -> None:
         table: QTableWidget = self._widget.findChild(QTableWidget, f"_table_{tab_type}")

@@ -81,11 +81,12 @@ def fill_dict(table: QTableWidget, rows, columns) -> None:
 
 def add_findings(layout: QVBoxLayout, findings: List[ap.Finding], all_clear: str) -> None:
     if not findings:
-        ok = QLabel(all_clear)
+        ok = QLabel(f"✅  {all_clear}")
         set_role(ok, "statusSuccess")
         layout.addWidget(ok)
     for f in findings:
-        lbl = QLabel(f"<b>{f.title}</b>. {f.detail}")
+        icon = "⛔  " if f.severity in ("error", "critical") else ("⚠️  " if f.severity == "warning" else "ℹ️  ")
+        lbl = QLabel(f"{icon}<b>{f.title}</b>: {f.detail}")
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setWordWrap(True)
         set_role(lbl, _ROLE_FOR.get(f.severity, "statusInfo"))

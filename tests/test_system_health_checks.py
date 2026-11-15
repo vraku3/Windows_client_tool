@@ -656,6 +656,62 @@ def test_check_crash_history_real_machine():
         assert f.jump == "Diagnose"
 
 
+def test_evaluate_antivirus_health():
+    # Healthy single active scanner, up-to-date
+    p_healthy = [{"name": "Windows Defender", "state": 0x60100, "scanner_on": True, "defs_updated": True}]
+    assert h.evaluate_antivirus_health(p_healthy, []) == []
+
+    # Missing protection
+    p_none = [{"name": "Windows Defender", "state": 0x60100, "scanner_on": False, "defs_updated": True}]
+    f_missing = h.evaluate_antivirus_health(p_none, [])
+    assert len(f_missing) == 1
+    assert f_missing[0].id == "antivirus:protection_missing"
+    assert f_missing[0].severity == "error"
+    assert f_missing[0].jump == "Security Dashboard"
+
+    # Multiple active scanners
+    p_multi = [
+        {"name": "Windows Defender", "state": 0x60100, "scanner_on": True, "defs_updated": True},
+        {"name": "Bitdefender Antivirus", "state": 0x41000, "scanner_on": True, "defs_updated": True},
+    ]
+    f_multi = h.evaluate_antivirus_health(p_multi, [])
+    assert len(f_multi) == 1
+    assert f_multi[0].id == "antivirus:multiple_active"
+    assert f_multi[0].severity == "warning"
+
+    # Outdated definitions
+    p_stale = [{"name": "Windows Defender", "state": 0x60110, "scanner_on": True, "defs_updated": False}]
+    f_stale = h.evaluate_antivirus_health(p_stale, [])
+    assert len(f_stale) == 1
+    assert f_stale[0].id == "antivirus:definitions_outdated"
+    assert f_stale[0].severity == "warning"
+
+    # Threats detected
+    threats = [
+        {"timestamp": "2026-11-12", "event_id": 1116, "threat_name": "Trojan:Win32/Test", "path": "C:\\test.exe", "action": "Quarantine"},
+    ]
+    f_threat = h.evaluate_antivirus_health(p_healthy, threats)
+    assert len(f_threat) == 1
+    assert f_threat[0].id == "antivirus:threats_detected"
+    assert f_threat[0].severity == "warning"
+    assert "Trojan:Win32/Test" in f_threat[0].evidence
+
+    # Failed remediation is error severity
+    threats_failed = [
+        {"timestamp": "2026-11-12", "event_id": 1008, "threat_name": "Ransom:Win32/Wanna", "path": "C:\\w.exe", "action": "Failed"},
+    ]
+    f_failed = h.evaluate_antivirus_health(p_healthy, threats_failed)
+    assert f_failed[0].severity == "error"
+
+
+def test_check_antivirus_health_real_machine():
+    findings = h.check_antivirus_health()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Security Dashboard"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

@@ -1366,6 +1366,135 @@ def check_crash_history() -> List[Finding]:
     )
 
 
+# ---- Antivirus & Threat Protection ------------------------------------------------
+
+def evaluate_antivirus_health(
+    products: List[dict],
+    threat_events: List[dict],
+    days: int = 30,
+) -> List[Finding]:
+    """Turn antivirus scanner state, signature freshness, and recent threat events into health findings."""
+    out: List[Finding] = []
+
+    active = [p for p in products if p.get("scanner_on")]
+    active_names = [p.get("name", "Antivirus") for p in active]
+
+    if not active:
+        out.append(Finding(
+            id="antivirus:protection_missing",
+            title="No active antivirus real-time protection detected",
+            detail=(
+                "Windows Security Center reports no active real-time antivirus scanner running. "
+                "The machine is unprotected against malicious downloads, malware, and ransomware."
+            ),
+            severity="error",
+            evidence="No registered antivirus product has real-time scanning enabled in SecurityCenter2",
+            jump="Security Dashboard",
+        ))
+    elif len(active) > 1:
+        out.append(Finding(
+            id="antivirus:multiple_active",
+            title=f"Multiple active antivirus scanners ({', '.join(active_names)})",
+            detail=(
+                "Multiple real-time antivirus engines are actively scanning files simultaneously. "
+                "This typically causes high CPU/disk usage, severe file lock contention, and system sluggishness."
+            ),
+            severity="warning",
+            evidence="\n".join(f"• {p.get('name', 'AV')}: state 0x{p.get('state', 0):X}" for p in active),
+            jump="Security Dashboard",
+        ))
+
+    stale = [p for p in active if not p.get("defs_updated")]
+    if stale:
+        stale_names = ", ".join(p.get("name", "Antivirus") for p in stale)
+        out.append(Finding(
+            id="antivirus:definitions_outdated",
+            title=f"Antivirus signatures are outdated ({stale_names})",
+            detail=(
+                "Security Center reports that virus definitions/signatures are out of date for an active scanner. "
+                "Update virus definitions to ensure protection against newly discovered threats."
+            ),
+            severity="warning",
+            evidence="\n".join(f"• {p.get('name')}: state 0x{p.get('state', 0):X}" for p in stale),
+            jump="Security Dashboard",
+        ))
+
+    if threat_events:
+        failed_actions = [e for e in threat_events if e.get("event_id") == 1008]
+        sev = "error" if failed_actions else "warning"
+        n = len(threat_events)
+        lines = []
+        for e in threat_events[:5]:
+            ts = e.get("timestamp", "")
+            name = e.get("threat_name") or "Threat"
+            path = e.get("path", "")
+            act = e.get("action", "")
+            path_str = f" -- {path}" if path else ""
+            act_str = f" [{act}]" if act else ""
+            lines.append(f"• {ts}: {name}{path_str}{act_str}")
+        if n > 5:
+            lines.append(f"... and {n - 5} more threat event{'s' if n - 5 > 1 else ''}")
+        out.append(Finding(
+            id="antivirus:threats_detected",
+            title=f"{n} malware threat{'s' if n > 1 else ''} detected in the last {days} days",
+            detail=(
+                "Microsoft Defender recorded malware threat detections. "
+                "Check the threat details, affected file paths, and quarantine status in Security Dashboard."
+            ),
+            severity=sev,
+            evidence="\n".join(lines),
+            jump="Security Dashboard",
+        ))
+
+    return out
+
+
+def check_antivirus_health() -> List[Finding]:
+    """Audit Windows Security Center for registered antivirus scanners, status, and recent threat events."""
+    import pythoncom
+    import win32com.client
+    from modules.event_viewer import event_query
+
+    products = []
+    try:
+        pythoncom.CoInitialize()
+        wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\SecurityCenter2")
+        for p in wmi.ExecQuery("SELECT * FROM AntiVirusProduct"):
+            try:
+                st = int(p.productState)
+                products.append({
+                    "name": str(p.displayName),
+                    "state": st,
+                    "scanner_on": ((st >> 8) & 0xFF) in (0x10, 0x11),
+                    "defs_updated": (st & 0xF0) == 0,
+                })
+            except (ValueError, TypeError, AttributeError) as exc:
+                logger.debug("Failed parsing AntiVirusProduct %s: %s", getattr(p, "displayName", "unknown"), exc)
+    except Exception as exc:
+        logger.debug("Could not query root\\SecurityCenter2 AntiVirusProduct: %s", exc)
+
+    threats = []
+    try:
+        xpath = "*[System[(EventID=1116 or EventID=1117 or EventID=1006 or EventID=1008) and TimeCreated[timediff(@SystemTime) <= 2592000000]]]"
+        res = event_query.query_log("Microsoft-Windows-Windows Defender/Operational", None, 50, xpath=xpath)
+        if res.error is None:
+            for e in res.entries:
+                raw_data = e.data or {}
+                threats.append({
+                    "timestamp": str(e.timestamp),
+                    "event_id": e.event_id,
+                    "threat_name": raw_data.get("Threat Name", ""),
+                    "path": raw_data.get("Path", ""),
+                    "action": raw_data.get("Action Name", ""),
+                })
+        else:
+            logger.debug("Defender Operational log query error: %s", res.error)
+    except Exception as exc:
+        logger.debug("Could not query Defender threat events: %s", exc)
+
+    return evaluate_antivirus_health(products, threats)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -1389,6 +1518,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("software inventory", check_software_health),
     ("firmware security", check_firmware_security),
     ("crash history", check_crash_history),
+    ("antivirus health", check_antivirus_health),
 )
 
 

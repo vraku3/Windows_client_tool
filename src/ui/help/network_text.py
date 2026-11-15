@@ -90,6 +90,7 @@ CONTROL_HELP = {
     "self._filter": "Show cached DNS rows whose name contains this text. Filters the view only; it does not remove cache entries or change DNS settings.",
     "self._search": "Show health check findings whose title or detail contains this text. Filters the view only; it does not change network settings.",
     "share_search": "Show rows matching this text. Filters the view only; it does not change shares, sessions, or mapped drives.",
+    "hosts_search": "Filter hosts file overrides by IP, host name, or comment. Filters the view only; does not change the hosts file.",
     "adapter_combo": "Network adapter whose IPv4 DNS settings Apply DNS or Restore DHCP will change. Listed adapters are those psutil reports as up; selection alone changes nothing.",
     "preset_combo": "Fill the two DNS address fields with a bundled provider preset, or choose Custom to type your own. Selection does not change Windows until Apply DNS.",
     "primary_edit": "Primary IPv4 DNS server to write for the selected adapter. Editing alone changes nothing; Apply DNS replaces the setting without saving the previous addresses.",

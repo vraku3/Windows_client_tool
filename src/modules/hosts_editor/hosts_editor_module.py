@@ -15,8 +15,9 @@ from typing import Dict, List
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
+    QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QStackedWidget, QTableWidget, QVBoxLayout, QWidget,
 )
 
@@ -170,8 +171,26 @@ class HostsEditorModule(BaseModule):
             b.clicked.connect(slot)
             toolbar.addWidget(b)
             self._buttons[text] = b
+        self._search_edit = QLineEdit()
+        self._search_edit.setObjectName("hosts_search")
+        self._search_edit.setPlaceholderText("Filter overrides...")
+        self._search_edit.setMaximumWidth(200)
+        self._search_edit.textChanged.connect(self._apply_table_filter)
+        control_help(self._search_edit, "hosts_search")
+        toolbar.addWidget(self._search_edit)
         toolbar.addStretch()
         return toolbar
+
+    def _apply_table_filter(self) -> None:
+        if self._table is None:
+            return
+        query = self._search_edit.text().strip().lower()
+        for r in range(self._table.rowCount()):
+            ip = self._cell(r, 1).lower()
+            hosts = self._cell(r, 2).lower()
+            comment = self._cell(r, 3).lower()
+            match = not query or (query in ip or query in hosts or query in comment)
+            self._table.setRowHidden(r, not match)
 
     def on_start(self, app) -> None:
         self.app = app
@@ -332,12 +351,28 @@ class HostsEditorModule(BaseModule):
         self._current_findings.sort(key=lambda f: _SEV_RANK[f.severity])
         self._findings.clear()
         for f in self._current_findings:
-            item = QListWidgetItem("[%s] %s" % (f.severity.upper(), f.title))
+            if f.severity == ha.SEV_HIGH:
+                prefix = "⛔"
+                color = QColor(semantic("error"))
+            elif f.severity == ha.SEV_MEDIUM:
+                prefix = "⚠️"
+                color = QColor(semantic("warning"))
+            elif f.severity == ha.SEV_LOW:
+                prefix = "ℹ️"
+                color = QColor(semantic("info"))
+            else:
+                prefix = "ℹ️"
+                color = QColor(semantic("info"))
+
+            item = QListWidgetItem(f"{prefix} [{f.severity.upper()}] {f.title}")
+            item.setForeground(color)
             item.setToolTip(f.detail)
             item.setData(Qt.ItemDataRole.UserRole, f)
             self._findings.addItem(item)
         if not self._current_findings:
-            self._findings.addItem("No problems found.")
+            clean_item = QListWidgetItem("✅ No problems found.")
+            clean_item.setForeground(QColor(semantic("success")))
+            self._findings.addItem(clean_item)
 
     def _select_finding_rows(self) -> None:
         items = self._findings.selectedItems()

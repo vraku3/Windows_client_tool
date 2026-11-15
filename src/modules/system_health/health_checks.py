@@ -738,6 +738,49 @@ def check_driver_load_failures(days: int = 14) -> List[Finding]:
     return evaluate_driver_load_failures(rows)
 
 
+# ---- TPM attestation events ------------------------------------------------------
+
+def evaluate_tpm_attestation_events(rows: List[Dict[str, Any]]) -> List[Finding]:
+    """Evaluate System log event 1040 from Microsoft-Windows-TPM-WMI."""
+    if not rows:
+        return []
+    count = len(rows)
+    evidence_lines = [
+        f"- {r.get('Time') or r.get('TimeCreated')}: Event 1040 (Pre-attestation health check failed)"
+        for r in rows[:5]
+    ]
+    return [Finding(
+        id="tpm_wmi_attestation_failed",
+        title=f"TPM pre-attestation check failed ({count} time(s))",
+        detail=(
+            "Microsoft-Windows-TPM-WMI recorded event 1040 indicating that pre-attestation health "
+            "checks failed on this device. Device health attestation (Intune, conditional access) "
+            "or BitLocker attestation may fail."
+        ),
+        severity="warning",
+        evidence="\n".join(evidence_lines),
+        jump="Security Dashboard",
+    )]
+
+
+def check_tpm_attestation_events(days: int = 14) -> List[Finding]:
+    """Check the System log for Microsoft-Windows-TPM-WMI event 1040."""
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        f"$f = @{{LogName='System'; ProviderName='Microsoft-Windows-TPM-WMI'; Id=1040; "
+        f"StartTime=(Get-Date).AddDays(-{int(days)})}}; "
+        "try { $events = Get-WinEvent -FilterHashtable $f -MaxEvents 50 } "
+        "catch { if ($_.FullyQualifiedErrorId -like '*NoMatchingEventsFound*') { '[]'; exit 0 } else { throw } }; "
+        "@($events | Select-Object Id, "
+        "@{n='Time';e={$_.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')}}, "
+        "Message) | ConvertTo-Json -Compress"
+    )
+    rows, why = _ps_json(script, 30)
+    if rows is None:
+        return [_unknown("tpm_attestation_events", "TPM attestation events", why or "", jump="Security Dashboard")]
+    return evaluate_tpm_attestation_events(rows)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -752,6 +795,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("certificates", check_certificates),
     ("Windows Update failures", check_windows_update_failures),
     ("driver load failures", check_driver_load_failures),
+    ("TPM attestation", check_tpm_attestation_events),
 )
 
 

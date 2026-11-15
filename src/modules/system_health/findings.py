@@ -4,12 +4,14 @@ here is safe to call unelevated and safe to call from --unattended
 """
 from core.system_paths import powershell_exe
 from datetime import datetime
+import glob
+import json
 import logging
 import os
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.windows_utils import system_root
 
@@ -1262,6 +1264,98 @@ def check_hosts_file(hosts_path: Optional[str] = None) -> Optional[Finding]:
     return None
 
 
+def evaluate_measured_boot_json(data: Dict[str, Any], filepath: str = "") -> List[Finding]:
+    """Evaluate Measured Boot JSON record for TPM presence, version, and attestation health."""
+    out: List[Finding] = []
+    health = data.get("HealthStatus", "")
+    required = {item.get("Field"): item.get("Value") for item in data.get("Required", []) if isinstance(item, dict)}
+    expected = {item.get("Field"): item.get("Value") for item in data.get("Expected", []) if isinstance(item, dict)}
+
+    # Check TPM Presence
+    if required.get("TpmPresent") is False:
+        out.append(Finding(
+            id="measured_boot_no_tpm",
+            title="No TPM detected during Measured Boot",
+            detail="Windows Measured Boot log reports that no TPM chip was detected. Windows Hello, BitLocker, and Device Guard operate with reduced security.",
+            severity="warning",
+            evidence=f"File: {filepath}\nHealthStatus: {health}\nTpmPresent: False",
+            jump="Security Dashboard",
+        ))
+        return out
+
+    # Check TPM 2.0 Minimum Version
+    if required.get("TpmMeetsMinimumVersion") is False:
+        out.append(Finding(
+            id="measured_boot_tpm_outdated",
+            title="TPM does not meet minimum version requirements",
+            detail="The TPM does not meet the TPM 2.0 specification required for Windows 11 Measured Boot and device health attestation.",
+            severity="warning",
+            evidence=f"File: {filepath}\nHealthStatus: {health}\nTpmMeetsMinimumVersion: False",
+            jump="Security Dashboard",
+        ))
+
+    # Check Responsiveness
+    if required.get("TpmIsResponsive") is False:
+        out.append(Finding(
+            id="measured_boot_tpm_unresponsive",
+            title="TPM was unresponsive during boot",
+            detail="The TPM chip failed to respond to commands during Windows boot initialization.",
+            severity="warning",
+            evidence=f"File: {filepath}\nTpmIsResponsive: False",
+            jump="Security Dashboard",
+        ))
+
+    # Check HealthStatus / Attestation
+    if health and health.lower() != "attestable":
+        failed_checks = []
+        for fld, val in {**required, **expected}.items():
+            if val is False:
+                failed_checks.append(f"{fld}=False")
+        detail_reasons = (", ".join(failed_checks)) if failed_checks else health
+        out.append(Finding(
+            id="measured_boot_attestation_failed",
+            title=f"TPM attestation health check failed: {health}",
+            detail=(
+                f"Windows Measured Boot reports that the TPM cannot be attested ({detail_reasons}). "
+                "Cloud conditional access, Intune device compliance, and BitLocker attestation may fail."
+            ),
+            severity="warning",
+            evidence=f"File: {filepath}\nHealthStatus: {health}\nFailed checks: {', '.join(failed_checks) or 'None'}",
+            jump="Security Dashboard",
+        ))
+
+    return out
+
+
+def check_measured_boot(log_dir: Optional[str] = None) -> List[Finding]:
+    """Inspect the latest Windows Measured Boot log for TPM attestation health.
+
+    Measured Boot (%SystemRoot%\\Logs\\MeasuredBoot\\*.json) logs hardware
+    TPM presence, responsiveness, version, PCR integrity, and EK/AIK attestation
+    certificates. Unlike WMI Win32_Tpm, these logs are readable unelevated.
+    """
+    base_dir = log_dir or os.path.join(system_root(), "Logs", "MeasuredBoot")
+    if not os.path.isdir(base_dir):
+        return []
+    try:
+        files = sorted(glob.glob(os.path.join(base_dir, "*.json")), key=os.path.getmtime, reverse=True)
+    except OSError as exc:
+        logger.debug("MeasuredBoot directory unreadable: %s", exc)
+        return []
+    if not files:
+        return []
+
+    latest_file = files[0]
+    try:
+        with open(latest_file, "r", encoding="utf-16-le", errors="replace") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as exc:
+        logger.debug("MeasuredBoot JSON file unreadable: %s", exc)
+        return []
+
+    return evaluate_measured_boot_json(data, latest_file)
+
+
 def all_findings() -> List[Finding]:
     findings = []
     pending = check_pending_servicing()
@@ -1276,6 +1370,7 @@ def all_findings() -> List[Finding]:
     pagefile_finding = check_pagefile_config()
     if pagefile_finding:
         findings.append(pagefile_finding)
+    findings.extend(check_measured_boot())
     findings.extend(check_orphaned_scheduled_tasks())
     findings.extend(check_orphaned_services())
     findings.extend(check_orphaned_startup_entries())

@@ -297,6 +297,38 @@ def test_check_driver_load_failures_refused_is_unknown(monkeypatch):
     assert "access denied" in findings[0].evidence
 
 
+def test_evaluate_tpm_attestation_events():
+    assert h.evaluate_tpm_attestation_events([]) == []
+    rows = [
+        {
+            "Time": "2026-11-09 14:52:58",
+            "Message": "Pre-attestation health checks confirm a critical component has failed...",
+        },
+        {
+            "Time": "2026-11-09 14:01:21",
+            "Message": "Pre-attestation health checks confirm a critical component has failed...",
+        },
+    ]
+    findings = h.evaluate_tpm_attestation_events(rows)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.id == "tpm_wmi_attestation_failed"
+    assert "2 time(s)" in f.title
+    assert f.severity == "warning"
+    assert f.jump == "Security Dashboard"
+    assert "Event 1040" in f.evidence
+
+
+def test_check_tpm_attestation_events_refused_is_unknown(monkeypatch):
+    monkeypatch.setattr(h, "_ps_json", lambda script, timeout: (None, "access denied"))
+    findings = h.check_tpm_attestation_events()
+    assert len(findings) == 1
+    assert findings[0].id == "tpm_attestation_events:unknown"
+    assert findings[0].severity == "info"
+    assert findings[0].jump == "Security Dashboard"
+    assert "access denied" in findings[0].evidence
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

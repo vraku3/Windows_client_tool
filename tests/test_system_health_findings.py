@@ -878,3 +878,68 @@ def test_real_orphaned_startup_entries_runs_without_raising():
     for f in findings:
         assert f.jump == "Startup & Boot"
 
+
+def test_evaluate_measured_boot_json_clean_attestable():
+    from modules.system_health.findings import evaluate_measured_boot_json
+    data = {
+        "HealthStatus": "Attestable",
+        "Required": [
+            {"Field": "TpmPresent", "Value": True},
+            {"Field": "TpmMeetsMinimumVersion", "Value": True},
+            {"Field": "TpmIsResponsive", "Value": True},
+            {"Field": "AttestationCertIsAvailable", "Value": True},
+        ],
+        "Expected": [
+            {"Field": "PcrsMatchTcgLog", "Value": True},
+        ],
+    }
+    assert evaluate_measured_boot_json(data, "test.json") == []
+
+
+def test_evaluate_measured_boot_json_attestation_failure():
+    from modules.system_health.findings import evaluate_measured_boot_json
+    data = {
+        "HealthStatus": "Cannot be attested",
+        "Required": [
+            {"Field": "TpmPresent", "Value": True},
+            {"Field": "TpmMeetsMinimumVersion", "Value": True},
+            {"Field": "TpmIsResponsive", "Value": True},
+            {"Field": "AttestationCertIsAvailable", "Value": False},
+        ],
+        "Expected": [
+            {"Field": "PcrsMatchTcgLog", "Value": True},
+        ],
+    }
+    findings = evaluate_measured_boot_json(data, "0000000004.json")
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.id == "measured_boot_attestation_failed"
+    assert "Cannot be attested" in f.title
+    assert "AttestationCertIsAvailable=False" in f.detail
+    assert f.severity == "warning"
+    assert f.jump == "Security Dashboard"
+
+
+def test_evaluate_measured_boot_json_no_tpm():
+    from modules.system_health.findings import evaluate_measured_boot_json
+    data = {
+        "HealthStatus": "No TPM",
+        "Required": [
+            {"Field": "TpmPresent", "Value": False},
+        ],
+    }
+    findings = evaluate_measured_boot_json(data, "test.json")
+    assert len(findings) == 1
+    assert findings[0].id == "measured_boot_no_tpm"
+    assert findings[0].severity == "warning"
+
+
+def test_check_measured_boot_empty_or_missing_dir(tmp_path):
+    from modules.system_health.findings import check_measured_boot
+    # Missing directory
+    assert check_measured_boot(str(tmp_path / "Nonexistent")) == []
+    # Empty directory
+    empty_dir = tmp_path / "Empty"
+    empty_dir.mkdir()
+    assert check_measured_boot(str(empty_dir)) == []
+

@@ -1129,6 +1129,46 @@ def check_software_health() -> List[Finding]:
     return evaluate_software_health(f_list)
 
 
+# ---- Firmware & Secure Boot ------------------------------------------------------
+
+def evaluate_firmware_security(mode: Optional[str], secure_boot: Optional[bool], sb_reason: str) -> List[Finding]:
+    """Turn firmware mode and Secure Boot state into actionable health findings."""
+    out: List[Finding] = []
+    if mode == "Legacy BIOS":
+        out.append(Finding(
+            id="firmware:legacy_bios",
+            title="Machine boots in Legacy BIOS mode instead of UEFI",
+            detail="Windows 11 and modern platform security features (Secure Boot, TPM 2.0 measurement, Credential Guard) require UEFI boot mode.",
+            severity="warning",
+            evidence="Firmware mode: Legacy BIOS",
+            jump="Hardware Info",
+        ))
+    if secure_boot is False:
+        out.append(Finding(
+            id="firmware:secure_boot_disabled",
+            title="Secure Boot is disabled in firmware",
+            detail="Secure Boot is disabled. The system is vulnerable to bootkits and unsigned bootloaders executing before Windows loads.",
+            severity="warning",
+            evidence=f"Secure Boot: False\n{sb_reason or 'UEFISecureBootEnabled=0'}",
+            jump="Security Dashboard",
+        ))
+    elif secure_boot is None:
+        out.append(_unknown("firmware_secure_boot", "Secure Boot state", sb_reason or "Read was refused", jump="Security Dashboard"))
+    return out
+
+
+def check_firmware_security() -> List[Finding]:
+    """Audit firmware boot mode (UEFI vs BIOS) and Secure Boot status via winreg/kernel32."""
+    from modules.hardware_inventory import asset_reader as ar
+    try:
+        mode = ar._read_firmware_mode()
+        sb, reason = ar._read_secure_boot(mode)
+    except Exception as exc:
+        logger.warning("firmware security check failed: %s", exc)
+        return [_unknown("firmware_security", "firmware security state", str(exc), jump="Security Dashboard")]
+    return evaluate_firmware_security(mode, sb, reason)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -1150,6 +1190,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("local accounts", check_local_accounts),
     ("PATH environment", check_path_environment),
     ("software inventory", check_software_health),
+    ("firmware security", check_firmware_security),
 )
 
 

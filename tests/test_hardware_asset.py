@@ -104,6 +104,22 @@ def test_room_to_expand_finding_only_when_headroom_exists():
                if f.title == "Room to expand"]
 
 
+def test_single_channel_memory_finding():
+    one_of_two = [
+        ap.MemorySlot(locator="Slot 1", populated=True, capacity_bytes=16 * 1024 ** 3),
+        ap.MemorySlot(locator="Slot 2", populated=False),
+    ]
+    findings = ap.memory_findings(one_of_two)
+    assert any("Single-channel memory" in f.title for f in findings)
+
+    two_of_two = [
+        ap.MemorySlot(locator="Slot 1", populated=True, capacity_bytes=16 * 1024 ** 3),
+        ap.MemorySlot(locator="Slot 2", populated=True, capacity_bytes=16 * 1024 ** 3),
+    ]
+    findings2 = ap.memory_findings(two_of_two)
+    assert not any("Single-channel memory" in f.title for f in findings2)
+
+
 def test_ecc_bits_detected_from_widths():
     ecc = ap.build_slot_map([dict(_stick(), TotalWidth=72)], 1)[0]
     assert ecc.ecc_bits

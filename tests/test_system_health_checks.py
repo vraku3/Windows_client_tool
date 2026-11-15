@@ -589,6 +589,32 @@ def test_check_software_health_real_machine():
         assert f.jump == "Software Inventory"
 
 
+def test_evaluate_firmware_security():
+    # Healthy UEFI + Secure Boot
+    assert h.evaluate_firmware_security("UEFI", True, "") == []
+
+    # UEFI + Secure Boot disabled
+    sb_off = h.evaluate_firmware_security("UEFI", False, "UEFISecureBootEnabled=0")
+    assert len(sb_off) == 1
+    assert sb_off[0].id == "firmware:secure_boot_disabled"
+    assert sb_off[0].severity == "warning"
+    assert sb_off[0].jump == "Security Dashboard"
+
+    # Legacy BIOS
+    legacy = h.evaluate_firmware_security("Legacy BIOS", None, "Not available in Legacy BIOS")
+    assert len(legacy) == 2
+    ids = {f.id for f in legacy}
+    assert "firmware:legacy_bios" in ids
+    assert any(":unknown" in i for i in ids)
+
+
+def test_check_firmware_security_real_machine():
+    findings = h.check_firmware_security()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

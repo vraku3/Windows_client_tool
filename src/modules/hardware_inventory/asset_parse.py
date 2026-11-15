@@ -355,6 +355,12 @@ def memory_findings(slots: Sequence[MemorySlot], max_capacity_bytes: Optional[in
     filled = [s for s in slots if s.populated]
     if not filled:
         return out
+    if len(filled) == 1 and len(slots) > 1:
+        out.append(Finding(
+            "warning", "Single-channel memory configuration",
+            f"Only 1 memory module ({_fmt_gb(filled[0].capacity_bytes)}) is installed across {len(slots)} slots. "
+            "Memory is running in single-channel mode (64-bit bus), cutting memory bandwidth by roughly 50% compared to dual-channel.",
+        ))
     caps = {s.capacity_bytes for s in filled}
     if len(caps) > 1:
         out.append(Finding("info", "Mixed module sizes",

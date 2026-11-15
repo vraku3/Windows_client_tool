@@ -886,6 +886,72 @@ def check_tpm_attestation_events(days: int = 14) -> List[Finding]:
     return evaluate_tpm_attestation_events(rows)
 
 
+# ---- Firewall Exposure -----------------------------------------------------------
+
+def evaluate_firewall_exposure(snapshot: Any) -> List[Finding]:
+    """Turn a firewall_audit Snapshot into actionable System Health findings.
+
+    Only flags genuine exposure:
+    - Profile disabled (severity="warning")
+    - Profile allows inbound by default (severity="warning")
+    - Inbound allow rules with no program, service, or port limit on Public profile (warning)
+    - Enabled rules pointing to deleted/missing executables (severity="info")
+    """
+    if getattr(snapshot, "error", ""):
+        return [_unknown("firewall_exposure", "firewall policy", snapshot.error, jump="Firewall Rules")]
+
+    out: List[Finding] = []
+    for f in getattr(snapshot, "findings", []):
+        if f.key == "profile_off":
+            out.append(Finding(
+                id=f"firewall:{f.key}",
+                title=f.title,
+                detail=f.detail + (" " + f.fix if getattr(f, "fix", "") else ""),
+                severity="warning",
+                evidence="\n".join(f.rule_names) if f.rule_names else f.title,
+                jump="Firewall Rules",
+            ))
+        elif f.key == "default_allow":
+            out.append(Finding(
+                id=f"firewall:{f.key}",
+                title=f.title,
+                detail=f.detail,
+                severity="warning",
+                evidence=f.title,
+                jump="Firewall Rules",
+            ))
+        elif f.key == "open_public":
+            out.append(Finding(
+                id=f"firewall:{f.key}",
+                title=f.title,
+                detail=f.detail,
+                severity="warning",
+                evidence="\n".join(f.rule_names),
+                jump="Firewall Rules",
+            ))
+        elif f.key == "prog_missing":
+            out.append(Finding(
+                id=f"firewall:{f.key}",
+                title=f.title,
+                detail=f.detail,
+                severity="info",
+                evidence="\n".join(f.rule_names),
+                jump="Firewall Rules",
+            ))
+    return out
+
+
+def check_firewall_exposure() -> List[Finding]:
+    """Audit Windows Firewall profiles and rule exposure via registry."""
+    from modules.firewall_rules.firewall_audit import take_snapshot
+    try:
+        snap = take_snapshot()
+    except Exception as exc:
+        logger.warning("firewall snapshot failed: %s", exc)
+        return [_unknown("firewall_exposure", "firewall policy", str(exc), jump="Firewall Rules")]
+    return evaluate_firewall_exposure(snap)
+
+
 # ---- entry point -----------------------------------------------------------------
 
 CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
@@ -902,6 +968,7 @@ CHECKS: Tuple[Tuple[str, Callable[[], List[Finding]]], ...] = (
     ("Windows Update failures", check_windows_update_failures),
     ("driver load failures", check_driver_load_failures),
     ("TPM attestation", check_tpm_attestation_events),
+    ("firewall exposure", check_firewall_exposure),
 )
 
 

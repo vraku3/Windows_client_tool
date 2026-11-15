@@ -414,6 +414,75 @@ def test_check_storage_events_refused_is_unknown(monkeypatch):
     assert findings[0].jump == "Disk Health"
 
 
+def test_evaluate_firewall_exposure_clean():
+    class DummySnap:
+        error = ""
+        findings = []
+    assert h.evaluate_firewall_exposure(DummySnap()) == []
+
+
+def test_evaluate_firewall_exposure_profile_off_and_default_allow():
+    from modules.firewall_rules.firewall_audit import Finding as AuditFinding
+    class DummySnap:
+        error = ""
+        findings = [
+            AuditFinding(severity="high", key="profile_off", title="Firewall is OFF on the Public profile",
+                         detail="No rules enforced.", fix="Set-NetFirewallProfile -Profile Public -Enabled True"),
+            AuditFinding(severity="high", key="default_allow", title="Public profile allows inbound by default",
+                         detail="Unsolicited traffic permitted."),
+        ]
+    findings = h.evaluate_firewall_exposure(DummySnap())
+    assert len(findings) == 2
+    assert findings[0].id == "firewall:profile_off"
+    assert findings[0].severity == "warning"
+    assert findings[0].jump == "Firewall Rules"
+    assert "Set-NetFirewallProfile" in findings[0].detail
+
+    assert findings[1].id == "firewall:default_allow"
+    assert findings[1].severity == "warning"
+    assert findings[1].jump == "Firewall Rules"
+
+
+def test_evaluate_firewall_exposure_open_and_missing():
+    from modules.firewall_rules.firewall_audit import Finding as AuditFinding
+    class DummySnap:
+        error = ""
+        findings = [
+            AuditFinding(severity="high", key="open_public", title="1 open rule on Public",
+                         detail="Open to all ports.", rule_names=["TestRule"]),
+            AuditFinding(severity="low", key="prog_missing", title="1 rule points to deleted exe",
+                         detail="Stale rule.", rule_names=["OldApp"]),
+        ]
+    findings = h.evaluate_firewall_exposure(DummySnap())
+    assert len(findings) == 2
+    assert findings[0].id == "firewall:open_public"
+    assert findings[0].severity == "warning"
+    assert "TestRule" in findings[0].evidence
+
+    assert findings[1].id == "firewall:prog_missing"
+    assert findings[1].severity == "info"
+    assert "OldApp" in findings[1].evidence
+
+
+def test_evaluate_firewall_exposure_error_is_unknown():
+    class DummySnap:
+        error = "Access denied reading registry"
+        findings = []
+    findings = h.evaluate_firewall_exposure(DummySnap())
+    assert len(findings) == 1
+    assert findings[0].id == "firewall_exposure:unknown"
+    assert findings[0].severity == "info"
+    assert findings[0].jump == "Firewall Rules"
+
+
+def test_check_firewall_exposure_real_machine():
+    findings = h.check_firewall_exposure()
+    assert isinstance(findings, list)
+    for f in findings:
+        assert isinstance(f, Finding)
+        assert f.jump == "Firewall Rules"
+
+
 def test_real_machine_checks_return_findings_and_do_not_raise():
     out = h.run_all()
     assert all(isinstance(f, Finding) for f in out)

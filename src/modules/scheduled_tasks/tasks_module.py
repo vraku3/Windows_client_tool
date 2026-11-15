@@ -366,8 +366,17 @@ class TasksModule(BaseModule):
                 item.setToolTip(result)
                 if task_view.failed(t.last_result_code):
                     item.setForeground(self._brush("error"))
-            elif c == _COL_STATE and t.status == "Disabled":
-                item.setForeground(self._brush("warning"))
+                elif t.last_result_code == 0:
+                    item.setForeground(self._brush("success"))
+                elif task_view.to_code(t.last_result_code) in (0x41300, 0x41301, 0x41302, 0x41303):
+                    item.setForeground(self._brush("info"))
+            elif c == _COL_STATE:
+                if t.status == "Disabled":
+                    item.setForeground(self._brush("warning"))
+                elif t.status == "Ready":
+                    item.setForeground(self._brush("success"))
+                elif t.status == "Running":
+                    item.setForeground(self._brush("info"))
             self._table.setItem(r, c, item)
 
     @staticmethod

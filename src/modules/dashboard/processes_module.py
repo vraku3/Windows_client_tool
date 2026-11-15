@@ -10,14 +10,15 @@ users are refused, and the pane says so rather than pretending. Gating the
 whole tab behind elevation would hide a table that is most of the way useful
 without it.
 """
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QWidget
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 
-from .processes_tab import ProcessesTab
+if TYPE_CHECKING:
+    from .processes_tab import ProcessesTab
 from ui.help.dashboard_ui import apply_help
 
 
@@ -30,7 +31,7 @@ class ProcessesModule(BaseModule):
 
     def __init__(self) -> None:
         super().__init__()
-        self._widget: Optional[ProcessesTab] = None
+        self._widget: Optional[QWidget] = None
 
     def on_start(self, app) -> None:
         # Only the app reference here: `create_widget` has not run, so there
@@ -38,6 +39,7 @@ class ProcessesModule(BaseModule):
         self.app = app
 
     def create_widget(self) -> QWidget:
+        from .processes_tab import ProcessesTab
         self._widget = ProcessesTab()
         self._widget.set_app(self.app)
         apply_help(self._widget, self.name)

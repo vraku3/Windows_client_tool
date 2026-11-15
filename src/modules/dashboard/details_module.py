@@ -14,7 +14,7 @@ This module also owns the Dashboard's global-search provider (W5-04): one
 place for the process data, so Details and Processes do not each register a
 second provider that would double every hit.
 """
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QWidget
 
@@ -22,7 +22,8 @@ from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 
-from .details_tab import DetailsTab
+if TYPE_CHECKING:
+    from .details_tab import DetailsTab
 from .process_search import ProcessSearchProvider
 from ui.help.dashboard_ui import apply_help
 
@@ -36,7 +37,7 @@ class DetailsModule(BaseModule):
 
     def __init__(self) -> None:
         super().__init__()
-        self._widget: Optional[DetailsTab] = None
+        self._widget: Optional[QWidget] = None
         # Built in __init__, not on_start: the registry may ask for the
         # provider before the widget has ever been shown (CLAUDE.md, and the
         # same choice TreeSize makes).
@@ -48,6 +49,7 @@ class DetailsModule(BaseModule):
         self.app = app
 
     def create_widget(self) -> QWidget:
+        from .details_tab import DetailsTab
         self._widget = DetailsTab()
         self._widget.set_app(self.app)
         apply_help(self._widget, self.name)

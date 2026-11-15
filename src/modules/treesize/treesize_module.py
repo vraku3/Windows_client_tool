@@ -10,7 +10,7 @@ from modules.treesize.help_widgets import (
 )
 import ctypes
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtWidgets import QWidget
 
@@ -19,7 +19,8 @@ from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
 
 from modules.treesize.search_provider import TreeSizeSearchProvider
-from modules.treesize.ui.shell import TreeSizeShell
+if TYPE_CHECKING:
+    from modules.treesize.ui.shell import TreeSizeShell
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +42,14 @@ class TreeSizeModule(BaseModule):
     def __init__(self) -> None:
         super().__init__()
         self._widget: Optional[QWidget] = None
-        self._shell: Optional[TreeSizeShell] = None
+        self._shell: Optional[QWidget] = None
         self._last_summary = "No scan yet"
         # Built here rather than in create_widget: the registry may ask for
         # the provider before the pane has ever been shown.
         self._search_provider = TreeSizeSearchProvider()
 
     def create_widget(self) -> QWidget:
+        from modules.treesize.ui.shell import TreeSizeShell
         self._shell = TreeSizeShell()
         self._shell.scan_finished.connect(self._on_scan_finished)
         config = getattr(self, "_config", None)

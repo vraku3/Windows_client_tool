@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QBrush, QColor
 from PyQt6.QtWidgets import (
     QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
     QProgressBar, QPushButton, QStackedWidget, QTableWidget, QTabWidget,
@@ -14,8 +14,9 @@ from PyQt6.QtWidgets import (
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
-from core.table_ui import centered_item, fit_table
+from core.table_ui import center_header, centered_item, fit_table, set_role
 from core.types import LogEntry
+from ui.table_style import apply_table_style
 from modules.perfmon.perfmon_collector import (
     PerfMonStore, REPLAYABLE_COUNTERS, collect_snapshot, compute_summary,
     downsample, write_history_csv,
@@ -68,7 +69,7 @@ class PerfMonModule(BaseModule):
         dash_layout.setContentsMargins(4, 4, 4, 4)
 
         self._summary_label = QLabel("Collecting data...")
-        self._summary_label.setStyleSheet("font-size: 13px; padding: 4px;")
+        set_role(self._summary_label, "muted")
         dash_layout.addWidget(self._summary_label)
 
         self._dashboard = PerfMonDashboard()
@@ -89,28 +90,28 @@ class PerfMonModule(BaseModule):
 
         # CPU bar
         cpu_label = QLabel("CPU Usage")
-        cpu_label.setStyleSheet("font-weight: bold;")
+        set_role(cpu_label, "heading")
         self._cpu_bar = QProgressBar()
         self._cpu_bar.setRange(0, 100)
         self._cpu_bar.setFormat("%p%")
 
         # Memory bar
         mem_label = QLabel("Memory Usage")
-        mem_label.setStyleSheet("font-weight: bold;")
+        set_role(mem_label, "heading")
         self._mem_bar = QProgressBar()
         self._mem_bar.setRange(0, 100)
         self._mem_bar.setFormat("%p%")
 
         # Disk I/O bar
         disk_label = QLabel("Disk I/O")
-        disk_label.setStyleSheet("font-weight: bold;")
+        set_role(disk_label, "heading")
         self._disk_bar = QProgressBar()
         self._disk_bar.setRange(0, 100)
         self._disk_bar.setFormat("0 MB/s")
 
         # Network I/O bar
         net_label = QLabel("Network I/O")
-        net_label.setStyleSheet("font-weight: bold;")
+        set_role(net_label, "heading")
         self._net_bar = QProgressBar()
         self._net_bar.setRange(0, 100)
         self._net_bar.setFormat("0 KB/s")
@@ -127,7 +128,7 @@ class PerfMonModule(BaseModule):
 
         # Top processes table
         proc_label = QLabel("Top Processes by CPU")
-        proc_label.setStyleSheet("font-weight: bold;")
+        set_role(proc_label, "heading")
         live_layout.addWidget(proc_label, 4, 0, 1, 2)
 
         self._proc_table = QTableWidget()
@@ -136,6 +137,9 @@ class PerfMonModule(BaseModule):
         self._proc_table.setRowCount(10)
         fit_table(self._proc_table, stretch=[0], content=[1, 2])
         self._proc_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._proc_table.setAlternatingRowColors(True)
+        center_header(self._proc_table)
+        apply_table_style(self._proc_table)
         live_layout.addWidget(self._proc_table, 5, 0, 1, 2)
 
         self._tabs.addTab(live_widget, "Live Monitor")
@@ -539,8 +543,16 @@ class PerfMonModule(BaseModule):
                 if i < len(procs):
                     name, cpu_pct, mem_mb = procs[i]
                     self._proc_table.setItem(i, 0, centered_item(name))
-                    self._proc_table.setItem(i, 1, centered_item(f"{cpu_pct:.1f}"))
-                    self._proc_table.setItem(i, 2, centered_item(f"{mem_mb:.0f}"))
+                    cpu_item = centered_item(f"{cpu_pct:.1f}%")
+                    if cpu_pct >= 50:
+                        cpu_item.setForeground(QBrush(QColor(semantic("error"))))
+                    elif cpu_pct >= 20:
+                        cpu_item.setForeground(QBrush(QColor(semantic("warning"))))
+                    self._proc_table.setItem(i, 1, cpu_item)
+                    mem_item = centered_item(f"{mem_mb:,.0f} MB")
+                    if mem_mb >= 2048:
+                        mem_item.setForeground(QBrush(QColor(semantic("warning"))))
+                    self._proc_table.setItem(i, 2, mem_item)
                 else:
                     for col in range(3):
                         self._proc_table.setItem(i, col, centered_item(""))

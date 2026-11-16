@@ -12,6 +12,7 @@ import csv
 import os
 import sqlite3
 import tempfile
+import time
 
 from modules.perfmon.perfmon_collector import (
     REPLAYABLE_COUNTERS, PerfMonStore, compute_summary, write_history_csv,
@@ -87,6 +88,7 @@ def test_write_history_csv_round_trips_a_real_store_query():
         db_path = os.path.join(tmpdir, "test_perfmon.db")
         store = PerfMonStore(db_path)
         for i in range(3):
+            time.sleep(0.02)
             store.store_snapshot({
                 "cpu_total": 10.0 + i,
                 "memory_percent": 40.0 + i,

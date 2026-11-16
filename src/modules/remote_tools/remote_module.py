@@ -9,7 +9,7 @@ from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6 import sip
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QCompleter, QFormLayout, QHBoxLayout, QHeaderView, QTableWidgetItem,
+    QCheckBox, QCompleter, QFormLayout, QHBoxLayout, QHeaderView, QTableWidgetItem,
     QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QPushButton,
     QSpinBox, QTableWidget, QTabWidget, QVBoxLayout, QWidget, QGridLayout, QScrollArea,
 )
@@ -20,7 +20,7 @@ from ui.help.network_ui import control_help, explain_tabs, item_help
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from core.table_ui import centered_item, set_role
 from modules.remote_tools import remote_audit as ra
 from core.worker import Worker
@@ -192,7 +192,14 @@ class RemoteToolsModule(BaseModule):
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
-                if r.severity in ("high", "medium"):
+                if c == 1:
+                    if r.status == "On":
+                        item.setForeground(QColor(semantic("warning" if r.severity in ("high", "medium") else "info")))
+                    elif r.status == "Off":
+                        item.setForeground(QColor(semantic("success")))
+                    else:
+                        item.setForeground(QColor(chrome("text_muted")))
+                elif r.severity in ("high", "medium"):
                     item.setForeground(QColor(semantic("error" if r.severity == "high" else "warning")))
                 self._exp_table.setItem(i, c, item_help(item, self._exp_table, c))
         n = sum(1 for r in rows if r.status == "On")
@@ -352,6 +359,9 @@ class RemoteToolsModule(BaseModule):
         self._sweep_btn = QPushButton("Sweep")
         self._sweep_btn.clicked.connect(self._run_sweep)
         top.addWidget(self._sweep_btn)
+        self._sweep_online_only = QCheckBox("Online only")
+        self._sweep_online_only.stateChanged.connect(self._filter_sweep_table)
+        top.addWidget(self._sweep_online_only)
         self._sweep_progress = QProgressBar()
         self._sweep_progress.setVisible(False)
         top.addWidget(self._sweep_progress)
@@ -408,8 +418,14 @@ class RemoteToolsModule(BaseModule):
                 row = self._sweep_table.rowCount()
                 self._sweep_table.insertRow(row)
                 self._sweep_table.setItem(row, 0, item_help(centered_item(ip), self._sweep_table, 0))
-                status = "🟢 Online" if alive else "⚫ Offline"
-                self._sweep_table.setItem(row, 1, item_help(centered_item(status), self._sweep_table, 1))
+                status = "Online" if alive else "Offline"
+                s_item = centered_item(status)
+                if alive:
+                    s_item.setForeground(QColor(semantic("success")))
+                else:
+                    s_item.setForeground(QColor(chrome("text_muted")))
+                self._sweep_table.setItem(row, 1, item_help(s_item, self._sweep_table, 1))
+            self._filter_sweep_table()
 
         def on_done():
             self._sweep_btn.setEnabled(True)
@@ -422,6 +438,13 @@ class RemoteToolsModule(BaseModule):
         w.signals.progress.connect(self._sweep_progress.setValue)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
+
+    def _filter_sweep_table(self) -> None:
+        online_only = self._sweep_online_only.isChecked()
+        for r in range(self._sweep_table.rowCount()):
+            item = self._sweep_table.item(r, 1)
+            is_online = item is not None and "online" in item.text().lower()
+            self._sweep_table.setRowHidden(r, online_only and not is_online)
 
     # ------------------------------------------------------------------
     # Wake-on-LAN tab
@@ -459,9 +482,11 @@ class RemoteToolsModule(BaseModule):
         broadcast = self._wol_broadcast.text().strip() or "255.255.255.255"
         try:
             _send_wol(mac, broadcast)
-            self._wol_status.setText(f"✅ Magic packet sent to {mac} via {broadcast}")
+            self._wol_status.setText(f"Magic packet sent to {mac} via {broadcast}")
+            set_role(self._wol_status, "statusSuccess")
         except Exception as e:
-            self._wol_status.setText(f"❌ Failed: {e}")
+            self._wol_status.setText(f"Failed: {e}")
+            set_role(self._wol_status, "statusError")
 
     # ------------------------------------------------------------------
     # Helpers

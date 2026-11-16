@@ -15,6 +15,7 @@ from typing import List
 
 from core.flight_recorder import read_flight_recorder_entries, timeline_summary_text
 from core.log_reader_module import LogReaderModule
+from core.semantic_colors import chrome, semantic
 from core.types import LogEntry
 from modules.timeline.timeline_search_provider import TimelineSearchProvider
 
@@ -27,7 +28,14 @@ def _detail_html(entry: LogEntry) -> str:
     import json
 
     raw = entry.raw or {}
-    out = [f"<b>{html.escape(entry.source)}</b> &mdash; <i>{html.escape(entry.level)}</i><br>"]
+    lvl = (entry.level or "info").lower()
+    sem_color = (
+        semantic("error") if ("err" in lvl or "crit" in lvl)
+        else semantic("warning") if "warn" in lvl
+        else semantic("success") if ("succ" in lvl or "ok" in lvl)
+        else semantic("info")
+    )
+    out = [f"<b>{html.escape(entry.source)}</b> &mdash; <i style='color:{sem_color};'>{html.escape(entry.level)}</i><br>"]
     out.append(f"<b>Event Time:</b> {entry.timestamp.strftime('%Y-%m-%d %H:%M:%S')}<br>")
     out.append(f"<b>Summary:</b> {html.escape(entry.message)}<br>")
 
@@ -37,7 +45,10 @@ def _detail_html(entry: LogEntry) -> str:
 
     detail = raw.get("detail")
     if detail and isinstance(detail, dict):
-        out.append("<b>Details:</b><pre style='background:#222; padding:6px;'>")
+        bg = chrome("surface")
+        fg = chrome("text")
+        border = chrome("outline")
+        out.append(f"<b>Details:</b><pre style='background:{bg}; color:{fg}; border:1px solid {border}; border-radius:4px; padding:6px;'>")
         out.append(html.escape(json.dumps(detail, indent=2, ensure_ascii=False)))
         out.append("</pre>")
 

@@ -18,7 +18,7 @@ from ui.glance import GlanceStrip, GlanceTile
 from ui.chip_bar import ChipBar
 from ui.table_style import apply_table_style
 from core.module_groups import ModuleGroup
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from core.table_ui import center_header, centered_item, fit_table, set_role
 from core.worker import Worker
 from modules.local_users import accounts as acc
@@ -122,6 +122,7 @@ class LocalUsersModule(BaseModule):
         describe_control(self._search, '_search')
         self._search.setPlaceholderText("Search name, full name, SID, group, profile...")
         self._search.textChanged.connect(self._render_users)
+        self._search.textChanged.connect(self._render_groups)
         self._status_label = QLabel("Loading...")
         set_role(self._status_label, "muted")
         for w in (self._refresh_btn, self._copy_btn):
@@ -266,14 +267,29 @@ class LocalUsersModule(BaseModule):
         for r, a in enumerate(rows):
             idle = acc.days_since(a.last_logon)
             age = a.password_age_days
+            enabled_item = centered_item("Yes" if a.enabled else "No")
+            enabled_item.setForeground(QColor(semantic("success") if a.enabled else chrome("text_muted")))
+
+            flags_val = flag_text(a)
+            flags_item = centered_item(f"⛔ {flags_val}" if (a.flags & acc.UF_LOCKOUT) else flags_val)
+            if a.flags & acc.UF_LOCKOUT:
+                flags_item.setForeground(QColor(semantic("error")))
+            elif a.flags & (acc.UF_DONT_EXPIRE_PASSWD | acc.UF_PASSWD_NOTREQD):
+                flags_item.setForeground(QColor(semantic("warning")))
+
+            groups_val = ", ".join(a.groups) if not a.groups_error else "unreadable"
+            groups_item = centered_item(groups_val)
+            if any("admin" in g.lower() for g in a.groups):
+                groups_item.setForeground(QColor(semantic("warning")))
+
             cells = [
                 centered_item(a.name), centered_item(a.full_name),
-                centered_item("Yes" if a.enabled else "No"),
+                enabled_item,
                 _NumItem(_fmt_time(a.last_logon), a.last_logon),
                 _NumItem("" if idle is None else str(idle), -1 if idle is None else idle),
                 _NumItem(format_password_age(a.password_age_s), -1 if age is None else age),
-                centered_item(", ".join(a.groups) if not a.groups_error else "unreadable"),
-                centered_item(flag_text(a)),
+                groups_item,
+                flags_item,
             ]
             for c, item in enumerate(cells):
                 t.setItem(r, c, item)
@@ -283,33 +299,55 @@ class LocalUsersModule(BaseModule):
                                    f"{len(self._snap.group_members)} group(s)")
 
     def _render_groups(self):
+        if self._snap is None:
+            return
         snap = self._snap
         t = self._group_table
         t.setSortingEnabled(False)
         names = sorted(snap.group_members, key=str.lower)
+        q = self._search.text().strip().lower() if self._search else ""
+        if q:
+            names = [
+                g for g in names
+                if q in g.lower()
+                or (snap.group_members[g][0] and any(q in m.lower() for m in snap.group_members[g][0]))
+                or q in snap.group_comments.get(g, "").lower()
+            ]
         t.setRowCount(len(names))
         for r, g in enumerate(names):
             members, why = snap.group_members[g]
             count = _NumItem("unreadable" if members is None else str(len(members)),
                              -1 if members is None else len(members))
             text = f"Could not read: {why}" if members is None else ", ".join(members)
-            for c, item in enumerate([centered_item(g), count, centered_item(text),
+            g_item = centered_item(g)
+            if "admin" in g.lower():
+                g_item.setForeground(QColor(semantic("warning")))
+            for c, item in enumerate([g_item, count, centered_item(text),
                                       centered_item(snap.group_comments.get(g, ""))]):
                 t.setItem(r, c, item)
                 describe_cell(t, c, t.item(r, c))
         t.setSortingEnabled(True)
 
     def _render_findings(self):
+        if self._snap is None:
+            return
         fs = acc.findings(self._snap)
         t = self._findings_table
         t.setSortingEnabled(False)
         t.setRowCount(len(fs))
-        colours = {"warning": "warning", "unknown": "info", "info": "info"}
+        badge_map = {
+            "warning": ("⚠️ Warning", "warning"),
+            "error": ("⛔ Error", "error"),
+            "critical": ("⛔ Critical", "error"),
+            "info": ("ℹ️ Info", "info"),
+            "unknown": ("❓ Unknown", "info"),
+        }
         for r, f in enumerate(fs):
-            for c, txt in enumerate((f.severity, f.account, f.message)):
+            badge_text, col_name = badge_map.get(f.severity.lower(), (f.severity.capitalize(), "info"))
+            for c, txt in enumerate((badge_text, f.account, f.message)):
                 item = centered_item(txt)
                 if c == 0:
-                    item.setForeground(QColor(semantic(colours.get(f.severity, "info"))))
+                    item.setForeground(QColor(semantic(col_name)))
                 t.setItem(r, c, item)
                 describe_cell(t, c, t.item(r, c))
         t.setSortingEnabled(True)

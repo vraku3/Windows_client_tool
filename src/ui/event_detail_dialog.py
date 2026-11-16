@@ -37,14 +37,7 @@ class EventDetailDialog(QDialog):
 
         # ── Header card ─────────────────────────────────────────────────
         header_card = QFrame()
-        header_card.setStyleSheet("""
-            QFrame {
-                background: #2d2d2d;
-                border: 1px solid #3c3c3c;
-                border-radius: 6px;
-                padding: 8px;
-            }
-        """)
+        header_card.setObjectName("card")
         header_layout = QVBoxLayout(header_card)
         header_layout.setSpacing(4)
 
@@ -73,7 +66,6 @@ class EventDetailDialog(QDialog):
         # ── Separator ───────────────────────────────────────────────────
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #3c3c3c;")
         layout.addWidget(sep)
 
         # ── Message area ────────────────────────────────────────────────

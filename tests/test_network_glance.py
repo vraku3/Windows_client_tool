@@ -201,3 +201,26 @@ def test_wifi_replaced_scan_cannot_overwrite_connection_summary(qapp, monkeypatc
     assert not module._scan_btn.isEnabled()
     module.on_stop()
     pending[-1].signals.finished.emit()
+
+
+def test_chip_bar_selected_key_property(qapp):
+    from ui.chip_bar import ChipBar
+    bar = ChipBar([("all", "All", 10), ("errors", "Errors", 2)])
+    assert bar.selected_key == "all"
+    bar.chips["errors"].setChecked(True)
+    assert bar.selected_key == "errors"
+
+
+def test_listening_ports_tab_chip_filter(qapp):
+    from modules.network_diagnostics.network_health_module import _PortsPane
+    from modules.network_diagnostics.port_reader import ListeningPort
+    pane = _PortsPane(SimpleNamespace(track=lambda w: None))
+    p1 = ListeningPort("TCP", "0.0.0.0", 80, "All Interfaces", "Web", 100, "nginx.exe", "", "SYSTEM", True)
+    p2 = ListeningPort("TCP", "127.0.0.1", 8080, "Loopback", "Dev", 200, "python.exe", "", "user", False)
+    pane._done(([p1, p2], []))
+    assert pane._table.rowCount() == 2
+    pane._chips.chips["public"].setChecked(True)
+    assert pane._table.rowCount() == 1
+    pane._chips.chips["loopback"].setChecked(True)
+    assert pane._table.rowCount() == 1
+

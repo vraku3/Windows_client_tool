@@ -1,4 +1,6 @@
 """Counted, keyboard-accessible filter pills."""
+from typing import Optional
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QPushButton, QButtonGroup, QHBoxLayout, QWidget, QSizePolicy
 
@@ -55,6 +57,11 @@ class ChipBar(QWidget):
 
     def selected(self):
         return [key for key, chip in self.chips.items() if chip.isChecked()]
+
+    @property
+    def selected_key(self) -> Optional[str]:
+        keys = self.selected()
+        return keys[0] if keys else None
 
     def set_counts(self, counts):
         for key, count in counts.items():

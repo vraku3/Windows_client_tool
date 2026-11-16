@@ -26,6 +26,7 @@ from modules.tweaks.preset_manager import PresetManager
 from modules.tweaks.tweak_categories import CATEGORY_FILES
 from modules.gpresult.tweak_conflicts import policy_managed_tweak_keys
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 from ui.error_banner import ErrorBanner
 from ui.module_intro import module_intro
 from modules.tweaks.tweaks_help import (
@@ -54,6 +55,12 @@ _STATUS_DISPLAY = {
     PARTIAL:        ("◐ Partial",     "warning"),
     NOT_APPLICABLE: ("⊘ N/A",         None),
     UNKNOWN:        ("? Unknown",     "info"),
+}
+
+_STATUS_ROLES = {
+    APPLIED:        "statusSuccess",
+    PARTIAL:        "statusWarning",
+    UNKNOWN:        "statusInfo",
 }
 
 #: Status filter dropdown -> status code. "All" and "Applicable" are handled
@@ -95,7 +102,7 @@ class _DetailsPanel(QFrame):
 
         self._title = QLabel()
         self._title.setWordWrap(True)
-        self._title.setStyleSheet("font-size: 15px; font-weight: 600;")
+        set_role(self._title, "heading")
         layout.addWidget(self._title)
 
         self._risk = QLabel()
@@ -107,7 +114,7 @@ class _DetailsPanel(QFrame):
 
         self._desc = QLabel()
         self._desc.setWordWrap(True)
-        self._desc.setStyleSheet("color: #aaaaaa;")
+        set_role(self._desc, "muted")
         layout.addWidget(self._desc)
 
         self._policy_warning = QLabel()
@@ -123,7 +130,7 @@ class _DetailsPanel(QFrame):
 
         self._presets = QLabel()
         self._presets.setWordWrap(True)
-        self._presets.setStyleSheet("color: #888888; font-size: 11px;")
+        set_role(self._presets, "muted")
         layout.addWidget(self._presets)
 
         layout.addStretch()
@@ -273,6 +280,7 @@ class TweakRow(QWidget):
     def __init__(self, tweak: Dict, parent: Optional[QWidget] = None,
                  policy_keys: Optional[List[str]] = None):
         super().__init__(parent)
+        self.setObjectName("tweakRow")
         self.tweak = tweak
         self._safety_reason = ""
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -307,7 +315,7 @@ class TweakRow(QWidget):
                 "This tweak writes into a Group Policy managed registry "
                 "branch — a future GPO can revert it without warning. See "
                 "the details panel or the Group Policy pane's Policy Audit.")
-            gpo_badge.setStyleSheet("color: %s; font-weight: 600;" % semantic("info"))
+            set_role(gpo_badge, "statusInfo")
             gpo_badge.setFixedWidth(36)
             gpo_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
             gpo_badge.setAttribute(Qt.WidgetAttribute.WA_LayoutUsesWidgetRect, True)
@@ -315,9 +323,8 @@ class TweakRow(QWidget):
 
         risk = tweak.get("risk", "low")
         risk_label = QLabel(risk.upper())
-        risk_label.setStyleSheet("color: %s;" % semantic(
-            "error" if risk == "high"
-            else "warning" if risk == "medium" else "success"))
+        risk_role = "statusError" if risk == "high" else "statusWarning" if risk == "medium" else "statusSuccess"
+        set_role(risk_label, risk_role)
         risk_label.setToolTip(RISK_HELP.get(risk, "Risk not specified."))
         risk_label.setFixedWidth(70)
         risk_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -346,10 +353,6 @@ class TweakRow(QWidget):
         self.disable_btn.setVisible(False)  # only shown once status is detected as "applied"
         layout.addWidget(self.disable_btn)
 
-        # Row highlight on hover
-        self.setStyleSheet(
-            "TweakRow:hover { background-color: #2a2d2e; }"
-        )
         self._update_help()
 
     def _update_help(self) -> None:
@@ -377,10 +380,9 @@ class TweakRow(QWidget):
         self.status = status
         self.status_reason = reason
 
-        text, colour = _STATUS_DISPLAY.get(status, (status, None))
+        text, _ = _STATUS_DISPLAY.get(status, (status, None))
         self.status_label.setText(text)
-        self.status_label.setStyleSheet(
-            f"color: {semantic(colour)};" if colour else "")
+        set_role(self.status_label, _STATUS_ROLES.get(status, ""))
 
         # A tweak with nothing to do here must not sit in a bulk selection and
         # then report a failure the user has to go and interpret.
@@ -390,9 +392,9 @@ class TweakRow(QWidget):
         if not applicable:
             self.checkbox.setChecked(False)
             self.apply_btn.setToolTip(f"Not applicable on this PC — {reason}")
-            self._name_label.setStyleSheet("color: #7a7a7a;")
+            set_role(self._name_label, "muted")
         else:
-            self._name_label.setStyleSheet("")
+            set_role(self._name_label, "")
 
         self.disable_btn.setVisible(status in (APPLIED, PARTIAL))
         self._update_help()
@@ -1059,7 +1061,7 @@ class TweaksModule(BaseModule):
         # What "not applicable" is being judged against — without this the
         # verdict is unfalsifiable from the user's side.
         self._os_label = QLabel(get_os_context().friendly_name)
-        self._os_label.setStyleSheet("color: #888888; font-size: 11px;")
+        set_role(self._os_label, "muted")
         self._os_label.setToolTip(
             "Tweaks are checked against this Windows build, edition and "
             "architecture.")
@@ -1100,8 +1102,7 @@ class TweaksModule(BaseModule):
 
         self._perf_tuner_nudge_lbl = QLabel(
             "Looking for what used to be Performance Tuner? Try the Performance preset above.")
-        self._perf_tuner_nudge_lbl.setObjectName("muted")
-        self._perf_tuner_nudge_lbl.setStyleSheet("font-size: 11px; font-style: italic;")
+        set_role(self._perf_tuner_nudge_lbl, "muted")
         layout.addWidget(self._perf_tuner_nudge_lbl)
         self._preset_combo.currentTextChanged.connect(self._update_perf_tuner_nudge)
         self._update_perf_tuner_nudge(self._preset_combo.currentText())

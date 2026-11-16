@@ -692,7 +692,7 @@ class _PortsPane(QWidget):
         self._apply_filter()
 
     def _filtered_entries(self) -> List[port_reader.ListeningPort]:
-        sel = self._chips.selected_key or "all"
+        sel = getattr(self._chips, "selected_key", None) or (self._chips.selected()[0] if self._chips.selected() else "all")
         needle = self._filter.text().strip().lower()
 
         entries = self._entries

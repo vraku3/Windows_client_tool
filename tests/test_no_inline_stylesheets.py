@@ -28,7 +28,7 @@ pytestmark = pytest.mark.usefixtures("fresh_widgets")
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 
 #: 204 when the ratchet went in. Only ever lower it.
-BUDGET = 75
+BUDGET = 47
 
 #: The roles both stylesheets define.
 KNOWN_ROLES = {

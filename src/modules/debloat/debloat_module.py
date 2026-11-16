@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 
 from PyQt6.QtCore import Qt, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QCheckBox, QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QMenu, QApplication, QProgressBar, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget, QMessageBox,
@@ -28,7 +28,7 @@ from core.events import DEBLOAT_ITEMS_REMOVED
 from core.formatting import human_size
 from core.module_groups import ModuleGroup
 from core.search_provider import SearchProvider
-from core.table_ui import fit_columns_once, restore_column_widths, save_column_widths
+from core.table_ui import fit_columns_once, restore_column_widths, save_column_widths, set_role
 from core.worker import Worker
 from modules.debloat import debloat_history
 from modules.debloat import debloat_presets as dp
@@ -183,7 +183,7 @@ class DebloatToolsModule(BaseModule):
         layout = QVBoxLayout(widget)
 
         self._apps_status = QLabel("Click 'Scan Apps' to detect installed bloatware")
-        self._apps_status.setStyleSheet("font-size: 13px; padding: 4px;")
+        set_role(self._apps_status, "muted")
         layout.addWidget(self._apps_status)
 
         btn_layout = QGridLayout()
@@ -254,7 +254,7 @@ class DebloatToolsModule(BaseModule):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
@@ -337,7 +337,6 @@ class DebloatToolsModule(BaseModule):
         layout = QVBoxLayout(widget)
 
         status_lbl = QLabel("Loading...")
-        status_lbl.setStyleSheet("font-size: 13px; padding: 4px;")
         status_lbl.setObjectName(f"_status_{tab_type}")
         status_row = QHBoxLayout()
         status_row.addWidget(status_lbl)
@@ -397,7 +396,7 @@ class DebloatToolsModule(BaseModule):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         table_container = QWidget()
         table_layout = QVBoxLayout(table_container)
@@ -521,7 +520,7 @@ class DebloatToolsModule(BaseModule):
 
     def _on_scanned(self, result: Dict) -> None:
         self._scan_btn.setEnabled(True)
-        self._apps_status.setStyleSheet("font-size: 13px; padding: 4px;")
+        set_role(self._apps_status, "muted")
         installed: List[str] = result.get("installed", [])
         self._installed_apps = installed
         logger.info("Debloat scan complete \u2014 %d bloatware app(s) detected", len(installed))
@@ -863,8 +862,7 @@ class DebloatToolsModule(BaseModule):
     def _on_scan_error(self, err: str) -> None:
         self._scan_btn.setEnabled(True)
         self._apps_status.setText(f"Scan failed: {err}")
-        self._apps_status.setStyleSheet(
-            f"font-size: 13px; padding: 4px; color: {semantic('error')};")
+        set_role(self._apps_status, "statusError")
         logger.error("Debloat scan error: %s", err)
 
     def _on_apply_error(self, err: str) -> None:

@@ -706,3 +706,4 @@ QLabel#emptyHint { color: #5f5f5f; }
 QTableView[scanTable="true"] { alternate-background-color: #ededed; }
 
 QLabel#introSummary { background: transparent; border: none; padding: 0; }
+QWidget#tweakRow:hover { background-color: #e5e5e5; }

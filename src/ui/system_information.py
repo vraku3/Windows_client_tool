@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (QDialog, QFormLayout, QGridLayout, QHBoxLayout,
                              QLabel, QTabWidget, QVBoxLayout, QWidget)
 
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 
 from ui.perf_graph import CoreGrid, PerfGraph
 from core.procengine.columns import fmt_bytes
@@ -81,11 +82,11 @@ class SystemInformationDialog(QDialog):
                 ("Physical memory", "success", 100.0),
                 ("I/O bytes", "match", 1024.0))):
             caption = QLabel(name, page)
-            caption.setStyleSheet("font-weight: 600;")
+            set_role(caption, "heading")
             graph = PerfGraph(semantic(colour), ceiling, page)
             graph.setMinimumHeight(110)
             reading = QLabel("—", page)
-            reading.setStyleSheet("font-size: 11px;")
+            set_role(reading, "muted")
             row, column = divmod(index, 2)
             cell = QVBoxLayout()
             cell.addWidget(caption)
@@ -103,7 +104,7 @@ class SystemInformationDialog(QDialog):
 
         static = cpu_static()
         title = QLabel(static.name or "Processor", page)
-        title.setStyleSheet("font-weight: 600;")
+        set_role(title, "heading")
         column.addWidget(title)
 
         self.cpu_graph = PerfGraph(semantic("info"), 100.0, page)
@@ -124,14 +125,14 @@ class SystemInformationDialog(QDialog):
         column = QVBoxLayout(page)
 
         commit = QLabel("Commit charge", page)
-        commit.setStyleSheet("font-weight: 600;")
+        set_role(commit, "heading")
         column.addWidget(commit)
         self.commit_graph = PerfGraph(semantic("warning"), 100.0, page)
         self.commit_graph.setMinimumHeight(110)
         column.addWidget(self.commit_graph)
 
         physical = QLabel("Physical memory", page)
-        physical.setStyleSheet("font-weight: 600;")
+        set_role(physical, "heading")
         column.addWidget(physical)
         self.physical_graph = PerfGraph(semantic("success"), 100.0, page)
         self.physical_graph.setMinimumHeight(110)
@@ -151,7 +152,7 @@ class SystemInformationDialog(QDialog):
         page = QWidget(self)
         column = QVBoxLayout(page)
         title = QLabel("System I/O", page)
-        title.setStyleSheet("font-weight: 600;")
+        set_role(title, "heading")
         column.addWidget(title)
 
         self.io_graph = PerfGraph(semantic("match"), 1024.0, page)
@@ -177,7 +178,7 @@ class SystemInformationDialog(QDialog):
         form = QFormLayout()
         for name in names:
             caption = QLabel(name, parent)
-            caption.setStyleSheet("font-size: 11px;")
+            set_role(caption, "muted")
             value = QLabel("—", parent)
             self._values[f"{prefix}.{name}"] = value
             form.addRow(caption, value)
@@ -333,11 +334,11 @@ class SystemInformationDialog(QDialog):
             name = facts.name if facts is not None and facts.name \
                 else f"Adapter {luid:#x}"
             title = QLabel(name, self)
-            title.setStyleSheet("font-weight: 600;")
+            set_role(title, "heading")
             graph = PerfGraph(semantic("match"), 100.0, self)
             graph.setMinimumHeight(110)
             reading = QLabel("—", self)
-            reading.setStyleSheet("font-size: 11px;")
+            set_role(reading, "muted")
             for widget in (title, graph, reading):
                 self.gpu_area.addWidget(widget)
             row = {"graph": graph, "reading": reading}

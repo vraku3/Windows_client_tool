@@ -76,7 +76,7 @@ class ConnectionsTab(DashTab):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         for column, width in enumerate((60, 230, 230, 110, 70, 200)):
             header.resizeSection(column, width)
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
         self._sort = (PROCESS, Qt.SortOrder.AscendingOrder)
         header.setSortIndicatorShown(True)
         header.sectionClicked.connect(self._sort_by)

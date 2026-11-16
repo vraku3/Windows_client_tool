@@ -73,14 +73,14 @@ class LogTableWidget(QWidget):
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self._table.setAlternatingRowColors(True)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Interactive
         )
         center_header(self._table)
         # The default 100px cut the Time column to "2026-09-25 ...".
         for col, name in enumerate(self._columns):
-            width = {"Time": 150, "Source": 170, "Level": 70}.get(name)
+            width = {"Time": 150, "Source": 170, "Level": 70, "Message": 350}.get(name)
             if width:
                 self._table.setColumnWidth(col, width)
         self._table.verticalHeader().setDefaultSectionSize(24)

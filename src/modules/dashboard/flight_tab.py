@@ -148,8 +148,10 @@ class SavedTracesDialog(QDialog):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(_LIB_HEADERS)):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            self._table.setColumnWidth(col, 160 if col == 0 else 100)
         self._table.doubleClicked.connect(self._open)
         layout.addWidget(self._table, 1)
         self.status = QLabel("", self)
@@ -458,7 +460,10 @@ class FlightTab(DashTab):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(_MOMENT_COLS)):
+            table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(col, 160)
         table.setToolTip("Who was using the machine at the cursor")
         # Exactly its rows tall; the charts take the rest of the height.
         table.setFixedHeight(table.horizontalHeader().sizeHint().height()

@@ -589,8 +589,10 @@ class QuickCleanupTab(QWidget):
         card.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         card.table.setAccessibleName(f"{card.title_label.text()} values")
         card.table.setToolTip("Read-only values from the same scan or history as the chart.")
-        card.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        card.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        card.table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(headers)):
+            card.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            card.table.setColumnWidth(col, 220 if col == 0 else 110)
         card.table.verticalHeader().hide()
         card.table.hide()
         card.layout().insertWidget(1, card.table_toggle, 0, Qt.AlignmentFlag.AlignRight)

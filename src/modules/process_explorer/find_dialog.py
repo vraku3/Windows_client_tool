@@ -86,7 +86,12 @@ class FindHandleDialog(QDialog):
         self._table.setHorizontalHeaderLabels(_HEADERS)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
+        self._table.setColumnWidth(0, 160)
+        self._table.setColumnWidth(1, 80)
+        self._table.setColumnWidth(2, 90)
+        self._table.setColumnWidth(3, 90)
+        self._table.setColumnWidth(4, 300)
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(

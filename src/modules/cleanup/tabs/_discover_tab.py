@@ -388,10 +388,11 @@ class _DiscoverTab(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._table.setSortingEnabled(True)
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        # Fixed, user-resizable widths: content-sized text columns squeezed the
-        # path to three characters in the first render.
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 100)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(1, 320)
         for column, width in ((2, 220), (3, 130), (4, 140)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             self._table.setColumnWidth(column, width)

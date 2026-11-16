@@ -53,7 +53,10 @@ class ThreadView(QWidget):
         self._table = QTableWidget(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(_HEADERS)
         center_header(self._table)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(_HEADERS)):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            self._table.setColumnWidth(col, 100)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         layout.addWidget(self._table)

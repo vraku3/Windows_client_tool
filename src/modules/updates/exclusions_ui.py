@@ -100,7 +100,15 @@ class ExclusionsEditor(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        for col in range(6):
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 200)
+        self.table.setColumnWidth(1, 220)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 100)
+        self.table.setColumnWidth(4, 100)
+        self.table.setColumnWidth(5, 100)
         self.table.setMinimumHeight(180)
         apply_table_style(self.table, date_columns=(3, 4, 5))
         layout.addWidget(self.table)
@@ -273,7 +281,12 @@ class ExcludedOffers(QGroupBox):
         for col, tip in enumerate(("Currently offered update suppressed by an active exclusion.",
                                    "The active exclusion pattern matching this offer.", "Why the matching exclusion was created.")):
             self.table.horizontalHeaderItem(col).setToolTip(tip)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        for col in range(3):
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 220)
+        self.table.setColumnWidth(1, 160)
+        self.table.setColumnWidth(2, 240)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setMaximumHeight(160)
         apply_table_style(self.table)

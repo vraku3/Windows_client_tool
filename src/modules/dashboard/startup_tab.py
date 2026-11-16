@@ -119,12 +119,14 @@ class StartupTab(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(22)
         header = self._table.horizontalHeader()
-        # The command column is prose and takes the free width; the rest hug
-        # their content so the table always fills the pane.
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for column in (0, 2, 3, 4):
-            header.setSectionResizeMode(
-                column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        for col in range(len(_HEADERS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 180)
+        self._table.setColumnWidth(1, 260)
+        self._table.setColumnWidth(2, 90)
+        self._table.setColumnWidth(3, 140)
+        self._table.setColumnWidth(4, 160)
         apply_table_style(self._table)
         layout.addWidget(self._table, 1)
 

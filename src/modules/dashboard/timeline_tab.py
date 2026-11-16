@@ -59,7 +59,12 @@ class TimelineTab(DashTab):
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(3):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 140)
+        self._table.setColumnWidth(1, 140)
+        self._table.setColumnWidth(2, 380)
         self._table.itemSelectionChanged.connect(self._show_detail)
         layout.addWidget(self._table, 3)
         self._detail = QPlainTextEdit()

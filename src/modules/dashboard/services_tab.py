@@ -145,12 +145,17 @@ class ServicesTab(QWidget):
             Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_menu)
         header = self._table.horizontalHeader()
-        # The path column is prose and takes the free width; the short codes
-        # hug their content.
-        header.setSectionResizeMode(PATH, QHeaderView.ResizeMode.Stretch)
-        for column in (STATUS, NAME, DISPLAY, START_TYPE, PID, IMPACT, LOGON):
-            header.setSectionResizeMode(
-                column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        for col in range(len(_HEADERS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(STATUS, 90)
+        self._table.setColumnWidth(NAME, 140)
+        self._table.setColumnWidth(DISPLAY, 180)
+        self._table.setColumnWidth(START_TYPE, 100)
+        self._table.setColumnWidth(PID, 80)
+        self._table.setColumnWidth(IMPACT, 90)
+        self._table.setColumnWidth(PATH, 240)
+        self._table.setColumnWidth(LOGON, 140)
         split = QSplitter(Qt.Orientation.Vertical, self)
         split.addWidget(self._table)
         split.addWidget(self._build_detail())

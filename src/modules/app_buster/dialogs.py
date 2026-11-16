@@ -158,7 +158,12 @@ class ResultDialog(QDialog):
         table = QTableWidget(0, 3, self)
         table.setHorizontalHeaderLabels(["App", "Result", "Reason"])
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setStretchLastSection(False)
+        for c in range(3):
+            table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 180)
+        table.setColumnWidth(1, 100)
+        table.setColumnWidth(2, 260)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         order = {act.REMOVED: 0, act.DEFERRED: 1}
         for o in sorted(outcomes, key=lambda o: order.get(o.state, 2)):
@@ -213,7 +218,11 @@ class PropertiesDialog(QDialog):
         table = QTableWidget(len(rows), 2, self)
         table.horizontalHeader().setVisible(False)
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setStretchLastSection(False)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 160)
+        table.setColumnWidth(1, 360)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setWordWrap(True)
         for r, (label, value) in enumerate(rows):

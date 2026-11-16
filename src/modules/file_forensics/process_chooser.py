@@ -20,7 +20,17 @@ class ProcessChooser(QDialog):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        for col in range(8):
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 140)
+        self.table.setColumnWidth(1, 80)
+        self.table.setColumnWidth(2, 260)
+        self.table.setColumnWidth(3, 120)
+        self.table.setColumnWidth(4, 130)
+        self.table.setColumnWidth(5, 120)
+        self.table.setColumnWidth(6, 80)
+        self.table.setColumnWidth(7, 180)
         for row, choice in enumerate(choices):
             for col, text in enumerate((choice.name, str(choice.pid), choice.path, choice.user,
                     choice.started, choice.signature, 'No' if choice.reason else 'Yes', choice.reason)):

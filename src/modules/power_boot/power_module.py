@@ -5,7 +5,7 @@ import datetime
 from typing import Optional
 
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QWidget, QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton,
     QLabel, QTabWidget, QListWidget, QCheckBox, QSpinBox,
     QTableWidget, QListWidgetItem, QFrame,
 )
@@ -394,7 +394,11 @@ class PowerBootModule(BaseModule):
         boot_table = QTableWidget(0, 2)
         boot_table.setHorizontalHeaderLabels(["Property", "Value"])
         apply_table_style(boot_table)
-        fit_table(boot_table, stretch=[1], content=[0])
+        boot_table.horizontalHeader().setStretchLastSection(False)
+        boot_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        boot_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        boot_table.setColumnWidth(0, 180)
+        boot_table.setColumnWidth(1, 320)
         boot_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         bt_layout.addWidget(boot_table, 1)
 

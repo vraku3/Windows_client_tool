@@ -2,7 +2,7 @@ import winreg
 from PyQt6 import sip
 from typing import List, Dict, Optional
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QHeaderView, QPushButton,
     QTableWidget, QTabWidget, QLabel,
     QProgressBar, QStackedWidget, QScrollArea, QLineEdit)
 from PyQt6.QtGui import QColor
@@ -11,7 +11,7 @@ from core.semantic_colors import semantic
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
 from core.worker import Worker, retire
-from core.table_ui import centered_item, fit_last
+from core.table_ui import center_header, centered_item, fit_last
 from ui.table_style import apply_table_style
 from ui.empty_state import EmptyState
 from ui.help.network_overview import add_glance, feature_card, unreadable
@@ -140,7 +140,10 @@ def get_mapped_drives() -> List[Dict]:
 def _make_table(columns) -> QTableWidget:
     t = QTableWidget(0, len(columns))
     t.setHorizontalHeaderLabels(columns)
-    fit_last(t)
+    for c in range(len(columns)):
+        t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        t.setColumnWidth(c, 260 if c == 0 or c == len(columns) - 1 else 130)
+    center_header(t)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     apply_table_style(t, numeric_columns=[i for i, c in enumerate(columns)

@@ -371,13 +371,10 @@ def test_sort_persists_on_deactivate_and_restores_on_the_next_create_widget():
 # ----------------------------------------------------------------------
 
 
-def test_columns_other_than_device_name_are_interactive():
+def test_columns_are_all_interactive():
     mod = _module()
     header = mod._table.horizontalHeader()
-    # Device Name shares the free width; every other column must be
-    # Interactive so a drag-resize or a persisted width actually sticks.
-    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
-    for i in range(1, len(dmod.COLUMNS)):
+    for i in range(len(dmod.COLUMNS)):
         assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
             f"column {i} ({dmod.COLUMNS[i]}) is not Interactive"
 

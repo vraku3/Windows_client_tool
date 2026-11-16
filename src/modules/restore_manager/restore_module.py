@@ -14,7 +14,7 @@ from typing import List, Optional
 from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication, QHBoxLayout, QInputDialog, QLabel, QMessageBox, QProgressBar,
+    QApplication, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QMessageBox, QProgressBar,
     QPushButton, QTableWidget, QVBoxLayout, QWidget, QComboBox, QLineEdit,
 )
 
@@ -165,7 +165,11 @@ class RestoreManagerModule(BaseModule):
         self._drive_table = QTableWidget(0, len(DRIVE_COLUMNS))
         self._drive_table.setHorizontalHeaderLabels(DRIVE_COLUMNS)
         describe_headers(self._drive_table)
-        fit_table(self._drive_table, stretch=[0], content=[1, 2, 3, 4, 5])
+        self._drive_table.horizontalHeader().setStretchLastSection(False)
+        for c in range(len(DRIVE_COLUMNS)):
+            self._drive_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        for c, w in enumerate((180, 100, 100, 100, 100, 80)):
+            self._drive_table.setColumnWidth(c, w)
         self._drive_table.verticalHeader().setVisible(False)
         self._drive_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         apply_table_style(self._drive_table, size_columns=(2, 3, 4), numeric_columns=(5,))
@@ -188,7 +192,11 @@ class RestoreManagerModule(BaseModule):
         self._table.setColumnCount(len(POINT_COLUMNS))
         self._table.setHorizontalHeaderLabels(POINT_COLUMNS)
         describe_headers(self._table)
-        fit_table(self._table, stretch=[0], content=[1, 2, 3, 4])
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for c in range(len(POINT_COLUMNS)):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        for c, w in enumerate((240, 140, 120, 90, 90)):
+            self._table.setColumnWidth(c, w)
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)

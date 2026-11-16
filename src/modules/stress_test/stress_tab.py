@@ -11,7 +11,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt, QThreadPool, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
-    QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
+    QGridLayout, QHBoxLayout, QHeaderView, QLabel, QMessageBox, QPushButton, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from core.semantic_colors import chrome, semantic
@@ -116,7 +116,14 @@ class StressTab(QWidget):
         self.table = QTableWidget(0, 5, self)
         self.table.setHorizontalHeaderLabels(['Sensor', 'Value / availability', 'Min', 'Max', 'Cut-off'])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        for col in range(5):
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 220)
+        self.table.setColumnWidth(1, 140)
+        self.table.setColumnWidth(2, 90)
+        self.table.setColumnWidth(3, 90)
+        self.table.setColumnWidth(4, 100)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
         center_header(self.table)

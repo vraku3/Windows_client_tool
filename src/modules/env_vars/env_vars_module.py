@@ -11,7 +11,7 @@ from typing import List, Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+    QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -108,7 +108,14 @@ class _EnvPanel(QWidget):
         self._table = QTableWidget(0, 5)
         self._table.setHorizontalHeaderLabels(["Name", "Type", "Value", "Expanded", "Actions"])
         describe_headers(self._table)
-        fit_table(self._table, stretch=[2, 3], content=[0, 1, 4])
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for c in range(5):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 160)
+        self._table.setColumnWidth(1, 100)
+        self._table.setColumnWidth(2, 260)
+        self._table.setColumnWidth(3, 260)
+        self._table.setColumnWidth(4, 100)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
@@ -255,7 +262,13 @@ class _PathPane(QWidget):
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Scope", "Entry", "Finding", "Detail"])
         describe_headers(self._table)
-        fit_table(self._table, stretch=[3], content=[0, 1, 2])
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for c in range(4):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 90)
+        self._table.setColumnWidth(1, 240)
+        self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 260)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
@@ -374,7 +387,15 @@ class _EffectivePane(QWidget):
         self._table.setHorizontalHeaderLabels(
             ["Name", "System", "User", "This process has", "State", "Actions"])
         describe_headers(self._table)
-        fit_table(self._table, stretch=[1, 2, 3], content=[0, 4, 5])
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for c in range(6):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 140)
+        self._table.setColumnWidth(1, 180)
+        self._table.setColumnWidth(2, 180)
+        self._table.setColumnWidth(3, 180)
+        self._table.setColumnWidth(4, 90)
+        self._table.setColumnWidth(5, 100)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
@@ -463,7 +484,15 @@ class _EffectivePane(QWidget):
         table = QTableWidget(0, 6)
         table.setHorizontalHeaderLabels(["PID", "Process", "User", "Value", "State", "Actions"])
         describe_headers(table)
-        fit_table(table, stretch=[1, 3], content=[0, 2, 4, 5])
+        table.horizontalHeader().setStretchLastSection(False)
+        for c in range(6):
+            table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 80)
+        table.setColumnWidth(1, 180)
+        table.setColumnWidth(2, 120)
+        table.setColumnWidth(3, 220)
+        table.setColumnWidth(4, 90)
+        table.setColumnWidth(5, 100)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
         shown = [r for r in rows if r.value is not None or not r.readable]

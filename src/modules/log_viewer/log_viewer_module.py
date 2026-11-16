@@ -581,11 +581,16 @@ class LogViewerWidget(QWidget):
         # width it rendered "CbsPersist_20…", and CBS archives differ
         # only in the timestamp at the END of the name, so every one of
         # them elided to the same characters.
-        for column in (TIME, SOURCE, SEVERITY, COMPONENT, PACKAGE,
-                       THREAD):
-            header.setSectionResizeMode(column,
-                                        QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(MESSAGE, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
+        for column in (TIME, SOURCE, SEVERITY, COMPONENT, PACKAGE, THREAD, MESSAGE):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(TIME, 130)
+        self.table.setColumnWidth(SOURCE, 150)
+        self.table.setColumnWidth(SEVERITY, 80)
+        self.table.setColumnWidth(COMPONENT, 120)
+        self.table.setColumnWidth(PACKAGE, 120)
+        self.table.setColumnWidth(THREAD, 70)
+        self.table.setColumnWidth(MESSAGE, 380)
 
         from .log_delegate import LogMessageDelegate
 
@@ -842,6 +847,11 @@ class LogViewerWidget(QWidget):
         self._path = self._paths[0] if self._paths else ""
         self._refresh_empty_recent()
         self._content_stack.setCurrentWidget(self.splitter if self._paths else self._empty)
+        if self._paths:
+            max_name = max((os.path.basename(p) for p in self._paths), key=len, default="")
+            if max_name:
+                needed = self.table.fontMetrics().horizontalAdvance(max_name) + 24
+                self.table.setColumnWidth(SOURCE, max(150, needed))
         self.reload()
 
     def open_folder(self, folder: str) -> None:

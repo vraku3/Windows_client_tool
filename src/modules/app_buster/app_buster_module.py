@@ -134,7 +134,7 @@ class AppBusterWidget(QWidget):
         self._table.horizontalHeader().setSectionsClickable(True)
         self._table.horizontalHeader().sectionClicked.connect(self._header_clicked)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
         for view in (self._cards, self._table):
             view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
             view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

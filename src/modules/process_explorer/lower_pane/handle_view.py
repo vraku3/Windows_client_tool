@@ -47,10 +47,10 @@ class HandleView(QWidget):
         self._table.setHorizontalHeaderLabels(_HEADERS)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # Name takes the slack. It is the column worth reading, and the
-        # default widths left a third of the table empty while truncating
-        # "\REGISTRY\MACHINE\SOFTWARE\Microsoft\..." to nothing useful.
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
+        self._table.setColumnWidth(0, 140)
+        self._table.setColumnWidth(1, 380)
+        self._table.setColumnWidth(2, 120)
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(

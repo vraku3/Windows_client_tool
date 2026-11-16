@@ -56,10 +56,10 @@ class InstalledAppsTab(DashTab):
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_menu)
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
         for column, width in enumerate((320, 120, 220, 100, 90, 70)):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             header.resizeSection(column, width)
-        header.setStretchLastSection(True)
         self._sort = (0, Qt.SortOrder.AscendingOrder)
         header.setSortIndicatorShown(True)
         header.sectionClicked.connect(self._sort_by)

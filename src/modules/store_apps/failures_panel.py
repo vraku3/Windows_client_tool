@@ -81,10 +81,10 @@ class DeploymentFailuresPanel(QWidget):
         self._table.setAlternatingRowColors(True)
         self._table.setWordWrap(False)
         header = self._table.horizontalHeader()
-        # Every column sized to its text; the meaning column is the long one
-        # and a wide table scrolls sideways rather than eliding the advice.
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
+        for col in range(len(_COLUMNS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            self._table.setColumnWidth(col, 130 if col in (0, 3) else 200)
         self._table.setHorizontalScrollMode(
             QTableWidget.ScrollMode.ScrollPerPixel)
         self._stack.addWidget(self._table)

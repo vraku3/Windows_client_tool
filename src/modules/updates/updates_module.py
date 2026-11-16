@@ -130,7 +130,12 @@ class _ScanChanges(QGroupBox):
         layout = QVBoxLayout(self)
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Update", "Change", "Detail"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setStretchLastSection(False)
+        for col in range(3):
+            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 240)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 220)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setMaximumHeight(150)
         apply_table_style(self.table)
@@ -298,8 +303,14 @@ class _AppUpdatesTab(QWidget):
         # Updates table
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(["Name", "ID", "Installed version", "Available", "Source", "Result"])
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for c in range(6):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 240)
+        self._table.setColumnWidth(1, 180)
+        self._table.setColumnWidth(2, 130)
+        self._table.setColumnWidth(3, 130)
+        self._table.setColumnWidth(4, 110)
+        self._table.setColumnWidth(5, 120)
         center_header(self._table)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -1074,7 +1085,11 @@ class _WinUpdatesTab(QWidget):
             ["KB", "Title", "Classification", "Severity", "Download",
              "Restart", "Released", "Result"]
         )
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(8):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        for col, width in enumerate((100, 260, 140, 100, 90, 80, 110, 120)):
+            self._table.setColumnWidth(col, width)
         center_header(self._table)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -2007,7 +2022,12 @@ class _UpdateSettingsTab(QWidget):
         owner_desc.setWordWrap(True)
         self._owner_table = QTableWidget(0, 3)
         self._owner_table.setHorizontalHeaderLabels(["Item", "Value", "Source"])
-        self._owner_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._owner_table.horizontalHeader().setStretchLastSection(False)
+        for col in range(3):
+            self._owner_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._owner_table.setColumnWidth(0, 180)
+        self._owner_table.setColumnWidth(1, 240)
+        self._owner_table.setColumnWidth(2, 160)
         self._owner_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._owner_table.setMaximumHeight(220)
         apply_table_style(self._owner_table)
@@ -2032,7 +2052,12 @@ class _UpdateSettingsTab(QWidget):
         policy_desc.setWordWrap(True)
         self._policy_table = QTableWidget(0, 3)
         self._policy_table.setHorizontalHeaderLabels(["Setting", "Effective value", "Source"])
-        self._policy_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._policy_table.horizontalHeader().setStretchLastSection(False)
+        for col in range(3):
+            self._policy_table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._policy_table.setColumnWidth(0, 200)
+        self._policy_table.setColumnWidth(1, 220)
+        self._policy_table.setColumnWidth(2, 160)
         self._policy_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._policy_table.setMaximumHeight(240)
         apply_table_style(self._policy_table)

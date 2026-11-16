@@ -134,10 +134,14 @@ class OptimiseTab(QWidget):
         self._tree.setAlternatingRowColors(True)
         self._tree.setWordWrap(True)
         head = self._tree.header()
-        for column in (0, 2, 3):
-            head.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
-        for column in (1, 4):
-            head.setSectionResizeMode(column, QHeaderView.ResizeMode.Stretch)
+        head.setStretchLastSection(False)
+        for column in range(5):
+            head.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self._tree.setColumnWidth(0, 180)
+        self._tree.setColumnWidth(1, 140)
+        self._tree.setColumnWidth(2, 130)
+        self._tree.setColumnWidth(3, 100)
+        self._tree.setColumnWidth(4, 260)
         self._tree.itemChanged.connect(self._toggled)
         self._tree.currentItemChanged.connect(self._details_changed)
         self._stack.addWidget(self._tree)
@@ -215,9 +219,15 @@ class OptimiseTab(QWidget):
         self._usage_tree.setRootIsDecorated(False)
         self._usage_tree.setAlternatingRowColors(True)
         head = self._usage_tree.header()
-        for column in range(5):
-            head.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        head.setStretchLastSection(False)
+        for column in range(6):
+            head.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self._usage_tree.setColumnWidth(0, 180)
+        self._usage_tree.setColumnWidth(1, 100)
+        self._usage_tree.setColumnWidth(2, 100)
+        self._usage_tree.setColumnWidth(3, 120)
+        self._usage_tree.setColumnWidth(4, 110)
+        self._usage_tree.setColumnWidth(5, 240)
         lay.addWidget(self._usage_tree, 1)
         row = QHBoxLayout()
         self._buster_btn = QPushButton("Open in App Buster", page)

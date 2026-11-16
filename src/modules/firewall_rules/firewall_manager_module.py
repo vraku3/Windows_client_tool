@@ -730,9 +730,14 @@ class _GroupsDialog(QDialog):
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, len(_GROUP_COLS)):
-            header.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        for i in range(len(_GROUP_COLS)):
+            header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 240)
+        self._table.setColumnWidth(1, 80)
+        self._table.setColumnWidth(2, 80)
+        self._table.setColumnWidth(3, 80)
+        self._table.setColumnWidth(4, 100)
         center_header(self._table)
         layout.addWidget(self._table, 1)
 

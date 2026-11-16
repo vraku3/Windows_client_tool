@@ -47,10 +47,13 @@ class DriverInstancesDialog(QDialog):
             QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        for col in range(len(_HEADERS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 160)
+        self.table.setColumnWidth(1, 240)
+        self.table.setColumnWidth(2, 240)
+        self.table.setColumnWidth(3, 100)
         for row, member in enumerate(group.members):
             for col, text in enumerate((member.device_name, member.device_id,
                                         member.hardware_id, member.flags)):

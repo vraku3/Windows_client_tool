@@ -26,10 +26,15 @@ class SearchResultsTable(QWidget):
         self._table.setSortingEnabled(True)
         self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.ResizeToContents
+            QHeaderView.ResizeMode.Interactive
         )
+        self._table.setColumnWidth(0, 150)
+        self._table.setColumnWidth(1, 140)
+        self._table.setColumnWidth(2, 90)
+        self._table.setColumnWidth(3, 320)
+        self._table.setColumnWidth(4, 140)
         center_header(self._table)
         self._table.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self._table)

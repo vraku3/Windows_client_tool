@@ -677,22 +677,19 @@ def test_returning_to_a_tab_redetects_status_without_rebuilding_rows(
 # ----------------------------------------------------------------------
 
 
-def test_apps_table_checkbox_and_status_columns_are_interactive():
+def test_apps_table_columns_are_all_interactive():
     mod = _module()
     header = mod._apps_table.horizontalHeader()
-    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch  # App Name
-    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch  # Category
-    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive  # checkbox
-    assert header.sectionResizeMode(3) == QHeaderView.ResizeMode.Interactive  # Status
+    for i in range(4):
+        assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
+            f"column {i} is not Interactive"
 
 
-def test_tweaks_table_checkbox_risk_and_status_columns_are_interactive():
+def test_tweaks_table_columns_are_all_interactive():
     mod = _module()
     table = mod._widget.findChild(QTableWidget, "_table_tweak")
     header = table.horizontalHeader()
-    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch  # Tweak
-    assert header.sectionResizeMode(2) == QHeaderView.ResizeMode.Stretch  # Category
-    for i in (0, 3, 4):  # checkbox, Risk, Status
+    for i in range(5):
         assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
             f"column {i} is not Interactive"
 

@@ -174,10 +174,11 @@ class TasksModule(BaseModule):
         lay.addWidget(self._search)
         self._table = QTableWidget(0, len(TASK_COLS))
         self._table.setHorizontalHeaderLabels(TASK_COLS)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        for col, width in ((0, 230), (1, 170), (4, 190), (6, 150), (7, 150)):
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(TASK_COLS)):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        for col, width in ((0, 230), (1, 170), (2, 90), (3, 140), (4, 190), (5, 140), (6, 150), (7, 150)):
             self._table.setColumnWidth(col, width)
-        self._table.horizontalHeader().setStretchLastSection(True)
         center_header(self._table)
         apply_table_style(self._table, date_columns=(3, 5))
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)

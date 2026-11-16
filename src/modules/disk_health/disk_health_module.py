@@ -11,14 +11,14 @@ from typing import List, Optional
 from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QProgressBar,
+    QApplication, QFrame, QHBoxLayout, QHeaderView, QLabel, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.admin_utils import is_admin
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, fit_table, set_role
+from core.table_ui import center_header, centered_item, fit_table, set_role
 from core.worker import Worker
 from modules.disk_health import disk_reader as dr
 from modules.disk_health.smart_reader import DiskInfo, SmartAttribute, _query_disks  # noqa: F401
@@ -233,7 +233,10 @@ class _ResultsView(QWidget):
         set_role(head, "heading")
         box.addWidget(head)
         self.drive_table = _new_table(DRIVE_COLUMNS)
-        fit_table(self.drive_table, stretch=[8], content=[0, 1, 2, 3, 4, 5, 6, 7])
+        for c in range(len(DRIVE_COLUMNS)):
+            self.drive_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+            self.drive_table.setColumnWidth(c, 240 if c == 8 else 100)
+        center_header(self.drive_table)
         _fill_drives(self.drive_table, self.report.disks)
         fit_table_height(self.drive_table)
         box.addWidget(self.drive_table)
@@ -249,7 +252,10 @@ class _ResultsView(QWidget):
         set_role(head, "heading")
         box.addWidget(head)
         self.volume_table = _new_table(VOLUME_COLUMNS)
-        fit_table(self.volume_table, stretch=[1], content=[0, 2, 3, 4, 5, 6, 7, 8])
+        for c in range(len(VOLUME_COLUMNS)):
+            self.volume_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+            self.volume_table.setColumnWidth(c, 240 if c == 1 else 90)
+        center_header(self.volume_table)
         _fill_volumes(self.volume_table, self.report)
         fit_table_height(self.volume_table)
         self.volume_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

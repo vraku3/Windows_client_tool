@@ -121,13 +121,17 @@ class _CertTab(QWidget):
         self._table.setHorizontalHeaderLabels(COLUMNS)
         describe_headers(self._table)
         center_header(self._table)
-        self._table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, len(COLUMNS)):
+        for i in range(len(COLUMNS)):
             self._table.horizontalHeader().setSectionResizeMode(
-                i, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(
-            len(COLUMNS) - 1, QHeaderView.ResizeMode.Stretch)
+                i, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 240)
+        self._table.setColumnWidth(1, 200)
+        self._table.setColumnWidth(2, 110)
+        self._table.setColumnWidth(3, 110)
+        self._table.setColumnWidth(4, 90)
+        self._table.setColumnWidth(5, 130)
+        self._table.setColumnWidth(6, 120)
+        self._table.setColumnWidth(7, 200)
         self._table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(

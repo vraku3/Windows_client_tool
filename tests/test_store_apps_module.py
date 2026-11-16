@@ -654,13 +654,7 @@ def test_sort_column_is_actually_restored_after_a_restart(monkeypatch):
 def test_content_hugging_columns_are_interactive():
     mod = store_module()
     header = mod._table.horizontalHeader()
-    # Name (0), Publisher (1) and Package Family (5) deliberately share the
-    # free width; Version/Size/User-Removable/Architecture must be
-    # Interactive so a drag-resize or a persisted width actually sticks.
-    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(1) == QHeaderView.ResizeMode.Stretch
-    assert header.sectionResizeMode(5) == QHeaderView.ResizeMode.Stretch
-    for i in (2, 3, 4, 6):
+    for i in range(mod._table.columnCount()):
         assert header.sectionResizeMode(i) == QHeaderView.ResizeMode.Interactive, \
             f"column {i} is not Interactive"
 

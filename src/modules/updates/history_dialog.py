@@ -1,6 +1,6 @@
 """Searchable, date-filtered Windows Update history (dialect: dark theme)."""
 from PyQt6.QtWidgets import (
-    QComboBox, QDialog, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
+    QComboBox, QDialog, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox,
     QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
@@ -44,7 +44,14 @@ class UpdateHistoryDialog(QDialog):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(5):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 130)
+        self._table.setColumnWidth(1, 110)
+        self._table.setColumnWidth(2, 220)
+        self._table.setColumnWidth(3, 100)
+        self._table.setColumnWidth(4, 200)
         apply_table_style(self._table, date_columns=(0,))
         layout.addWidget(self._table, 1)
 

@@ -6,7 +6,7 @@ from typing import Optional
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction, QBrush, QColor
 from PyQt6.QtWidgets import (
-    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMessageBox,
+    QComboBox, QFileDialog, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QMessageBox,
     QProgressBar, QPushButton, QStackedWidget, QTableWidget, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -135,7 +135,12 @@ class PerfMonModule(BaseModule):
         self._proc_table.setColumnCount(3)
         self._proc_table.setHorizontalHeaderLabels(["Process", "CPU %", "Memory MB"])
         self._proc_table.setRowCount(10)
-        fit_table(self._proc_table, stretch=[0], content=[1, 2])
+        self._proc_table.horizontalHeader().setStretchLastSection(False)
+        for c in range(3):
+            self._proc_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._proc_table.setColumnWidth(0, 240)
+        self._proc_table.setColumnWidth(1, 100)
+        self._proc_table.setColumnWidth(2, 120)
         self._proc_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._proc_table.setAlternatingRowColors(True)
         center_header(self._proc_table)

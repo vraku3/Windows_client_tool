@@ -81,10 +81,15 @@ class DllView(QWidget):
         self._table.setHorizontalHeaderLabels(_HEADERS)
         header = self._table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        # The full path takes the slack -- it is the widest and the one a
-        # truncation makes useless.
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        self._table.setColumnWidth(0, 160)
+        self._table.setColumnWidth(1, 180)
+        self._table.setColumnWidth(2, 140)
+        self._table.setColumnWidth(3, 100)
+        self._table.setColumnWidth(4, 110)
+        self._table.setColumnWidth(5, 90)
+        self._table.setColumnWidth(6, 280)
+        self._table.setColumnWidth(7, 100)
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(

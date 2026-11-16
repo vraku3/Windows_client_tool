@@ -72,7 +72,10 @@ class PowerTab(DashTab):
         self._table.setHorizontalHeaderLabels(list(HEADERS))
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(HEADERS)):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            self._table.setColumnWidth(col, 100)
         apply_table_style(self._table, numeric_columns=(0, 1, 3, 4, 5, 6))
         layout.addWidget(self._table, 1)
 

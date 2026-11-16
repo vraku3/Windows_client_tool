@@ -63,9 +63,11 @@ class BenchmarksTab(DashTab):
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = self._table.horizontalHeader()
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        for column, width in enumerate((230, 150, 110)):
-            header.resizeSection(column, width)
+        header.setStretchLastSection(False)
+        for col in range(len(HEADERS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate((230, 150, 110, 260)):
+            self._table.setColumnWidth(column, width)
         apply_table_style(self._table, numeric_columns=(1, 2))
         layout.addWidget(self._table, 1)
 

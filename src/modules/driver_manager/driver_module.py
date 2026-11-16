@@ -274,15 +274,9 @@ class DriverModule(BaseModule):
 
         self._table = QTableWidget(0, len(COLUMNS))
         self._table.setHorizontalHeaderLabels(COLUMNS)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        # Interactive, not ResizeToContents: only Interactive columns can
-        # hold a manually-set or persisted width (see core/table_ui.py's
-        # fit_columns_once/save_column_widths/restore_column_widths). The
-        # one-time content fit on first real population (below, in
-        # _populate()) keeps a fresh install looking exactly as it did
-        # under ResizeToContents.
-        for i in range(1, len(COLUMNS)):
+        for i in range(len(COLUMNS)):
             self._table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 260)
         center_header(self._table)
         apply_table_style(self._table, date_columns=(3,))
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)

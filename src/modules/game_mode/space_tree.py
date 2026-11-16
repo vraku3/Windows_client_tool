@@ -45,10 +45,10 @@ def build_tree(parent) -> QTreeWidget:
     tree.setAlternatingRowColors(True)
     tree.setUniformRowHeights(True)
     head = tree.header()
-    head.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-    for column in (1, 2, 3, 4):
-        head.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
     head.setStretchLastSection(False)
+    for column in range(len(COLUMNS)):
+        head.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        tree.setColumnWidth(column, 240 if column == 0 else 100)
     return tree
 
 

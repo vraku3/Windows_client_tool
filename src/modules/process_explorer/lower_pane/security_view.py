@@ -20,7 +20,7 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (QGridLayout, QLabel, QSplitter, QTableWidget,
+from PyQt6.QtWidgets import (QGridLayout, QHeaderView, QLabel, QSplitter, QTableWidget,
                              QVBoxLayout, QWidget)
 
 from core.semantic_colors import semantic
@@ -101,8 +101,10 @@ class SecurityView(QWidget):
     def _table(headers, stretch) -> QTableWidget:
         table = QTableWidget(0, len(headers))
         table.setHorizontalHeaderLabels(headers)
-        fit_table(table, stretch=stretch,
-                  content=[c for c in range(len(headers)) if c not in stretch])
+        table.horizontalHeader().setStretchLastSection(False)
+        for c in range(len(headers)):
+            table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+            table.setColumnWidth(c, 240 if c in stretch else 120)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.verticalHeader().setVisible(False)

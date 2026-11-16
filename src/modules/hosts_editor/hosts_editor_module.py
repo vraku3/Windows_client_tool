@@ -17,7 +17,7 @@ from PyQt6 import sip
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QAbstractItemView, QCheckBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QStackedWidget, QTableWidget, QVBoxLayout, QWidget,
 )
 
@@ -30,7 +30,7 @@ from core.base_module import BaseModule
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
-from core.table_ui import centered_item, fit_table, set_role
+from core.table_ui import center_header, centered_item, fit_table, set_role
 from core.windows_utils import system32
 from core.worker import Worker
 from ui.empty_state import EmptyState
@@ -129,7 +129,13 @@ class HostsEditorModule(BaseModule):
         self._table = QTableWidget()
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["Enabled", "IP Address", "Hostname(s)", "Comment"])
-        fit_table(self._table, stretch=[2, 3], content=[0, 1])
+        for c in range(4):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 80)
+        self._table.setColumnWidth(1, 140)
+        self._table.setColumnWidth(2, 260)
+        self._table.setColumnWidth(3, 260)
+        center_header(self._table)
         self._table.setAlternatingRowColors(True)
         apply_table_style(self._table)
         self._table.itemChanged.connect(self._on_item_changed)

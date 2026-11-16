@@ -416,10 +416,14 @@ class ServicesModule(BaseModule):
         cols = ["Display Name", "Name", "Status", "Start Type", "Impact"]
         self._table = QTableWidget(0, len(cols))
         self._table.setHorizontalHeaderLabels(cols)
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, len(cols)):
+        for i in range(len(cols)):
             self._table.horizontalHeader().setSectionResizeMode(
-                i, QHeaderView.ResizeMode.ResizeToContents)
+                i, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 260)
+        self._table.setColumnWidth(1, 180)
+        self._table.setColumnWidth(2, 110)
+        self._table.setColumnWidth(3, 120)
+        self._table.setColumnWidth(4, 100)
         center_header(self._table)
         apply_table_style(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)

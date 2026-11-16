@@ -573,9 +573,16 @@ class _HistoryTab(QWidget):
         self.table.setWordWrap(False)
         self.table.setAccessibleName("Cleans")
         header = self.table.horizontalHeader()
-        for col in range(len(COLUMNS) - 1):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(COL_SUMMARY, QHeaderView.ResizeMode.Stretch)
+        header.setStretchLastSection(False)
+        for col in range(len(COLUMNS)):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(COL_WHEN, 130)
+        self.table.setColumnWidth(COL_FREED, 90)
+        self.table.setColumnWidth(COL_FILES, 80)
+        self.table.setColumnWidth(COL_IN_USE, 90)
+        self.table.setColumnWidth(COL_REFUSED, 90)
+        self.table.setColumnWidth(COL_SOURCE, 130)
+        self.table.setColumnWidth(COL_SUMMARY, 260)
         self.table.itemSelectionChanged.connect(self._show_detail)
 
         self.empty = QLabel("No cleans recorded yet.\nWhat each clean removes, leaves in use "
@@ -599,9 +606,12 @@ class _HistoryTab(QWidget):
         self.paths.setAlternatingRowColors(True)
         ph = self.paths.header()
         ph.setStretchLastSection(False)
-        ph.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in (1, 2, 3):
-            ph.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        for col in range(len(PATH_COLUMNS)):
+            ph.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.paths.setColumnWidth(0, 300)
+        self.paths.setColumnWidth(1, 90)
+        self.paths.setColumnWidth(2, 130)
+        self.paths.setColumnWidth(3, 180)
         self.paths.itemSelectionChanged.connect(self._path_selection_changed)
         self.paths.itemDoubleClicked.connect(lambda *_: self._open_folder())
 

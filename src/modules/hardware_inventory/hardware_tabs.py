@@ -13,12 +13,12 @@ from typing import List
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QBrush, QColor, QDesktopServices
 from PyQt6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QApplication, QHeaderView, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
     QTableWidget, QVBoxLayout, QWidget,
 )
 
 from core.semantic_colors import chrome, semantic
-from core.table_ui import centered_item, fit_last, fit_table, set_role
+from core.table_ui import center_header, centered_item, fit_last, fit_table, set_role
 from modules.hardware_inventory import asset_parse as ap
 from modules.hardware_inventory import asset_reader as ar
 from modules.hardware_inventory import device_reader as dvr
@@ -42,7 +42,11 @@ def make_kv_table() -> QTableWidget:
     t = QTableWidget(0, 2)
     t.setHorizontalHeaderLabels(["Property", "Value"])
     describe_headers(t)
-    fit_table(t, stretch=[1], content=[0])
+    t.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+    t.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+    t.setColumnWidth(0, 200)
+    t.setColumnWidth(1, 300)
+    center_header(t)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -75,7 +79,10 @@ def make_dict_table(columns) -> QTableWidget:
     t = QTableWidget(0, len(columns))
     t.setHorizontalHeaderLabels(columns)
     describe_headers(t)
-    fit_last(t)
+    for c in range(len(columns)):
+        t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        t.setColumnWidth(c, 240 if c == 0 or c == len(columns) - 1 else 110)
+    center_header(t)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -311,7 +318,10 @@ def setup_memory(layout, data) -> None:
     t2 = QTableWidget(len(report.slots), len(MEMORY_COLUMNS))
     t2.setHorizontalHeaderLabels(MEMORY_COLUMNS)
     describe_headers(t2)
-    fit_table(t2, stretch=[10], content=list(range(10)))
+    t2.horizontalHeader().setStretchLastSection(False)
+    for c in range(len(MEMORY_COLUMNS)):
+        t2.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        t2.setColumnWidth(c, 160 if c in (8, 9, 10) else 90)
     t2.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t2.verticalHeader().setVisible(False)
     t2.setSortingEnabled(False)
@@ -345,7 +355,10 @@ def setup_monitors(layout, data) -> None:
     t = QTableWidget(len(monitors), len(MONITOR_COLUMNS))
     t.setHorizontalHeaderLabels(MONITOR_COLUMNS)
     describe_headers(t)
-    fit_table(t, stretch=[6], content=[0, 1, 2, 3, 4, 5])
+    t.horizontalHeader().setStretchLastSection(False)
+    for c in range(len(MONITOR_COLUMNS)):
+        t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        t.setColumnWidth(c, 240 if c == 6 else (140 if c in (0, 1, 2) else 100))
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
     for r, m in enumerate(monitors):

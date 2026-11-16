@@ -297,8 +297,10 @@ class WindowsFeaturesModule(BaseModule):
         tree.setColumnCount(2)
         tree.setHeaderLabels(["Feature Name", "State"])
         tree.setAlternatingRowColors(True)
-        tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        tree.setColumnWidth(0, 320)
+        tree.setColumnWidth(1, 140)
         splitter.addWidget(tree)
 
         # Right: detail panel

@@ -153,8 +153,11 @@ class SearchView(LimitControls):
         apply_table_style(table)
         table.setToolTip('Unreadable search items and the error reported by Windows; limited to the first 200.')
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setStretchLastSection(False)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 360)
+        table.setColumnWidth(1, 200)
         for index, (path, reason) in enumerate(items):
             p_item = QTableWidgetItem(path)
             r_item = QTableWidgetItem(reason)

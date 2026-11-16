@@ -48,6 +48,10 @@ def _read_only_table(cols: List[str]) -> QTableWidget:
     t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     t.verticalHeader().setVisible(False)
+    t.horizontalHeader().setStretchLastSection(False)
+    for c in range(len(cols)):
+        t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        t.setColumnWidth(c, 160)
     return t
 
 
@@ -102,7 +106,8 @@ class _HealthPane(QWidget):
         lay.addLayout(bar)
 
         self._table = _read_only_table(["Result", "Finding"])
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table.setColumnWidth(0, 120)
+        self._table.setColumnWidth(1, 380)
         self._table.itemSelectionChanged.connect(self._show_detail)
         self._detail = QPlainTextEdit()
         self._detail.setReadOnly(True)
@@ -361,7 +366,7 @@ class _DnsPane(QWidget):
                     item.setForeground(QBrush(QColor(semantic("error"))))
                 self._table.setItem(r, c, item_help(item, self._table, c))
         self._table.resizeColumnsToContents()
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
 
 
 class _PingPane(QWidget):
@@ -593,7 +598,7 @@ class _DnsCachePane(QWidget):
             for c, text in enumerate(values):
                 self._table.setItem(r, c, item_help(QTableWidgetItem(text), self._table, c))
         self._table.resizeColumnsToContents()
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
 
     def _flush(self) -> None:
         self._set_buttons_enabled(False)
@@ -733,7 +738,7 @@ class _PortsPane(QWidget):
                     item.setToolTip(f"{p.process_name}\nPath: {p.process_path}\nUser: {p.username or 'unknown'}")
                 self._table.setItem(r, c, item_help(item, self._table, c))
         self._table.resizeColumnsToContents()
-        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.horizontalHeader().setStretchLastSection(False)
 
     def _copy_list(self) -> None:
         rows = self._filtered_entries()

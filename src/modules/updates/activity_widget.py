@@ -42,8 +42,10 @@ class ActivityWidget(QGroupBox):
         self._table.setHorizontalHeaderLabels(headers)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setStretchLastSection(False)
+        for col in range(len(headers)):
+            self._table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            self._table.setColumnWidth(col, 180 if col == 1 else 130)
         layout.addWidget(self._table)
         self._status = QLabel("Select a package to view activity." if package else "No package activity recorded.")
         self._status.setWordWrap(True)

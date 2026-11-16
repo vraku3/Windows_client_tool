@@ -113,7 +113,12 @@ class PreflightDialog(QDialog):
         self.tree = QTreeWidget(self)
         self.tree.setHeaderLabels(["Action", "Status", "Privilege", "Details"])
         self.tree.header().setStretchLastSection(False)
-        self.tree.header().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        for col in range(4):
+            self.tree.header().setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self.tree.setColumnWidth(0, 200)
+        self.tree.setColumnWidth(1, 140)
+        self.tree.setColumnWidth(2, 110)
+        self.tree.setColumnWidth(3, 240)
         self.tree.setMinimumSize(0, 100)
         categories = {"service": "Services", "app": "Apps", "task": "Scheduled tasks",
                       "power": "Power plan", "registry": "Windows settings", "priority": "Priorities"}

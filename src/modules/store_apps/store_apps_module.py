@@ -405,21 +405,18 @@ class StoreAppsModule(BaseModule):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSortIndicatorShown(True)
         header.setSortIndicator(0, Qt.SortOrder.AscendingOrder)
-        # Name, Publisher and (when shown) Family share the free width.
-        # Version/Size/User-Removable/Architecture are Interactive, not
-        # ResizeToContents -- only Interactive can hold a manually-set or
-        # persisted width (core/table_ui.py). The one-time content fit on
-        # first real population (below, in _on_apps_loaded()) keeps a fresh
-        # install looking exactly as it did under ResizeToContents.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(_COL_SOURCE, QHeaderView.ResizeMode.Interactive)
+        # All columns are Interactive so the user can drag dividers to resize them.
+        for c in range(self._table.columnCount()):
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 240)
+        self._table.setColumnWidth(1, 180)
+        self._table.setColumnWidth(2, 90)
+        self._table.setColumnWidth(3, 90)
+        self._table.setColumnWidth(4, 120)
+        self._table.setColumnWidth(5, 180)
+        self._table.setColumnWidth(6, 90)
+        self._table.setColumnWidth(7, 90)
+        self._table.setColumnWidth(_COL_SOURCE, 100)
         self._table.setSortingEnabled(True)
         saved_col = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_column", 0) or 0)
         saved_order = int(self.app.config.get(f"{self._CONFIG_PREFIX}.sort_order",

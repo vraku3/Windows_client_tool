@@ -207,8 +207,8 @@ def test_the_source_column_is_wide_enough_for_a_real_log_name(qapp, tmp_path):
         widget.open_folder(str(tmp_path))
         header = widget.table.horizontalHeader()
         assert header.sectionResizeMode(SOURCE) == \
-            QHeaderView.ResizeMode.ResizeToContents, \
-            "Source keeps a guessed default width and clips real names"
+            QHeaderView.ResizeMode.Interactive, \
+            "Source is interactive so the user can drag and resize it"
 
         needed = widget.table.fontMetrics().horizontalAdvance(long_name)
         assert header.sectionSize(SOURCE) >= needed, (

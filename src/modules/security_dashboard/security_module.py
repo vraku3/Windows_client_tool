@@ -1702,7 +1702,13 @@ class SecurityDashboardModule(BaseModule):
         self._history_table = QTableWidget(0, 4)
         self._history_table.setHorizontalHeaderLabels(
             ["When", "What", "Changes", "State"])
-        fit_table(self._history_table, stretch=[1], content=[0, 2, 3])
+        self._history_table.horizontalHeader().setStretchLastSection(False)
+        for c in range(4):
+            self._history_table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._history_table.setColumnWidth(0, 140)
+        self._history_table.setColumnWidth(1, 260)
+        self._history_table.setColumnWidth(2, 90)
+        self._history_table.setColumnWidth(3, 100)
         self._history_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows)
         self._history_table.itemSelectionChanged.connect(

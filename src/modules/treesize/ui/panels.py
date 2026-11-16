@@ -83,10 +83,12 @@ class DriveList(QTreeWidget):
         # ResizeToContents and pinned `% Free` back to 100px, pushing the row
         # past the viewport again.
         self.header().setStretchLastSection(False)
-        self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in (1, 2, 3):
-            self.header().setSectionResizeMode(
-                column, QHeaderView.ResizeMode.ResizeToContents)
+        for column in range(4):
+            self.header().setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self.setColumnWidth(0, 160)
+        self.setColumnWidth(1, 90)
+        self.setColumnWidth(2, 90)
+        self.setColumnWidth(3, 100)
         # The same delegate the tree uses, so a drive's free space reads the
         # way every other proportional value in the pane reads (spec 5.6).
         self.setItemDelegateForColumn(3, ProportionBarDelegate(self))

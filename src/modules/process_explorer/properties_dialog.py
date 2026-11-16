@@ -6,7 +6,7 @@ from typing import Optional
 
 import psutil
 from PyQt6.QtWidgets import (QDialog, QTabWidget, QWidget, QVBoxLayout,
-                              QHBoxLayout, QGridLayout, QLabel,
+                              QHBoxLayout, QGridLayout, QLabel, QHeaderView,
                               QTableWidget, QPushButton, QDialogButtonBox, QLineEdit)
 from PyQt6.QtCore import Qt, QTimer
 
@@ -372,7 +372,11 @@ class ProcessPropertiesDialog(QDialog):
         layout.addWidget(search)
         table = QTableWidget(0, 2)
         table.setHorizontalHeaderLabels(["Variable", "Value"])
-        fit_table(table, stretch=[1], content=[0])
+        table.horizontalHeader().setStretchLastSection(False)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 180)
+        table.setColumnWidth(1, 340)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(table)
 

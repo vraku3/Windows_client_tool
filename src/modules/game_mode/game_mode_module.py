@@ -436,9 +436,13 @@ class GameModeModule(BaseModule):
         self._advice.setTextElideMode(Qt.TextElideMode.ElideNone)
         self._advice.setAlternatingRowColors(True)
         head = self._advice.header()
-        head.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        head.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        head.setStretchLastSection(False)
+        head.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        head.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        head.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self._advice.setColumnWidth(0, 40)
+        self._advice.setColumnWidth(1, 300)
+        self._advice.setColumnWidth(2, 360)
         lay.addWidget(self._advice, 1)
         return page
 
@@ -524,9 +528,10 @@ class GameModeModule(BaseModule):
         tree.setRootIsDecorated(False)
         tree.setAlternatingRowColors(True)
         head = tree.header()
-        for i in range(len(headers) - 1):
-            head.setSectionResizeMode(i, QHeaderView.ResizeMode.ResizeToContents)
-        head.setSectionResizeMode(len(headers) - 1, QHeaderView.ResizeMode.Stretch)
+        head.setStretchLastSection(False)
+        for i in range(len(headers)):
+            head.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+            tree.setColumnWidth(i, 260 if i == 0 else 140)
         return tree
 
     # ---- reading ------------------------------------------------------------------------------

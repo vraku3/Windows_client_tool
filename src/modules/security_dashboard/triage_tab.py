@@ -61,9 +61,13 @@ class TriageTab(QWidget):
         self._tree.setColumnCount(4)
         self._tree.setHeaderLabels(["Severity", "Finding", "Count", "Last seen"])
         header = self._tree.header()
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        for col in (0, 2, 3):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        for col in range(4):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._tree.setColumnWidth(0, 100)
+        self._tree.setColumnWidth(1, 360)
+        self._tree.setColumnWidth(2, 90)
+        self._tree.setColumnWidth(3, 140)
         self._tree.setAlternatingRowColors(True)
         self._tree.currentItemChanged.connect(lambda *_: self._show_detail())
         self._detail = QTextBrowser(self)

@@ -31,8 +31,10 @@ def _table(columns, height: int) -> QTableWidget:
     table = QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels(columns)
     header = table.horizontalHeader()
-    header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-    header.setStretchLastSection(True)
+    header.setStretchLastSection(False)
+    for col in range(len(columns)):
+        header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(col, 130)
     center_header(table)
     apply_table_style(table, numeric_columns=tuple(i for i, c in enumerate(columns)
                       if c in ("Boot time", "Main path", "Post-boot", "Startup apps", "Events", "Worst", "Average")),

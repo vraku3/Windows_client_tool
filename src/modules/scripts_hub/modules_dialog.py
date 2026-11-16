@@ -70,9 +70,13 @@ class ModulesDialog(QDialog):
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         header = table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in (1, 2, 3):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        for col in range(4):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 240)
+        table.setColumnWidth(1, 120)
+        table.setColumnWidth(2, 90)
+        table.setColumnWidth(3, 100)
         for row, req in enumerate(reqs):
             have = status.get(req.key)
             text, meaning = (("Installed", "success") if have else

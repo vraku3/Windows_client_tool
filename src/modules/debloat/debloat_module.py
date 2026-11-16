@@ -267,13 +267,15 @@ class DebloatToolsModule(BaseModule):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSortIndicatorShown(True)
         header.setSortIndicator(1, Qt.SortOrder.AscendingOrder)
-        # Checkbox and Status are Interactive (content-fitted once, see
-        # `_fit_columns_once`) so they can hold a manually-set or persisted
-        # width; App Name and Category share the free width.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        # All columns are Interactive so the user can freely drag dividers
+        # to fit text (App Name, Category, Status, Checkbox), and persisted
+        # column widths can be applied.
+        for c in range(4):
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._apps_table.setColumnWidth(0, 36)
+        self._apps_table.setColumnWidth(1, 280)
+        self._apps_table.setColumnWidth(2, 160)
+        self._apps_table.setColumnWidth(3, 140)
         self._apps_table.setSortingEnabled(True)
         self._apps_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._apps_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -305,14 +307,16 @@ class DebloatToolsModule(BaseModule):
         header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setSortIndicatorShown(True)
         header.setSortIndicator(1, Qt.SortOrder.AscendingOrder)
-        # Tweak and Category share the width; the rest are Interactive
-        # (content-fitted once, see `_fit_columns_once`) so they can hold a
-        # manually-set or persisted width.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        # All columns are Interactive so the user can freely drag dividers
+        # to fit text (Tweak, Category, Risk, Status, Checkbox), and persisted
+        # column widths can be applied.
+        for c in range(5):
+            header.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        table.setColumnWidth(0, 36)
+        table.setColumnWidth(1, 320)
+        table.setColumnWidth(2, 160)
+        table.setColumnWidth(3, 100)
+        table.setColumnWidth(4, 140)
         table.setSortingEnabled(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)

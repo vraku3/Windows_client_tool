@@ -107,8 +107,12 @@ class _StoreUpdatesTab(QWidget):
 
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Name", "Id", "Installed", "Available"])
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for c in range(4):
+            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 260)
+        self._table.setColumnWidth(1, 200)
+        self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 120)
         center_header(self._table)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)

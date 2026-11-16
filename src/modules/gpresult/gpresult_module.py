@@ -220,7 +220,7 @@ class GPResultModule(BaseModule):
         for i, width in enumerate(_COL_WIDTHS):
             header.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
             self._tree.setColumnWidth(i, width)
-        header.setStretchLastSection(True)
+        header.setStretchLastSection(False)
         layout.addWidget(self._tree, 1)
 
         self._refresh_btn.clicked.connect(self._do_refresh)

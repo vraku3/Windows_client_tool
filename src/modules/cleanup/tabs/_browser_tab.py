@@ -718,13 +718,15 @@ class _BrowserCleanupTab(QWidget):
         self._tree.setItemDelegate(SafetyDelegate(self._tree, safety_column=_COL_SAFETY,
                                                   share_column=_COL_SHARE))
         hdr = self._tree.header()
-        hdr.setStretchLastSection(True)
-        hdr.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(False)
+        for col in range(len(HEADERS)):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         self._tree.setColumnWidth(_COL_NAME, 360)
         self._tree.setColumnWidth(_COL_SIZE, 90)
         self._tree.setColumnWidth(_COL_SHARE, 130)
         self._tree.setColumnWidth(_COL_SAFETY, 100)
         self._tree.setColumnWidth(_COL_VERDICT, 190)
+        self._tree.setColumnWidth(_COL_NOTE, 220)
         for col, tip in ((_COL_NAME, "Tick a cache type to clean it. Hover a row for what it is."),
                          (_COL_SIZE, "Size as last measured"),
                          (_COL_SHARE, "Share of all browser caches found"),

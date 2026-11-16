@@ -97,11 +97,10 @@ class UsersTab(QWidget):
         self.tree.itemCollapsed.connect(
             lambda item: self._remember(item, False))
         header = self.tree.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for section in range(1, len(COLUMNS)):
-            header.setSectionResizeMode(
-                section, QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(section, 100)
+        header.setStretchLastSection(False)
+        for section in range(len(COLUMNS)):
+            header.setSectionResizeMode(section, QHeaderView.ResizeMode.Interactive)
+            header.resizeSection(section, 240 if section == 0 else 100)
         layout.addWidget(self.tree, 1)
 
         self.status = QLabel("", self)

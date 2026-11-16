@@ -9,7 +9,7 @@ from typing import List, Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QGuiApplication
 from PyQt6.QtWidgets import (
-    QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QPlainTextEdit,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QProgressBar, QPushButton, QPlainTextEdit,
     QSplitter, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -184,7 +184,10 @@ class LocalUsersModule(BaseModule):
         t = QTableWidget(0, len(cols))
         t.setHorizontalHeaderLabels(cols)
         describe_headers(t)
-        fit_table(t, stretch=stretch, content=content)
+        for c in range(len(cols)):
+            t.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+            t.setColumnWidth(c, 240 if c in stretch else 120)
+        center_header(t)
         apply_table_style(t)
         t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)

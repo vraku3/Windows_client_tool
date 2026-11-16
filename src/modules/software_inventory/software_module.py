@@ -15,7 +15,7 @@ from typing import List, Optional
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QLabel, QLineEdit,
+    QApplication, QButtonGroup, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QPlainTextEdit, QProgressBar, QPushButton, QSplitter, QTableWidget,
     QVBoxLayout, QWidget,
 )
@@ -29,7 +29,7 @@ from ui.chip_bar import ChipBar
 from ui.table_style import apply_table_style
 from core.confirm import confirm_destructive
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, fit_table, set_role
+from core.table_ui import center_header, centered_item, fit_table, set_role
 from core.worker import Worker
 from modules.software_inventory import software_analysis as sa
 # Re-exported: other panes import these from here.
@@ -99,9 +99,18 @@ class _SoftwarePane(QWidget):
         describe_headers(self.table)
         from ui.app_facts import _controller
         _controller(self.table, 0, True).updated.connect(self._on_selection)
-        fit_table(self.table, stretch=[0, 2], content=[1, 3, 4, 5, 6, 7])
+        for c in range(len(COLUMNS)):
+            self.table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
+        self.table.setColumnWidth(0, 240)
+        self.table.setColumnWidth(1, 180)
+        self.table.setColumnWidth(2, 100)
+        self.table.setColumnWidth(3, 110)
+        self.table.setColumnWidth(4, 90)
+        self.table.setColumnWidth(5, 90)
+        self.table.setColumnWidth(6, 120)
+        self.table.setColumnWidth(7, 200)
+        center_header(self.table)
         self.table.horizontalHeader().setSortIndicator(0, Qt.SortOrder.AscendingOrder)
-        self.table.horizontalHeader().setStretchLastSection(True)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)

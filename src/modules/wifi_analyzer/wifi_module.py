@@ -52,9 +52,8 @@ def _make_table(cols: List[str], stretch: int = 0) -> QTableWidget:
                                          if c in ('Signal %', 'Channel', 'Utilization %', 'Count')],
                       date_columns=[i for i, c in enumerate(cols) if c == 'Last seen'])
     for i in range(len(cols)):
-        t.horizontalHeader().setSectionResizeMode(
-            i, QHeaderView.ResizeMode.Stretch if i == stretch
-            else QHeaderView.ResizeMode.ResizeToContents)
+        t.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+        t.setColumnWidth(i, 200 if i == stretch else 120)
     t.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
     describe_table(t)

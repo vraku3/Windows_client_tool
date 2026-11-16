@@ -48,8 +48,9 @@ EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette so
 #: moved disabled rule text colour to chrome("text_muted"); 174 after
 #: network_view replaced _WARN_BRUSH hex literal with semantic("warning");
 #: 172 after debloat_module moved _STATUS_COLOR hex literals to semantic palette;
-#: 167 after game_mode_module converted force-off button styles to dangerButton role (5 literals).
-BUDGET = 167
+#: 167 after game_mode_module converted force-off button styles to dangerButton role (5 literals);
+#: 164 after startup_module status dot and quick_fix reboot banner converted to semantic roles (3 literals).
+BUDGET = 164
 
 
 def frozen_colour_literals():

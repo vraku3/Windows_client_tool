@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QProgressBar, QLabel, QMessageBox,
     QLineEdit, QDialog, QDialogButtonBox, QFormLayout,
 )
-from PyQt6.QtCore import QThreadPool, QUrl
+from PyQt6.QtCore import Qt, QThreadPool, QUrl
 from PyQt6.QtGui import QDesktopServices
 import logging
 import os
@@ -14,7 +14,7 @@ from typing import Optional
 from core.base_module import BaseModule
 from core.composite_module import CompositeModule
 from core.module_groups import ModuleGroup
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
 from core.worker import Worker, COMWorker, retire
 from modules.startup_manager.startup_reader import (
     get_registry_entries,
@@ -84,7 +84,7 @@ class _AddEntryDialog(QDialog):
         form.addRow("Command:", self._command)
         layout.addLayout(form)
         hint = QLabel("Adds a value to HKCU\\...\\CurrentVersion\\Run.")
-        hint.setStyleSheet("color: #888; font-size: 11px;")
+        set_role(hint, "muted")
         layout.addWidget(hint)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -214,11 +214,12 @@ class _StartupTab(QWidget):
 
     def _make_status_dot(self, enabled: bool) -> QLabel:
         """Return a small colored dot label: green=enabled, red=disabled."""
-        color = "#44BB44" if enabled else "#DD3333"
         text = "Enabled" if enabled else "Disabled"
-        lbl = QLabel(f"<span style='color:{color};'>&#x25CF;</span> {text}")
+        glyph = "🟢" if enabled else "🔴"
+        lbl = QLabel(f"{glyph} {text}")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setToolTip("Enabled means this source allows automatic launch; Disabled prevents that launch. Neither state says whether the program is currently running.")
-        lbl.setStyleSheet("QLabel { background: transparent; padding: 2px 4px; }")
+        set_role(lbl, "statusSuccess" if enabled else "statusError")
         return lbl
 
     def _load(self):

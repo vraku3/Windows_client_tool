@@ -16,6 +16,7 @@ from core.module_groups import ModuleGroup
 from core.worker import Worker
 from core.windows_utils import is_reboot_pending
 from core.long_op_pool import get_long_op_pool
+from core.table_ui import set_role
 from modules.quick_fix.fix_actions import ALL_ACTIONS, FixAction
 from modules.quick_fix.browser_links_card import BrowserLinksCard
 import logging
@@ -51,7 +52,7 @@ class _FixCard(QFrame):
         title_row.addWidget(title_lbl)
         if self._action.reboot_required:
             badge = QLabel("⚠ Reboot required")
-            badge.setStyleSheet("color: orange;")
+            set_role(badge, "statusWarning")
             title_row.addStretch()
             title_row.addWidget(badge)
         layout.addLayout(title_row)
@@ -59,7 +60,7 @@ class _FixCard(QFrame):
         # Description
         desc = QLabel(self._action.description)
         desc.setWordWrap(True)
-        desc.setStyleSheet("color: gray;")
+        set_role(desc, "muted")
         layout.addWidget(desc)
 
         # Run button
@@ -76,7 +77,7 @@ class _FixCard(QFrame):
         # in flight (see _run/_on_done/_on_error/cancel).
         self._status = QLabel("")
         self._status.setToolTip("Recorded outcome or current precondition for this repair. A completed command is not an independent check that the original problem is resolved.")
-        self._status.setStyleSheet("color: gray; font-size: 11px;")
+        set_role(self._status, "muted")
         layout.addWidget(self._status)
         self._refresh_status()
 
@@ -283,9 +284,7 @@ class QuickFixModule(BaseModule):
 
         # Reboot banner (hidden by default)
         self._reboot_banner = QLabel("⚠ A system reboot is pending.")
-        self._reboot_banner.setStyleSheet(
-            "background: #FF8800; color: white; padding: 4px; font-weight: bold;"
-        )
+        set_role(self._reboot_banner, "statusWarning")
         self._reboot_banner.hide()
         outer_layout.addWidget(self._reboot_banner)
 

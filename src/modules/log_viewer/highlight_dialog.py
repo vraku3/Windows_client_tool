@@ -10,7 +10,7 @@ from modules.log_viewer.help_widgets import (
 import re
 
 from PyQt6.QtWidgets import (QAbstractItemView, QColorDialog, QDialog,
-                             QDialogButtonBox, QHBoxLayout, QPushButton,
+                             QDialogButtonBox, QHBoxLayout, QHeaderView, QPushButton,
                              QTableWidget, QTableWidgetItem, QVBoxLayout)
 from PyQt6.QtGui import QColor
 from PyQt6.QtCore import Qt
@@ -31,6 +31,12 @@ class HighlightDialog(QDialog):
         self.table.setHorizontalHeaderLabels(_COLUMNS)
         describe_headers(self.table)
         center_header(self.table)
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+        self.table.setColumnWidth(0, 220)
+        self.table.setColumnWidth(1, 100)
+        self.table.setColumnWidth(2, 80)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self.table, 1)

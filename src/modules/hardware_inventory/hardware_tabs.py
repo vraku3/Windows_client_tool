@@ -11,12 +11,13 @@ import logging
 from typing import List
 
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QBrush, QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
     QTableWidget, QVBoxLayout, QWidget,
 )
 
+from core.semantic_colors import chrome, semantic
 from core.table_ui import centered_item, fit_last, fit_table, set_role
 from modules.hardware_inventory import asset_parse as ap
 from modules.hardware_inventory import asset_reader as ar
@@ -52,9 +53,21 @@ def make_kv_table() -> QTableWidget:
 def fill_kv(table: QTableWidget, rows) -> None:
     table.setRowCount(len(rows))
     for r, (k, v) in enumerate(rows):
-        table.setItem(r, 0, centered_item(str(k)))
+        k_str = str(k)
+        v_str = str(v)
+        table.setItem(r, 0, centered_item(k_str))
         describe_cell(table, 0, table.item(r, 0))
-        table.setItem(r, 1, centered_item(str(v)))
+        val_item = centered_item(v_str)
+        v_low = v_str.strip().lower()
+        if v_low in ("enabled", "yes", "true", "ok", "active", "pass", "passed", "running", "good"):
+            paint_severity(val_item, "ok")
+        elif v_low in ("disabled", "no", "false", "off", "inactive", "n/a", "none"):
+            val_item.setForeground(QBrush(QColor(chrome("text_muted"))))
+        elif v_low in ("failed", "error", "critical", "bad"):
+            paint_severity(val_item, "error")
+        elif v_low in ("warning", "caution", "degraded"):
+            paint_severity(val_item, "warning")
+        table.setItem(r, 1, val_item)
         describe_cell(table, 1, table.item(r, 1))
 
 
@@ -75,7 +88,35 @@ def fill_dict(table: QTableWidget, rows, columns) -> None:
     table.setRowCount(len(rows))
     for r, row in enumerate(rows):
         for c, col in enumerate(columns):
-            table.setItem(r, c, centered_item(str(row.get(col, ""))))
+            val = str(row.get(col, ""))
+            item = centered_item(val)
+            val_low = val.strip().lower()
+            if col == "Up":
+                if val_low == "yes":
+                    paint_severity(item, "ok")
+                elif val_low == "no":
+                    item.setForeground(QBrush(QColor(chrome("text_muted"))))
+            elif col == "Status":
+                if val_low in ("ok", "good"):
+                    paint_severity(item, "ok")
+                elif any(m in val_low for m in ("error", "failed", "critical", "bad")):
+                    paint_severity(item, "error")
+                elif any(m in val_low for m in ("warn", "caution", "problem", "degraded")):
+                    paint_severity(item, "warning")
+                elif val_low in ("—", "-", "unknown", "n/a"):
+                    item.setForeground(QBrush(QColor(chrome("text_muted"))))
+            elif col == "Use%":
+                try:
+                    pct = float(val.rstrip("%"))
+                    if pct >= 90:
+                        paint_severity(item, "error")
+                    elif pct >= 75:
+                        paint_severity(item, "warning")
+                    else:
+                        paint_severity(item, "ok")
+                except ValueError:
+                    pass
+            table.setItem(r, c, item)
             describe_cell(table, c, table.item(r, c))
 
 
@@ -230,9 +271,14 @@ def load_memory(worker=None):
 
 def _slot_cells(s: ap.MemorySlot):
     if not s.populated:
-        return [centered_item(s.locator)] + [centered_item("") for _ in range(9)] + [centered_item("empty")]
+        empty_item = centered_item("empty")
+        empty_item.setForeground(QBrush(QColor(chrome("text_muted"))))
+        return [centered_item(s.locator)] + [centered_item("") for _ in range(9)] + [empty_item]
     gb = s.capacity_bytes / 1024 ** 3
     ecc = "; ECC bits" if s.ecc_bits else ""
+    speed_item = centered_item((s.speed_note + ecc).strip("; "))
+    if s.speed_note:
+        speed_item.setForeground(QBrush(QColor(semantic("warning"))))
     return [
         centered_item(s.locator), centered_item(s.bank),
         numeric_item(f"{gb:.0f} GB", s.capacity_bytes), centered_item(s.mem_type),
@@ -240,7 +286,7 @@ def _slot_cells(s: ap.MemorySlot):
         numeric_item(f"{s.rated_mhz} MHz" if s.rated_mhz else "n/a", s.rated_mhz),
         numeric_item(f"{s.configured_mhz} MHz" if s.configured_mhz else "n/a", s.configured_mhz),
         centered_item(s.manufacturer), centered_item(s.part_number), centered_item(s.serial),
-        centered_item((s.speed_note + ecc).strip("; ")),
+        speed_item,
     ]
 
 
@@ -305,13 +351,17 @@ def setup_monitors(layout, data) -> None:
     for r, m in enumerate(monitors):
         status = {True: "Connected", False: "Remembered (not connected)", None: "Unknown"}[m.active]
         diag = m.diagonal_inches
+        status_item = centered_item(status)
+        if m.active:
+            paint_severity(status_item, "ok")
+        else:
+            status_item.setForeground(QBrush(QColor(chrome("text_muted"))))
         cells = [
             centered_item(m.make), centered_item(m.name or f"product {m.product_code}"),
             centered_item(m.serial or "not stored"), centered_item(m.manufactured or "n/a"),
-            numeric_item(f'{diag:.1f}"' if diag else "n/a", diag), centered_item(status),
+            numeric_item(f'{diag:.1f}"' if diag else "n/a", diag), status_item,
             centered_item(m.instance_path),
         ]
-        paint_severity(cells[5], "ok" if m.active else "info")
         for c, item in enumerate(cells):
             t.setItem(r, c, item)
             describe_cell(t, c, t.item(r, c))
@@ -397,6 +447,7 @@ class AssetRecordView(QWidget):
     def copy(self, fmt, name: str) -> None:
         QApplication.clipboard().setText(fmt(self.record))
         self.status.setText(f"{name}: copied.")
+        set_role(self.status, "statusSuccess")
 
 
 def setup_asset(layout, data) -> None:

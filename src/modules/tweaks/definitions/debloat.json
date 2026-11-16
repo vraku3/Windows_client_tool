@@ -130,7 +130,7 @@
   {
     "id": "remove_bing_search",
     "name": "Bing Search",
-    "description": "This entry targets Bing Search: Web search app. Applying removes the matching installed app package (Microsoft.BingSearch) for the current Windows user. Revert cannot restore the removed app or its previous data; reinstall separately if you need it again.",
+    "description": "This entry targets Bing Search: Web search app. Note: On modern Windows 10/11, Microsoft binds this package directly to the Windows Search shell and rejects standalone package removal. To disable Bing web search without package errors, use 'Disable Bing in Start Menu' or 'Disable Bing Suggestions in Windows Search' under Privacy & Telemetry.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,

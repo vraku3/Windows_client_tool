@@ -113,6 +113,7 @@ PROTECTED_APPS = {
     "Microsoft.ScreenSketch",
     "Microsoft.SecHealthUI",
     "Microsoft.DesktopAppInstaller",
+    "Microsoft.BingSearch",
 }
 
 PROTECTED_REASONS = {
@@ -127,4 +128,5 @@ PROTECTED_REASONS = {
     "Microsoft.SecHealthUI": "Windows Security Center user interface — "
         "removal breaks Windows Defender UI and security settings",
     "Microsoft.DesktopAppInstaller": "Windows Package Manager (winget) and MSIX package installer",
+    "Microsoft.BingSearch": "Core Windows Search component — Windows prevents package removal. To disable Bing web search, use the 'Disable Bing in Start Menu' tweak in Privacy & Telemetry.",
 }

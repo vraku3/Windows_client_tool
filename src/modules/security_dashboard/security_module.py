@@ -32,7 +32,7 @@ from core.base_module import BaseModule
 from core.semantic_colors import semantic
 from core.module_groups import ModuleGroup
 from core.search_provider import FilterField, SearchProvider, SearchQuery, SearchResult
-from core.table_ui import centered_item, fit_table
+from core.table_ui import centered_item, fit_table, set_role
 from core.worker import Worker, COMWorker
 from ui.error_banner import ErrorBanner
 from modules.security_dashboard import snapshots
@@ -353,7 +353,7 @@ class _StatusCard(QFrame):
         layout.addWidget(self._title_lbl)
 
         self._status_lbl = QLabel("Loading...")
-        self._status_lbl.setStyleSheet("font-size: 13px; font-weight: bold;")
+        set_role(self._status_lbl, "heading")
         layout.addWidget(self._status_lbl)
 
         self._details_layout = QVBoxLayout()
@@ -389,7 +389,7 @@ class _StatusCard(QFrame):
         for k, v in data.get("details", []):
             row = QHBoxLayout()
             k_lbl = QLabel(f"{k}:")
-            k_lbl.setStyleSheet("color: gray;")
+            set_role(k_lbl, "muted")
             v_lbl = QLabel(str(v))
             row.addWidget(k_lbl)
             row.addStretch()
@@ -935,8 +935,7 @@ class SecurityDashboardModule(BaseModule):
         if note:
             self._elevation_label = QLabel(note)
             self._elevation_label.setWordWrap(True)
-            self._elevation_label.setStyleSheet(
-                f"color: {semantic('warning')};")
+            set_role(self._elevation_label, "statusWarning")
             layout.addWidget(self._elevation_label)
 
         layout.addWidget(self._build_filter_bar())
@@ -991,7 +990,7 @@ class SecurityDashboardModule(BaseModule):
 
         # Core security grid (2x2)
         core_label = QLabel("Core Security")
-        core_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #b0b0b0;")
+        set_role(core_label, "heading")
         layout.addWidget(core_label)
 
         grid = QGridLayout()
@@ -1008,7 +1007,7 @@ class SecurityDashboardModule(BaseModule):
 
         # Additional checks grid
         adv_label = QLabel("Additional Protections")
-        adv_label.setStyleSheet("font-weight: bold; font-size: 14px; color: #b0b0b0;")
+        set_role(adv_label, "heading")
         layout.addWidget(adv_label)
 
         grid2 = QGridLayout()
@@ -1096,13 +1095,13 @@ class SecurityDashboardModule(BaseModule):
                         data["bitlocker"], data["secure_boot_tpm"]]
             colors = [d.get("color", "amber") for d in all_data]
             if all(c == "green" for c in colors):
-                overall, col = "Secure", "#27AE60"
+                overall, role = "Secure", "statusSuccess"
             elif any(c == "red" for c in colors):
-                overall, col = "Issues Detected", "#E74C3C"
+                overall, role = "Issues Detected", "statusError"
             else:
-                overall, col = "Warnings", "#E67E22"
+                overall, role = "Warnings", "statusWarning"
             self._banner.setText(f"Security Status — {overall}")
-            self._banner.setStyleSheet(f"font-weight: bold; color: {col};")
+            set_role(self._banner, role)
 
         def on_error(err):
             if not _widget_valid(self._banner):
@@ -1112,6 +1111,7 @@ class SecurityDashboardModule(BaseModule):
             self._error_banner.set_error(f"Failed to load security status: {emsg}")
             self._error_banner.show()
             self._banner.setText("Security Status — Error")
+            set_role(self._banner, "statusError")
 
         worker.signals.result.connect(on_result)
         worker.signals.error.connect(on_error)
@@ -1142,7 +1142,7 @@ class SecurityDashboardModule(BaseModule):
 
     def _do_quick_scan(self):
         self._action_status_lbl.setText("Quick scan running...")
-        self._action_status_lbl.setStyleSheet("color: #E67E22; font-size: 12px;")
+        set_role(self._action_status_lbl, "statusWarning")
 
         def do_scan(worker):
             return run_quick_scan()
@@ -1154,10 +1154,10 @@ class SecurityDashboardModule(BaseModule):
             msg = res.get("message", "")
             if success:
                 self._action_status_lbl.setText(f"Scan completed: {msg}")
-                self._action_status_lbl.setStyleSheet("color: #27AE60; font-size: 12px;")
+                set_role(self._action_status_lbl, "statusSuccess")
             else:
                 self._action_status_lbl.setText(f"Scan finished: {msg[:150]}")
-                self._action_status_lbl.setStyleSheet("color: #E67E22; font-size: 12px;")
+                set_role(self._action_status_lbl, "statusWarning")
 
         w = Worker(do_scan)
         w.signals.result.connect(on_result)
@@ -1169,7 +1169,7 @@ class SecurityDashboardModule(BaseModule):
 
     def _do_update_defs(self):
         self._action_status_lbl.setText("Updating definitions...")
-        self._action_status_lbl.setStyleSheet("color: #E67E22; font-size: 12px;")
+        set_role(self._action_status_lbl, "statusWarning")
 
         def do_update(worker):
             return run_update_definitions()
@@ -1181,13 +1181,13 @@ class SecurityDashboardModule(BaseModule):
             msg = res.get("message", "")
             if success:
                 self._action_status_lbl.setText(f"Definitions updated: {msg}")
-                self._action_status_lbl.setStyleSheet("color: #27AE60; font-size: 12px;")
+                set_role(self._action_status_lbl, "statusSuccess")
                 # Refresh signature state
                 if self._loaded_controls:
                     self._refresh_controls()
             else:
                 self._action_status_lbl.setText(f"Update: {msg[:150]}")
-                self._action_status_lbl.setStyleSheet("color: #E67E22; font-size: 12px;")
+                set_role(self._action_status_lbl, "statusWarning")
 
         w = Worker(do_update)
         w.signals.result.connect(on_result)
@@ -1866,7 +1866,7 @@ def _on_label_error(label, message: str):
     """Helper: show error on a QLabel if it still exists."""
     if _widget_valid(label):
         label.setText(message)
-        label.setStyleSheet("color: #E74C3C; font-size: 12px;")
+        set_role(label, "statusError")
 
 
 # ── Search Provider ────────────────────────────────────────────────────────

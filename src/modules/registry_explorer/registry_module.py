@@ -8,7 +8,7 @@ import logging
 import subprocess
 
 from PyQt6.QtCore import QModelIndex, Qt, QThreadPool
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel, QListWidget,
     QLineEdit, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSplitter,
@@ -19,6 +19,7 @@ from core.base_module import BaseModule
 from ui.empty_state import EmptyState
 from ui.table_style import apply_table_style
 from core.module_groups import ModuleGroup
+from core.semantic_colors import chrome, semantic
 from core.table_ui import centered_item, center_header, set_role
 from core.worker import Worker
 from modules.registry_explorer import registry_acl, registry_scan
@@ -236,11 +237,24 @@ class RegistryExplorerModule(BaseModule):
         for name, type_str, data in values:
             row = self._values_table.rowCount()
             self._values_table.insertRow(row)
-            self._values_table.setItem(row, 0, centered_item(name))
+            name_item = centered_item(name)
+            type_item = centered_item(type_str)
+            data_item = centered_item(data)
+
+            if name == "(Default)":
+                name_item.setForeground(QColor(semantic("info")))
+            if data == "(value not set)" or data == "—":
+                data_item.setForeground(QColor(chrome("text_muted")))
+            elif "DWORD" in type_str or "QWORD" in type_str:
+                type_item.setForeground(QColor(semantic("info")))
+            elif "BINARY" in type_str:
+                type_item.setForeground(QColor(semantic("warning")))
+
+            self._values_table.setItem(row, 0, name_item)
             describe_cell(self._values_table, 0, self._values_table.item(row, 0))
-            self._values_table.setItem(row, 1, centered_item(type_str))
+            self._values_table.setItem(row, 1, type_item)
             describe_cell(self._values_table, 1, self._values_table.item(row, 1))
-            self._values_table.setItem(row, 2, centered_item(data))
+            self._values_table.setItem(row, 2, data_item)
             describe_cell(self._values_table, 2, self._values_table.item(row, 2))
 
     def _update_write_access(self, path: str) -> None:
@@ -352,9 +366,15 @@ class RegistryExplorerModule(BaseModule):
 
         w = Worker(work)
         w.signals.result.connect(self._on_search_result)
-        w.signals.error.connect(lambda e: self._search_status.setText(f"Search failed: {e}"))
+        w.signals.error.connect(self._on_search_error)
         self._workers.append(w)
         QThreadPool.globalInstance().start(w)
+
+    def _on_search_error(self, e) -> None:
+        if self._widget is None:
+            return
+        set_role(self._search_status, "statusError")
+        self._search_status.setText(f"Search failed: {e}")
 
     def _on_search_result(self, res) -> None:
         if self._widget is None:
@@ -371,8 +391,14 @@ class RegistryExplorerModule(BaseModule):
         note = f"{len(res.hits)} hit(s) in {res.keys_visited} keys"
         if res.truncated:
             note += " (stopped at a limit)"
-        if res.refused:
+            set_role(self._search_status, "statusWarning")
+        elif res.refused:
             note += f"; {len(res.refused)} key(s) could not be read"
+            set_role(self._search_status, "statusWarning")
+        elif res.hits:
+            set_role(self._search_status, "statusSuccess")
+        else:
+            set_role(self._search_status, "muted")
         self._search_status.setText(note)
 
     def _tree_context_menu(self, pos) -> None:

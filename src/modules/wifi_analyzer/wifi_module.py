@@ -19,7 +19,7 @@ from ui.help.network_text import INTRO
 from ui.help.network_ui import explain, explain_tabs, item_help, table_page, interface_property_help
 
 from core.base_module import BaseModule
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from core.module_groups import ModuleGroup
 from core.table_ui import centered_item, describe_table, set_role
 from core.widget_life import widget_is_valid
@@ -386,7 +386,7 @@ class WifiAnalyzerModule(BaseModule):
         self._net_table.setRowCount(len(networks))
         for r, net in enumerate(networks):
             sig = net.get("Signal %", 0)
-            color = (
+            sig_color = (
                 QColor(semantic("success")) if sig >= 70
                 else QColor(semantic("warning")) if sig >= 40
                 else QColor(semantic("error"))
@@ -395,9 +395,31 @@ class WifiAnalyzerModule(BaseModule):
                 val = net.get(col, "")
                 item = centered_item("" if val is None else str(val))
                 if col == "Signal %":
-                    item.setForeground(color)
-                if col == "Utilization %" and val == "":
-                    item.setToolTip("This access point does not advertise BSS Load.")
+                    item.setForeground(sig_color)
+                elif col == "Security":
+                    s_lower = str(val).lower()
+                    if any(w in s_lower for w in ("open", "none", "wep")):
+                        item.setForeground(QColor(semantic("error")))
+                    elif any(w in s_lower for w in ("wpa3", "wpa2")):
+                        item.setForeground(QColor(semantic("success")))
+                elif col == "Utilization %":
+                    if val == "":
+                        item.setToolTip("This access point does not advertise BSS Load.")
+                    else:
+                        try:
+                            util_num = int(str(val).strip().rstrip("%"))
+                            if util_num >= 80:
+                                item.setForeground(QColor(semantic("error")))
+                            elif util_num >= 60:
+                                item.setForeground(QColor(semantic("warning")))
+                            elif util_num <= 30:
+                                item.setForeground(QColor(semantic("success")))
+                        except (ValueError, TypeError):
+                            logger.debug("Non-numeric Wi-Fi utilization %r", val)
+                elif col == "Band":
+                    b_lower = str(val).lower()
+                    if "5 ghz" in b_lower or "6 ghz" in b_lower:
+                        item.setForeground(QColor(semantic("info")))
                 self._net_table.setItem(r, c, item_help(item, self._net_table, c))
 
         refresh = "ON" if self._auto_refresh_cb.isChecked() else "OFF"
@@ -506,8 +528,20 @@ class WifiAnalyzerModule(BaseModule):
                     item.setToolTip(f"ReasonCode {codes}")
                 if c == 5 and text:
                     item.setToolTip(text)
-                if c == 0 and g.kind == "Connection failed" and not g.meaning:
-                    item.setForeground(QColor(semantic("error")))
+                if c == 0:
+                    k_lower = g.kind.lower()
+                    if "fail" in k_lower or "drop" in k_lower or "error" in k_lower:
+                        item.setForeground(QColor(semantic("error")))
+                    elif "disconnect" in k_lower or "warn" in k_lower:
+                        item.setForeground(QColor(semantic("warning")))
+                    elif "connect" in k_lower:
+                        item.setForeground(QColor(semantic("success")))
+                elif c == 3:
+                    try:
+                        if int(text) > 10:
+                            item.setForeground(QColor(semantic("warning")))
+                    except ValueError:
+                        logger.debug("Non-numeric count %r", text)
                 self._hist_table.setItem(r, c, item_help(item, self._hist_table, c))
         row = self._hist_table.currentRow()
         self._show_history_detail(row if 0 <= row < len(groups) else 0)
@@ -611,6 +645,22 @@ class WifiAnalyzerModule(BaseModule):
                 item = centered_item(str(val))
                 if row_color is not None:
                     item.setForeground(row_color)
+                else:
+                    if c == 1:
+                        if p.rating in ("wpa3", "wpa2"):
+                            item.setForeground(QColor(semantic("success")))
+                        elif p.rating in ("wpa",):
+                            item.setForeground(QColor(semantic("warning")))
+                    elif c == 4:
+                        if val == "Yes":
+                            item.setForeground(QColor(semantic("info")))
+                        elif val == "No":
+                            item.setForeground(QColor(chrome("text_muted")))
+                    elif c == 6:
+                        if val == "Yes":
+                            item.setForeground(QColor(semantic("success")))
+                        elif val == "No":
+                            item.setForeground(QColor(chrome("text_muted")))
                 self._profile_table.setItem(r, c, item_help(item, self._profile_table, c))
 
         risky = wifi_profile_audit.risky_profiles(profiles)

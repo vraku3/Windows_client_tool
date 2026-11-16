@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from core.blocklist import (add_exclusion, expired_exclusions, export_json, import_json,
                             is_blocked, load_exclusions, matching_offers, save_exclusions)
 from core.semantic_colors import chrome, semantic
+from core.table_ui import set_role
 from ui.table_style import apply_table_style
 
 
@@ -56,20 +57,21 @@ class ExclusionDialog(QDialog):
     def _update_preview(self, text: str) -> None:
         if not self.offers:
             self.preview.setText("No current offers to preview; scan App Updates or Windows Updates first.")
-            self.preview.setStyleSheet(f"color: {chrome('text_muted')};")
+            set_role(self.preview, "muted")
             return
         if not text.strip() or text.strip().startswith("#"):
             self.preview.setText("")
+            set_role(self.preview, "")
             return
         matches = matching_offers(text, self.offers)
         if not matches:
             self.preview.setText("Matches none of the current offers.")
-            self.preview.setStyleSheet(f"color: {chrome('text_muted')};")
+            set_role(self.preview, "muted")
             return
         names = ", ".join(name for name, _ in matches[:4])
         more = f" and {len(matches) - 4} more" if len(matches) > 4 else ""
         self.preview.setText(f"Would hide {len(matches)} current offer(s): {names}{more}.")
-        self.preview.setStyleSheet(f"color: {semantic('warning')};")
+        set_role(self.preview, "statusWarning")
 
     def accept(self):
         pattern = self.pattern.text().strip()

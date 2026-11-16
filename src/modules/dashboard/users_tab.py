@@ -78,8 +78,9 @@ class UsersTab(QWidget):
         self.sessions_table.verticalHeader().setVisible(False)
         self.sessions_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.sessions_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.sessions_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch)
+        for c in range(5):
+            self.sessions_table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
         self.sessions_table.setMaximumHeight(120)
         layout.addWidget(self.sessions_table)
         self.sessions_note = QLabel("", self)

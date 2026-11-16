@@ -120,8 +120,12 @@ class SearchDialog(QDialog):
         self.results.setUniformRowHeights(True)
         self.results.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
-        self.results.header().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch)
+        for c in range(3):
+            self.results.header().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
+        self.results.header().resizeSection(0, 200)
+        self.results.header().resizeSection(1, 100)
+        self.results.header().resizeSection(2, 350)
         self.results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results.customContextMenuRequested.connect(self._context_menu)
         self.results.itemDoubleClicked.connect(self._activated)
@@ -231,8 +235,12 @@ class DuplicatesDialog(QDialog):
         self.results.setHeaderLabels(["File", "Size", "Recoverable"])
         describe_headers(self.results)
         self.results.setUniformRowHeights(True)
-        self.results.header().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch)
+        for c in range(3):
+            self.results.header().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
+        self.results.header().resizeSection(0, 300)
+        self.results.header().resizeSection(1, 100)
+        self.results.header().resizeSection(2, 120)
         self.results.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.results.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.results, 1)

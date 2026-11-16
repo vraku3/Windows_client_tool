@@ -142,8 +142,14 @@ class HistoryView(QWidget):
         self.table.setUniformRowHeights(True)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.header().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch)
+        for c in range(5):
+            self.table.header().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
+        self.table.header().resizeSection(0, 140)
+        self.table.header().resizeSection(1, 220)
+        self.table.header().resizeSection(2, 90)
+        self.table.header().resizeSection(3, 90)
+        self.table.header().resizeSection(4, 80)
         self.table.itemDoubleClicked.connect(self._chosen)
         splitter.addWidget(self.table)
         splitter.setStretchFactor(0, 1)

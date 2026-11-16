@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt
 
 from ui.error_banner import ErrorBanner
 from ui.help.dashboard_ui import apply_help
+from core.table_ui import set_role
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ class SysinternalsTab(QWidget):
 
             name_lbl = QLabel(f"<b>{name}</b>")
             desc_lbl = QLabel(desc)
-            desc_lbl.setStyleSheet("color: gray;")
+            set_role(desc_lbl, "muted")
             status_lbl = QLabel(status)
 
             launch_btn = QPushButton("Launch")

@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from core.worker import COMWorker
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 from modules.updates import run_checkpoint
 from modules.updates.operation_guard import maintenance_worker
 from .activity_widget import ActivityWidget
@@ -146,7 +147,7 @@ class _RunAllTab(QWidget):
             f"A previous maintenance run did not finish (context: {run.get('context') or 'unknown'}, "
             f"started {run.get('started') or 'unknown'})."
             + (" Last recorded: " + "; ".join(rows) if rows else ""))
-        self._checkpoint_lbl.setStyleSheet(f"color: {semantic('warning')};")
+        set_role(self._checkpoint_lbl, "statusWarning")
         self._checkpoint_lbl.setVisible(True)
 
     def _confirm_preflight(self) -> bool:
@@ -187,7 +188,7 @@ class _RunAllTab(QWidget):
         self._stop_btn.setEnabled(True)
         self._report_btn.setEnabled(False)
         self._log.clear()
-        self._status_lbl.setStyleSheet("")
+        set_role(self._status_lbl, "")
         self._status_lbl.setText("Running…")
         self._phase = ""
         self._last_activity = time.monotonic()
@@ -269,8 +270,7 @@ class _RunAllTab(QWidget):
         elapsed = self._op_timer.elapsed() / 1000
         idle = time.monotonic() - self._last_activity
         self._status_lbl.setText(format_running_status(self._phase, elapsed, idle))
-        self._status_lbl.setStyleSheet(
-            f"color: {semantic('warning')};" if idle >= STALL_AFTER_S else "")
+        set_role(self._status_lbl, "statusWarning" if idle >= STALL_AFTER_S else "")
 
     def _tick_watch(self) -> None:
         self._update_running_status()
@@ -282,7 +282,7 @@ class _RunAllTab(QWidget):
         self._run_btn.setEnabled(not self._busy_owner)
         self._stop_btn.setEnabled(False)
         self._report_btn.setEnabled(True)
-        self._status_lbl.setStyleSheet("")
+        set_role(self._status_lbl, "")
         self._last_data = self._normalize_data(data)
         from modules.updates.stage_runners import outstanding_text
         self._log.setPlainText(outstanding_text(data.get("outstanding") or {}) + "\n\n" + self._log.toPlainText())
@@ -313,7 +313,7 @@ class _RunAllTab(QWidget):
         self._watch.stop()
         self._run_btn.setEnabled(not self._busy_owner)
         self._stop_btn.setEnabled(False)
-        self._status_lbl.setStyleSheet("")
+        set_role(self._status_lbl, "statusError")
         self._status_lbl.setText(f"Error: {err}")
         self._log.appendPlainText(f"Error: {err}")
 

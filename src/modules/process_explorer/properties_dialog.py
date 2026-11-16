@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QDialog, QTabWidget, QWidget, QVBoxLayout,
 from PyQt6.QtCore import Qt, QTimer
 
 from core.semantic_colors import semantic
-from core.table_ui import centered_item, fit_table
+from core.table_ui import centered_item, fit_table, set_role
 
 from ui.perf_graph import PerfGraph
 from modules.process_explorer.process_node import ProcessNode
@@ -124,7 +124,7 @@ class ProcessPropertiesDialog(QDialog):
         grid = QGridLayout(holder)
         for index, name in enumerate(names):
             caption = QLabel(name, holder)
-            caption.setStyleSheet("font-size: 11px;")
+            set_role(caption, "muted")
             value = QLabel("—", holder)
             row, column = divmod(index, 2)
             grid.addWidget(caption, row, column * 2)
@@ -153,11 +153,11 @@ class ProcessPropertiesDialog(QDialog):
                 ("private", "Private bytes", "success", 1024.0),
                 ("io", "I/O bytes", "warning", 1024.0)):
             caption = QLabel(title, w)
-            caption.setStyleSheet("font-weight: 600;")
+            set_role(caption, "heading")
             graph = PerfGraph(semantic(colour), ceiling, w)
             graph.setMinimumHeight(100)
             reading = QLabel("—", w)
-            reading.setStyleSheet("font-size: 11px;")
+            set_role(reading, "muted")
             layout.addWidget(caption)
             layout.addWidget(graph)
             layout.addWidget(reading)
@@ -176,7 +176,7 @@ class ProcessPropertiesDialog(QDialog):
             "ships and this does not; the TCP/IP tab lists this process's "
             "connections instead.", w)
         note.setWordWrap(True)
-        note.setStyleSheet("font-size: 11px;")
+        set_role(note, "muted")
         layout.addWidget(note)
         layout.addStretch()
         self._tabs.addTab(w, "Disk and Network")
@@ -185,11 +185,11 @@ class ProcessPropertiesDialog(QDialog):
         w = QWidget()
         layout = QVBoxLayout(w)
         caption = QLabel("GPU utilisation", w)
-        caption.setStyleSheet("font-weight: 600;")
+        set_role(caption, "heading")
         graph = PerfGraph(semantic("match"), 100.0, w)
         graph.setMinimumHeight(120)
         reading = QLabel("—", w)
-        reading.setStyleSheet("font-size: 11px;")
+        set_role(reading, "muted")
         layout.addWidget(caption)
         layout.addWidget(graph)
         layout.addWidget(reading)
@@ -224,7 +224,7 @@ class ProcessPropertiesDialog(QDialog):
                 "so it reports what it can see rather than an empty limits "
                 "table that would read as “no limits are set”.", w)
             note.setWordWrap(True)
-            note.setStyleSheet("font-size: 11px;")
+            set_role(note, "muted")
             layout.addWidget(note)
         else:
             layout.addWidget(self._row("In a job", "No"))

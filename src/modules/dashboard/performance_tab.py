@@ -84,11 +84,10 @@ class PerformanceTab(QWidget):
         column = QVBoxLayout(panel)
 
         self.cpu_title = QLabel("CPU", panel)
-        self.cpu_title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        set_role(self.cpu_title, "heading")
         column.addWidget(self.cpu_title)
         self.cpu_subtitle = QLabel("", panel)
-        self.cpu_subtitle.setStyleSheet(
-            f"color: {semantic('info')};")
+        set_role(self.cpu_subtitle, "statusInfo")
         column.addWidget(self.cpu_subtitle)
 
         self.cpu_meter = VfdMeter(panel)
@@ -124,7 +123,7 @@ class PerformanceTab(QWidget):
             self.cpu_figures.addWidget(
                 _caption(name, panel), 0, index)
             value = QLabel("—", panel)
-            value.setStyleSheet("font-size: 15px;")
+            set_role(value, "metric")
             self._cpu_values[name] = value
             self.cpu_figures.addWidget(value, 1, index)
         column.addLayout(self.cpu_figures)
@@ -146,10 +145,10 @@ class PerformanceTab(QWidget):
         column = QVBoxLayout(panel)
 
         self.memory_title = QLabel("Memory", panel)
-        self.memory_title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        set_role(self.memory_title, "heading")
         column.addWidget(self.memory_title)
         self.memory_subtitle = QLabel("", panel)
-        self.memory_subtitle.setStyleSheet(f"color: {semantic('success')};")
+        set_role(self.memory_subtitle, "statusSuccess")
         column.addWidget(self.memory_subtitle)
 
         self.memory_graph = PerfGraph(semantic("success"), 100.0, panel)
@@ -162,7 +161,7 @@ class PerformanceTab(QWidget):
                  "Paged pool", "Non-paged pool")):
             self.memory_figures.addWidget(_caption(name, panel), 0, index)
             value = QLabel("—", panel)
-            value.setStyleSheet("font-size: 15px;")
+            set_role(value, "metric")
             self._memory_values[name] = value
             self.memory_figures.addWidget(value, 1, index)
         column.addLayout(self.memory_figures)
@@ -195,7 +194,7 @@ class PerformanceTab(QWidget):
         panel = QWidget(self)
         column = QVBoxLayout(panel)
         title = QLabel(title_text, panel)
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
+        set_role(title, "heading")
         column.addWidget(title)
 
         scroller = QScrollArea(panel)
@@ -345,7 +344,7 @@ class PerformanceTab(QWidget):
         row = self._disk_rows.get(index)
         if row is None:
             caption = QLabel("", self)
-            caption.setStyleSheet("font-size: 11px;")
+            set_role(caption, "muted")
             graph = PerfGraph(semantic("warning"), 100.0, self)
             graph.setMinimumHeight(56)
             self.disk_area.addWidget(caption)
@@ -385,7 +384,7 @@ class PerformanceTab(QWidget):
         row = self._network_rows.get(name)
         if row is None:
             caption = QLabel("", self)
-            caption.setStyleSheet("font-size: 11px;")
+            set_role(caption, "muted")
             graph = PerfGraph(semantic("info"), 1.0, self)
             graph.setMinimumHeight(56)
             self.network_area.addWidget(caption)
@@ -452,7 +451,7 @@ class PerformanceTab(QWidget):
             return row
 
         title = QLabel(_adapter_name(luid, facts), self)
-        title.setStyleSheet("font-weight: 600;")
+        set_role(title, "heading")
         # Violet: the CPU and network graphs are already the info blue,
         # memory the success teal and the disks the warning amber, and this
         # is the only hue left that clears 4.5:1 in both themes. The
@@ -462,11 +461,11 @@ class PerformanceTab(QWidget):
         graph.setMinimumHeight(72)
         utilisation = QLabel("", self)
         engines = QLabel("", self)
-        engines.setStyleSheet("font-size: 11px;")
+        set_role(engines, "muted")
         memory = QLabel("", self)
-        memory.setStyleSheet("font-size: 11px;")
+        set_role(memory, "muted")
         detail = QLabel(_adapter_detail(facts), self)
-        detail.setStyleSheet("font-size: 11px;")
+        set_role(detail, "muted")
         detail.setWordWrap(True)
 
         for widget in (title, graph, utilisation, engines, memory, detail):
@@ -557,7 +556,7 @@ class PerformanceTab(QWidget):
 
 def _caption(text: str, parent) -> QLabel:
     label = QLabel(text, parent)
-    label.setStyleSheet("font-size: 11px;")
+    set_role(label, "muted")
     label.setAlignment(Qt.AlignmentFlag.AlignLeft)
     return label
 

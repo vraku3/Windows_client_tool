@@ -256,8 +256,9 @@ class SessionTab(QWidget):
         self._health_table = QTableWidget(0, 4, health)
         self._health_table.setHorizontalHeaderLabels(
             ["Change", "Expected", "Actual", "Status"])
-        self._health_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch)
+        for c in range(4):
+            self._health_table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
         self._health_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         apply_table_style(self._health_table)
         hrow = QHBoxLayout()
@@ -276,6 +277,9 @@ class SessionTab(QWidget):
         jlay = QVBoxLayout(journal)
         self._journal_table = QTableWidget(0, 3, journal)
         self._journal_table.setHorizontalHeaderLabels(["Change", "Status", "Label"])
+        for c in range(3):
+            self._journal_table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
         self._journal_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         apply_table_style(self._journal_table)
         jrow = QHBoxLayout()

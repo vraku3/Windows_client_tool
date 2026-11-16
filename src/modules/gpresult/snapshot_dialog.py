@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 
 from modules.gpresult.rsop_parser import RsopResult
 from modules.gpresult.rsop_snapshot import (
@@ -73,9 +74,12 @@ class SnapshotCompareDialog(QDialog):
         self._tree.setColumnCount(3)
         self._tree.setHeaderLabels(["Change", "Was", "Now"])
         describe_headers(self._tree)
-        self._tree.header().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Interactive)
+        for c in range(3):
+            self._tree.header().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
         self._tree.setColumnWidth(0, 380)
+        self._tree.setColumnWidth(1, 160)
+        self._tree.setColumnWidth(2, 160)
         self._tree.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         splitter.addWidget(self._tree)
         splitter.setSizes([260, 640])
@@ -131,10 +135,10 @@ class SnapshotCompareDialog(QDialog):
         if snapshot.error:
             self._summary.setText("Could not read that snapshot: %s"
                                   % snapshot.error)
-            self._summary.setStyleSheet("color: %s;" % semantic("error"))
+            set_role(self._summary, "statusError")
             return
 
-        self._summary.setStyleSheet("")
+        set_role(self._summary, "")
         diff = diff_rsop(snapshot.result, self._current)
         self._render(diff, meta)
 

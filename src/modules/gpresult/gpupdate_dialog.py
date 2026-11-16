@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 )
 
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 from core.worker import Worker
 
 from modules.gpresult.gpupdate import (
@@ -53,6 +54,13 @@ _STATUS_COLOURS = {
     STATUS_PARTIAL: "warning",
     STATUS_FAILURE: "error",
     STATUS_CANCELLED: "info",
+}
+
+_STATUS_ROLES = {
+    STATUS_SUCCESS: "statusSuccess",
+    STATUS_PARTIAL: "statusWarning",
+    STATUS_FAILURE: "statusError",
+    STATUS_CANCELLED: "statusInfo",
 }
 
 
@@ -142,7 +150,7 @@ class GpupdateDialog(QDialog):
         self._cancelled = False
         self._output.clear()
         self._verdict.setText("")
-        self._verdict.setStyleSheet("")
+        set_role(self._verdict, "")
         self._progress.show()
         self._run_btn.setEnabled(False)
         self._target.setEnabled(False)
@@ -194,7 +202,7 @@ class GpupdateDialog(QDialog):
         self._progress.hide()
         self._restore_controls()
         self._verdict.setText("gpupdate could not be started: %s" % message)
-        self._verdict.setStyleSheet("color: %s;" % semantic("error"))
+        set_role(self._verdict, "statusError")
 
     def _on_finished(self, result: GpupdateResult) -> None:
         self._worker = None
@@ -206,8 +214,8 @@ class GpupdateDialog(QDialog):
             self._append_line(line)
 
         self._verdict.setText(result.summary)
-        colour = _STATUS_COLOURS.get(result.status, "warning")
-        self._verdict.setStyleSheet("color: %s;" % semantic(colour))
+        role = _STATUS_ROLES.get(result.status, "statusWarning")
+        set_role(self._verdict, role)
 
         # The exit code is reported, never used as the verdict. When it
         # disagrees with the parsed outcome that disagreement is itself worth

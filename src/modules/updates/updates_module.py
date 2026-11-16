@@ -96,7 +96,7 @@ class _ScanStatusLabel(QLabel):
             logger.warning("Could not save %s scan timestamp: %s", self.source, exc)
             self.setText("Scan completed; could not save last scan time")
             self.setToolTip(str(exc))
-            self.setStyleSheet(f"color: {semantic('warning')};")
+            set_role(self, "statusWarning")
             return
         self.refresh()
 
@@ -105,7 +105,7 @@ class _ScanStatusLabel(QLabel):
             return
         directory = getattr(self.app, "app_data_dir", None)
         entry = load_timestamps(directory).get(self.source) if directory is not None else None
-        self.setStyleSheet("")
+        set_role(self, "")
         self.setToolTip("")
         if not entry:
             self.setText("Never scanned")
@@ -115,7 +115,7 @@ class _ScanStatusLabel(QLabel):
         text = f"Last scan: {elapsed_text(entry['ts'])} ({entry['count']} updates found)"
         if stale:
             text += " -- results may be stale"
-            self.setStyleSheet(f"color: {semantic('warning')};")
+            set_role(self, "statusWarning")
         self.setText(text)
         self.setToolTip(f"Last successful scan: {entry['ts']}")
 
@@ -979,9 +979,7 @@ class _WinUpdatesTab(QWidget):
         reboot_lay = QHBoxLayout(self._reboot_row)
         reboot_lay.setContentsMargins(0, 0, 0, 0)
         self._reboot_banner = QLabel("A system reboot is pending.")
-        self._reboot_banner.setStyleSheet(
-            "background: #FF8800; color: white; padding: 4px; font-weight: bold;"
-        )
+        set_role(self._reboot_banner, "statusWarning")
         self._restart_btn = QPushButton("Restart now")
         self._restart_btn.setToolTip(
             "Ask Windows to restart in 60 seconds so a pending update can finish. "
@@ -2111,8 +2109,9 @@ class _UpdateSettingsTab(QWidget):
         self._wu_health_table = QTableWidget(0, 4)
         self._wu_health_table.setHorizontalHeaderLabels(
             ["Service", "State", "Start type", "Detail"])
-        self._wu_health_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch)
+        for c in range(4):
+            self._wu_health_table.horizontalHeader().setSectionResizeMode(
+                c, QHeaderView.ResizeMode.Interactive)
         self._wu_health_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._wu_health_table.setMaximumHeight(190)
         apply_table_style(self._wu_health_table)
@@ -2720,7 +2719,7 @@ class UpdatesModule(BaseModule):
         if owner:
             self._busy_lbl.setText(
                 f"Operation in progress: {owner}. Installing is disabled until it finishes.")
-            self._busy_lbl.setStyleSheet(f"color: {semantic('warning')};")
+            set_role(self._busy_lbl, "statusWarning")
         self._busy_lbl.setVisible(bool(owner))
         for tab in (self._app_tab, self._win_tab, self._store_tab, self._runall_tab):
             setter = getattr(tab, "set_maintenance_busy", None)
@@ -2785,8 +2784,7 @@ class UpdatesModule(BaseModule):
                 parts.append(f"{pending_count} still pending")
             self._reconcile_lbl.setText("After the restart: " + ", ".join(parts) + ".")
             self._reconcile_lbl.setToolTip("\n".join(f"{r['name']}: {r['detail']}" for r in results))
-            self._reconcile_lbl.setStyleSheet(
-                f"color: {semantic('warning') if pending_count else semantic('success')};")
+            set_role(self._reconcile_lbl, "statusWarning" if pending_count else "statusSuccess")
             self._reconcile_lbl.setVisible(True)
             record(folder, "updates", "post_reboot_reconcile",
                    f"Post-restart reconciliation: {confirmed} confirmed, {pending_count} still pending, {unverified} unverifiable",

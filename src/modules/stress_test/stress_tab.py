@@ -9,10 +9,14 @@ import time
 
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QThreadPool, QTimer
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
     QGridLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
+from core.semantic_colors import chrome, semantic
+from core.table_ui import center_header, set_role
+from ui.table_style import apply_table_style
 from core.worker import Worker, retire
 from .engine.ram_test import GIB, default_ram_bytes
 from .engine.safety import SafetyPolicy
@@ -103,14 +107,20 @@ class StressTab(QWidget):
         self.status = QLabel('Ready. Open this tab to check available sensors.', self)
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
+        set_role(self.status, "muted")
         layout.addWidget(self.status)
         self.counters = QLabel('Elapsed 00:00 | Remaining 00:00 | Iterations/s 0 | CPU errors 0 | RAM passes/errors 0/0', self)
         self.counters.setWordWrap(True)
+        set_role(self.counters, "muted")
         layout.addWidget(self.counters)
         self.table = QTableWidget(0, 5, self)
         self.table.setHorizontalHeaderLabels(['Sensor', 'Value / availability', 'Min', 'Max', 'Cut-off'])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        center_header(self.table)
+        apply_table_style(self.table)
         self.table.setMinimumHeight(160)
         layout.addWidget(self.table)
         grid = QGridLayout()
@@ -269,12 +279,29 @@ class StressTab(QWidget):
         self.start_button.setEnabled(not active and not self._preview_busy)
         self.stop_button.setEnabled(active)
         self.sensor_button.setEnabled(not active and not self._preview_busy)
-        self.status.setText(f'{state["verdict"]}: {state["reason"]}')
+        verdict = state["verdict"]
+        self.status.setText(f'{verdict}: {state["reason"]}')
+        if verdict == "PASSED":
+            set_role(self.status, "statusSuccess")
+        elif verdict in ("STOPPED BY SAFETY", "FAILED"):
+            set_role(self.status, "statusError")
+        elif active:
+            set_role(self.status, "statusWarning")
+        else:
+            set_role(self.status, "muted")
+
         self._fill_sensors(state['readings'])
         cpu, ram = state['cpu'], state['ram']
+        cpu_err = cpu.get("error_count", 0)
+        ram_err = ram.get("error_count", 0)
+        if cpu_err > 0 or ram_err > 0:
+            set_role(self.counters, "statusError")
+        else:
+            set_role(self.counters, "muted")
+
         self.counters.setText(f'Elapsed {self._time(state["elapsed_s"])} | Remaining {self._time(state["remaining_s"])} | '
-            f'Iterations/s {state["iterations_per_s"]:,.0f} | CPU errors {cpu.get("error_count", 0)} | '
-            f'RAM passes/errors {ram.get("passes", 0)}/{ram.get("error_count", 0)} | '
+            f'Iterations/s {state["iterations_per_s"]:,.0f} | CPU errors {cpu_err} | '
+            f'RAM passes/errors {ram.get("passes", 0)}/{ram_err} | '
             f'RAM allocated/tested {ram.get("allocated_bytes", 0) / GIB:.3f}/{ram.get("tested_bytes", 0) / GIB:.3f} GiB'
             + (f' | {ram["allocation_reason"]}' if ram.get('allocation_reason') else ''))
         tick = int(state['elapsed_s'])
@@ -307,6 +334,17 @@ class StressTab(QWidget):
             for column, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
+                if column == 1:
+                    if value is None:
+                        item.setForeground(QColor(chrome("text_muted")))
+                    elif reading['kind'] in limits:
+                        cut_off = limits[reading['kind']]
+                        if value >= cut_off:
+                            item.setForeground(QColor(semantic("error")))
+                        elif value >= cut_off - 5:
+                            item.setForeground(QColor(semantic("warning")))
+                        else:
+                            item.setForeground(QColor(semantic("success")))
                 self.table.setItem(row, column, item)
         self.table.setColumnWidth(0, 240)
         self.table.setColumnWidth(1, 360)

@@ -12,7 +12,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QHBoxLayout, QHeaderView, QLineEdit, QPushButton,
                              QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from ui.chips import make_chips, set_chip_counts
 
 from .engine import view
@@ -78,6 +78,7 @@ class SensorsPanel(QWidget):
         tree.header().setSectionResizeMode(C_NAME, QHeaderView.ResizeMode.Stretch)
         tree.setSortingEnabled(True)
         tree.sortByColumn(C_NAME, Qt.SortOrder.AscendingOrder)
+        tree.setAlternatingRowColors(True)
         tree.setColumnHidden(C_HW, True)
         self._tree = tree
         layout.addWidget(tree, 1)
@@ -190,6 +191,11 @@ class SensorsPanel(QWidget):
                      if s.kind == TEMPERATURE and not self._grouped.isChecked() else "")
         colour = _colour(s, lim)
         item.setForeground(C_NOW, colour if colour is not None else self.palette().text().color())
+        max_colour = _max_colour(s, hi, lim)
+        if max_colour is not None:
+            item.setForeground(C_MAX, max_colour)
+        if s.kind == TEMPERATURE:
+            item.setForeground(C_LIM, QColor(chrome("text_muted")))
 
     def _apply_visibility(self) -> None:
         limits = view.limits_by_hardware(self._sensors)
@@ -216,5 +222,15 @@ def _colour(s: Sensor, lim: Dict[str, float]) -> Optional[QColor]:
     if "crit" in lim and s.value >= lim["crit"]:
         return QColor(semantic("error"))
     if s.value >= lim.get("warn", view.HOT_C):
+        return QColor(semantic("warning"))
+    return None
+
+
+def _max_colour(s: Sensor, hi: Optional[float], lim: Dict[str, float]) -> Optional[QColor]:
+    if s.kind != TEMPERATURE or hi is None:
+        return None
+    if "crit" in lim and hi >= lim["crit"]:
+        return QColor(semantic("error"))
+    if hi >= lim.get("warn", view.HOT_C):
         return QColor(semantic("warning"))
     return None

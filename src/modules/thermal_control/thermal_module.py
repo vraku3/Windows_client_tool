@@ -3,12 +3,14 @@ import logging
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
                              QLabel, QListWidget, QListWidgetItem, QMessageBox,
                              QPushButton, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.semantic_colors import semantic
 from core.table_ui import set_role
 from ui.chips import make_chips, set_chip_counts
 from ui.error_banner import ErrorBanner
@@ -238,6 +240,8 @@ class ThermalWidget(QWidget):
             item = QListWidgetItem(row.detail)
             item.setToolTip(row.detail)
             item.setData(Qt.ItemDataRole.UserRole, row.key)
+            if row.on:
+                item.setForeground(QColor(semantic("success")))
             self._headers.addItem(item)
             if row.key == current:
                 self._headers.setCurrentItem(item)

@@ -78,6 +78,35 @@ KNOWN_PACKAGES = {
 }
 
 
+def _is_bing_search_disabled() -> bool:
+    """Return True if Bing web search integration is disabled via registry policy."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Search") as k:
+            val, _ = winreg.QueryValueEx(k, "BingSearchEnabled")
+            if val == 0:
+                return True
+    except (OSError, FileNotFoundError) as exc:
+        logger.debug("BingSearchEnabled registry key query: %s", exc)
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Policies\Microsoft\Windows\Windows Search") as k:
+            val, _ = winreg.QueryValueEx(k, "DisableWebSearch")
+            if val == 1:
+                return True
+    except (OSError, FileNotFoundError) as exc:
+        logger.debug("DisableWebSearch registry key query: %s", exc)
+    return False
+
+
+def _is_target_bloat(name: str) -> bool:
+    if name not in KNOWN_PACKAGES:
+        return False
+    if name == "Microsoft.BingSearch" and _is_bing_search_disabled():
+        return False
+    return True
+
+
 def get_installed_packages() -> Dict[str, str]:
     """Return {package_name: display_name} for known installed Appx packages.
 
@@ -86,7 +115,7 @@ def get_installed_packages() -> Dict[str, str]:
     """
     installed: Dict[str, str] = {}
     for name in installed_names():
-        if name in KNOWN_PACKAGES:
+        if _is_target_bloat(name):
             installed[name] = name
     return installed
 
@@ -100,7 +129,7 @@ def get_installed_packages_or_none() -> Optional[Dict[str, str]]:
     names = installed_names_or_none()
     if names is None:
         return None
-    return {name: name for name in names if name in KNOWN_PACKAGES}
+    return {name: name for name in names if _is_target_bloat(name)}
 
 
 PROTECTED_APPS = {

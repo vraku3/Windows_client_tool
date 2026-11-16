@@ -130,16 +130,38 @@
   {
     "id": "remove_bing_search",
     "name": "Bing Search",
-    "description": "This entry targets Bing Search: Web search app. Note: On modern Windows 10/11, Microsoft binds this package directly to the Windows Search shell and rejects standalone package removal. To disable Bing web search without package errors, use 'Disable Bing in Start Menu' or 'Disable Bing Suggestions in Windows Search' under Privacy & Telemetry.",
+    "description": "Disables Bing web search and suggestions in Windows Search and Start menu, and removes provisioned Bing search packages where supported by Windows.",
     "category": "Bing Apps",
     "risk": "low",
     "requires_admin": true,
     "package": "Microsoft.BingSearch",
     "steps": [
       {
+        "type": "registry",
+        "key": "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search",
+        "value": "BingSearchEnabled",
+        "data": 0,
+        "kind": "DWORD"
+      },
+      {
+        "type": "registry",
+        "key": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+        "value": "DisableWebSearch",
+        "data": 1,
+        "kind": "DWORD"
+      },
+      {
+        "type": "registry",
+        "key": "HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\Windows Search",
+        "value": "ConnectedSearchUseWeb",
+        "data": 0,
+        "kind": "DWORD"
+      },
+      {
         "type": "appx",
         "package": "Microsoft.BingSearch",
-        "action": "remove"
+        "action": "remove",
+        "optional": true
       }
     ]
   },

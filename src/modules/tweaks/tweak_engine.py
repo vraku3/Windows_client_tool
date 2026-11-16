@@ -168,6 +168,35 @@ class TweakEngine:
     # Apply
     # ==================================================================
 
+    def _apply_step_guarded(
+        self,
+        tweak_id: str,
+        step: Dict,
+        rp_id: str,
+        on_error: Optional[Callable[[str], None]] = None,
+    ) -> bool:
+        """Apply a single step, recording on success and handling errors."""
+        if self._step_is_moot(step):
+            return True
+        try:
+            record = self._apply_step(step, rp_id)
+            if record:
+                self._backup.record_steps(tweak_id, [record], rp_id)
+            return True
+        except Exception as e:
+            if step.get("optional"):
+                logger.info("Optional step skipped (%s): %s", step.get("type"), e)
+                return True
+            key_info = (step.get("key") or step.get("name")
+                        or step.get("cmd") or step.get("command")
+                        or step.get("task_name") or step.get("package")
+                        or "")
+            msg = f"Step failed ({step.get('type')} {key_info}): {e}"
+            logger.error(msg)
+            if on_error:
+                on_error(msg)
+            return False
+
     def apply_tweak(
         self,
         tweak: Dict,
@@ -191,30 +220,10 @@ class TweakEngine:
                 on_error(msg)
             return False
 
+        tweak_id = tweak.get("id", "")
         success = True
         for step in tweak.get("steps", []):
-            if self._step_is_moot(step):
-                continue
-            try:
-                record = self._apply_step(step, rp_id)
-                if record:
-                    # Recorded as soon as it is made, not after the whole
-                    # tweak: a crash, power loss or failed later step must
-                    # not leave a change on the machine with no way back.
-                    self._backup.record_steps(tweak["id"], [record], rp_id)
-            except Exception as e:
-                # A `script` step keeps its command under "command", not
-                # "cmd" -- looking only for the latter produced "Step failed
-                # (script ): ..." for every refused Set-MpPreference, which
-                # names nothing in a batch that runs eighteen of them.
-                key_info = (step.get("key") or step.get("name")
-                            or step.get("cmd") or step.get("command")
-                            or step.get("task_name") or step.get("package")
-                            or "")
-                msg = f"Step failed ({step.get('type')} {key_info}): {e}"
-                logger.error(msg)
-                if on_error:
-                    on_error(msg)
+            if not self._apply_step_guarded(tweak_id, step, rp_id, on_error):
                 success = False
         return success
 
@@ -520,6 +529,9 @@ class TweakEngine:
         # shared cached list is -AllUsers when elevated).
         still = self._appx_count_for_current_user(pkg)
         if still != 0:
+            if step.get("optional"):
+                logger.info("Optional appx removal for '%s': package still present (%s)", pkg, still)
+                return StepRecord("appx_optional", pkg, pkg, None)
             detail = ((proc.stdout or "") + (proc.stderr or "")).strip()[-300:]
             raise RuntimeError(
                 (f"'{pkg}' is still installed" if still else
@@ -841,6 +853,11 @@ class TweakEngine:
 
     def _detect_appx(self, step: Dict) -> StepStatus:
         pkg = step["package"]
+        if step.get("optional"):
+            installed = self._os.appx_installed(pkg)
+            if not installed:
+                return StepStatus(APPLIED, f"'{pkg}' is not installed", pkg)
+            return StepStatus(NOT_APPLICABLE, f"'{pkg}' package is optional", pkg)
         installed = self._os.appx_installed(pkg)
         if installed is None:
             return StepStatus(UNKNOWN, f"could not list installed apps to check '{pkg}'", pkg)

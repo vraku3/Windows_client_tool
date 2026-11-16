@@ -149,7 +149,7 @@ class _StoreUpdatesTab(QWidget):
             self._table.setItem(row, 3, centered_item(u.available_version))
         self._status_lbl.setText(
             f"{len(self._updates)} Store app(s) with updates."
-            if self._updates else "No Store app updates pending (via winget)."
+            if self._updates else "All Store apps are up to date (scanned via winget)."
         )
         self._sync_buttons()
 

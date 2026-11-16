@@ -15,7 +15,7 @@ from PyQt6 import sip
 from core.table_ui import set_role
 from ui.glance import GlanceStrip, GlanceTile
 from ui.empty_state import EmptyState
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from modules.dashboard.overview_health import pending_reboot_reasons
 import logging
 logger = logging.getLogger(__name__)
@@ -296,6 +296,7 @@ class WindowsFeaturesModule(BaseModule):
         tree = QTreeWidget()
         tree.setColumnCount(2)
         tree.setHeaderLabels(["Feature Name", "State"])
+        tree.setAlternatingRowColors(True)
         tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         splitter.addWidget(tree)
@@ -337,9 +338,17 @@ class WindowsFeaturesModule(BaseModule):
             tip = "<qt>" + escape(f"{name}\n{description}\nWindows-reported state: {state}").replace("\n", "<br>") + "</qt>"
             for col in range(2):
                 item.setToolTip(col, tip)
-            color = QColor(semantic("success") if "Enable" in state else semantic("info"))
-            for col in range(2):
-                item.setForeground(col, color)
+            fn_low = name.lower()
+            is_insecure = any(fn_low.startswith(p) or p in fn_low for p in INSECURE_LEGACY_FEATURES)
+            if "Enable" in state:
+                state_color = QColor(semantic("error" if is_insecure else "success"))
+                if is_insecure:
+                    item.setForeground(0, QColor(semantic("warning")))
+            elif "Pending" in state or "Restart" in state:
+                state_color = QColor(semantic("warning"))
+            else:
+                state_color = QColor(chrome("text_muted"))
+            item.setForeground(1, state_color)
 
         def populate(features: List[Tuple[str, str]], filter_text: str = "") -> None:
             ft = filter_text.lower()

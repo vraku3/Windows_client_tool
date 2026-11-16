@@ -10,9 +10,11 @@ from PyQt6.QtWidgets import (
     QTableWidget, QListWidgetItem, QFrame,
 )
 from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QColor
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.semantic_colors import chrome, semantic
 from core.table_ui import centered_item, fit_table, set_role
 from ui.table_style import apply_table_style
 from core.widget_life import widget_is_valid as _widget_valid
@@ -185,8 +187,10 @@ def _safe_set(fn, value, status_lbl):
         else:
             fn(value)
         status_lbl.setText("Done.")
+        set_role(status_lbl, "statusSuccess")
     except Exception as e:
         status_lbl.setText(f"Error: {e}")
+        set_role(status_lbl, "statusError")
 
 
 # ── Module ────────────────────────────────────────────────────────────────────
@@ -315,10 +319,12 @@ class PowerBootModule(BaseModule):
                     set_plan_btn.setEnabled(True)
                 if _widget_valid(status_lbl):
                     status_lbl.setText("Loaded.")
+                    set_role(status_lbl, "statusSuccess")
 
             def on_error(err):
                 if _widget_valid(status_lbl):
                     status_lbl.setText(f"Error: {err}")
+                    set_role(status_lbl, "statusError")
                 if _widget_valid(set_plan_btn):
                     set_plan_btn.setEnabled(True)
 
@@ -387,6 +393,7 @@ class PowerBootModule(BaseModule):
 
         boot_table = QTableWidget(0, 2)
         boot_table.setHorizontalHeaderLabels(["Property", "Value"])
+        apply_table_style(boot_table)
         fit_table(boot_table, stretch=[1], content=[0])
         boot_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         bt_layout.addWidget(boot_table, 1)
@@ -394,6 +401,7 @@ class PowerBootModule(BaseModule):
         def load_boot():
             refresh_boot_btn.setEnabled(False)
             boot_status.setText("Loading...")
+            set_role(boot_status, "muted")
 
             self._worker = Worker(lambda _w: get_boot_entries())
 
@@ -404,6 +412,7 @@ class PowerBootModule(BaseModule):
                     refresh_boot_btn.setEnabled(True)
                 if _widget_valid(boot_status):
                     boot_status.setText(f"{len(entries)} entries.")
+                    set_role(boot_status, "statusSuccess")
                 rows = []
                 for entry in entries:
                     for k, v in entry.items():
@@ -411,14 +420,33 @@ class PowerBootModule(BaseModule):
                     rows.append(("---", "---"))
                 boot_table.setRowCount(len(rows))
                 for r, (k, v) in enumerate(rows):
-                    boot_table.setItem(r, 0, centered_item(k))
-                    boot_table.setItem(r, 1, centered_item(v))
+                    if k == "_section":
+                        item_k = centered_item(v)
+                        item_k.setForeground(QColor(semantic("info")))
+                        item_v = centered_item("")
+                    elif k == "---":
+                        item_k = centered_item("—" * 12)
+                        item_k.setForeground(QColor(chrome("text_muted")))
+                        item_v = centered_item("—" * 12)
+                        item_v.setForeground(QColor(chrome("text_muted")))
+                    else:
+                        item_k = centered_item(k)
+                        item_v = centered_item(v)
+                        if k in ("safeboot", "testsigning") and v.lower() not in ("no", "0", ""):
+                            item_v.setForeground(QColor(semantic("warning")))
+                        elif k == "timeout":
+                            item_v.setForeground(QColor(semantic("info")))
+                        elif k in ("default", "displayorder"):
+                            item_v.setForeground(QColor(chrome("text_muted")))
+                    boot_table.setItem(r, 0, item_k)
+                    boot_table.setItem(r, 1, item_v)
 
             def on_error(err):
                 if _widget_valid(refresh_boot_btn):
                     refresh_boot_btn.setEnabled(True)
                 if _widget_valid(boot_status):
                     boot_status.setText(f"Error: {err}")
+                    set_role(boot_status, "statusError")
 
             self._worker.signals.result.connect(on_result)
             self._worker.signals.error.connect(on_error)

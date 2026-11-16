@@ -69,6 +69,30 @@ def _fill_drives(table: QTableWidget, disks: List[dr.PhysicalDiskInfo]) -> None:
             centered_item(verdict),
         ]
         paint_severity(cells[8], sev)
+
+        # Style Health
+        if d.health and d.health.lower() in ("healthy", "ok"):
+            paint_severity(cells[4], "ok")
+        elif d.health and d.health.lower() in ("warning", "caution"):
+            paint_severity(cells[4], "warning")
+        elif d.health and any(x in d.health.lower() for x in ("error", "bad", "failing", "unhealthy")):
+            paint_severity(cells[4], "error")
+
+        # Style Temp
+        if temp is not None:
+            warn, crit = dr.temperature_limits(d)
+            if temp >= crit:
+                paint_severity(cells[5], "error")
+            elif temp >= warn:
+                paint_severity(cells[5], "warning")
+
+        # Style Wear
+        if d.wear_percent is not None:
+            if d.wear_percent >= 90:
+                paint_severity(cells[6], "error")
+            elif d.wear_percent >= 75:
+                paint_severity(cells[6], "warning")
+
         for c, item in enumerate(cells):
             table.setItem(r, c, item)
             describe_cell(table, c, table.item(r, c))
@@ -97,6 +121,18 @@ def _fill_volumes(table: QTableWidget, report: dr.DiskReport) -> None:
             paint_severity(cells[5], "error")
         elif pct is not None and pct < 10:
             paint_severity(cells[5], "warning")
+
+        # Style BitLocker
+        if v.bitlocker and v.bitlocker.lower() in ("on", "encrypted"):
+            paint_severity(cells[6], "ok")
+        elif v.bitlocker and v.bitlocker.lower() in ("off", "unencrypted"):
+            paint_severity(cells[6], "warning")
+
+        # Style Trim
+        if trim is True:
+            paint_severity(cells[7], "ok")
+        elif trim is False:
+            paint_severity(cells[7], "warning")
 
         if v.operational and v.operational != "OK":
             sev = "error" if any(x in v.operational for x in ("Error", "Chkdsk", "Failed")) else "warning"
@@ -180,11 +216,12 @@ class _ResultsView(QWidget):
         findings = dr.all_findings(self.report)
         self.finding_labels: List[QLabel] = []
         if not findings:
-            ok = QLabel("Nothing needs attention. Every drive and volume read is within normal limits.")
+            ok = QLabel("✅ Nothing needs attention. Every drive and volume read is within normal limits.")
             set_role(ok, "statusSuccess")
             box.addWidget(ok)
         for f in findings:
-            lbl = QLabel(f"<b>{f.subject}</b>: {f.title}. {f.detail}")
+            prefix = "⛔ " if f.severity == "error" else ("⚠️ " if f.severity == "warning" else "ℹ️ ")
+            lbl = QLabel(f"{prefix}<b>{f.subject}</b>: {f.title}. {f.detail}")
             lbl.setWordWrap(True)
             lbl.setTextFormat(Qt.TextFormat.RichText)
             set_role(lbl, _ROLE_FOR.get(f.severity, "statusInfo"))

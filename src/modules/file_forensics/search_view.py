@@ -1,13 +1,16 @@
 """Compact search chrome and detail layout, using Cleanup's shared path and QSS conventions."""
 import os
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QGridLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QSplitter, QStackedWidget, QTableView, QTextBrowser,
     QVBoxLayout, QWidget, QListWidget, QAbstractItemView, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox)
 from core.table_ui import set_role
+from core.semantic_colors import semantic
 from ui.empty_state import EmptyState
 from ui.elided_path import ElidedPathLabel
+from ui.table_style import apply_table_style
 from modules.cleanup.cleanup_scanner.known_folders import known_folder
 from .limit_controls import LimitControls
 from .results_model import ResultsModel, ResultsFilter
@@ -147,12 +150,17 @@ class SearchView(LimitControls):
         layout.addWidget(label)
         table = QTableWidget(len(items), 2)
         table.setHorizontalHeaderLabels(['Path', 'Reason'])
+        apply_table_style(table)
         table.setToolTip('Unreadable search items and the error reported by Windows; limited to the first 200.')
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         for index, (path, reason) in enumerate(items):
-            table.setItem(index, 0, QTableWidgetItem(path))
-            table.setItem(index, 1, QTableWidgetItem(reason))
+            p_item = QTableWidgetItem(path)
+            r_item = QTableWidgetItem(reason)
+            r_item.setForeground(QColor(semantic('warning')))
+            table.setItem(index, 0, p_item)
+            table.setItem(index, 1, r_item)
         layout.addWidget(table)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.button(QDialogButtonBox.StandardButton.Close).setToolTip('Close the skipped-items list and keep the current result filter.')

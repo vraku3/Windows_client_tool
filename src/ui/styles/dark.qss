@@ -401,6 +401,25 @@ QPushButton#accentButton:disabled {
     border: 1px solid #3c3c3c;
 }
 
+QPushButton#dangerButton {
+    background-color: #8b1e1e;
+    color: #ffffff;
+    font-weight: bold;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+}
+
+QPushButton#dangerButton:hover {
+    background-color: #a82424;
+}
+
+QPushButton#dangerButton:disabled {
+    background-color: #3a2020;
+    color: #777777;
+    border: 1px solid #3c3c3c;
+}
+
 QLabel#infoNote {
     background-color: #252526;
     color: #858585;

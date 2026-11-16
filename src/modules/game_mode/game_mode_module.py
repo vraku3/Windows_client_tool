@@ -409,11 +409,7 @@ class GameModeModule(BaseModule):
         self._off_btn.clicked.connect(lambda: self._turn_off(force=False))
         self._force_off_btn = QPushButton("Force OFF", parent)
         self._force_off_btn.setMinimumSize(120, 40)
-        self._force_off_btn.setStyleSheet(
-            "QPushButton { background-color: #8b1e1e; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 6px 12px; } "
-            "QPushButton:hover { background-color: #a82424; } "
-            "QPushButton:disabled { background-color: #3a2020; color: #777777; }"
-        )
+        set_role(self._force_off_btn, "dangerButton")
         self._force_off_btn.setToolTip("Force Game Mode OFF immediately, cancelling any active tasks and clearing the journal.")
         self._force_off_btn.clicked.connect(lambda: self._turn_off(force=True))
         self._force_off_btn.setVisible(False)

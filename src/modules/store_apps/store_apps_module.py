@@ -449,7 +449,6 @@ class StoreAppsModule(BaseModule):
         bottom = QHBoxLayout()
         self._uninstall_btn = QPushButton("🗑️ Uninstall Selected")
         self._uninstall_btn.setObjectName("_uninstall_btn")
-        self._uninstall_btn.setStyleSheet(f"color: {semantic('error')}; font-weight: bold;")
         self._uninstall_btn.setToolTip(
             "Uninstall the selected app(s)  (Del)\n\n"
             "Removes for every user on this machine.")

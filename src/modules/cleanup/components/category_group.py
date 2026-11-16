@@ -694,8 +694,7 @@ class CategoryGroup(QWidget):
                                   "path or review it on its own tab.")
         self._more_btn.setAccessibleName(f"Actions: {self._group_name}")
         self._more_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        # The "…" already says "menu"; Qt's own arrow beside it only adds noise.
-        self._more_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0px; }")
+        self._more_btn.setObjectName("categoryMoreBtn")
         self._menu = QMenu(self._more_btn)
         self._menu.aboutToShow.connect(self._fill_menu)
         self._more_btn.setMenu(self._menu)

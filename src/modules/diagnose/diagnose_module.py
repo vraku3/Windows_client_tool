@@ -112,25 +112,13 @@ class DiagnoseModule(CompositeModule):
         # ── Results tree (unified search output) ───────────────────────
         self._results_tree = QTreeWidget()
         self._results_tree.setHeaderLabels(["Time", "Source", "Summary"])
+        hdr = self._results_tree.header()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
         self._results_tree.setColumnWidth(0, 160)
-        self._results_tree.setColumnWidth(1, 120)
+        self._results_tree.setColumnWidth(1, 140)
         self._results_tree.setAlternatingRowColors(True)
         self._results_tree.setRootIsDecorated(True)
-        self._results_tree.setStyleSheet("""
-            QTreeWidget {
-                background: #2d2d2d;
-                border: 1px solid #3c3c3c;
-                border-radius: 4px;
-            }
-            QTreeWidget::item { padding: 4px 0; }
-            QTreeWidget::item:selected { background: #3c3c3c; }
-            QHeaderView::section {
-                background: #3c3c3c;
-                color: #b0b0b0;
-                padding: 4px;
-                border: none;
-            }
-        """)
         self._results_tree.setVisible(False)
         self._results_tree.itemDoubleClicked.connect(self._on_tree_result_activated)
         root.addWidget(self._results_tree, 1)

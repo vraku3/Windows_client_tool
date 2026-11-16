@@ -5,6 +5,7 @@ from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
     QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout,
 )
+from core.table_ui import set_role
 
 
 class CommandPalette(QDialog):
@@ -14,31 +15,9 @@ class CommandPalette(QDialog):
         super().__init__(parent)
         self._modules = modules
         self._on_select = on_select
+        self.setObjectName("commandPalette")
         self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setFixedWidth(480)
-        self.setStyleSheet("""
-            QDialog {
-                background: #252526;
-                border: 1px solid #555;
-                border-radius: 6px;
-            }
-            QLineEdit {
-                background: #3c3c3c;
-                border: none;
-                border-bottom: 1px solid #555;
-                padding: 10px 14px;
-                font-size: 14px;
-            }
-            QListWidget {
-                background: #252526;
-                border: none;
-                font-size: 13px;
-                outline: none;
-            }
-            QListWidget::item { padding: 7px 14px; }
-            QListWidget::item:selected { background: #094771; color: #fff; }
-            QListWidget::item:hover { background: #2a2d2e; }
-        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -53,7 +32,7 @@ class CommandPalette(QDialog):
         layout.addWidget(self._list)
 
         hint = QLabel("  \u2191\u2193 navigate   \u23ce select   Esc dismiss")
-        hint.setStyleSheet("color: #555; font-size: 11px; padding: 4px 8px 6px 8px;")
+        set_role(hint, "muted")
         layout.addWidget(hint)
 
         self._populate("")

@@ -1283,11 +1283,7 @@ class _ScanTab(QWidget):
 
     def _build_feedback(self, layout):
         self._error = ErrorBanner()
-        # ErrorBanner's legacy inline colours are frozen; this host uses QSS
-        # roles so its error state follows live dark/light theme switches.
-        self._error.setStyleSheet("")
         for child in self._error.findChildren(QWidget):
-            child.setStyleSheet("")
             if isinstance(child, QLabel):
                 child.setTextFormat(Qt.TextFormat.PlainText)
                 child.setWordWrap(True)

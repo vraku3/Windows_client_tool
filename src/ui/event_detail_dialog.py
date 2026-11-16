@@ -5,15 +5,8 @@ from PyQt6.QtWidgets import (
     QPushButton, QTextEdit, QVBoxLayout, QFrame,
 )
 
+from core.semantic_colors import chrome, semantic
 from core.types import LogEntry
-
-_LEVEL_COLORS = {
-    "Error": ("#f44336", "#ffffff"),
-    "Warning": ("#ff9800", "#000000"),
-    "Critical": ("#d32f2f", "#ffffff"),
-    "Info": ("#2196f3", "#ffffff"),
-    "Debug": ("#757575", "#ffffff"),
-}
 
 
 class EventDetailDialog(QDialog):
@@ -43,17 +36,27 @@ class EventDetailDialog(QDialog):
 
         row1 = QHBoxLayout()
         ts_str = entry.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-        lbl_time = QLabel(f"<span style='color:#b0b0b0;font-size:11px;'>TIME</span><br>"
+        muted = chrome("text_muted")
+        lbl_time = QLabel(f"<span style='color:{muted};font-size:11px;'>TIME</span><br>"
                           f"<span style='font-size:13px;'>{ts_str}</span>")
         row1.addWidget(lbl_time)
 
-        lbl_source = QLabel(f"<span style='color:#b0b0b0;font-size:11px;'>SOURCE</span><br>"
+        lbl_source = QLabel(f"<span style='color:{muted};font-size:11px;'>SOURCE</span><br>"
                             f"<span style='font-size:13px;'>{entry.source}</span>")
         row1.addWidget(lbl_source)
 
-        bg, fg = _LEVEL_COLORS.get(entry.level, ("#555555", "#ffffff"))
+        lvl = (entry.level or "Info").lower()
+        if lvl in ("error", "critical"):
+            bg = semantic("error")
+        elif lvl == "warning":
+            bg = semantic("warning")
+        elif lvl == "info":
+            bg = semantic("info")
+        else:
+            bg = chrome("text_muted")
+        fg = chrome("overlay_text")
         lbl_level = QLabel(
-            f"<span style='color:#b0b0b0;font-size:11px;'>LEVEL</span><br>"
+            f"<span style='color:{muted};font-size:11px;'>LEVEL</span><br>"
             f"<span style='background:{bg};color:{fg};"
             f"padding:2px 10px;border-radius:3px;font-weight:bold;font-size:12px;'>&nbsp;{entry.level}&nbsp;</span>"
         )

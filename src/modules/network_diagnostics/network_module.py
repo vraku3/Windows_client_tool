@@ -1160,7 +1160,7 @@ class NetworkToolsModule(BaseModule):
 
         # Title
         title = QLabel("Network Diagnostics")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; padding: 8px;")
+        set_role(title, "heading")
         outer_layout.addWidget(title)
 
         # Scroll area

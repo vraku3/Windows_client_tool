@@ -52,8 +52,9 @@ EXEMPT = {"core/semantic_colors.py", "core/phosphor.py"}   # both ARE palette so
 #: 164 after startup_module status dot and quick_fix reboot banner converted to semantic roles (3 literals);
 #: 163 after updates_module reboot banner converted to statusWarning role (1 literal);
 #: 155 after tweaks_module and debloat_module converted descriptions, presets, and name labels to semantic roles (8 literals);
-#: 143 after security_module converted headings, banners, scan status, and error labels to semantic roles (12 literals).
-BUDGET = 143
+#: 143 after security_module converted headings, banners, scan status, and error labels to semantic roles (12 literals);
+#: 112 after error_banner, command_palette, diagnose_module, tweaks_module, and event_detail_dialog converted to theme roles and semantic palette (31 literals).
+BUDGET = 112
 
 
 def frozen_colour_literals():

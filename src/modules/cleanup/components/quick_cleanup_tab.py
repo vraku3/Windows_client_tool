@@ -1891,8 +1891,6 @@ class QuickCleanupTab(QWidget):
         # Row C — recommendations
         self._reco_card = QFrame()
         self._reco_card.setObjectName("chartCard")
-        self._reco_card.setStyleSheet("QStackedWidget, QStackedWidget > QWidget "
-                                      "{ background: transparent; }")
         reco_lay = QVBoxLayout(self._reco_card)
         reco_lay.setContentsMargins(14, 12, 14, 12)
         self._reco = None
@@ -1911,12 +1909,6 @@ class QuickCleanupTab(QWidget):
         # Row D — locations
         loc = QFrame()
         loc.setObjectName("chartCard")
-        # The rows are painted on the card itself; without this every plain
-        # QWidget inside it would fill itself with the pane colour.
-        loc.setStyleSheet(
-            "QWidget#categoryGroup, QWidget#categoryRow, QWidget#categoryPathsBox, "
-            "QWidget#categoryRows, QWidget#categoryColumns, QTreeWidget#categoryPaths "
-            "{ background: transparent; }")
         loc_lay = QVBoxLayout(loc)
         loc_lay.setContentsMargins(6, 12, 6, 8)
         loc_lay.setSpacing(0)

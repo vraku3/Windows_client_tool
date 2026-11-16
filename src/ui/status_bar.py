@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QStatusBar, QLabel, QWidget
-from core.semantic_colors import semantic
+from core.table_ui import set_role
 
 
 class AppStatusBar(QStatusBar):
@@ -9,7 +9,7 @@ class AppStatusBar(QStatusBar):
         super().__init__(parent)
         self._module_label = QLabel("")
         self._refresh_label = QLabel("")
-        self._refresh_label.setStyleSheet("color: #888;")
+        set_role(self._refresh_label, "muted")
         self._admin_label = QLabel("")
         self.addPermanentWidget(self._module_label)
         self.addPermanentWidget(self._refresh_label)
@@ -25,8 +25,7 @@ class AppStatusBar(QStatusBar):
     def set_admin_status(self, is_admin: bool) -> None:
         if is_admin:
             self._admin_label.setText("Admin")
-            self._admin_label.setStyleSheet(
-                f"color: {semantic('success')}; font-weight: bold;")
+            set_role(self._admin_label, "statusSuccess")
         else:
             self._admin_label.setText("User")
-            self._admin_label.setStyleSheet(f"color: {semantic('warning')};")
+            set_role(self._admin_label, "statusWarning")

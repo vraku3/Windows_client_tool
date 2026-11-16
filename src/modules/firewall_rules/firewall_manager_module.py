@@ -980,7 +980,7 @@ class FirewallManagerModule(BaseModule):
 
         # ---- Status bar ----
         self._status_lbl = QLabel("Click Refresh to load firewall rules.")
-        self._status_lbl.setStyleSheet("color: #888;")
+        set_role(self._status_lbl, "muted")
         layout.addWidget(self._status_lbl)
 
         # ---- Text size ----

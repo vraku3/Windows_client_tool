@@ -150,7 +150,7 @@ QPushButton#accentButton:disabled {
     border: 1px solid #cccccc;
 }
 
-QPushButton#dangerButton {
+QPushButton#dangerButton, QPushButton#_uninstall_btn {
     background-color: #b3261e;
     color: #ffffff;
     font-weight: bold;
@@ -159,11 +159,11 @@ QPushButton#dangerButton {
     padding: 6px 12px;
 }
 
-QPushButton#dangerButton:hover {
+QPushButton#dangerButton:hover, QPushButton#_uninstall_btn:hover {
     background-color: #8c1d18;
 }
 
-QPushButton#dangerButton:disabled {
+QPushButton#dangerButton:disabled, QPushButton#_uninstall_btn:disabled {
     background-color: #d6d6d6;
     color: #8c8c8c;
     border: 1px solid #cccccc;
@@ -707,3 +707,69 @@ QTableView[scanTable="true"] { alternate-background-color: #ededed; }
 
 QLabel#introSummary { background: transparent; border: none; padding: 0; }
 QWidget#tweakRow:hover { background-color: #e5e5e5; }
+
+/* ---- Error banner ---- */
+QWidget#errorBanner {
+    background-color: #fde7e9;
+    border: 1px solid #f1aeb5;
+    border-radius: 4px;
+}
+QLabel#errorBannerLabel {
+    font-size: 12px;
+}
+QPushButton#errorBannerClose {
+    background: transparent;
+    color: #737373;
+    border: none;
+    font-size: 16px;
+    padding: 0 4px;
+}
+QPushButton#errorBannerClose:hover {
+    color: #1a1a1a;
+}
+
+/* ---- Command palette ---- */
+QDialog#commandPalette {
+    background-color: #f3f3f3;
+    border: 1px solid #cccccc;
+    border-radius: 6px;
+}
+QDialog#commandPalette QLineEdit {
+    background-color: #ffffff;
+    border: none;
+    border-bottom: 1px solid #cccccc;
+    padding: 10px 14px;
+    font-size: 14px;
+}
+QDialog#commandPalette QListWidget {
+    background-color: #f3f3f3;
+    border: none;
+    font-size: 13px;
+    outline: none;
+}
+QDialog#commandPalette QListWidget::item {
+    padding: 7px 14px;
+}
+QDialog#commandPalette QListWidget::item:selected {
+    background-color: #cce4f7;
+    color: #000000;
+}
+QDialog#commandPalette QListWidget::item:hover {
+    background-color: #e5e5e5;
+}
+
+/* ---- Cleanup components ---- */
+QToolButton#categoryMoreBtn::menu-indicator {
+    image: none;
+    width: 0px;
+}
+QFrame#chartCard QStackedWidget,
+QFrame#chartCard QStackedWidget > QWidget,
+QFrame#chartCard QWidget#categoryGroup,
+QFrame#chartCard QWidget#categoryRow,
+QFrame#chartCard QWidget#categoryPathsBox,
+QFrame#chartCard QWidget#categoryRows,
+QFrame#chartCard QWidget#categoryColumns,
+QFrame#chartCard QTreeWidget#categoryPaths {
+    background: transparent;
+}

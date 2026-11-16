@@ -25,7 +25,7 @@ from modules.tweaks.app_catalog import AppCatalog, PROTECTED_APPS_DEFAULT
 from modules.tweaks.preset_manager import PresetManager
 from modules.tweaks.tweak_categories import CATEGORY_FILES
 from modules.gpresult.tweak_conflicts import policy_managed_tweak_keys
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from core.table_ui import set_role
 from ui.error_banner import ErrorBanner
 from ui.module_intro import module_intro
@@ -178,8 +178,9 @@ class _DetailsPanel(QFrame):
         safety_reason = self._safety_reasons.get(tweak_id, "")
         text, colour = _STATUS_DISPLAY.get(status, (status, None))
         label = text.split(" ", 1)[-1]
-        shade = semantic(colour) if colour else "#aaaaaa"
-        detail = f"<br><span style='color:#999999'>{_escape(reason)}</span>" if reason else ""
+        muted_col = chrome("text_muted")
+        shade = semantic(colour) if colour else muted_col
+        detail = f"<br><span style='color:{muted_col}'>{_escape(reason)}</span>" if reason else ""
         if safety_reason:
             detail += "<br><b>Blocked for safety</b><br>" + _escape(safety_reason)
         self._status.setToolTip(STATUS_HELP.get(status, STATUS_HELP[UNKNOWN]) + ("\n" + reason if reason else ""))
@@ -222,11 +223,12 @@ class _DetailsPanel(QFrame):
         managed_keys = self._policy_managed.get(tweak.get("id", ""))
         if managed_keys:
             info_color = semantic("info")
+            muted_col = chrome("text_muted")
             key_list = "<br>".join(_escape(k) for k in managed_keys)
             self._policy_warning.setText(
                 f"<span style='color:{info_color}'>&#9888; Writes into a Group "
                 f"Policy managed branch:</span><br>{key_list}<br>"
-                "<span style='color:#999999'>If this machine later gets a local "
+                f"<span style='color:{muted_col}'>If this machine later gets a local "
                 "or domain GPO for this path, it can take this tweak back "
                 "without warning — see the Group Policy pane's Policy Audit "
                 "tab for whether one exists today.</span>")

@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
-from core.semantic_colors import semantic
+from core.semantic_colors import chrome, semantic
 from core.table_ui import center_header, centered_item, set_role
 from modules.boot_analyzer import boot_history as bh
 from ui.glance import GlanceStrip, GlanceTile
@@ -142,6 +142,8 @@ class BootHistoryPanel(QWidget):
                 cells[2].setForeground(QBrush(QColor(semantic("warning"))))
             if b.degraded:
                 cells[6].setForeground(QBrush(QColor(semantic("error"))))
+            elif b.boot_type:
+                cells[1].setForeground(QBrush(QColor(chrome("text_muted"))))
             for column, cell in enumerate(cells):
                 table.setItem(row, column, cell)
         table.setSortingEnabled(True)
@@ -173,8 +175,12 @@ class BootHistoryPanel(QWidget):
                 _Num(duration_text, duration_value),
                 centered_item(shutdown_text),
             ]
-            if r.prior_shutdown_clean is False:
+            if r.prior_shutdown_clean is True:
+                cells[2].setForeground(QBrush(QColor(semantic("success"))))
+            elif r.prior_shutdown_clean is False:
                 cells[2].setForeground(QBrush(QColor(semantic("warning"))))
+            else:
+                cells[2].setForeground(QBrush(QColor(chrome("text_muted"))))
             for column, cell in enumerate(cells):
                 table.setItem(row, column, cell)
         table.setSortingEnabled(True)
@@ -189,6 +195,10 @@ class BootHistoryPanel(QWidget):
                      _Num(str(s.count), s.count), _Num(bh.fmt_ms(s.worst_ms), s.worst_ms),
                      _Num(bh.fmt_ms(s.avg_ms), s.avg_ms), _Num(f"{s.last_seen:%Y-%m-%d}", s.last_seen.timestamp()),
                      centered_item(s.path)]
+            if s.worst_ms >= 5000:
+                cells[4].setForeground(QBrush(QColor(semantic("error"))))
+            elif s.worst_ms >= 2000:
+                cells[4].setForeground(QBrush(QColor(semantic("warning"))))
             for column, cell in enumerate(cells):
                 table.setItem(row, column, cell)
         table.setSortingEnabled(True)

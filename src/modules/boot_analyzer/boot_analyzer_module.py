@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.table_ui import set_role
 from core.widget_life import widget_is_valid as _widget_valid
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
@@ -140,7 +141,7 @@ class BootAnalyzerModule(BaseModule):
 
         # Placeholder while loading
         loading = QLabel("Analyzing boot configuration...")
-        loading.setStyleSheet("color: #888; font-size: 13px; padding: 8px;")
+        set_role(loading, "muted")
         self._info_cards.addWidget(loading)
 
         def do_analyze(worker):
@@ -302,7 +303,7 @@ class BootAnalyzerModule(BaseModule):
             card_layout.setSpacing(2)
 
             t = QLabel(title)
-            t.setStyleSheet("font-size: 11px; color: #888;")
+            set_role(t, "muted")
             card_layout.addWidget(t, 0, 0)
 
             v = QLabel(str(value))
@@ -310,7 +311,7 @@ class BootAnalyzerModule(BaseModule):
             card_layout.addWidget(v, 1, 0)
 
             d = QLabel(detail)
-            d.setStyleSheet("font-size: 11px; color: #aaa;")
+            set_role(d, "muted")
             card_layout.addWidget(d, 2, 0)
 
             self._info_cards.addWidget(card)

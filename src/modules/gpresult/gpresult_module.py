@@ -42,6 +42,7 @@ from core.base_module import BaseModule
 from ui.glance import GlanceStrip, GlanceTile
 from core.module_groups import ModuleGroup
 from core.semantic_colors import semantic
+from core.table_ui import set_role
 from core.worker import Worker
 from ui.error_banner import ErrorBanner
 
@@ -205,7 +206,7 @@ class GPResultModule(BaseModule):
         layout.addWidget(self._banner)
 
         self._info_lbl = QLabel("")
-        self._info_lbl.setStyleSheet("color: gray;")
+        set_role(self._info_lbl, "muted")
         layout.addWidget(self._info_lbl)
 
         self._tree = QTreeWidget()
@@ -357,7 +358,10 @@ class GPResultModule(BaseModule):
 
     @staticmethod
     def _paint(item: QTreeWidgetItem, meaning: str) -> QTreeWidgetItem:
-        item.setForeground(0, QBrush(QColor(semantic(meaning))))
+        brush = QBrush(QColor(semantic(meaning)))
+        item.setForeground(0, brush)
+        if item.text(1):
+            item.setForeground(1, brush)
         return item
 
     def _rebuild_tree(self, result: RsopResult,

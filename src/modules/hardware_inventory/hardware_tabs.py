@@ -115,7 +115,7 @@ def fill_dict(table: QTableWidget, rows, columns) -> None:
                     else:
                         paint_severity(item, "ok")
                 except ValueError:
-                    pass
+                    logger.debug("Non-numeric partition use percentage: %r", val)
             table.setItem(r, c, item)
             describe_cell(table, c, table.item(r, c))
 

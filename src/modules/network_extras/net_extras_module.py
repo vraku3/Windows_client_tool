@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
 from ui.help.network_ui import control_help, explain_tabs
 from core.base_module import BaseModule
 from core.module_groups import ModuleGroup
+from core.table_ui import set_role
 from core.worker import Worker, retire
 from ui.help.network_overview import add_glance, feature_card, unreadable
 logger = logging.getLogger(__name__)
@@ -182,6 +183,7 @@ class NetExtrasModule(BaseModule):
             secondary = secondary_edit.text().strip()
             if not adapter or not primary:
                 status.setText("Select adapter and enter DNS.")
+                set_role(status, "statusWarning")
                 return
             try:
                 subprocess.run(["netsh", "interface", "ip", "set", "dns",
@@ -192,8 +194,10 @@ class NetExtrasModule(BaseModule):
                                     adapter, secondary, "index=2"],
                                    capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=30)
                 status.setText(f"DNS set for {adapter}.")
+                set_role(status, "statusSuccess")
             except Exception as e:
                 status.setText(f"Error: {e}")
+                set_role(status, "statusError")
 
         def restore_dhcp():
             adapter = adapter_combo.currentText()
@@ -202,8 +206,10 @@ class NetExtrasModule(BaseModule):
                                 adapter, "dhcp"],
                                capture_output=True, creationflags=CREATE_NO_WINDOW, timeout=30)
                 status.setText(f"DHCP restored for {adapter}.")
+                set_role(status, "statusSuccess")
             except Exception as e:
                 status.setText(f"Error: {e}")
+                set_role(status, "statusError")
 
         apply_btn.clicked.connect(apply_dns)
         dhcp_btn.clicked.connect(restore_dhcp)
@@ -260,8 +266,10 @@ class NetExtrasModule(BaseModule):
                     server_edit.setText(str(rv("ProxyServer", "")))
                     override_edit.setText(str(rv("ProxyOverride", "")))
                 status.setText("Loaded.")
+                set_role(status, "statusInfo")
             except Exception as e:
                 status.setText(f"Error: {e}")
+                set_role(status, "statusError")
 
         def save():
             try:
@@ -271,9 +279,11 @@ class NetExtrasModule(BaseModule):
                     winreg.SetValueEx(k, "ProxyServer", 0, winreg.REG_SZ, server_edit.text())
                     winreg.SetValueEx(k, "ProxyOverride", 0, winreg.REG_SZ, override_edit.text())
                 status.setText("Saved.")
+                set_role(status, "statusSuccess")
                 self.on_activate()
             except Exception as e:
                 status.setText(f"Error: {e}")
+                set_role(status, "statusError")
 
         load_btn.clicked.connect(load)
         save_btn.clicked.connect(save)

@@ -353,7 +353,20 @@ class TasksModule(BaseModule):
         folder = t.path.rpartition("\\")[0] or "\\"
         result = task_view.describe_result(t.last_result_code)
         display_result = task_view.short_result(t.last_result_code)
-        values = [t.name, folder, t.status, t.last_run, display_result,
+        if task_view.failed(t.last_result_code):
+            display_result = f"❌ {display_result}"
+        elif t.last_result_code == 0:
+            display_result = f"✅ {display_result}"
+
+        status_display = t.status
+        if t.status == "Ready":
+            status_display = "🟢 Ready"
+        elif t.status == "Running":
+            status_display = "▶ Running"
+        elif t.status == "Disabled":
+            status_display = "⛔ Disabled"
+
+        values = [t.name, folder, status_display, t.last_run, display_result,
                   "-" if t.next_run == "Never" else t.next_run, d.run_as, ", ".join(d.triggers) or t.triggers, t.author]
         explanation = (task_help(t.path) + f"\nRuns as: {d.run_as or 'not reported'}"
                        + "\nCommands: " + "; ".join(f"{exe} {args}".strip() for exe, args in d.commands)

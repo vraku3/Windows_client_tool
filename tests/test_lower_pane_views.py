@@ -183,3 +183,16 @@ def test_cancelling_drops_a_result_that_arrives_late(qapp):
     time.sleep(0.5)
     qapp.processEvents()
     assert view._table.rowCount() == 0
+
+
+def test_handle_view_filters_rows_by_query(qapp):
+    view = HandleView()
+    view.load_pid(MY_PID)
+    assert _settle(qapp, view, lambda: view._table.rowCount() > 0)
+    total = view._table.rowCount()
+    # Query something improbable
+    view._search.setText("___improbable_query_xyz___")
+    assert view._table.rowCount() == 0
+    # Clear filter
+    view._search.clear()
+    assert view._table.rowCount() == total

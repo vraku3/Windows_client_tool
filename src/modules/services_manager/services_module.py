@@ -561,39 +561,45 @@ class ServicesModule(BaseModule):
         ]
         self._table.setRowCount(len(rows))
         for r, svc in enumerate(rows):
-            values = [
-                svc["Display Name"], svc["Name"], svc["Status"],
-                svc["Start Type"], svc["Impact"],
-            ]
-            svc_name_lower = svc.get("Name", "").lower()
-            tip_parts = [escape(service_help(svc))]
-            if svc_name_lower in self._blocked_services:
-                tip_parts.append("[Warning] Blocked dependency: relies on disabled service(s).")
-            if svc_name_lower in self._missing_bin_services:
-                tip_parts.append("[Error] Missing binary: service executable path not found on disk.")
-            tip_html = "<qt>" + "<br>".join(tip_parts).replace("\n", "<br>") + "</qt>"
-
-            for c, val in enumerate(values):
-                item = centered_item(val)
-                item.setToolTip(tip_html)
-                if c == 2:  # Status
-                    color = status_colour(svc["Status"])
-                    if color:
-                        item.setForeground(QColor(color))
-                elif c == 3:  # Start Type
-                    st = (svc.get("Start Type") or "").lower()
-                    if st == "disabled":
-                        item.setForeground(QColor(semantic("warning")))
-                    elif st.startswith("auto"):
-                        item.setForeground(QColor(semantic("info")))
-                elif c == 4:  # Impact
-                    color = impact_colour(svc["Impact"])
-                    if color:
-                        item.setForeground(QColor(color))
-                item.setData(Qt.ItemDataRole.UserRole, svc["Name"])
-                self._table.setItem(r, c, item)
+            self._populate_service_row(r, svc)
         self._table_stack.setCurrentIndex(0 if rows else 1)
         self._status_label.setText(f"{len(rows)} / {len(self._all_services)} service(s)")
+
+    def _populate_service_row(self, r: int, svc: Dict) -> None:
+        status = svc.get("Status", "")
+        glyph = "● " if status in ("Running", "Stopped", "Paused") else ""
+        status_text = f"{glyph}{status}"
+        st_text = svc.get("Start Type", "")
+        st_display = f"⛔ {st_text}" if (st_text or "").lower() == "disabled" else st_text
+        values = [svc["Display Name"], svc["Name"], status_text, st_display, svc["Impact"]]
+
+        svc_name_lower = svc.get("Name", "").lower()
+        tip_parts = [escape(service_help(svc))]
+        if svc_name_lower in self._blocked_services:
+            tip_parts.append("[Warning] Blocked dependency: relies on disabled service(s).")
+        if svc_name_lower in self._missing_bin_services:
+            tip_parts.append("[Error] Missing binary: service executable path not found on disk.")
+        tip_html = "<qt>" + "<br>".join(tip_parts).replace("\n", "<br>") + "</qt>"
+
+        for c, val in enumerate(values):
+            item = centered_item(val)
+            item.setToolTip(tip_html)
+            if c == 2:
+                color = status_colour(status)
+                if color:
+                    item.setForeground(QColor(color))
+            elif c == 3:
+                st = (st_text or "").lower()
+                if st == "disabled":
+                    item.setForeground(QColor(semantic("warning")))
+                elif st.startswith("auto"):
+                    item.setForeground(QColor(semantic("info")))
+            elif c == 4:
+                color = impact_colour(svc.get("Impact", ""))
+                if color:
+                    item.setForeground(QColor(color))
+            item.setData(Qt.ItemDataRole.UserRole, svc["Name"])
+            self._table.setItem(r, c, item)
 
     def _passes_audit(self, svc: Dict, key: str) -> bool:
         if key in (None, "any"):
@@ -652,10 +658,12 @@ class ServicesModule(BaseModule):
         self._detail_desc_value.setWordWrap(True)
         self._detail_impact_value.setText(svc.get("Impact", "-"))
         imp_color = impact_colour(svc.get("Impact", ""))
+        palette = self._detail_impact_value.palette()
         if imp_color:
-            self._detail_impact_value.setStyleSheet(f"color: {imp_color}; font-weight: bold;")
+            palette.setColor(self._detail_impact_value.foregroundRole(), QColor(imp_color))
         else:
-            self._detail_impact_value.setStyleSheet("")
+            palette.setColor(self._detail_impact_value.foregroundRole(), QColor(semantic("text_primary")))
+        self._detail_impact_value.setPalette(palette)
 
         # Fetch full config via sc.exe qc in a worker
         self._detail_type_value.setText("Loading...")

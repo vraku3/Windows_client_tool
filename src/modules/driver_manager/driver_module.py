@@ -114,10 +114,13 @@ def _update_status_text(driver: DriverInfo, history_by_id: Dict[str, "update_his
 def _style_status_cell(item: QTableWidgetItem, text: str) -> None:
     t_lower = text.lower()
     if "available" in t_lower or "newer" in t_lower:
+        item.setText(f"⬆ {text}" if not text.startswith("⬆") else text)
         item.setForeground(QColor(semantic("warning")))
     elif "up to date" in t_lower or "current" in t_lower:
+        item.setText(f"✓ {text}" if not text.startswith("✓") else text)
         item.setForeground(QColor(semantic("success")))
     elif "failed" in t_lower or "error" in t_lower:
+        item.setText(f"⚠ {text}" if not text.startswith("⚠") else text)
         item.setForeground(QColor(semantic("error")))
 
 
@@ -607,21 +610,23 @@ class DriverModule(BaseModule):
                             f"{group.count} devices use this driver. "
                             "Double-click to list them.")
                 self._table.setItem(r, c, item)
-            if d.error_code != 0 or not d.signed:
-                for c in range(len(COLUMNS)):
-                    cell = self._table.item(r, c)
-                    if cell:
-                        cell.setForeground(QColor(semantic("error")))
-            else:
-                signed_cell = self._table.item(r, 6)
-                if signed_cell and d.signed:
-                    signed_cell.setForeground(QColor(semantic("success")))
-                flags_cell = self._table.item(r, 7)
-                if flags_cell and "Old" in group.flags:
-                    flags_cell.setForeground(QColor(semantic("warning")))
-                status_cell = self._table.item(r, 8)
-                if status_cell:
-                    _style_status_cell(status_cell, status_cell.text())
+            self._style_driver_row(r, d, group)
+
+    def _style_driver_row(self, r: int, d: DriverInfo, group: DriverGroup) -> None:
+        if d.error_code != 0:
+            for c in (0, 7):
+                cell = self._table.item(r, c)
+                if cell:
+                    cell.setForeground(QColor(semantic("error")))
+        signed_cell = self._table.item(r, 6)
+        if signed_cell:
+            signed_cell.setForeground(QColor(semantic("success") if d.signed else semantic("error")))
+        flags_cell = self._table.item(r, 7)
+        if flags_cell and "Old" in group.flags:
+            flags_cell.setForeground(QColor(semantic("warning")))
+        status_cell = self._table.item(r, 8)
+        if status_cell:
+            _style_status_cell(status_cell, status_cell.text())
 
     def _on_group_toggled(self) -> None:
         if self._table is None:

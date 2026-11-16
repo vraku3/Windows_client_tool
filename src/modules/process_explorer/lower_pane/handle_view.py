@@ -18,8 +18,8 @@ import threading
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import (QHeaderView, QLabel, QTableWidget,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+                             QTableWidget, QVBoxLayout, QWidget)
 
 from core.table_ui import centered_item, center_header
 from ui.help.dashboard_ui import apply_help
@@ -40,9 +40,17 @@ class HandleView(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        top_row = QHBoxLayout()
         self._label = QLabel("Select a process to view handles")
         self._label.setWordWrap(True)
-        layout.addWidget(self._label)
+        top_row.addWidget(self._label, 1)
+        self._search = QLineEdit()
+        self._search.setObjectName("handle_search")
+        self._search.setPlaceholderText("Filter handles by name or type...")
+        self._search.setMaximumWidth(260)
+        self._search.textChanged.connect(self._apply_filter)
+        top_row.addWidget(self._search)
+        layout.addLayout(top_row)
         self._table = QTableWidget(0, len(_HEADERS))
         self._table.setHorizontalHeaderLabels(_HEADERS)
         header = self._table.horizontalHeader()
@@ -63,6 +71,9 @@ class HandleView(QWidget):
         # The pid is the guard: a result for a pid we are no longer showing
         # is dropped rather than painted over the new selection.
         self._pid = -1
+        self._rows: list = []
+        self._note = ""
+        self._search.clear()
         self._label.setText("Select a process to view handles")
         self._table.hide()
         self._thread = None
@@ -92,10 +103,26 @@ class HandleView(QWidget):
     def _populate(self, pid: int, rows: list, note) -> None:
         if pid != self._pid:
             return
-        from core.procengine.handles import access_flags
+        self._rows = rows
+        self._note = note
+        self._apply_filter()
+        self._table.show()
 
-        self._table.setRowCount(len(rows))
-        for index, row in enumerate(rows):
+    def _apply_filter(self) -> None:
+        rows = getattr(self, "_rows", None) or []
+        query = self._search.text().strip().lower()
+        if query:
+            filtered = [
+                r for r in rows
+                if query in (r.name or "").lower()
+                or query in (r.type_name or "").lower()
+            ]
+        else:
+            filtered = rows
+
+        from core.procengine.handles import access_flags
+        self._table.setRowCount(len(filtered))
+        for index, row in enumerate(filtered):
             entry = row.entry
             name = row.name if row.name else f"— {row.unavailable or ''}".strip()
             cells = [
@@ -108,14 +135,14 @@ class HandleView(QWidget):
             for column, text in enumerate(cells):
                 item = centered_item(text)
                 if column == 1 and not row.name:
-                    # An unresolved name is greyed, so a glance separates
-                    # "this object is called X" from "we could not ask".
                     item.setForeground(Qt.GlobalColor.gray)
                     item.setToolTip(row.unavailable or "")
                 self._table.setItem(index, column, item)
 
-        self._label.setText(self._summary(rows, note))
-        self._table.show()
+        if query:
+            self._label.setText(f"{len(filtered):,} of {len(rows):,} handles matching filter")
+        else:
+            self._label.setText(self._summary(rows, self._note))
 
     @staticmethod
     def _summary(rows: List, note) -> str:

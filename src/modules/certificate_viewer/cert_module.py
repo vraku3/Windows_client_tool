@@ -10,7 +10,7 @@ from PyQt6 import sip
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QProgressBar, QPushButton, QTableWidget,
+    QLineEdit, QProgressBar, QPushButton, QTableWidget, QTableWidgetItem,
     QTabWidget, QPlainTextEdit, QVBoxLayout, QWidget,
 )
 
@@ -40,6 +40,33 @@ STORES = [
     ("Disallowed",        "Disallowed", "machine"),
     ("Trusted Publishers", "TrustedPublisher", "machine"),
 ]
+
+
+def _style_cert_cell(item: QTableWidgetItem, col: int, c: CertInfo, problem: bool, soon: bool) -> None:
+    if col in (0, 7):  # Subject CN or Status
+        if problem:
+            item.setForeground(QColor(semantic("error")))
+        elif soon:
+            item.setForeground(QColor(semantic("warning")))
+        else:
+            item.setForeground(QColor(semantic("success")))
+    elif col == 3:  # Days until expiry
+        if c.days_until_expiry < 0:
+            item.setForeground(QColor(semantic("error")))
+        elif c.days_until_expiry < 90:
+            item.setForeground(QColor(semantic("warning")))
+        else:
+            item.setForeground(QColor(semantic("success")))
+    elif col == 6 and c.has_private_key:  # Has Private Key
+        if cf.has_exportable_private_key(c):
+            item.setForeground(QColor(semantic("warning")))
+        else:
+            item.setForeground(QColor(semantic("info")))
+    elif col == 8:  # Findings
+        if problem:
+            item.setForeground(QColor(semantic("error")))
+        elif soon:
+            item.setForeground(QColor(semantic("warning")))
 
 
 class _CertTab(QWidget):
@@ -229,41 +256,19 @@ class _CertTab(QWidget):
                 c.expiry.strftime("%Y-%m-%d")
                 if c.expiry != datetime.datetime.min else "N/A"
             )
+            status_text = c.flag if c.flag else "🟢 Valid"
             vals = [
                 c.subject_cn, c.issuer, expiry_str, str(c.days_until_expiry),
                 c.thumbprint, c.key_usage,
                 ("🔑 Yes" if c.has_private_key else "No"),
-                c.flag, cf.findings_text(c),
+                status_text, cf.findings_text(c),
             ]
             problem = c.days_until_expiry < 0 or bool(cf.weakness(c))
             soon = (c.days_until_expiry < 90 or cf.self_signed_non_root(c)
                     or cf.has_exportable_private_key(c))
             for col, val in enumerate(vals):
                 item = centered_item(str(val))
-                if col in (0, 7):  # Subject CN or Status
-                    if problem:
-                        item.setForeground(QColor(semantic("error")))
-                    elif soon:
-                        item.setForeground(QColor(semantic("warning")))
-                    else:
-                        item.setForeground(QColor(semantic("success")))
-                elif col == 3:  # Days until expiry
-                    if c.days_until_expiry < 0:
-                        item.setForeground(QColor(semantic("error")))
-                    elif c.days_until_expiry < 90:
-                        item.setForeground(QColor(semantic("warning")))
-                    else:
-                        item.setForeground(QColor(semantic("success")))
-                elif col == 6 and c.has_private_key:  # Has Private Key
-                    if cf.has_exportable_private_key(c):
-                        item.setForeground(QColor(semantic("warning")))
-                    else:
-                        item.setForeground(QColor(semantic("info")))
-                elif col == 8:  # Findings
-                    if problem:
-                        item.setForeground(QColor(semantic("error")))
-                    elif soon:
-                        item.setForeground(QColor(semantic("warning")))
+                _style_cert_cell(item, col, c, problem, soon)
                 self._table.setItem(r, col, item)
                 describe_cell(self._table, col, self._table.item(r, col))
 

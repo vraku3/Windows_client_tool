@@ -421,16 +421,16 @@ class _EffectivePane(QWidget):
             ]
         self._table.setRowCount(len(rows))
         for r, row in enumerate(rows):
-            state = "stale" if row.is_stale else ("process-only" if row.process_only else "current")
+            state = "⚠️ stale" if row.is_stale else ("ℹ️ process-only" if row.process_only else "✓ current")
             values = (row.name, row.system_value or "—", row.user_value or "—",
                      row.process_value if row.process_value is not None else "—", state)
             _secret_row(self._table, r, row.name, values, (1, 2, 3), 5)
-            if state == "stale":
+            if row.is_stale:
                 self._table.item(r, 4).setForeground(QColor(semantic("warning")))
-            elif state == "current":
-                self._table.item(r, 4).setForeground(QColor(semantic("success")))
-            elif state == "process-only":
+            elif row.process_only:
                 self._table.item(r, 4).setForeground(QColor(semantic("info")))
+            else:
+                self._table.item(r, 4).setForeground(QColor(semantic("success")))
         self._status.setText(
             f"{len(rows)} row(s) shown. Stale rows need a new process to take effect."
             if not self._only_stale.isChecked() else

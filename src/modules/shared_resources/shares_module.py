@@ -174,6 +174,13 @@ def _fill_table(table: QTableWidget, rows: List[Dict], columns: List[str]):
                 elif val_str.lower() in ("no", "false", "off"):
                     item.setText("⚠️ " + val_str)
                     item.setForeground(QColor(semantic("warning")))
+            elif col == "Status":
+                if val_str.lower() in ("connected", "ok", "active"):
+                    item.setText("🟢 " + val_str)
+                    item.setForeground(QColor(semantic("success")))
+                elif val_str.lower() in ("disconnected", "error", "unavailable"):
+                    item.setText("⛔ " + val_str)
+                    item.setForeground(QColor(semantic("error")))
             table.setItem(r, c, item_help(item, table, c))
 
 class _RefreshTab(QWidget):

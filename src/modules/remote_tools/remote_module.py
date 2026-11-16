@@ -190,7 +190,8 @@ class RemoteToolsModule(BaseModule):
         self._show_feature_cards(rows)
         self._exp_table.setRowCount(len(rows))
         for i, r in enumerate(rows):
-            cells = [r.feature, r.status, r.summary, " ".join(r.findings)]
+            status_text = "▶ On" if r.status == "On" else ("⛔ Off" if r.status == "Off" else r.status)
+            cells = [r.feature, status_text, r.summary, " ".join(r.findings)]
             for c, text in enumerate(cells):
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)

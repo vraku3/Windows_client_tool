@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QHeaderView, QLabel, QProgressBar, QLineEdit,
     QComboBox, QMessageBox, QTabWidget, QGroupBox, QFormLayout,
     QScrollArea, QTextEdit, QStackedWidget, QApplication,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QFrame,
 )
 from PyQt6.QtCore import Qt, QThreadPool
 from PyQt6.QtGui import QColor
@@ -18,7 +18,7 @@ from core.module_groups import ModuleGroup
 from core.run import run
 from core.semantic_colors import semantic
 from core.windows_utils import ps_quote
-from core.table_ui import centered_item, center_header
+from core.table_ui import centered_item, center_header, set_role
 from core.worker import COMWorker, Worker
 from ui.error_banner import ErrorBanner
 from ui.table_style import apply_table_style
@@ -450,7 +450,7 @@ class ServicesModule(BaseModule):
 
         # Summary section (always shown once a service is selected)
         self._detail_name_label = QLabel("Select a service to view details.")
-        self._detail_name_label.setStyleSheet("font-size: 15px; font-weight: bold;")
+        set_role(self._detail_name_label, "heading")
         self._detail_layout.addWidget(self._detail_name_label)
 
         self._detail_info_group = QGroupBox("General Information")
@@ -463,7 +463,7 @@ class ServicesModule(BaseModule):
         self._detail_path_value = QTextEdit()
         self._detail_path_value.setReadOnly(True)
         self._detail_path_value.setMaximumHeight(60)
-        self._detail_path_value.setStyleSheet("background: transparent; border: none;")
+        self._detail_path_value.setFrameShape(QFrame.Shape.NoFrame)
         self._detail_load_group_value = QLabel("-")
         self._detail_name_value = QLabel("-")
         self._detail_disp_value = QLabel("-")

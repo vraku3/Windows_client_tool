@@ -181,6 +181,31 @@ def _feature_group(state):
     return "Unknown / unreadable"
 
 
+def _color_feature_item(item: QTreeWidgetItem, state: str) -> None:
+    from modules.windows_features.help_text import FEATURES
+    from html import escape
+    name = item.text(0)
+    description = FEATURES.get(name, "Windows reports this optional component by its internal name. Select it to read the DISM details before deciding whether to change it.")
+    tip = "<qt>" + escape(f"{name}\n{description}\nWindows-reported state: {state}").replace("\n", "<br>") + "</qt>"
+    for col in range(2):
+        item.setToolTip(col, tip)
+    fn_low = name.lower()
+    is_insecure = any(fn_low.startswith(p) or p in fn_low for p in INSECURE_LEGACY_FEATURES)
+    if "Enable" in state:
+        state_color = QColor(semantic("error" if is_insecure else "success"))
+        glyph = "● "
+        if is_insecure:
+            item.setForeground(0, QColor(semantic("warning")))
+    elif "Pending" in state or "Restart" in state:
+        state_color = QColor(semantic("warning"))
+        glyph = "⏳ "
+    else:
+        state_color = QColor(chrome("text_muted"))
+        glyph = "○ "
+    item.setText(1, f"{glyph}{state}")
+    item.setForeground(1, state_color)
+
+
 class WindowsFeaturesModule(BaseModule):
     name = "Windows Features"
     icon = "🧩"
@@ -332,26 +357,6 @@ class WindowsFeaturesModule(BaseModule):
         features_ref: list = [[]]   # [List[Tuple[str, str]]]
         selected_name_ref: list = [None]
 
-        def _color_item(item: QTreeWidgetItem, state: str) -> None:
-            from modules.windows_features.help_text import FEATURES
-            from html import escape
-            name = item.text(0)
-            description = FEATURES.get(name, "Windows reports this optional component by its internal name. Select it to read the DISM details before deciding whether to change it.")
-            tip = "<qt>" + escape(f"{name}\n{description}\nWindows-reported state: {state}").replace("\n", "<br>") + "</qt>"
-            for col in range(2):
-                item.setToolTip(col, tip)
-            fn_low = name.lower()
-            is_insecure = any(fn_low.startswith(p) or p in fn_low for p in INSECURE_LEGACY_FEATURES)
-            if "Enable" in state:
-                state_color = QColor(semantic("error" if is_insecure else "success"))
-                if is_insecure:
-                    item.setForeground(0, QColor(semantic("warning")))
-            elif "Pending" in state or "Restart" in state:
-                state_color = QColor(semantic("warning"))
-            else:
-                state_color = QColor(chrome("text_muted"))
-            item.setForeground(1, state_color)
-
         def populate(features: List[Tuple[str, str]], filter_text: str = "") -> None:
             ft = filter_text.lower()
             want = state_combo.currentText()
@@ -377,12 +382,12 @@ class WindowsFeaturesModule(BaseModule):
                 pin_hdr.setFlags(pin_hdr.flags() & ~Qt.ItemFlag.ItemIsSelectable)
                 for feat_name, state in pinned:
                     item = QTreeWidgetItem(pin_hdr, [feat_name, state])
-                    _color_item(item, state)
+                    _color_feature_item(item, state)
                 tree.expandItem(pin_hdr)
 
             for feat_name, state in rest:
                 item = QTreeWidgetItem(tree, [feat_name, state])
-                _color_item(item, state)
+                _color_feature_item(item, state)
 
         def load_features() -> None:
             if self._reading:

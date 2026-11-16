@@ -105,10 +105,13 @@ def fill_dict(table: QTableWidget, rows, columns) -> None:
                     item.setForeground(QBrush(QColor(chrome("text_muted"))))
             elif col == "Status":
                 if val_low in ("ok", "good"):
+                    item.setText("🟢 " + val)
                     paint_severity(item, "ok")
                 elif any(m in val_low for m in ("error", "failed", "critical", "bad")):
+                    item.setText("⛔ " + val)
                     paint_severity(item, "error")
                 elif any(m in val_low for m in ("warn", "caution", "problem", "degraded")):
+                    item.setText("⚠️ " + val)
                     paint_severity(item, "warning")
                 elif val_low in ("—", "-", "unknown", "n/a"):
                     item.setForeground(QBrush(QColor(chrome("text_muted"))))

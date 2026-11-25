@@ -23,7 +23,7 @@ from core.worker import Worker
 from ui.chip_bar import ChipBar
 from ui.table_style import apply_table_style
 from ui.help.network_overview import add_glance, unreadable
-from modules.network_diagnostics import dns_cache, dns_client, network_fixes, network_health, port_reader, route_table
+from modules.network_diagnostics import dns_benchmark, dns_cache, dns_client, network_fixes, network_health, port_reader, route_table, socket_analytics
 from modules.network_diagnostics.ping_stats import PingStats
 from modules.perfmon.perfmon_charts import _QtLineChart
 
@@ -367,6 +367,96 @@ class _DnsPane(QWidget):
                 self._table.setItem(r, c, item_help(item, self._table, c))
         self._table.resizeColumnsToContents()
         self._table.horizontalHeader().setStretchLastSection(False)
+
+
+class _DnsBenchmarkPane(QWidget):
+    """Benchmark DNS resolvers against top domains to measure latency and packet loss."""
+
+    def __init__(self, module: "NetworkHealthModule") -> None:
+        super().__init__()
+        self._module = module
+        lay = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>DNS Resolver Latency Benchmark</b>"))
+        self._status = QLabel("Click 'Run Benchmark' to test latency across public and system DNS resolvers.")
+        set_role(self._status, "muted")
+        top.addWidget(self._status, 1)
+
+        self._flush_btn = QPushButton("Flush DNS Cache")
+        self._flush_btn.clicked.connect(self._flush_dns)
+        top.addWidget(self._flush_btn)
+
+        self._run_btn = QPushButton("Run Benchmark")
+        self._run_btn.clicked.connect(self.run_benchmark)
+        top.addWidget(self._run_btn)
+        lay.addLayout(top)
+
+        self._table = _read_only_table(["Rank", "Resolver", "Server IP", "Avg Latency", "Min / Max", "Reliability", "Sample Response"])
+        self._table.setColumnWidth(0, 100)
+        self._table.setColumnWidth(1, 190)
+        self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 110)
+        self._table.setColumnWidth(4, 120)
+        self._table.setColumnWidth(5, 110)
+        self._table.setColumnWidth(6, 220)
+        lay.addWidget(self._table, 1)
+
+    def run_benchmark(self) -> None:
+        self._run_btn.setEnabled(False)
+        self._status.setText("Benchmarking DNS resolvers (5 queries each)...")
+
+        def work(worker: Worker):
+            return dns_benchmark.run_dns_benchmark(is_cancelled=lambda: worker.is_cancelled)
+
+        w = Worker(work)
+        w.signals.result.connect(lambda res: self._on_done(res) if _alive(self) else None)
+        w.signals.error.connect(lambda err: self._on_error(str(err)) if _alive(self) else None)
+        self._module.track(w)
+
+    def _on_done(self, results: List[dns_benchmark.BenchmarkResult]) -> None:
+        self._run_btn.setEnabled(True)
+        if not results:
+            self._status.setText("No benchmark results returned.")
+            return
+
+        fastest = results[0]
+        if fastest.avg_rtt_ms is not None:
+            self._status.setText(f"Fastest resolver: {fastest.name} ({fastest.server}) at {fastest.avg_rtt_ms:.1f} ms average latency.")
+            set_role(self._status, "statusSuccess")
+        else:
+            self._status.setText("All DNS benchmark queries timed out or failed.")
+            set_role(self._status, "statusWarning")
+
+        self._table.setRowCount(len(results))
+        for r, res in enumerate(results):
+            rank_str = "🏆 Fastest" if res.is_fastest else f"#{r + 1}"
+            avg_str = f"{res.avg_rtt_ms:.1f} ms" if res.avg_rtt_ms is not None else "Failed"
+            min_max_str = f"{res.min_rtt_ms:.1f} / {res.max_rtt_ms:.1f} ms" if res.min_rtt_ms is not None else "—"
+            rel_str = f"{res.success_rate_pct:.0f}% ({res.samples_ok}/{res.samples_sent})"
+            sample_str = res.sample_answer or res.error_summary or "—"
+
+            vals = [rank_str, res.name, res.server, avg_str, min_max_str, rel_str, sample_str]
+            for c, txt in enumerate(vals):
+                item = QTableWidgetItem(txt)
+                if res.is_fastest and c in (0, 3):
+                    item.setForeground(QColor(semantic("success")))
+                elif res.avg_rtt_ms is None:
+                    item.setForeground(QColor(semantic("error")))
+                self._table.setItem(r, c, item)
+
+    def _on_error(self, err: str) -> None:
+        self._run_btn.setEnabled(True)
+        self._status.setText(f"DNS benchmark error: {err}")
+        set_role(self._status, "statusError")
+
+    def _flush_dns(self) -> None:
+        try:
+            import subprocess
+            subprocess.run(["ipconfig.exe", "/flushdns"], capture_output=True, timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            self._status.setText("DNS resolver cache successfully flushed.")
+            set_role(self._status, "statusSuccess")
+        except Exception as e:
+            self._status.setText(f"Failed to flush DNS cache: {e}")
 
 
 class _PingPane(QWidget):
@@ -749,6 +839,170 @@ class _PortsPane(QWidget):
         self._status.setText(f"Copied {len(rows)} port(s) to clipboard.")
 
 
+class _SocketsPane(QWidget):
+    """Active TCP sockets, connection state distribution & ephemeral port exhaustion analytics."""
+
+    def __init__(self, module: "NetworkHealthModule") -> None:
+        super().__init__()
+        self._module = module
+        self._snapshot: Optional[socket_analytics.SocketAnalyticsSnapshot] = None
+        self._entries: List[socket_analytics.SocketConnection] = []
+        lay = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>Active TCP sockets & connection analytics</b>"))
+        self._status = QLabel("")
+        set_role(self._status, "muted")
+        top.addWidget(self._status, 1)
+
+        self._filter = QLineEdit()
+        control_help(self._filter, 'self._filter')
+        self._filter.setPlaceholderText("Filter process, PID, IP, port, service...")
+        self._filter.textChanged.connect(self._apply_filter)
+        top.addWidget(self._filter)
+
+        self._copy_btn = QPushButton("Copy list")
+        self._copy_btn.setToolTip("Copy the filtered active connections list to clipboard")
+        self._copy_btn.clicked.connect(self._copy_list)
+        top.addWidget(self._copy_btn)
+
+        self._refresh_btn = QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self.refresh)
+        top.addWidget(self._refresh_btn)
+        lay.addLayout(top)
+
+        # Alert banner for socket leaks or dynamic port exhaustion
+        self._alert_banner = QLabel("")
+        self._alert_banner.setWordWrap(True)
+        self._alert_banner.setVisible(False)
+        set_role(self._alert_banner, "statusWarning")
+        lay.addWidget(self._alert_banner)
+
+        self._chips = ChipBar([
+            ("all", "All", 0),
+            ("close_wait", "CLOSE_WAIT (Leaked)", 0),
+            ("established", "ESTABLISHED", 0),
+            ("time_wait", "TIME_WAIT", 0),
+            ("syn_sent", "SYN_SENT", 0),
+            ("listen", "LISTEN", 0),
+        ])
+        self._chips.selection_changed.connect(lambda _: self._apply_filter())
+        lay.addWidget(self._chips)
+
+        cols = ["Process", "PID", "State", "Local Endpoint", "Foreign Endpoint", "Service", "Dynamic Port?", "Path"]
+        self._table = _read_only_table(cols)
+        lay.addWidget(self._table, 1)
+
+    def refresh(self) -> None:
+        self._refresh_btn.setEnabled(False)
+        self._status.setText("Reading active sockets and dynamic port limits...")
+        w = Worker(lambda _w: socket_analytics.read_socket_analytics())
+        w.signals.result.connect(lambda r: self._done(r) if _alive(self) else None)
+        w.signals.error.connect(lambda e: self._failed(str(e)) if _alive(self) else None)
+        self._module.track(w)
+
+    def _failed(self, message: str) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._status.setText(f"Could not read active sockets: {message}")
+
+    def _done(self, snapshot: socket_analytics.SocketAnalyticsSnapshot) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._snapshot = snapshot
+        self._entries = snapshot.connections
+
+        sc = snapshot.state_counts
+        self._chips.set_counts({
+            "all": len(snapshot.connections),
+            "close_wait": sc.get("CLOSE_WAIT", 0),
+            "established": sc.get("ESTABLISHED", 0),
+            "time_wait": sc.get("TIME_WAIT", 0),
+            "syn_sent": sc.get("SYN_SENT", 0),
+            "listen": sc.get("LISTEN", 0),
+        })
+
+        ephem = snapshot.ephemeral
+        status_txt = (
+            f"{len(snapshot.connections)} sockets | Dynamic ports: {ephem.in_use}/{ephem.num_ports} "
+            f"({ephem.percent_used:.1f}%) [{ephem.status}] | "
+            f"ESTABLISHED: {sc.get('ESTABLISHED', 0)}, TIME_WAIT: {sc.get('TIME_WAIT', 0)}, CLOSE_WAIT: {sc.get('CLOSE_WAIT', 0)}"
+        )
+        self._status.setText(status_txt)
+
+        if snapshot.alerts:
+            self._alert_banner.setText("⚠️ " + "\n• ".join(snapshot.alerts[:3]))
+            self._alert_banner.setVisible(True)
+        else:
+            self._alert_banner.setVisible(False)
+
+        self._apply_filter()
+
+    def _filtered_entries(self) -> List[socket_analytics.SocketConnection]:
+        sel = getattr(self._chips, "selected_key", None) or (self._chips.selected()[0] if self._chips.selected() else "all")
+        needle = self._filter.text().strip().lower()
+
+        entries = self._entries
+        if sel == "close_wait":
+            entries = [c for c in entries if c.state == "CLOSE_WAIT"]
+        elif sel == "established":
+            entries = [c for c in entries if c.state == "ESTABLISHED"]
+        elif sel == "time_wait":
+            entries = [c for c in entries if c.state == "TIME_WAIT"]
+        elif sel == "syn_sent":
+            entries = [c for c in entries if c.state == "SYN_SENT"]
+        elif sel == "listen":
+            entries = [c for c in entries if c.state == "LISTEN"]
+
+        if needle:
+            entries = [
+                c for c in entries
+                if needle in c.process_name.lower()
+                or needle in str(c.pid or "")
+                or needle in str(c.local_port)
+                or needle in str(c.foreign_port)
+                or needle in c.local_endpoint.lower()
+                or needle in c.foreign_endpoint.lower()
+                or needle in c.service_name.lower()
+                or needle in c.state.lower()
+                or needle in (c.process_path or "").lower()
+            ]
+        return entries
+
+    def _apply_filter(self) -> None:
+        rows = self._filtered_entries()
+        self._table.setRowCount(len(rows))
+        for r, c in enumerate(rows):
+            values = [
+                c.process_name,
+                str(c.pid) if c.pid is not None else "—",
+                c.state,
+                c.local_endpoint,
+                c.foreign_endpoint,
+                c.service_name or "—",
+                "Yes" if c.is_ephemeral else "No",
+                c.process_path or "—",
+            ]
+            for col_idx, text in enumerate(values):
+                item = QTableWidgetItem(text)
+                if col_idx == 2:
+                    if c.is_leak_suspect:
+                        item.setForeground(QColor(semantic("warning")))
+                    elif c.state == "ESTABLISHED":
+                        item.setForeground(QColor(semantic("success")))
+                if col_idx == 0 and c.process_path:
+                    item.setToolTip(f"{c.process_name}\nPID: {c.pid}\nPath: {c.process_path}\nUser: {c.username or 'unknown'}")
+                self._table.setItem(r, col_idx, item_help(item, self._table, col_idx))
+        self._table.resizeColumnsToContents()
+        self._table.horizontalHeader().setStretchLastSection(False)
+
+    def _copy_list(self) -> None:
+        rows = self._filtered_entries()
+        lines = ["Process\tPID\tState\tLocal Endpoint\tForeign Endpoint\tService\tEphemeral\tPath"]
+        for c in rows:
+            lines.append(f"{c.process_name}\t{c.pid or ''}\t{c.state}\t{c.local_endpoint}\t{c.foreign_endpoint}\t{c.service_name}\t{c.is_ephemeral}\t{c.process_path}")
+        QGuiApplication.clipboard().setText("\n".join(lines))
+        self._status.setText(f"Copied {len(rows)} socket(s) to clipboard.")
+
+
 class NetworkHealthModule(BaseModule):
     name = "Health"
     icon = "🩺"
@@ -761,6 +1015,7 @@ class NetworkHealthModule(BaseModule):
         self._widget: Optional[QWidget] = None
         self._health: Optional[_HealthPane] = None
         self._ports: Optional[_PortsPane] = None
+        self._sockets: Optional[_SocketsPane] = None
         self._ping: Optional[_PingPane] = None
         self._routes: Optional["_RoutesPane"] = None
         self._dns_cache: Optional["_DnsCachePane"] = None
@@ -781,12 +1036,15 @@ class NetworkHealthModule(BaseModule):
         tabs = QTabWidget()
         self._health = _HealthPane(self)
         self._ports = _PortsPane(self)
+        self._sockets = _SocketsPane(self)
         self._ping = _PingPane(self)
         self._routes = _RoutesPane(self)
         self._dns_cache = _DnsCachePane(self)
         tabs.addTab(self._health, "Health")
         tabs.addTab(self._ports, "Listening ports")
+        tabs.addTab(self._sockets, "Sockets & connections")
         tabs.addTab(_DnsPane(self), "DNS compare")
+        tabs.addTab(_DnsBenchmarkPane(self), "DNS benchmark")
         tabs.addTab(self._dns_cache, "DNS cache")
         tabs.addTab(self._ping, "Ping and jitter")
         tabs.addTab(self._routes, "Routes")
@@ -799,6 +1057,8 @@ class NetworkHealthModule(BaseModule):
             h.run_checks()
         if self._ports is not None and not self._ports._entries:
             self._ports.refresh()
+        if self._sockets is not None and not self._sockets._entries:
+            self._sockets.refresh()
         if self._routes is not None and self._routes._snapshot is None:
             self._routes.refresh()
         if self._dns_cache is not None and not self._dns_cache._entries:

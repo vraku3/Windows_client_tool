@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 # which runs before pytest fixtures — including conftest's session qapp
 # fixture — so make sure one exists here too. Idempotent: QApplication is
 # itself a singleton, and .instance() returns the existing one if any.
-QApplication.instance() or QApplication(sys.argv)
+QApplication.instance() or QApplication([sys.executable])
 
 from core.module_registry import ModuleRegistry  # noqa: E402
 from main import register_all_modules  # noqa: E402

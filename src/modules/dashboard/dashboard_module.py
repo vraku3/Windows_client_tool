@@ -651,9 +651,8 @@ class _DashboardWidget(QWidget):
         if self._energy:
             self._energy.close()
             self._energy = None
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
+        from core.worker import retire
+        retire(self._workers)
 
 
 def _alive(widget) -> bool:

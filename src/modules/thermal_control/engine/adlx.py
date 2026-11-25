@@ -153,20 +153,40 @@ def _load(directory: str):
     return dll
 
 
+import atexit
+
+_session_state = None  # (dll, system) kept open for process lifetime; ADLX crashes if re-initialized after ADLXTerminate()
+
+
+def _terminate_adlx() -> None:
+    global _session_state
+    if _session_state is not None:
+        dll, system = _session_state
+        _session_state = None
+        try:
+            dll.ADLXTerminate()
+        except Exception:
+            pass
+
+
 @contextmanager
 def _session(directory: str) -> Iterator[c_void_p]:
+    global _session_state
     with _lock:
-        try:
-            dll = _load(directory)
-        except OSError as e:
-            raise AdlxError(f"AMD's ADLX library could not be loaded ({e})") from e
-        version, system = c_uint64(), c_void_p()
-        if dll.ADLXQueryFullVersion(byref(version)) != 0 or dll.ADLXInitialize(version.value, byref(system)) != 0:
-            raise AdlxError("AMD's ADLX library would not start with the installed driver")
-        try:
-            yield system
-        finally:
-            dll.ADLXTerminate()
+        if _session_state is None:
+            try:
+                dll = _load(directory)
+            except OSError as e:
+                raise AdlxError(f"AMD's ADLX library could not be loaded ({e})") from e
+            version, system = c_uint64(), c_void_p()
+            try:
+                if dll.ADLXQueryFullVersion(byref(version)) != 0 or dll.ADLXInitialize(version.value, byref(system)) != 0:
+                    raise AdlxError("AMD's ADLX library would not start with the installed driver")
+            except OSError as e:
+                raise AdlxError(f"AMD's ADLX library failed to initialize ({e})") from e
+            _session_state = (dll, system)
+            atexit.register(_terminate_adlx)
+        yield _session_state[1]
 
 
 # ---- the C function tables -----------------------------------------------------------------

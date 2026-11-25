@@ -3,20 +3,32 @@
 `ReportingEvents.log` records failures as `Installation Failure: Windows failed
 to install the following update with error 0x800f0820: <title>`. This module
 pulls the failing update (and its KB number when it has one) and the error code
-out, translates the code, and counts them.
+out, translates the code, counts them, extracts installation durations, groups by KB,
+and provides actionable remediation.
 """
 from __future__ import annotations
 
 import html
 import re
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from core.types import LogEntry
 from core.wu_error_codes import decode_wu_error
+from modules.windows_update.wu_reader import (
+    DEFAULT_REMEDIATION,
+    WU_REMEDIATION_MAP,
+    KBUpdateGroup,
+    extract_error_code,
+    extract_failure_frequencies,
+    extract_install_durations,
+    extract_kb,
+    get_error_remediation,
+    group_updates_by_kb,
+)
 
 _HRESULT = re.compile(r"\b0[xX]([0-9a-fA-F]{8})\b")
-_KB = re.compile(r"\bKB\d{6,8}\b", re.IGNORECASE)
+_KB = re.compile(r"\bKB\d{4,8}\b", re.IGNORECASE)
 _FAILED_UPDATE = re.compile(
     r"following update(?: with error 0x[0-9a-fA-F]+)?:\s*(.+?)\.?\s*$", re.IGNORECASE)
 
@@ -45,6 +57,12 @@ def explain_code(code: int) -> str:
     if " - " in text:
         return text.split(" - ", 1)[1]
     return ""
+
+
+def remediation_for_code(code: int) -> str:
+    """Actionable remediation guidance for a Windows Update error code."""
+    _, rem = get_error_remediation(code)
+    return rem or DEFAULT_REMEDIATION
 
 
 def codes_in(text: str) -> List[int]:
@@ -165,14 +183,29 @@ def summary_text(entries: List[LogEntry]) -> str:
     span = f"{min(e.timestamp for e in entries):%Y-%m-%d} to {max(e.timestamp for e in entries):%Y-%m-%d}"
     text = f"{len(entries)} events ({span}); {installs} successful install(s)."
     later = f" {resolved} update(s) failed and later succeeded." if resolved else ""
+
+    # Check durations
+    durations_dict = extract_install_durations(entries)
+    all_durations = [d for sublist in durations_dict.values() for d in sublist]
+    if all_durations:
+        avg_d = sum(all_durations) / len(all_durations)
+        text += f" Avg install duration: {avg_d:.0f}s."
+
     if not fails:
         return text + " Nothing is failing now." + later
+
     system = [f for f in fails if not is_store_app(f[0])]
     store = [f for f in fails if is_store_app(f[0])]
     if system:
         head = "; ".join(_fmt_failure(f) for f in system[:4])
         text += (f" Still failing: {head}"
                  + (f"; and {len(system) - 4} more." if len(system) > 4 else "."))
+        # Surface remediation for the top failure
+        top_err = system[0][1]
+        top_cause, top_rem = get_error_remediation(top_err)
+        if top_rem:
+            text += f" Action: {top_rem}"
+
     if store:
         in_use = sum(1 for f in store if f[1] & 0xFFFFFFFF == 0x80073D02)
         text += (f" {len(store)} Store app(s) not updated"
@@ -193,9 +226,21 @@ def detail_html(entry: LogEntry) -> str:
     if code is None:
         return ""
     meaning = explain_code(code)
+    cause, rem = get_error_remediation(code)
     out = f"<b>Error 0x{code:08X}</b><br>"
-    out += html.escape(meaning) + "<br>" if meaning else "<i>No documented meaning is known for this code.</i><br>"
+    if meaning:
+        out += html.escape(meaning) + "<br>"
+    elif cause:
+        out += html.escape(cause) + "<br>"
+    else:
+        out += "<i>No documented meaning is known for this code.</i><br>"
+
+    if rem:
+        out += f"<b>Actionable Remediation:</b> {html.escape(rem)}<br>"
+
     name = failed_update_name(entry)
     if name:
-        out += f"<i>Update:</i> {html.escape(name)}<br>"
+        kb = kb_of(name)
+        kb_part = f" [<b>{html.escape(kb)}</b>]" if kb else ""
+        out += f"<i>Update:</i> {html.escape(name)}{kb_part}<br>"
     return out + "<hr>"

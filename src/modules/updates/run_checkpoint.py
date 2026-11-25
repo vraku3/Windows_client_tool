@@ -66,6 +66,8 @@ def begin(app_data_dir, stages: Iterable[str], context: str = "run_all") -> Opti
         "pid": os.getpid(),
         "context": str(context)[:60],
         "stages": [str(s) for s in stages],
+        "completed_stages": [],
+        "current_stage": "",
         "status": "running",
         "finished": None,
         "error": "",
@@ -120,6 +122,122 @@ def finish(app_data_dir, status: str = "completed", error: str = "") -> bool:
     data["error"] = str(error or "")[:MAX_DETAIL]
     data["finished"] = _now()
     return _write(checkpoint_path(app_data_dir), data)
+
+
+def stage_start(app_data_dir, stage: str) -> bool:
+    """Record that a stage has begun execution."""
+    if not app_data_dir:
+        return False
+    data = load(app_data_dir)
+    if data is None or data.get("status") != "running":
+        return False
+    data["current_stage"] = str(stage)[:30]
+    return _write(checkpoint_path(app_data_dir), data)
+
+
+def stage_complete(app_data_dir, stage: str) -> bool:
+    """Record that a stage completed execution."""
+    if not app_data_dir:
+        return False
+    data = load(app_data_dir)
+    if data is None or data.get("status") != "running":
+        return False
+    completed = data.setdefault("completed_stages", [])
+    s = str(stage)[:30]
+    if s not in completed:
+        completed.append(s)
+    return _write(checkpoint_path(app_data_dir), data)
+
+
+def remaining_stages(data: Optional[dict]) -> List[str]:
+    """Return the list of planned stages that have not completed."""
+    if not data:
+        return []
+    stages = [str(s) for s in data.get("stages") or []]
+    completed = set(data.get("completed_stages") or [])
+    if "wu" not in completed and "wu" in stages:
+        items = data.get("items") or {}
+        wu_items = [v for k, v in items.items() if str(k).startswith("wu:") and isinstance(v, dict)]
+        if wu_items and all(v.get("phase") in ("installed", "installed_after_reboot") for v in wu_items):
+            completed.add("wu")
+    return [s for s in stages if s not in completed]
+
+
+def get_installed_hotfixes() -> set[str]:
+    """Return set of installed HotFix IDs on Windows (e.g. {'KB5132061', ...})."""
+    try:
+        import ctypes
+        hr = ctypes.windll.ole32.CoInitialize(None)
+        try:
+            import win32com.client
+            wmi = win32com.client.GetObject("winmgmts:")
+            return {str(obj.HotFixID).upper() for obj in wmi.InstancesOf("Win32_QuickFixEngineering") if obj.HotFixID}
+        finally:
+            if hr >= 0:
+                ctypes.windll.ole32.CoUninitialize()
+    except Exception as exc:
+        logger.debug("Win32_QuickFixEngineering query failed: %s", exc)
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command", "Get-HotFix | Select-Object -ExpandProperty HotFixID"],
+            text=True, timeout=10, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        return {kb.strip().upper() for kb in out.split() if kb.strip()}
+    except Exception:
+        return set()
+
+
+def reconcile_checkpoint(app_data_dir, installed_kbs: Optional[set[str]] = None) -> Optional[dict]:
+    """Reconcile an unfinished checkpoint after restart or crash.
+
+    If WU items recorded as 'started' are now installed, updates their status.
+    If all stages are now satisfied, marks run as completed_after_reboot.
+    Returns the updated checkpoint data if reconciled, or None.
+    """
+    if not app_data_dir:
+        return None
+    data = unfinished(app_data_dir)
+    if data is None:
+        return None
+
+    items = data.get("items") or {}
+    wu_items = {k: v for k, v in items.items() if str(k).startswith("wu:") and isinstance(v, dict)}
+    changed = False
+
+    if wu_items and any(v.get("phase") in ("started", "reboot_required") for v in wu_items.values()):
+        if installed_kbs is None:
+            installed_kbs = get_installed_hotfixes()
+
+        import re
+        for k, v in wu_items.items():
+            if v.get("phase") in ("started", "reboot_required"):
+                m = re.search(r"KB\d+", k + " " + str(v.get("detail") or ""), re.IGNORECASE)
+                if m and m.group(0).upper() in installed_kbs:
+                    v["phase"] = "installed_after_reboot"
+                    v["detail"] = "Installed successfully (verified on OS)"
+                    changed = True
+
+    completed_stages = data.setdefault("completed_stages", [])
+    if wu_items and all(v.get("phase") in ("installed", "installed_after_reboot") for v in wu_items.values()):
+        if "wu" not in completed_stages:
+            completed_stages.append("wu")
+            changed = True
+
+    stages = data.get("stages") or []
+    remaining = [s for s in stages if s not in completed_stages]
+
+    if stages and not remaining:
+        data["status"] = "completed_after_reboot"
+        data["finished"] = _now()
+        _write(checkpoint_path(app_data_dir), data)
+        return data
+
+    if changed:
+        _write(checkpoint_path(app_data_dir), data)
+        return data
+
+    return None
 
 
 def clear(app_data_dir) -> None:

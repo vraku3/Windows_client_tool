@@ -1546,8 +1546,14 @@ class _WinUpdatesTab(QWidget):
             logger.warning("Could not build the install preflight", exc_info=True)
             preflight = None
         if preflight is not None and preflight.should_ask:
+            if preflight.reasons and preflight.unfinished_run:
+                title = "Pending Restart & Incomplete Run"
+            elif preflight.reasons:
+                title = "Pending Restart Detected"
+            else:
+                title = "Previous Run Incomplete"
             answer = QMessageBox.warning(
-                self, "Restart evidence",
+                self, title,
                 "\n".join(preflight.evidence_lines()) + "\n\nInstall anyway?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No)
@@ -2736,29 +2742,51 @@ class UpdatesModule(BaseModule):
         self._reconciled_once = True
         folder = getattr(self.app, "app_data_dir", None)
         pending = reboot_reconcile.load(folder)
-        if not pending:
+        unfinished_run = run_checkpoint.unfinished(folder)
+        if not pending and not unfinished_run:
             return
 
         def _run(_worker):
-            offers = None
-            if any(str(row.get("source") or "winget").casefold() != "wu" for row in pending):
+            reconciled_run = None
+            if unfinished_run:
                 try:
-                    from modules.updates.winget_updater import fetch_updates
-                    offers = fetch_updates()
+                    reconciled_run = run_checkpoint.reconcile_checkpoint(folder)
                 except Exception:
-                    logger.warning("Post-restart scan failed", exc_info=True)
-            reboot = None
-            try:
-                from core.pending_reboot import check
-                state = check()
-                if not (state.unreadable and not state.reasons):
-                    reboot = bool(state.reasons)
-            except Exception:
-                logger.warning("Could not read the restart state after a reboot", exc_info=True)
-            return reboot_reconcile.reconcile(pending, offers, reboot)
+                    logger.warning("Checkpoint post-reboot reconcile failed", exc_info=True)
 
-        def _received(results):
-            if not _widget_valid(self._reconcile_lbl):
+            results = []
+            if pending:
+                offers = None
+                if any(str(row.get("source") or "winget").casefold() != "wu" for row in pending):
+                    try:
+                        from modules.updates.winget_updater import fetch_updates
+                        offers = fetch_updates()
+                    except Exception:
+                        logger.warning("Post-restart scan failed", exc_info=True)
+                reboot = None
+                try:
+                    from core.pending_reboot import check
+                    state = check()
+                    if not (state.unreadable and not state.reasons):
+                        reboot = bool(state.reasons)
+                except Exception:
+                    logger.warning("Could not read the restart state after a reboot", exc_info=True)
+                results = reboot_reconcile.reconcile(pending, offers, reboot)
+            return (results, reconciled_run)
+
+        def _received(res_tuple):
+            results, reconciled_run = res_tuple
+            if hasattr(self, "_run_all_tab"):
+                try:
+                    self._run_all_tab.refresh_checkpoint_note()
+                except Exception as exc:
+                    logger.debug("Failed refreshing checkpoint note: %s", exc)
+            if reconciled_run:
+                from core.timeline import record
+                record(folder, "updates", "checkpoint_reconciled",
+                       f"Maintenance checkpoint reconciled after restart: {reconciled_run.get('status')}")
+
+            if not results or not _widget_valid(self._reconcile_lbl):
                 return
             from .activity_ledger import record_activity
             from core.timeline import record

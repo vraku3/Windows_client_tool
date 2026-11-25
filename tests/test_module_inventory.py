@@ -225,20 +225,31 @@ def test_the_network_tools_are_tabs_of_network_diagnostics(registered):
     ]
 
 
-def test_diagnose_hosts_the_seven_log_readers(registered):
+def test_diagnose_hosts_the_eight_log_readers(registered):
     diagnose = next(m for m in registered if m.name == "Diagnose")
     assert [c.name for c in diagnose.children] == [
         "Event Viewer", "CBS Log", "DISM Log",
-        "Windows Update", "Reliability", "Crash Dumps", "Timeline",
+        "Windows Update", "Reliability", "Crash Dumps", "Timeline", "Log Viewer",
     ]
 
 
+def test_log_viewer_routes_to_diagnose_tab(registered):
+    """Log Viewer is unified under Diagnose; route_map maps it to Diagnose tab 7."""
+    from core.module_registry import ModuleRegistry
+    registry = ModuleRegistry()
+    for module in registered:
+        registry.register(module)
+    host_name, tab_index = registry.route_map()["Log Viewer"]
+    assert host_name == "Diagnose"
+    assert tab_index == 7
+
+
 def test_every_diagnostic_source_is_back_in_global_search(registered):
-    """Diagnose search providers include the six original readers plus Timeline."""
+    """Diagnose search providers include the six original readers, Timeline, and LogViewer."""
     diagnose = next(m for m in registered if m.name == "Diagnose")
     names = {p.module_name for p in diagnose.get_search_providers()}
     assert names == {
-        "EventViewer", "CBS", "DISM", "WindowsUpdate", "Reliability", "CrashDumps", "Timeline",
+        "EventViewer", "CBS", "DISM", "WindowsUpdate", "Reliability", "CrashDumps", "Timeline", "LogViewer",
     }
 
 
@@ -253,8 +264,10 @@ def test_the_filter_panel_offers_no_source_that_cannot_answer(registered):
     assert set(_ALL_SOURCES) <= reachable
 
 
-def test_the_sidebar_is_32_entries(registered):
-    """32: Stress Test (2026-10-22) adds CPU/RAM stability testing in TOOLS.
+def test_the_sidebar_is_31_entries(registered):
+    """31: Log Viewer (2026-11-19) unified into the Diagnose hub: 32 - 1 = 31.
+
+    32: Stress Test (2026-10-22) adds CPU/RAM stability testing in TOOLS.
 
     31: Game Mode (2026-10-16) is a genuinely new OPTIMIZE entry -- a
     reversible ON/OFF session plus gaming advice; no existing hub owns
@@ -276,7 +289,7 @@ def test_the_sidebar_is_32_entries(registered):
     new Scripts hub (docs/superpowers/specs/
     2026-09-18-scripts-file-forensics-design.md) is a genuinely new sidebar
     entry, not a fold of existing ones: 28 + 1 = 29."""
-    assert len(registered) == 32
+    assert len(registered) == 31
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

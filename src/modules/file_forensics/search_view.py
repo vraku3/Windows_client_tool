@@ -61,7 +61,7 @@ class SearchView(LimitControls):
         self._places = QComboBox()
         self._places.setToolTip('Choose a common folder. Downloads and Desktop use the real Windows known folder, including redirection.')
         self._places.addItem('Common places', '')
-        for name in ('%TEMP%', r'C:\Windows\Temp', 'Downloads', 'Desktop', '%LOCALAPPDATA%', '%APPDATA%', '%ProgramData%'):
+        for name in ('%TEMP%', r'%windir%\Temp', 'Downloads', 'Desktop', '%LOCALAPPDATA%', '%APPDATA%', '%ProgramData%'):
             self._places.addItem(name, name)
         self._places.activated.connect(self._choose_place)
         self._filter_edit = QLineEdit()

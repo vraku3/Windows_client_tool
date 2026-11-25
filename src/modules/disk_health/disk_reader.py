@@ -292,11 +292,11 @@ def _query_bitlocker_com(drive_letter: str) -> Optional[str]:
     """Query BitLocker status via Shell.Application (works unelevated)."""
     initialized = False
     try:
-        import pythoncom
+        import ctypes
         import win32com.client
         try:
-            pythoncom.CoInitialize()
-            initialized = True
+            hr = ctypes.windll.ole32.CoInitialize(None)
+            initialized = (hr >= 0)
         except Exception as exc:
             logger.debug("CoInitialize note for %s: %s", drive_letter, exc)
         sh = win32com.client.Dispatch("Shell.Application")
@@ -311,7 +311,7 @@ def _query_bitlocker_com(drive_letter: str) -> Optional[str]:
     finally:
         if initialized:
             try:
-                pythoncom.CoUninitialize()
+                ctypes.windll.ole32.CoUninitialize()
             except Exception as exc:
                 logger.debug("CoUninitialize note for %s: %s", drive_letter, exc)
     return None

@@ -528,6 +528,8 @@ class MainWindow(QMainWindow):
             self._search_bar.focus_search_with_filters)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self._clear_search)
         QShortcut(QKeySequence("Ctrl+P"), self).activated.connect(self._open_command_palette)
+        QShortcut(QKeySequence("Ctrl+K"), self).activated.connect(self._open_command_palette)
+        QShortcut(QKeySequence("Ctrl+Shift+P"), self).activated.connect(self._open_command_palette)
         # Ctrl+1 .. Ctrl+9 pick the 1st .. 9th sound output, Ctrl+0 the 10th.
         for digit in range(10):
             QShortcut(QKeySequence(f"Ctrl+{digit}"), self).activated.connect(
@@ -587,13 +589,31 @@ class MainWindow(QMainWindow):
                 self.raise_()
                 self.activateWindow()
 
+    def _on_command_palette_select(self, target_name: str, payload: Optional[dict] = None) -> None:
+        if target_name == "Casebook":
+            from ui.investigation_casebook_dialog import InvestigationCasebookDialog
+            dlg = InvestigationCasebookDialog(parent=self)
+            dlg.exec()
+            return
+        if target_name == "Process Hunter":
+            from ui.process_hunter_dialog import ProcessHunterDialog
+            dlg = ProcessHunterDialog(self)
+            dlg.exec()
+            return
+        if target_name == "System Snapshot":
+            from ui.snapshot_dialog import SnapshotDialog
+            dlg = SnapshotDialog(self)
+            dlg.exec()
+            return
+        self._navigate_to_module(target_name, payload=payload)
+
     def _open_command_palette(self) -> None:
         from ui.command_palette import CommandPalette
         modules = list(self._module_map.values())
-        palette = CommandPalette(modules, self._navigate_to_module, self)
+        palette = CommandPalette(modules, self._on_command_palette_select, self)
         # Centre near top of main window
         geo = self.geometry()
-        pw = palette.sizeHint().width() or 480
+        pw = palette.sizeHint().width() or 560
         x = geo.x() + (geo.width() - pw) // 2
         y = geo.y() + 80
         palette.move(x, y)

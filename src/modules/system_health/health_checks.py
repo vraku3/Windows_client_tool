@@ -1031,13 +1031,14 @@ def evaluate_scheduled_task_failures(tasks: List[Any]) -> List[Finding]:
 def check_scheduled_task_failures() -> List[Finding]:
     """Audit enabled scheduled tasks for last run execution failures."""
     try:
-        import pythoncom
+        import ctypes
         from modules.scheduled_tasks.tasks_reader import get_tasks_in_folder, ALL_FOLDERS
-        pythoncom.CoInitialize()
+        hr = ctypes.windll.ole32.CoInitialize(None)
         try:
             tasks = get_tasks_in_folder(ALL_FOLDERS)
         finally:
-            pythoncom.CoUninitialize()
+            if hr >= 0:
+                ctypes.windll.ole32.CoUninitialize()
     except Exception as exc:
         logger.warning("scheduled task failure check failed: %s", exc)
         return [_unknown("scheduled_tasks_failure", "scheduled tasks execution status", str(exc), jump="Scheduled Tasks")]
@@ -1488,25 +1489,30 @@ def evaluate_antivirus_health(
 
 def check_antivirus_health() -> List[Finding]:
     """Audit Windows Security Center for registered antivirus scanners, status, and recent threat events."""
-    import pythoncom
-    import win32com.client
+    import ctypes
     from modules.event_viewer import event_query
 
     products = []
+    hr = -1
     try:
-        pythoncom.CoInitialize()
-        wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\SecurityCenter2")
-        for p in wmi.ExecQuery("SELECT * FROM AntiVirusProduct"):
-            try:
-                st = int(p.productState)
-                products.append({
-                    "name": str(p.displayName),
-                    "state": st,
-                    "scanner_on": ((st >> 8) & 0xFF) in (0x10, 0x11),
-                    "defs_updated": (st & 0xF0) == 0,
-                })
-            except (ValueError, TypeError, AttributeError) as exc:
-                logger.debug("Failed parsing AntiVirusProduct %s: %s", getattr(p, "displayName", "unknown"), exc)
+        hr = ctypes.windll.ole32.CoInitialize(None)
+        try:
+            import win32com.client
+            wmi = win32com.client.GetObject("winmgmts:\\\\.\\root\\SecurityCenter2")
+            for p in wmi.ExecQuery("SELECT * FROM AntiVirusProduct"):
+                try:
+                    st = int(p.productState)
+                    products.append({
+                        "name": str(p.displayName),
+                        "state": st,
+                        "scanner_on": ((st >> 8) & 0xFF) in (0x10, 0x11),
+                        "defs_updated": (st & 0xF0) == 0,
+                    })
+                except (ValueError, TypeError, AttributeError) as exc:
+                    logger.debug("Failed parsing AntiVirusProduct %s: %s", getattr(p, "displayName", "unknown"), exc)
+        finally:
+            if hr >= 0:
+                ctypes.windll.ole32.CoUninitialize()
     except Exception as exc:
         logger.debug("Could not query root\\SecurityCenter2 AntiVirusProduct: %s", exc)
 

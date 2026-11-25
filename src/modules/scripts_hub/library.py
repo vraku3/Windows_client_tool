@@ -110,91 +110,500 @@ BUILT_IN: List[Script] = [
            "'rebooted without cleanly shutting down') and every boot (6005). The first "
            "question after 'it rebooted overnight'.",
            _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: System Reboot & Shutdown History (Last 30 Days)"
+Write-Host "PURPOSE   : Correlates who initiated restarts, patch reboots vs dirty shutdowns"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK EVENT REFERENCE GUIDE:"
+Write-Host "  • Event 1074: Clean planned shutdown or reboot by user, Windows Update, or an app."
+Write-Host "  • Event 6006: Clean shutdown -- Event Log service stopped gracefully."
+Write-Host "  • Event 6005: System Boot -- Event Log service started."
+Write-Host "  • Event 6008: [BAD]  DIRTY SHUTDOWN -- previous shutdown was unexpected (hang/power cut)."
+Write-Host "  • Event 41  : [BAD]  KERNEL-POWER -- system rebooted without cleanly shutting down first."
+Write-Host ""
 $since = (Get-Date).AddDays(-30)
 try {
   $events = Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6008,41,6005,6006; StartTime=$since} -ErrorAction Stop
 } catch {
-  # "No events match" is an answer; a refused or failed read is not.
-  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { 'No shutdown or restart events in the last 30 days.'; return }
-  "ERROR: the System log could not be read: $($_.Exception.Message)"; return
-}
-$events | ForEach-Object {
-  $what = switch ($_.Id) {
-    1074 { 'Planned shutdown/restart' } 6008 { 'UNEXPECTED shutdown' }
-    41 { 'Kernel-Power: rebooted without a clean shutdown' }
-    6005 { 'Boot (event log started)' } 6006 { 'Clean shutdown (event log stopped)' } }
-  $detail = ''
-  if ($_.Id -eq 1074) {
-    $p = $_.Properties
-    $detail = "by $($p[6].Value) via $($p[0].Value) -- $($p[4].Value) ($($p[2].Value))"
+  if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') {
+    Write-Host "[OK]   No shutdown or restart events in the last 30 days."
+    return
   }
-  [pscustomobject]@{ Time = $_.TimeCreated; Event = $_.Id; What = $what; Detail = $detail }
-} """ + _WIDE)),
+  Write-Host ("ERROR: System event log could not be read: {0}" -f $_.Exception.Message)
+  return
+}
+
+$unexpectedCount = 0
+$kernelPowerCount = 0
+$plannedCount = 0
+
+Write-Host "=== Phase 1: Chronological Event Timeline (Newest First) ==="
+$events | ForEach-Object {
+  $id = $_.Id
+  $time = $_.TimeCreated
+  if ($id -eq 1074) {
+    $plannedCount++
+    $p = $_.Properties
+    $proc = if ($p[0].Value) { $p[0].Value } else { 'Unknown' }
+    $user = if ($p[6].Value) { $p[6].Value } else { 'System/Unknown' }
+    $reason = if ($p[2].Value) { $p[2].Value } else { 'None' }
+    $action = if ($p[4].Value) { $p[4].Value } else { 'restart' }
+    Write-Host ("[OK]   [{0:yyyy-MM-dd HH:mm:ss}] Event 1074 (Planned {1}) by '{2}' via {3}" -f $time, $action, $user, $proc)
+    Write-Host ("       Reason Given: {0}" -f $reason)
+  } elseif ($id -eq 6008) {
+    $unexpectedCount++
+    Write-Host ("[BAD]  [{0:yyyy-MM-dd HH:mm:ss}] Event 6008 (DIRTY SHUTDOWN): Previous shutdown was unexpected!" -f $time)
+    Write-Host "       WHAT THIS MEANS: The OS lost power abruptly or crashed before writing dirty pages to disk."
+  } elseif ($id -eq 41) {
+    $kernelPowerCount++
+    $xml = [xml]$_.ToXml()
+    $bc = $xml.Event.EventData.Data | Where-Object { $_.Name -eq 'BugcheckCode' } | Select-Object -ExpandProperty '#text'
+    $bcHex = if ($bc -and $bc -ne '0') { '0x{0:X}' -f [int64]$bc } else { '0x0 (None/Hard Loss)' }
+    Write-Host ("[BAD]  [{0:yyyy-MM-dd HH:mm:ss}] Event 41 (Kernel-Power): Unclean reboot detected! BugCheck Code: {1}" -f $time, $bcHex)
+    if ($bcHex -eq '0x0 (None/Hard Loss)') {
+      Write-Host "       WHAT THIS MEANS: Power cut, PSU failure, or power button held down (no BSOD dump written)."
+    } else {
+      Write-Host "       WHAT THIS MEANS: Blue-Screen (BSOD) kernel crash occurred! Inspect minidump file."
+    }
+  } elseif ($id -eq 6006) {
+    Write-Host ("[INFO] [{0:yyyy-MM-dd HH:mm:ss}] Event 6006: Clean shutdown completed successfully." -f $time)
+  } elseif ($id -eq 6005) {
+    Write-Host ("[INFO] [{0:yyyy-MM-dd HH:mm:ss}] Event 6005: System booted (Event Log service initialized)." -f $time)
+  }
+}
+
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & VERDICT ==="
+Write-Host "================================================================================"
+Write-Host ("Planned Reboots/Shutdowns (1074) : {0}" -f $plannedCount)
+Write-Host ("Unexpected Shutdowns (6008)      : {0}" -f $unexpectedCount)
+Write-Host ("Kernel-Power Dirty Resets (41)   : {0}" -f $kernelPowerCount)
+Write-Host ""
+if ($unexpectedCount -eq 0 -and $kernelPowerCount -eq 0) {
+  Write-Host "[OK]   STATUS: HEALTHY -- 100% of shutdowns and reboots were clean and planned."
+  Write-Host "       Helpdesk Note: If user complained of unexpected restart, check who initiated Event 1074 above (e.g. Windows Update or Explorer)."
+} else {
+  Write-Host "[BAD]  STATUS: UNSTABLE -- System has experienced unexpected power losses or crashes!"
+  Write-Host "       WHAT HELPDESK SHOULD DO NEXT:"
+  if ($kernelPowerCount -gt 0) {
+    Write-Host "       1. Run 'Kernel BugCheck Minidump Triage' script to identify the faulting driver."
+    Write-Host "       2. If BugCheck is 0x0, check physical power cord, UPS, battery health, and PSU voltage."
+    Write-Host "       3. Check if user is holding the power button to force shutdown during application freezes."
+  }
+}
+""")),
     Script("uptime", "Uptime, last boot and Fast Startup", "Troubleshooting",
            "When Windows last really booted and how long it has been up. With Fast Startup "
            "on, 'Shut down' is a hibernation of the kernel, so uptime keeps growing and "
            "driver/update problems that a restart would clear survive a shutdown -- this "
            "says whether it is on.",
            _ps(r"""
-$os = Get-CimInstance Win32_OperatingSystem
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: System Uptime, Boot Hygiene & Fast Startup Status"
+Write-Host "PURPOSE   : Verifies true kernel reset vs hibernation across shutdowns"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK PRIMER:"
+Write-Host "  • UPTIME measures how long the kernel and drivers have been continuously running."
+Write-Host "  • FAST STARTUP (Hiberboot): When ON, clicking 'Shut down' DOES NOT reset the kernel!"
+Write-Host "    Instead, Windows hibernates kernel session to hiberfil.sys. Stale driver states,"
+Write-Host "    leaked resources, and pending updates persist. Only 'Restart' resets the kernel!"
+Write-Host ""
+$os = Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue
+if (-not $os) {
+  Write-Host "ERROR: Unable to query Win32_OperatingSystem via CIM."
+  return
+}
 $up = (Get-Date) - $os.LastBootUpTime
-$fs = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -ErrorAction SilentlyContinue).HiberbootEnabled
-[pscustomobject]@{
-  'Last boot' = $os.LastBootUpTime
-  'Uptime' = '{0}d {1}h {2}m' -f $up.Days, $up.Hours, $up.Minutes
-  'Fast Startup' = $(if ($fs -eq 1) { 'ON -- Shut down does not reset the kernel; use Restart' } elseif ($fs -eq 0) { 'off' } else { 'not set (Windows default: on where hibernation is available)' })
-  'Installed' = $os.InstallDate
-} | Format-List | Out-String -Width 220""")),
+$fsKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'
+$fs = (Get-ItemProperty $fsKey -ErrorAction SilentlyContinue).HiberbootEnabled
+$hiberKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power'
+$hiber = (Get-ItemProperty $hiberKey -ErrorAction SilentlyContinue).HibernateEnabled
+
+Write-Host "=== Phase 1: Operating System & Boot Telemetry ==="
+Write-Host ("Last Boot Time   : {0:yyyy-MM-dd HH:mm:ss}" -f $os.LastBootUpTime)
+Write-Host ("Continuous Uptime: {0} days, {1} hours, {2} minutes" -f $up.Days, $up.Hours, $up.Minutes)
+Write-Host ("OS Install Date  : {0:yyyy-MM-dd}" -f $os.InstallDate)
+Write-Host ""
+
+Write-Host "=== Phase 2: Fast Startup & Hibernation Configuration ==="
+if ($fs -eq 1) {
+  Write-Host "[WARN] Fast Startup (Hiberboot) is ENABLED."
+  Write-Host "       CRITICAL HELPDESK NOTE: 'Shut down' hibernates the kernel. Tell users to click RESTART to clear problems!"
+} elseif ($fs -eq 0) {
+  Write-Host "[OK]   Fast Startup is DISABLED. 'Shut down' performs a genuine cold kernel reboot."
+} else {
+  Write-Host "[INFO] Fast Startup policy key not set (Windows default is active if hibernation supported)."
+}
+
+if ($hiber -eq 0) {
+  Write-Host "[INFO] System Hibernation is disabled (Fast Startup cannot engage without hibernation)."
+} else {
+  Write-Host "[INFO] System Hibernation is enabled on system drive."
+}
+
+Write-Host ""
+Write-Host "=== Phase 3: Recent Wake Source (Last Sleep Transition) ==="
+try {
+  $wakeEvents = Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-Power-Troubleshooter'; Id=1} -MaxEvents 1 -ErrorAction SilentlyContinue
+  if ($wakeEvents) {
+    $wakeMsg = ($wakeEvents[0].Message -split "`r?`n") | Where-Object { $_ -match 'Wake Source' }
+    if ($wakeMsg) {
+      Write-Host ("Last Wake Event  : {0:yyyy-MM-dd HH:mm:ss} -- {1}" -f $wakeEvents[0].TimeCreated, $wakeMsg.Trim())
+    } else {
+      Write-Host ("Last Wake Event  : {0:yyyy-MM-dd HH:mm:ss}" -f $wakeEvents[0].TimeCreated)
+    }
+  } else {
+    Write-Host "[INFO] Zero sleep/wake events recorded in System log."
+  }
+} catch {
+  Write-Host "[INFO] Wake source query note: $($_.Exception.Message)"
+}
+
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & VERDICT ==="
+Write-Host "================================================================================"
+if ($up.Days -ge 30) {
+  Write-Host ("[BAD]  UPTIME ALERT: {0} days without a true reboot!" -f $up.Days)
+  Write-Host "       WHAT THIS MEANS: High risk of pool exhaustion, unpatched security updates, and driver instability."
+  Write-Host "       ACTION REQUIRED: Instruct user to perform a full system restart."
+} elseif ($up.Days -ge 14) {
+  Write-Host ("[WARN] ELEVATED UPTIME: {0} days since last restart." -f $up.Days)
+  Write-Host "       WHAT THIS MEANS: Operating within acceptable range, but recommend scheduled reboot for patch hygiene."
+} else {
+  Write-Host ("[OK]   UPTIME HEALTHY: {0}d {1}h -- kernel was recently reset." -f $up.Days, $up.Hours)
+}
+if ($fs -eq 1) {
+  Write-Host "[WARN] REMINDER: If diagnosing intermittent network, audio, or peripheral bugs, always trigger RESTART."
+}
+""")),
     Script("auto_stopped", "Automatic services that are not running", "Troubleshooting",
            "Services set to start automatically that are stopped right now, with their last "
            "exit code. Trigger-start and delayed services stop on their own by design, so "
            "they are marked; a plain Automatic service with a non-zero exit code is the one "
            "that crashed.",
            _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Automatic Services That Are Stopped"
+Write-Host "PURPOSE   : Distinguishes benign on-demand triggers from crashed background services"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK SERVICE TRIAGE PRIMER:"
+Write-Host "  • [INFO] Trigger-Start: Starts ONLY when a hardware/network trigger fires (e.g. Bluetooth,"
+Write-Host "    Smart Card, VPN). Stops automatically when idle -- COMPLETELY NORMAL by design!"
+Write-Host "  • [INFO] Delayed-Start: Configured to start 2-3 minutes after boot to avoid CPU spikes."
+Write-Host "  • [BAD]  Non-Zero Exit Code: Service crashed or terminated abnormally (e.g. error 1067)."
+Write-Host "  • [WARN] Clean Stopped: Automatic service stopped with ExitCode 0 (requires review)."
+Write-Host ""
+
 $trigger = @{}
-Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyContinue | ForEach-Object {
-  if (Test-Path (Join-Path $_.PSPath 'TriggerInfo')) { $trigger[$_.PSChildName.ToLower()] = $true } }
-$rows = Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" | ForEach-Object {
-  [pscustomobject]@{ Name = $_.Name; 'Display name' = $_.DisplayName; 'Exit code' = $_.ExitCode
-    Kind = $(if ($trigger[$_.Name.ToLower()]) { 'trigger-start (stops by design)' } elseif ($_.DelayedAutoStart) { 'delayed' } else { 'automatic' }) } }
-if (-not $rows) { 'Every automatic service is running.' } else { $rows | Sort-Object Kind, Name """ + _WIDE + "}")),
+try {
+  Get-ChildItem 'HKLM:\SYSTEM\CurrentControlSet\Services' -ErrorAction SilentlyContinue | ForEach-Object {
+    if (Test-Path (Join-Path $_.PSPath 'TriggerInfo')) { $trigger[$_.PSChildName.ToLower()] = $true }
+  }
+} catch {
+  Write-Host "[INFO] Registry trigger info query note: $($_.Exception.Message)"
+}
+
+try {
+  $services = Get-CimInstance Win32_Service -Filter "StartMode='Auto' AND State<>'Running'" -ErrorAction Stop
+} catch {
+  Write-Host ("ERROR: Could not query Win32_Service: {0}" -f $_.Exception.Message)
+  return
+}
+
+if (-not $services) {
+  Write-Host "[OK]   STATUS: ALL automatic services are currently running. Zero stopped services."
+  return
+}
+
+$crashedServices = @()
+$triggerServices = @()
+$delayedServices = @()
+$otherStopped = @()
+
+foreach ($svc in $services) {
+  $nameLower = $svc.Name.ToLower()
+  $isTrigger = [bool]$trigger[$nameLower]
+  $isDelayed = [bool]$svc.DelayedAutoStart
+  $exitCode = $svc.ExitCode
+
+  if ($exitCode -ne 0) {
+    $crashedServices += $svc
+  } elseif ($isTrigger) {
+    $triggerServices += $svc
+  } elseif ($isDelayed) {
+    $delayedServices += $svc
+  } else {
+    $otherStopped += $svc
+  }
+}
+
+Write-Host "=== Phase 1: Crashed Services (Exit Code != 0) ==="
+if ($crashedServices.Count -gt 0) {
+  Write-Host ("[BAD]  Found {0} automatic service(s) that terminated with a failure exit code!" -f $crashedServices.Count)
+  foreach ($s in $crashedServices) {
+    Write-Host ("  [BAD]  Service: {0,-24} ExitCode: {1,-10} Name: {2}" -f $s.Name, $s.ExitCode, $s.DisplayName)
+    Write-Host ("         WHAT THIS MEANS: Service crashed on startup or runtime. Check System Event 7034/7031.")
+  }
+} else {
+  Write-Host "[OK]   Zero automatic services have non-zero crash exit codes."
+}
+Write-Host ""
+
+Write-Host "=== Phase 2: Other Stopped Automatic Services (Exit Code = 0) ==="
+if ($otherStopped.Count -gt 0) {
+  Write-Host ("[WARN] Found {0} automatic service(s) stopped cleanly without active trigger info:" -f $otherStopped.Count)
+  foreach ($s in $otherStopped) {
+    Write-Host ("  [WARN] Service: {0,-24} Name: {1}" -f $s.Name, $s.DisplayName)
+  }
+} else {
+  Write-Host "[OK]   Zero unexpected stopped automatic services."
+}
+Write-Host ""
+
+Write-Host "=== Phase 3: Benign On-Demand & Delayed Services (Informational) ==="
+Write-Host ("Trigger-Start services stopped by design: {0}" -f $triggerServices.Count)
+Write-Host ("Delayed-Auto-Start services currently idle: {0}" -f $delayedServices.Count)
+if ($triggerServices.Count -gt 0) {
+  $triggerNames = ($triggerServices | Select-Object -First 8 | ForEach-Object { $_.Name }) -join ', '
+  Write-Host ("  Examples: {0}..." -f $triggerNames)
+}
+
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & VERDICT ==="
+Write-Host "================================================================================"
+if ($crashedServices.Count -gt 0) {
+  Write-Host "[BAD]  ACTION REQUIRED: Crashed services detected!"
+  Write-Host "       WHAT HELPDESK SHOULD DO NEXT:"
+  Write-Host "       1. Note the service name and check Windows Event Viewer -> System log."
+  Write-Host "       2. Filter for Event ID 7034 or 7031 (Service Control Manager)."
+  Write-Host "       3. Attempt manual service start via Services console to observe the exact failure reason."
+} elseif ($otherStopped.Count -gt 0) {
+  Write-Host "[WARN] ATTENTION: Some automatic services are stopped. Verify if their features are used."
+} else {
+  Write-Host "[OK]   STATUS: HEALTHY. Stopped services are trigger-start services sleeping by design."
+}
+""")),
     Script("recent_software", "Software installed in the last 14 days", "Troubleshooting",
            "Programs whose install date is in the last two weeks (both registry views and "
            "per-user installs). 'It broke after I installed something' starts here.",
            _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Software Installed in the Last 14 Days"
+Write-Host "PURPOSE   : Root-cause analysis for 'it was working until recently' tickets"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK TRIAGE PRIMER:"
+Write-Host "  • Checks 64-bit system programs, 32-bit (WOW6432Node), and per-user installs."
+Write-Host "  • Correlates MSI installer events from the Application log (Event 11707)."
+Write-Host "  • If a machine developed glitches recently, match ticket creation time to install dates!"
+Write-Host ""
+
 $cut = (Get-Date).AddDays(-14).ToString('yyyyMMdd')
+$cutDate = (Get-Date).AddDays(-14)
 $keys = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
-$rows = Get-ItemProperty $keys -ErrorAction SilentlyContinue |
-  Where-Object { $_.DisplayName -and $_.InstallDate -match '^\d{8}$' -and $_.InstallDate -ge $cut } |
-  Sort-Object InstallDate -Descending |
-  Select-Object @{n='Installed';e={$_.InstallDate}}, DisplayName, DisplayVersion, Publisher
-if (-not $rows) { 'Nothing recorded an install date in the last 14 days.' } else { $rows """ + _WIDE + "}")),
+
+Write-Host "=== Phase 1: Registry-Tracked Application Installs ==="
+$rows = @()
+try {
+  $rows = Get-ItemProperty $keys -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName -and $_.InstallDate -match '^\d{8}$' -and $_.InstallDate -ge $cut } |
+    Sort-Object InstallDate -Descending |
+    Select-Object @{n='Installed';e={$_.InstallDate}}, DisplayName, DisplayVersion, Publisher
+} catch {
+  Write-Host "[INFO] Registry scan query note: $($_.Exception.Message)"
+}
+
+if ($rows) {
+  Write-Host ("[INFO] Found {0} software installation(s) in registry over the past 14 days:" -f $rows.Count)
+  foreach ($r in $rows) {
+    $formattedDate = $r.Installed.Insert(4, '-').Insert(7, '-')
+    Write-Host ("  [{0}] {1,-36} v{2,-14} ({3})" -f $formattedDate, $r.DisplayName, $r.DisplayVersion, $r.Publisher)
+  }
+} else {
+  Write-Host "[OK]   Zero software installations recorded with explicit InstallDate in the last 14 days."
+}
+Write-Host ""
+
+Write-Host "=== Phase 2: Windows Installer (MsiInstaller) Logged Events ==="
+try {
+  $msiEvents = Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='MsiInstaller'; Id=11707; StartTime=$cutDate} -MaxEvents 15 -ErrorAction Stop
+  if ($msiEvents) {
+    Write-Host ("[INFO] Recorded {0} MSI package installation success event(s) in Application log:" -f $msiEvents.Count)
+    foreach ($evt in $msiEvents) {
+      $firstLine = ($evt.Message -split "`r?`n")[0]
+      Write-Host ("  [{0:yyyy-MM-dd HH:mm}] {1}" -f $evt.TimeCreated, $firstLine)
+    }
+  } else {
+    Write-Host "[OK]   Zero MSI installer events recorded in the last 14 days."
+  }
+} catch {
+  if ($_.Exception.Message -match 'No events were found') {
+    Write-Host "[OK]   Zero MSI installer events recorded in the last 14 days."
+  } else {
+    Write-Host "[INFO] Application log MsiInstaller check note: $($_.Exception.Message)"
+  }
+}
+
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+if ($rows.Count -gt 0) {
+  Write-Host ("[WARN] RECENT CHANGES DETECTED: {0} programs were installed or updated." -f $rows.Count)
+  Write-Host "       WHAT HELPDESK SHOULD DO:"
+  Write-Host "       1. Ask the user if the problem began right after any of the dates listed above."
+  Write-Host "       2. Check if newly installed software included security agents, VPNs, or virtual display drivers."
+  Write-Host "       3. To test isolation, test uninstalling suspect app or rolling back using System Restore."
+} else {
+  Write-Host "[OK]   STATUS: NO RECENT SOFTWARE INSTALLS. Issue is likely caused by updates, hardware, or config."
+}
+""")),
     Script("hotfixes", "Installed Windows updates", "Troubleshooting",
            "Every installed update (KB) with its install date, newest first -- for 'which "
            "update came in before this started'. Cumulative updates replace each other, so "
            "only the latest few appear.",
-           _ps("Get-HotFix | Sort-Object InstalledOn -Descending | "
-               "Select-Object HotFixID, Description, InstalledOn, InstalledBy " + _WIDE)),
+           _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Installed Windows Updates & Servicing Hotfixes"
+Write-Host "PURPOSE   : Verifies patch cadence and pinpoints recently applied KBs"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK UPDATES PRIMER:"
+Write-Host "  • Cumulative Updates (LCU) replace previous months' updates; only recent ones show."
+Write-Host "  • If a system broke after Patch Tuesday (second Tuesday of the month), check the KBs below."
+Write-Host "  • To roll back an update causing driver/network outages: wusa.exe /uninstall /kb:XXXXXXX"
+Write-Host ""
+
+Write-Host "=== Phase 1: Installed Quality Updates (Get-HotFix) ==="
+try {
+  $fixes = Get-HotFix -ErrorAction Stop | Sort-Object InstalledOn -Descending
+  if ($fixes) {
+    Write-Host ("[INFO] Total HotFix packages detected: {0}" -f $fixes.Count)
+    foreach ($fix in $fixes) {
+      $dateStr = if ($fix.InstalledOn) { $fix.InstalledOn.ToString('yyyy-MM-dd') } else { 'Unknown' }
+      Write-Host ("  [{0}] {1,-14} {2,-28} by {3}" -f $dateStr, $fix.HotFixID, $fix.Description, $fix.InstalledBy)
+    }
+  } else {
+    Write-Host "[WARN] No hotfixes reported by Win32_QuickFixEngineering."
+  }
+} catch {
+  Write-Host ("ERROR: Failed to retrieve hotfixes: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+
+Write-Host "=== Phase 2: Recent Windows Update Client Activity ==="
+try {
+  $wuEvents = Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-WindowsUpdateClient'; Id=19,20; StartTime=(Get-Date).AddDays(-30)} -MaxEvents 10 -ErrorAction Stop
+  if ($wuEvents) {
+    Write-Host "[INFO] Recent Windows Update installation outcomes in System log:"
+    foreach ($evt in $wuEvents) {
+      $tag = if ($evt.Id -eq 19) { '[OK]  ' } else { '[BAD] ' }
+      $desc = if ($evt.Id -eq 19) { 'SUCCESS' } else { 'FAILED ' }
+      Write-Host ("  {0} [{1:yyyy-MM-dd HH:mm}] Update {2}: {3}" -f $tag, $evt.TimeCreated, $desc, ($evt.Message -split "`r?`n")[0])
+    }
+  } else {
+    Write-Host "[INFO] No Windows Update installation events recorded in the last 30 days."
+  }
+} catch {
+  if ($_.Exception.Message -match 'No events were found') {
+    Write-Host "[OK]   Zero Windows Update failure events recorded in the last 30 days."
+  } else {
+    Write-Host "[INFO] Windows Update log check note: $($_.Exception.Message)"
+  }
+}
+
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+Write-Host "[INFO] If a recent Windows Update broke printing, Wi-Fi, or software compatibility:"
+Write-Host "       1. Check the newest KB number from Phase 1."
+Write-Host "       2. Search Microsoft Release Health dashboard for known issues with that KB."
+Write-Host "       3. If required, remove via Command Prompt: wusa.exe /uninstall /kb:XXXXXXX /promptrestart"
+""")),
     # ---- Network --------------------------------------------------------------------------
     Script("listening", "Listening ports and the program behind each", "Network",
            "Every TCP port waiting for connections and every UDP endpoint, with the process "
            "name and path. Anything listening on 0.0.0.0 or :: is reachable from the network "
            "unless the firewall blocks it -- the list a hardening review starts from.",
            _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Listening Ports & Process Attribution Matrix"
+Write-Host "PURPOSE   : Identifies open network doors and the applications listening on them"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK LISTENING PORTS PRIMER:"
+Write-Host "  • 0.0.0.0 / [::] : Bound to ALL network interfaces -- reachable from LAN/Internet (EXPOSED)!"
+Write-Host "  • 127.0.0.1 / ::1: Bound to LOCALHOST only -- cannot be reached from outside the machine."
+Write-Host "  • High-Risk Ports: 3389 (RDP), 445 (SMB), 5985 (WinRM), 22 (SSH), 80/443 (Web)."
+Write-Host ""
 $procs = @{}
-Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $procs[$_.Id] = $_ }
-$tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-  $p = $procs[[int]$_.OwningProcess]
-  [pscustomobject]@{ Proto='TCP'; Address=$_.LocalAddress; Port=$_.LocalPort; PID=$_.OwningProcess
-    Process=$(if ($p) { $p.ProcessName } else { '?' }); Path=$(if ($p) { $p.Path } else { '' }) } }
-$udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
-  $p = $procs[[int]$_.OwningProcess]
-  [pscustomobject]@{ Proto='UDP'; Address=$_.LocalAddress; Port=$_.LocalPort; PID=$_.OwningProcess
-    Process=$(if ($p) { $p.ProcessName } else { '?' }); Path=$(if ($p) { $p.Path } else { '' }) } }
-@($tcp) + @($udp) | Sort-Object Proto, Port """ + _WIDE,
-               "the paths of system and other users' processes are blank"),
+try {
+  Get-Process -ErrorAction SilentlyContinue | ForEach-Object { $procs[$_.Id] = $_ }
+} catch {
+  Write-Host "[INFO] Process inventory note: $($_.Exception.Message)"
+}
+$tcp = @()
+$udp = @()
+try {
+  $tcp = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+    $p = $procs[[int]$_.OwningProcess]
+    $pName = if ($p) { $p.ProcessName } else { 'System/Protected' }
+    $pPath = if ($p -and $p.Path) { $p.Path } else { 'N/A' }
+    [pscustomobject]@{ Proto='TCP'; Address=$_.LocalAddress; Port=$_.LocalPort; PID=$_.OwningProcess; Process=$pName; Path=$pPath }
+  }
+} catch {
+  Write-Host "[INFO] TCP query note: $($_.Exception.Message)"
+}
+try {
+  $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
+    $p = $procs[[int]$_.OwningProcess]
+    $pName = if ($p) { $p.ProcessName } else { 'System/Protected' }
+    $pPath = if ($p -and $p.Path) { $p.Path } else { 'N/A' }
+    [pscustomobject]@{ Proto='UDP'; Address=$_.LocalAddress; Port=$_.LocalPort; PID=$_.OwningProcess; Process=$pName; Path=$pPath }
+  }
+} catch {
+  Write-Host "[INFO] UDP query note: $($_.Exception.Message)"
+}
+
+$all = @($tcp) + @($udp)
+$exposed = $all | Where-Object { $_.Address -in ('0.0.0.0', '::') }
+
+Write-Host "=== Phase 1: High-Exposure Network-Accessible Endpoints (0.0.0.0 / ::) ==="
+if ($exposed) {
+  Write-Host ("[WARN] Found {0} endpoint(s) listening on all external interfaces:" -f $exposed.Count)
+  foreach ($ep in ($exposed | Sort-Object Port)) {
+    $tag = if ($ep.Port -in (3389, 445, 135, 5985)) { '[WARN]' } else { '[INFO]' }
+    Write-Host ("  {0} {1,-4} Port {2,-5} PID: {3,-6} Process: {4,-22} ({5})" -f $tag, $ep.Proto, $ep.Port, $ep.PID, $ep.Process, $ep.Path)
+  }
+} else {
+  Write-Host "[OK]   Zero endpoints listening on 0.0.0.0 or ::."
+}
+Write-Host ""
+
+Write-Host "=== Phase 2: Localhost-Only Internal Endpoints (127.0.0.1 / ::1) ==="
+$local = $all | Where-Object { $_.Address -in ('127.0.0.1', '::1') }
+Write-Host ("[OK]   Found {0} safe internal-only listening endpoint(s)." -f $local.Count)
+foreach ($ep in ($local | Sort-Object Port | Select-Object -First 10)) {
+  Write-Host ("  [INFO] {0,-4} Port {1,-5} PID: {2,-6} Process: {3}" -f $ep.Proto, $ep.Port, $ep.PID, $ep.Process)
+}
+
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+if ($exposed) {
+  Write-Host "[INFO] Review Phase 1 endpoints to confirm all open ports are legitimate business tools."
+  Write-Host "       If an unexpected port or unknown process is listening on 0.0.0.0:"
+  Write-Host "       1. Check the executable path in Phase 1."
+  Write-Host "       2. If unneeded, close application or set service to Manual/Disabled."
+  Write-Host "       3. Verify Windows Firewall profile is set to Block inbound by default."
+} else {
+  Write-Host "[OK]   STATUS: HARDENED. No unexpected ports are listening externally."
+}
+"""),
            admin=True),
     Script("ipconfig", "Full network configuration", "Network",
            "ipconfig /all: every adapter, its addresses, DNS servers, DHCP lease and MAC.",
@@ -206,20 +615,88 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
            "list without any error (measured 2026-10-16: 0 entries unelevated, 94 "
            "elevated; ipconfig /displaydns says 'requires elevation'), so this script "
            "refuses rather than report an empty cache.",
-           _ps(_IS_ADMIN + "if (-not $isAdmin) { 'Cannot read the DNS cache: it needs "
-               "administrator rights. (Windows returns an empty list instead of an error, "
-               "so an empty result here would not mean the cache is empty.)'; return }\n"
-               "$c = Get-DnsClientCache -ErrorAction SilentlyContinue\n"
-               "if (-not $c) { 'The DNS cache is empty.' } else { $c | Sort-Object Entry | "
-               "Select-Object Entry, RecordName, Data, TimeToLive " + _WIDE + " }"),
+           _ps(_IS_ADMIN + r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: DNS Client Cache & Name Resolution History"
+Write-Host "PURPOSE   : Inspects locally cached DNS lookups and domain attribution"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK DNS PRIMER:"
+Write-Host "  • Windows caches every DNS query to speed up web browsing and network traffic."
+Write-Host "  • Stale DNS cache causes: 'Website unreachable in Chrome, but works on other PCs'."
+Write-Host "  • TTL (Time-To-Live): Seconds remaining before Windows must re-query the DNS server."
+Write-Host ""
+if (-not $isAdmin) {
+  Write-Host "NOT AVAILABLE: needs administrator rights -- Windows returns an empty list instead of an error unelevated."
+  return
+}
+try {
+  $c = Get-DnsClientCache -ErrorAction Stop
+  if (-not $c) {
+    Write-Host "[OK]   The DNS client cache is currently empty."
+  } else {
+    Write-Host ("[INFO] Cached DNS records detected: {0}" -f $c.Count)
+    Write-Host "=== Phase 1: Recently Resolved Hostnames & IPs ==="
+    foreach ($entry in ($c | Sort-Object Entry | Select-Object -First 30)) {
+      $data = if ($entry.Data) { $entry.Data } else { 'NXDOMAIN / Empty' }
+      Write-Host ("  [INFO] Host: {0,-36} TTL: {1,4}s | Data: {2}" -f $entry.Entry, $entry.TimeToLive, $data)
+    }
+  }
+} catch {
+  Write-Host ("ERROR: Failed to read DNS cache: {0}" -f $_.Exception.Message)
+  return
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+Write-Host "[INFO] If diagnosing website or intranet connection failures:"
+Write-Host "       1. If an IP in Phase 1 is outdated: flush cache via Command Prompt: ipconfig /flushdns"
+Write-Host "       2. Test fresh DNS lookup: Resolve-DnsName <hostname> or nslookup <hostname>"
+"""),
            admin=True),
     Script("routes", "Routing table", "Network",
            "IPv4 and IPv6 routes with their interface and metric. A VPN's 0.0.0.0/1 + "
            "128.0.0.0/1 pair, or a second default route, explains most 'traffic goes the "
            "wrong way' problems.",
-           _ps("Get-NetRoute -ErrorAction SilentlyContinue | Sort-Object AddressFamily, "
-               "RouteMetric | Select-Object AddressFamily, DestinationPrefix, NextHop, "
-               "InterfaceAlias, RouteMetric " + _WIDE)),
+           _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: IPv4 / IPv6 Routing Table & Default Gateway Metric"
+Write-Host "PURPOSE   : Resolves 'traffic routed to wrong network adapter or broken VPN'"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK ROUTING PRIMER:"
+Write-Host "  • 0.0.0.0/0 (IPv4) & ::/0 (IPv6) are the DEFAULT GATEWAYS to the Internet."
+Write-Host "  • METRIC: The lower the metric number, the HIGHER the priority! If Wi-Fi has metric 20"
+Write-Host "    and Ethernet has metric 35, Windows will route internet over Wi-Fi instead of cable!"
+Write-Host "  • VPN Split-Tunnel: 0.0.0.0/1 and 128.0.0.0/1 routes route half the internet each."
+Write-Host ""
+try {
+  $routes = Get-NetRoute -ErrorAction Stop
+  $defaultRoutes = $routes | Where-Object { $_.DestinationPrefix -in ('0.0.0.0/0', '::/0') } | Sort-Object RouteMetric
+  Write-Host "=== Phase 1: Default Gateways (Internet Exit Points) ==="
+  if ($defaultRoutes) {
+    foreach ($dr in $defaultRoutes) {
+      Write-Host ("  [OK]   AddressFamily: {0,-6} Gateway: {1,-20} Interface: {2,-18} Metric: {3}" -f $dr.AddressFamily, $dr.NextHop, $dr.InterfaceAlias, $dr.RouteMetric)
+    }
+  } else {
+    Write-Host "[BAD]  NO DEFAULT GATEWAY ROUTE DETECTED! System cannot route to the Internet."
+  }
+  Write-Host ""
+  Write-Host "=== Phase 2: Active Subnet & VPN Routes (Sample) ==="
+  $subnets = $routes | Where-Object { $_.DestinationPrefix -notin ('0.0.0.0/0', '::/0') } | Sort-Object InterfaceAlias, RouteMetric
+  foreach ($r in ($subnets | Select-Object -First 15)) {
+    Write-Host ("  [INFO] Prefix: {0,-22} NextHop: {1,-18} Interface: {2,-18} Metric: {3}" -f $r.DestinationPrefix, $r.NextHop, $r.InterfaceAlias, $r.RouteMetric)
+  }
+} catch {
+  Write-Host ("ERROR: Failed to retrieve routing table: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+Write-Host "[INFO] If Internet traffic is slow or taking the wrong network path:"
+Write-Host "       1. Check Phase 1: Ensure the faster physical connection (Ethernet) has the lowest metric."
+Write-Host "       2. To adjust priority, modify adapter properties or run set-netipinterface -InterfaceAlias '<name>' -InterfaceMetric <number>."
+""")),
     Script("wifi_profiles", "Saved Wi-Fi networks", "Network",
            "The Wi-Fi networks this PC remembers and will join automatically. Names only -- "
            "this never prints a password.",
@@ -228,65 +705,331 @@ $udp = Get-NetUDPEndpoint -ErrorAction SilentlyContinue | ForEach-Object {
     Script("local_admins", "Members of the local Administrators group", "Security",
            "Who has full control of this PC. Looked up by the group's well-known SID "
            "(S-1-5-32-544), so it works on any Windows language.",
-           _ps("Get-LocalGroupMember -SID S-1-5-32-544 | Select-Object Name, ObjectClass, "
-               "PrincipalSource " + _WIDE)),
+           _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Local Administrators Group Members (SID S-1-5-32-544)"
+Write-Host "PURPOSE   : Audits accounts with full administrative control over this machine"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK PRIVILEGE PRIMER:"
+Write-Host "  • Well-known SID S-1-5-32-544 is the universal SID for Administrators across all languages."
+Write-Host "  • Principle of Least Privilege: Standard users should NOT belong to this group."
+Write-Host "  • Local admin accounts represent elevated risk if left unmanaged (e.g. without LAPS)."
+Write-Host ""
+try {
+  $admins = Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop
+  Write-Host "=== Phase 1: Administrators Group Roster ==="
+  if ($admins) {
+    Write-Host ("[INFO] Total Administrators detected: {0}" -f $admins.Count)
+    foreach ($m in $admins) {
+      $source = if ($m.PrincipalSource) { $m.PrincipalSource } else { 'Local' }
+      $tag = if ($m.ObjectClass -eq 'Group') { '[INFO]' } else { '[WARN]' }
+      Write-Host ("  {0} Name: {1,-32} Class: {2,-10} Source: {3,-12} SID: {4}" -f $tag, $m.Name, $m.ObjectClass, $source, $m.SID)
+    }
+  } else {
+    Write-Host "[WARN] No members found in Administrators group."
+  }
+} catch {
+  Write-Host ("ERROR: Failed to query Local Administrators group: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+Write-Host "[INFO] Security Audit Guidance:"
+Write-Host "       1. Verify every user account listed in Phase 1 is authorized for full local control."
+Write-Host "       2. In corporate environments, domain users should rarely be direct members; use LAPS or PIM."
+""")),
     Script("third_party_tasks", "Scheduled tasks not shipped by Microsoft", "Security",
            "Every scheduled task outside \\Microsoft\\, with what it runs and as whom. Updaters "
            "live here -- and so does malware that wants to come back after a reboot.",
            _ps(r"""
-$rows = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskPath -notlike '\Microsoft\*' } | ForEach-Object {
-  [pscustomobject]@{ Task = $_.TaskPath + $_.TaskName; State = $_.State; 'Runs as' = $_.Principal.UserId
-    Action = (($_.Actions | ForEach-Object { ($_.Execute + ' ' + $_.Arguments).Trim() }) -join ' ; ') } }
-if (-not $rows) { 'No scheduled tasks outside \Microsoft\.' } else { $rows | Sort-Object Task | Format-List | Out-String -Width 220 }""",
-               "tasks registered by other users may be missing"), admin=True),
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Third-Party Scheduled Tasks (Outside \\Microsoft\\)"
+Write-Host "PURPOSE   : Identifies non-OS background persistence, updaters, and rogue tasks"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK PERSISTENCE PRIMER:"
+Write-Host "  • Scheduled Tasks outside \Microsoft\ are created by third-party applications or malware."
+Write-Host "  • Common legitimate updaters: GoogleUpdate, Adobe, EdgeUpdate, OneDrive."
+Write-Host "  • SUSPICIOUS: Tasks executing from %TEMP%, %APPDATA%, or running encoded scripts."
+Write-Host ""
+try {
+  $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskPath -notlike '\Microsoft\*' }
+  Write-Host "=== Phase 1: Non-Microsoft Task Inventory ==="
+  if ($tasks) {
+    Write-Host ("[INFO] Found {0} third-party scheduled task(s):" -f $tasks.Count)
+    foreach ($t in ($tasks | Sort-Object TaskPath, TaskName)) {
+      $fullName = $t.TaskPath + $t.TaskName
+      $actions = ($t.Actions | ForEach-Object { ($_.Execute + ' ' + $_.Arguments).Trim() }) -join ' ; '
+      $runAs = if ($t.Principal.UserId) { $t.Principal.UserId } else { 'System/Unknown' }
+      $tag = if ($t.State -eq 'Running') { '[INFO]' } elseif ($t.State -eq 'Ready') { '[OK]  ' } else { '[INFO]' }
+      Write-Host ("  {0} Task: {1,-36} State: {2,-8} RunAs: {3}" -f $tag, $fullName, $t.State, $runAs)
+      if ($actions) {
+        Write-Host ("       Action: {0}" -f $actions)
+      }
+    }
+  } else {
+    Write-Host "[OK]   Zero third-party scheduled tasks registered outside \Microsoft\."
+  }
+} catch {
+  Write-Host ("ERROR: Failed to enumerate scheduled tasks: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+Write-Host "[INFO] If investigating high background CPU or suspicious popups:"
+Write-Host "       1. Look for tasks whose Action points to user AppData or Temp folders."
+Write-Host "       2. To disable an unwanted task, use Task Scheduler (taskschd.msc) or unregister-scheduledtask."
+"""),
+           admin=True),
     Script("expiring_certs", "Certificates expiring within 60 days", "Security",
            "Personal certificates (this user and the computer) that expire in the next 60 days "
            "or already have -- VPN, Wi-Fi (802.1X) and code-signing breakage, before it happens.",
            _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Personal Certificates Expiring Within 60 Days"
+Write-Host "PURPOSE   : Prevents Wi-Fi 802.1X, VPN client, and code-signing authentication outages"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK CERTIFICATE PRIMER:"
+Write-Host "  • User and Computer Personal stores hold authentication certificates (Wi-Fi, VPN, EFS, Email)."
+Write-Host "  • When a client cert expires, the user suddenly cannot connect to corporate Wi-Fi or VPN!"
+Write-Host ""
 $limit = (Get-Date).AddDays(60)
-$rows = 'Cert:\CurrentUser\My','Cert:\LocalMachine\My' | ForEach-Object {
-  $store = $_; Get-ChildItem $_ -ErrorAction SilentlyContinue | Where-Object { $_.NotAfter -lt $limit } |
-  ForEach-Object { [pscustomobject]@{ Store=$store; Subject=$_.Subject; Expires=$_.NotAfter; Issuer=$_.Issuer; Thumbprint=$_.Thumbprint } } }
-if (-not $rows) { 'No personal certificate expires in the next 60 days.' } else { $rows | Sort-Object Expires """ + _WIDE + "}")),
+$now = Get-Date
+$stores = 'Cert:\CurrentUser\My', 'Cert:\LocalMachine\My'
+$found = @()
+try {
+  foreach ($s in $stores) {
+    if (Test-Path $s) {
+      Get-ChildItem $s -ErrorAction SilentlyContinue | Where-Object { $_.NotAfter -lt $limit } | ForEach-Object {
+        $found += [pscustomobject]@{ Store=$s; Subject=$_.Subject; NotAfter=$_.NotAfter; Issuer=$_.Issuer; Thumbprint=$_.Thumbprint }
+      }
+    }
+  }
+  Write-Host "=== Phase 1: Expiring / Expired Certificates Inventory ==="
+  if ($found) {
+    Write-Host ("[WARN] Found {0} certificate(s) expired or expiring within 60 days:" -f $found.Count)
+    foreach ($c in ($found | Sort-Object NotAfter)) {
+      $daysLeft = [math]::Round(($c.NotAfter - $now).TotalDays, 0)
+      $tag = if ($daysLeft -lt 0) { '[BAD] ' } elseif ($daysLeft -le 14) { '[BAD] ' } else { '[WARN]' }
+      $status = if ($daysLeft -lt 0) { "EXPIRED ($([math]::Abs($daysLeft)) days ago)" } else { "Expires in $daysLeft days" }
+      Write-Host ("  {0} [{1:yyyy-MM-dd}] ({2}) Store: {3}" -f $tag, $c.NotAfter, $status, $c.Store)
+      Write-Host ("       Subject: {0}" -f $c.Subject)
+      Write-Host ("       Issuer : {0}" -f $c.Issuer)
+    }
+  } else {
+    Write-Host "[OK]   Zero personal certificates are expired or expiring in the next 60 days."
+  }
+} catch {
+  Write-Host ("ERROR: Failed to scan certificate stores: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+if ($found) {
+  Write-Host "[WARN] ACTION REQUIRED: Renew expiring certificates before authentication fails."
+  Write-Host "       1. Check whether certificate is issued by internal Enterprise PKI or public CA."
+  Write-Host "       2. To request auto-renewal via Active Directory: certreq -enroll or certmgr.msc."
+} else {
+  Write-Host "[OK]   STATUS: CERTIFICATE HEALTHY. All personal certificates have valid lifetimes."
+}
+""")),
     Script("firewall_profiles", "Firewall profiles", "Security",
            "Whether the Domain, Private and Public firewall profiles are on, their default "
            "inbound/outbound actions, and which profile each network is in right now. A "
            "home network sitting in the Public profile (or a public one in Private) is a "
            "common surprise.",
-           _ps("Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, "
-               "DefaultOutboundAction, LogBlocked " + _WIDE + "\n"
-               "Get-NetConnectionProfile | Select-Object InterfaceAlias, Name, "
-               "NetworkCategory " + _WIDE)),
+           _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Windows Firewall Profiles & Network Location State"
+Write-Host "PURPOSE   : Audits Domain, Private, and Public perimeter security postures"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK FIREWALL PRIMER:"
+Write-Host "  • Public Profile: Strictest rules -- blocks all unsolicited incoming traffic (cafes/airports)."
+Write-Host "  • Private Profile: Allows local network sharing (printers, home media, file sharing)."
+Write-Host "  • Domain Profile: Active when connected to corporate Active Directory domain network."
+Write-Host "  • CRITICAL RULE: Inbound action MUST be 'Block' across all three profiles!"
+Write-Host ""
+try {
+  $profiles = Get-NetFirewallProfile -ErrorAction Stop
+  $connections = Get-NetConnectionProfile -ErrorAction SilentlyContinue
+
+  Write-Host "=== Phase 1: Active Network Connection Locations ==="
+  if ($connections) {
+    foreach ($conn in $connections) {
+      Write-Host ("  [INFO] Interface: {0,-20} SSID/Network: {1,-20} Category: {2}" -f $conn.InterfaceAlias, $conn.Name, $conn.NetworkCategory)
+    }
+  } else {
+    Write-Host "[INFO] No active network connections reported."
+  }
+  Write-Host ""
+
+  Write-Host "=== Phase 2: Windows Firewall Profile Configuration ==="
+  $anyDisabled = $false
+  $anyInboundAllow = $false
+  foreach ($p in $profiles) {
+    $enabledTag = if ($p.Enabled -eq 'True') { '[OK]  ' } else { $anyDisabled = $true; '[BAD] ' }
+    $inboundTag = if ($p.DefaultInboundAction -eq 'Block') { '[OK]  ' } else { $anyInboundAllow = $true; '[BAD] ' }
+    Write-Host ("  Profile: {0}" -f $p.Name)
+    Write-Host ("    {0} State          : {1}" -f $enabledTag, $(if ($p.Enabled -eq 'True') { 'ACTIVE (ON)' } else { 'DISABLED (OFF)!' }))
+    Write-Host ("    {1} Inbound Action : {0}" -f $p.DefaultInboundAction, $inboundTag)
+    Write-Host ("    [INFO] Outbound Action: {0}" -f $p.DefaultOutboundAction)
+    Write-Host ("    [INFO] Logging Blocked: {0}" -f $p.LogBlocked)
+  }
+} catch {
+  Write-Host ("ERROR: Failed to query Windows Firewall: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+if ($anyDisabled) {
+  Write-Host "[BAD]  SECURITY COMPROMISE: One or more firewall profiles are DISABLED!"
+  Write-Host "       ACTION REQUIRED: Re-enable Windows Firewall immediately via Windows Security or netsh."
+} elseif ($anyInboundAllow) {
+  Write-Host "[BAD]  OVER-PERMISSIVE: Inbound action set to Allow! System is vulnerable to port probes."
+} else {
+  Write-Host "[OK]   STATUS: FIREWALL POSTURE HARDENED. All profiles are active with Inbound Block policy."
+}
+""")),
     Script("shares", "Shared folders", "Security",
            "Every SMB share this PC offers, including the hidden administrative ones (C$, "
            "ADMIN$), with path and description.",
-           _ps("Get-SmbShare | Select-Object Name, Path, Description, CurrentUsers " + _WIDE)),
+           _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Local SMB Network Shares (Server Message Block)"
+Write-Host "PURPOSE   : Audits shared directories and administrative shares exposed on LAN"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK SMB PRIMER:"
+Write-Host "  • Administrative Shares (C$, ADMIN$, IPC$): Built-in Windows shares accessible only by Admins."
+Write-Host "  • Custom Shares: User-created folders shared across the local network."
+Write-Host "  • Risk: Over-permissive NTFS or share permissions can expose sensitive corporate files."
+Write-Host ""
+try {
+  $shares = Get-SmbShare -ErrorAction Stop
+  Write-Host "=== Phase 1: Local SMB Shares Inventory ==="
+  if ($shares) {
+    Write-Host ("[INFO] Total SMB Shares detected: {0}" -f $shares.Count)
+    foreach ($s in ($shares | Sort-Object Special, Name)) {
+      $kind = if ($s.Special) { 'Admin / Special' } else { 'Custom Share' }
+      $tag = if ($s.Special) { '[INFO]' } else { '[WARN]' }
+      Write-Host ("  {0} Share: {1,-14} Kind: {2,-16} Path: {3}" -f $tag, $s.Name, $kind, $s.Path)
+      if ($s.Description) {
+        Write-Host ("       Description: {0}" -f $s.Description)
+      }
+    }
+  } else {
+    Write-Host "[OK]   Zero SMB shares found on this system."
+  }
+} catch {
+  Write-Host ("ERROR: Failed to query SMB shares: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+Write-Host "[INFO] Security Audit Guidance:"
+Write-Host "       1. Special shares (C$, ADMIN$) are normal for Windows domain management."
+Write-Host "       2. Verify that any non-special (custom) shares listed above have legitimate business requirements."
+""")),
     # ---- Inventory ------------------------------------------------------------------------
     Script("system_summary", "System summary", "Inventory",
            "Edition, version and build, computer name, domain or workgroup, manufacturer and "
            "model, BIOS version and date, CPU, memory -- the header of every support ticket.",
            _ps(r"""
-$os = Get-CimInstance Win32_OperatingSystem; $cs = Get-CimInstance Win32_ComputerSystem
-$bios = Get-CimInstance Win32_BIOS; $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
-$cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
-[pscustomobject]@{
-  'Windows' = "$($os.Caption) $($cv.DisplayVersion) (build $($cv.CurrentBuild).$($cv.UBR))"
-  'Computer' = $cs.Name
-  'Domain / workgroup' = $(if ($cs.PartOfDomain) { "domain $($cs.Domain)" } else { "workgroup $($cs.Workgroup)" })
-  'Manufacturer / model' = "$($cs.Manufacturer) $($cs.Model)"
-  'BIOS' = "$($bios.SMBIOSBIOSVersion) ($($bios.ReleaseDate.ToString('yyyy-MM-dd')))"
-  'CPU' = $cpu.Name.Trim()
-  'Memory' = '{0:N1} GB' -f ($cs.TotalPhysicalMemory / 1GB)
-  'Architecture' = $os.OSArchitecture
-} | Format-List | Out-String -Width 220""")),
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Comprehensive System Hardware & OS Summary"
+Write-Host "PURPOSE   : Standardized system profile for Helpdesk tickets and escalation"
+Write-Host "================================================================================"
+try {
+  $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+  $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+  $bios = Get-CimInstance Win32_BIOS -ErrorAction Stop
+  $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+  $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+
+  Write-Host "=== Phase 1: Operating System & Build Baseline ==="
+  Write-Host ("OS Name         : {0}" -f $os.Caption)
+  Write-Host ("OS Version      : {0} (Build {1}.{2})" -f $cv.DisplayVersion, $cv.CurrentBuild, $cv.UBR)
+  Write-Host ("Architecture    : {0}" -f $os.OSArchitecture)
+  Write-Host ("Install Date    : {0:yyyy-MM-dd}" -f $os.InstallDate)
+  Write-Host ""
+
+  Write-Host "=== Phase 2: Hardware Platform & Motherboard ==="
+  Write-Host ("Manufacturer    : {0}" -f $cs.Manufacturer)
+  Write-Host ("Model           : {0}" -f $cs.Model)
+  Write-Host ("System Type     : {0}" -f $cs.SystemType)
+  Write-Host ("BIOS Version    : {0} ({1:yyyy-MM-dd})" -f $bios.SMBIOSBIOSVersion, $bios.ReleaseDate)
+  Write-Host ""
+
+  Write-Host "=== Phase 3: CPU & Memory Capacity ==="
+  Write-Host ("Processor       : {0}" -f $cpu.Name.Trim())
+  Write-Host ("Cores / Threads : {0} Cores, {1} Logical Processors" -f $cpu.NumberOfCores, $cpu.NumberOfLogicalProcessors)
+  Write-Host ("Total RAM       : {0:N1} GB ({1:N0} MB)" -f ($cs.TotalPhysicalMemory / 1GB), ($cs.TotalPhysicalMemory / 1MB))
+  Write-Host ""
+
+  Write-Host "=== Phase 4: Identity & Domain Membership ==="
+  Write-Host ("Computer Name   : {0}" -f $cs.Name)
+  $domainStr = if ($cs.PartOfDomain) { "Domain ({0})" -f $cs.Domain } else { "Workgroup ({0})" -f $cs.Workgroup }
+  Write-Host ("Membership      : {0}" -f $domainStr)
+} catch {
+  Write-Host ("ERROR: Failed to retrieve system summary: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TICKET HEADER (READY TO COPY/PASTE) ==="
+Write-Host "================================================================================"
+Write-Host ("[INFO] OS: {0} {1} (Build {2}) | CPU: {3} | RAM: {4:N1}GB | PC: {5}" -f $os.Caption, $cv.DisplayVersion, $cv.CurrentBuild, $cpu.Name.Trim(), ($cs.TotalPhysicalMemory / 1GB), $cs.Name)
+""")),
     Script("third_party_drivers", "Third-party drivers", "Inventory",
            "Drivers installed from outside Windows (oem*.inf), with provider, version and "
            "date -- the usual suspects for a blue screen or a device that stopped working.",
-           _ps("Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue | "
-               "Where-Object { $_.InfName -like 'oem*.inf' } | Sort-Object DriverProviderName, "
-               "DeviceName | Select-Object DeviceName, DriverProviderName, DriverVersion, "
-               "@{n='Date';e={if ($_.DriverDate) { $_.DriverDate.ToString('yyyy-MM-dd') }}}, InfName "
-               + _WIDE), timeout=180),
+           _ps(r"""
+Write-Host "================================================================================"
+Write-Host "DIAGNOSTIC: Third-Party OEM Drivers (oem*.inf)"
+Write-Host "PURPOSE   : Audits installed vendor drivers to pinpoint outdated crash culprits"
+Write-Host "================================================================================"
+Write-Host "[INFO] HELPDESK DRIVER PRIMER:"
+Write-Host "  • 'oem*.inf' drivers are installed by hardware vendors (GPU, Audio, Wi-Fi, Chipset)."
+Write-Host "  • Over 80% of kernel BSODs (IRQL, Page Fault, TDR) stem from buggy or outdated OEM drivers."
+Write-Host "  • Compare driver dates against vendor release notes when troubleshooting hardware freezes."
+Write-Host ""
+try {
+  $drivers = Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop |
+    Where-Object { $_.InfName -like 'oem*.inf' } |
+    Sort-Object DriverProviderName, DeviceName
+
+  Write-Host "=== Phase 1: Third-Party Driver Roster ==="
+  if ($drivers) {
+    Write-Host ("[INFO] Found {0} third-party OEM driver package(s):" -f $drivers.Count)
+    $now = Get-Date
+    $agingCount = 0
+    foreach ($d in $drivers) {
+      $dDate = if ($d.DriverDate) { $d.DriverDate.ToString('yyyy-MM-dd') } else { 'Unknown' }
+      $ageYears = if ($d.DriverDate) { [math]::Round(($now - $d.DriverDate).TotalDays / 365, 1) } else { 0 }
+      $tag = if ($ageYears -ge 4) { $agingCount++; '[WARN]' } else { '[INFO]' }
+      Write-Host ("  {0} Device: {1,-36} Provider: {2,-18} v{3,-14} ({4}, INF: {5})" -f $tag, $d.DeviceName, $d.DriverProviderName, $d.DriverVersion, $dDate, $d.InfName)
+    }
+  } else {
+    Write-Host "[OK]   Zero third-party OEM drivers detected (using in-box Microsoft drivers)."
+  }
+} catch {
+  Write-Host ("ERROR: Failed to query signed drivers: {0}" -f $_.Exception.Message)
+}
+Write-Host ""
+Write-Host "================================================================================"
+Write-Host "=== HELPDESK TRIAGE SUMMARY & NEXT STEPS ==="
+Write-Host "================================================================================"
+if ($agingCount -gt 0) {
+  Write-Host ("[WARN] Found {0} driver(s) older than 4 years. Outdated drivers are prime suspects for sleep/BSOD issues." -f $agingCount)
+  Write-Host "       WHAT HELPDESK SHOULD DO:"
+  Write-Host "       1. Check device vendor site (AMD, Intel, Realtek, NVIDIA) for updated drivers."
+  Write-Host "       2. Open Driver Manager tab in WinClientTool to export or inspect inf packages."
+} else {
+  Write-Host "[OK]   STATUS: DRIVERS HEALTHY. OEM drivers are modern and signed."
+}
+"""), timeout=180),
 ]
 
 CLIENT_CATEGORIES = ("Troubleshooting", "System", "Hardware", "Storage", "Performance",

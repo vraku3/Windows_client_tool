@@ -18,20 +18,20 @@ import winreg
 logger = logging.getLogger(__name__)
 
 DARK = {
-    "bg": "#1F1F1F",
-    "panel": "#252526",
-    "ribbon": "#2D2D30",
-    "border": "#3F3F46",
-    "text": "#F1F1F1",
-    "muted": "#9D9D9D",
-    "accent": "#3D8BD4",
-    "accent_hover": "#4A9BE8",
-    "selection": "#094771",
-    "bar_track": "#2A2D2E",
-    "warning": "#E0A030",
+    "bg": "#0d1117",
+    "panel": "#161b22",
+    "ribbon": "#21262d",
+    "border": "#30363d",
+    "text": "#e6edf3",
+    "muted": "#9ea7b3",
+    "accent": "#2f81f7",
+    "accent_hover": "#388bfd",
+    "selection": "#1f6feb",
+    "bar_track": "#21262d",
+    "warning": "#e3b341",
     # A wash of the warning hue, not a slab of it: the banner is an offer
     # sitting above the pane, and it must not outshout the scan itself.
-    "banner_bg": "#33291A",
+    "banner_bg": "#2b2313",
 }
 
 LIGHT = {

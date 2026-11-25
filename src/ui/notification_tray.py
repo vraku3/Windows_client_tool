@@ -63,18 +63,21 @@ class NotificationTray(QWidget):
         self._render_item(item)
 
     def _render_item(self, item: NotificationItem) -> None:
+        from core.semantic_colors import chrome
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)
         colors = {"info": semantic("info"), "warning": semantic("warning"),
                  "error": semantic("error")}
+        accent = colors.get(item.level, colors["info"])
         frame.setStyleSheet(
-            f"background-color: {colors.get(item.level, colors['info'])}; "
+            f"background-color: {chrome('surface')}; color: {chrome('text')}; "
+            f"border: 1px solid {chrome('outline')}; border-left: 4px solid {accent}; "
             f"border-radius: 4px; padding: 4px; margin: 2px;"
         )
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(8, 4, 8, 4)
         title = QLabel(f"<b>{item.title}</b>")
-        title.setStyleSheet("color: white;")
+        title.setStyleSheet(f"color: {accent}; background: transparent;")
         layout.addWidget(title)
         msg = QLabel(item.message)
         msg.setWordWrap(True)

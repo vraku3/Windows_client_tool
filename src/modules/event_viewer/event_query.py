@@ -145,11 +145,24 @@ def _entry_from(ev, log_name: str) -> Optional[LogEntry]:
 PROBLEM_LEVELS = "(Level=1 or Level=2 or Level=3)"
 INFO_LEVELS = "(Level=0 or Level=4 or Level=5)"
 
+#: XPath clause to suppress benign background noise (DCOM 10016, routine Time-Service syncs)
+BENIGN_NOISE_XPATH = (
+    "not(Provider[@Name='Microsoft-Windows-DistributedCOM'] and EventID=10016) and "
+    "not(Provider[@Name='Microsoft-Windows-Time-Service'] and (EventID=35 or EventID=37))"
+)
 
-def build_query(hours_back: Optional[int], levels: Optional[str] = None) -> str:
+
+def build_noise_filter_xpath() -> str:
+    """Return XPath clause that filters out common benign background noise."""
+    return BENIGN_NOISE_XPATH
+
+
+def build_query(hours_back: Optional[int], levels: Optional[str] = None,
+                exclude_noise: bool = False) -> str:
     """XPath restricting a channel to the last `hours_back` hours (None = all).
 
     `levels` is one of PROBLEM_LEVELS / INFO_LEVELS to fetch only those.
+    `exclude_noise` adds an XPath exclusion for benign background noise.
     """
     clauses = []
     if levels:
@@ -157,6 +170,8 @@ def build_query(hours_back: Optional[int], levels: Optional[str] = None) -> str:
     if hours_back:
         ms = int(hours_back) * 3600 * 1000
         clauses.append(f"TimeCreated[timediff(@SystemTime) <= {ms}]")
+    if exclude_noise:
+        clauses.append(BENIGN_NOISE_XPATH)
     if not clauses:
         return "*"
     return f"*[System[{' and '.join(clauses)}]]"
@@ -180,10 +195,11 @@ def _decode(raw: bytes) -> str:
 
 def query_log(log_name: str, hours_back: Optional[int] = 24, max_events: int = 5000,
               timeout: int = 90, levels: Optional[str] = None,
-              xpath: Optional[str] = None) -> QueryResult:
+              xpath: Optional[str] = None, exclude_noise: bool = False) -> QueryResult:
     """Newest-first events from one channel. Never raises; reports why it could not."""
+    query_str = xpath or build_query(hours_back, levels, exclude_noise=exclude_noise)
     cmd = ["wevtutil", "qe", log_name, "/rd:true", f"/c:{int(max_events)}",
-           "/f:RenderedXml", "/q:" + (xpath or build_query(hours_back, levels))]
+           "/f:RenderedXml", "/q:" + query_str]
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout,
                               creationflags=_CREATE_NO_WINDOW)

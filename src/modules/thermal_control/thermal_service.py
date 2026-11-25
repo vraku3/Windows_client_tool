@@ -98,6 +98,9 @@ class ThermalService(QObject):
             logger.warning("GPU fan check failed before opening the hardware: %s", e)
             gpu_fans = e
         try:
+            ok, msg = lhm_bridge.ensure_pawnio_installed()
+            if not ok:
+                return None, msg, gpu_fans
             bridge = lhm_bridge.LhmBridge()
             bridge.open()
             controller = FanController(bridge, self.marker_path, extra_sensors=gpu_kmt.read_gpus)

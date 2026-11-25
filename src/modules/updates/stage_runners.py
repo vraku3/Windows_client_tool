@@ -81,13 +81,10 @@ def _record_stage_completion(folder, stage, result, cancelled):
     record(folder, source, event, summary, detail, severity)
 
 
-@maintenance_stage
-@_timeline_stage("wu")
-def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") -> dict:
-    """Scan + install pending Windows Updates. Returns results + reboot flag."""
-    from modules.updates.windows_updater import (
-        fetch_pending_updates, install_updates_iter, download_size_mb, order_for_install, HELD_TEXT,
-    )
+def _scan_wu_updates(app, log: LogFn):
+    from modules.updates.windows_updater import fetch_pending_updates, HELD_TEXT, order_for_install
+    from core.timeline import record
+    from modules.updates import wu_categories
 
     patterns = load_exclusions(app)
     include_hidden = app.config.get("updates.wu_include_hidden", False)
@@ -99,9 +96,7 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
         include_hidden=include_hidden, patterns=patterns, include_drivers=include_drivers,
         held_out=held_found,
     )
-    from core.timeline import record
     record(getattr(app, "app_data_dir", None), "updates", "scan_complete", f"Maintenance Windows Update scan: {len(updates)} available", {"available": len(updates), "stage": "wu"})
-    # Held updates are reported, never installed: they are not in `updates`.
     held = [{"kb": u.kb, "title": u.title, "state": "held", "message": HELD_TEXT}
             for u in held_found]
     for h in held:
@@ -111,7 +106,6 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
     updates = [u for u in updates if not u.pending_restart]
     for entry in waiting:
         log(f"Windows Update: {entry['title']}: {entry['message']}")
-    from modules.updates import wu_categories
     runnable, skipped = wu_categories.split_for_automatic(
         updates,
         allow_feature=bool(app.config.get("updates.allow_feature_updates", False)),
@@ -122,6 +116,19 @@ def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") 
         log(f"Windows Update: not installed — {wu_categories.skipped_text(skipped)}. "
             "Change this in Updates → Settings.")
     updates = order_for_install(runnable)
+    return updates, held, waiting, deferred, skipped
+
+
+@maintenance_stage
+@_timeline_stage("wu")
+def run_wu_stage(app, log: LogFn, is_cancelled: CancelFn, *, context="run_all") -> dict:
+    """Scan + install pending Windows Updates. Returns results + reboot flag."""
+    from modules.updates.windows_updater import (
+        install_updates_iter, download_size_mb,
+    )
+    from core.timeline import record
+
+    updates, held, waiting, deferred, skipped = _scan_wu_updates(app, log)
     if not updates:
         log("Windows Update: nothing to install." if held or waiting or skipped
             else "Windows Update: system is up to date.")

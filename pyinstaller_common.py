@@ -27,6 +27,31 @@ def exclude_ambient_icu(analysis) -> None:
     )
 
 
+def normalize_pywin32_binaries(analysis) -> None:
+    """Ensure pywin32 system DLLs (pythoncom, pywintypes) are placed at the application root.
+
+    PyInstaller's contrib hooks place pythoncomXX.dll and pywintypesXX.dll into
+    the 'pywin32_system32' subfolder. In frozen mode, pywintypes checks sys.path
+    (where sys._MEIPASS is the primary entry). Placing them at the root (.)
+    alongside all other binaries ensures they are immediately accessible and
+    consistently located, while retaining the pywin32_system32 mapping for
+    backward compatibility.
+    """
+    new_binaries = []
+    seen = set()
+    for dest, src, typ in analysis.binaries:
+        dest_clean = dest.replace('/', '\\')
+        if dest_clean.lower().startswith('pywin32_system32\\'):
+            root_dest = os.path.basename(dest_clean)
+            if root_dest not in seen:
+                seen.add(root_dest)
+                new_binaries.append((root_dest, src, typ))
+        if dest not in seen:
+            seen.add(dest)
+            new_binaries.append((dest, src, typ))
+    analysis.binaries = type(analysis.binaries)(new_binaries)
+
+
 def get_main_script(project_root: str) -> str:
     return os.path.join(project_root, "src", "main.py")
 
@@ -63,6 +88,8 @@ def get_datas(project_root: str) -> list:
         # thermal_control/engine/lhm_bridge.py from _get_resource_dir()/vendor/lhm.
         # Without it the frozen Thermal Control silently falls back to GPU-only.
         (os.path.join(project_root, "vendor", "lhm"), "vendor/lhm"),
+        # Bundled PawnIO driver installer so Thermal Control works out-of-the-box on any PC.
+        (os.path.join(project_root, "vendor", "pawnio"), "vendor/pawnio"),
     ]
 
 
@@ -378,6 +405,7 @@ HIDDEN_IMPORTS = [
     "modules.network_diagnostics.dns_client",
     "modules.network_diagnostics.network_fixes",
     "modules.network_diagnostics.ping_stats",
+    "modules.network_diagnostics.socket_analytics",
     "modules.env_vars.effective_env",
     "modules.env_vars.path_analysis",
     "modules.env_vars.env_ops",
@@ -418,11 +446,14 @@ HIDDEN_IMPORTS = [
     "modules.software_inventory.software_analysis",
     "modules.system_report.report_sections",
     "core.stability",
+    "core.diagnostic_bridge",
     "modules.updates.patch_status",
     "modules.system_health.findings",
+    "modules.system_health.report_generator",
     "core.wu_error_codes",
     "modules.disk_health.physical_disks",
     "ui.table_items",
+    "ui.dialog_enhancer",
     "core.audio_switch",
     "ui.audio_outputs_dialog",
     "etw", "etw.etw", "etw.common", "etw.evntrace", "etw.evntcons", "etw.evntprov",
@@ -498,15 +529,21 @@ HIDDEN_IMPORTS = [
     # The catalogs are imported inside library.built_in().
     "modules.scripts_hub.catalog",
     "modules.scripts_hub.catalog._base",
-    "modules.scripts_hub.catalog.client_system",
-    "modules.scripts_hub.catalog.client_logs_network",
-    "modules.scripts_hub.catalog.client_security",
-    "modules.scripts_hub.catalog.client_mgmt",
-    "modules.scripts_hub.catalog.server",
-    "modules.scripts_hub.catalog.client_more",
-    "modules.scripts_hub.catalog.server_ad",
-    "modules.scripts_hub.catalog.server_infra",
-    "modules.scripts_hub.catalog.server_ops",
+    "modules.scripts_hub.catalog.deep_system_perf",
+    "modules.scripts_hub.catalog.deep_security_persistence",
+    "modules.scripts_hub.catalog.deep_hardware_firmware",
+    "modules.scripts_hub.catalog.deep_ad_identity",
+    "modules.scripts_hub.catalog.deep_storage_vss",
+    "modules.scripts_hub.catalog.deep_network_dns",
+    "modules.scripts_hub.catalog.deep_servicing_cbs",
+    "modules.scripts_hub.catalog.deep_crash_postmortem",
+    "modules.scripts_hub.catalog.deep_printing",
+    "modules.scripts_hub.catalog.deep_server_infra",
+    "modules.scripts_hub.catalog.deep_client_profile_boot_gdi",
+    "modules.scripts_hub.catalog.deep_client_gaming_power",
+    "modules.scripts_hub.catalog.deep_client_media_gpu",
+    "modules.scripts_hub.catalog.deep_client_cpu_kernel",
+    "modules.scripts_hub.catalog.deep_client_hw_storage",
     # Incident Triage (2026-10-15), imported at the top of security_module.
     "modules.security_dashboard.triage_tab",
     "modules.security_dashboard.incident_triage",

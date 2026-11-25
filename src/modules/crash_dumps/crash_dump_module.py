@@ -41,3 +41,16 @@ class CrashDumpModule(LogReaderModule):
         )
         self._notes = notes
         return entries
+
+    def build_controls(self, toolbar, extra) -> None:
+        import os
+        import subprocess
+        from PyQt6.QtWidgets import QPushButton
+        from core.windows_utils import system_root
+
+        btn = QPushButton("Open Minidump Folder")
+        btn.setToolTip("Open Windows Minidump folder containing crash dump files (.dmp)")
+        dmp_dir = os.path.join(system_root(), "Minidump")
+        btn.clicked.connect(lambda: subprocess.Popen(["explorer.exe", dmp_dir if os.path.exists(dmp_dir) else system_root()]))
+        toolbar.addWidget(btn)
+        extra["dmp_btn"] = btn

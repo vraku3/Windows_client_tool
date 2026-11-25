@@ -356,6 +356,7 @@ class DriverModule(BaseModule):
         snapshots_btn.setMenu(snapshots_menu)
         self._restore_points_btn = QPushButton("System Restore Points")
         self._check_all_updates_btn = QPushButton("Check All for Updates")
+        self._driver_store_btn = QPushButton("DriverStore Cleanup")
         self._undo_all_updates_btn = QPushButton("Undo All Updates This Session")
         self._undo_all_updates_btn.setEnabled(False)  # enabled once self._applied_update_tokens is non-empty
         devmgr_btn = QPushButton("Open Device Manager")
@@ -395,6 +396,7 @@ class DriverModule(BaseModule):
         view_row.addWidget(self._group_cb)
 
         action_row.addWidget(self._check_all_updates_btn)
+        action_row.addWidget(self._driver_store_btn)
         action_row.addWidget(wu_btn)
         action_row.addWidget(self._undo_all_updates_btn)
         action_row.addSpacing(12)
@@ -418,6 +420,7 @@ class DriverModule(BaseModule):
         devmgr_btn.clicked.connect(self._open_devmgr)
         self._restore_points_btn.clicked.connect(self._show_restore_points)
         self._check_all_updates_btn.clicked.connect(self._check_all_for_updates)
+        self._driver_store_btn.clicked.connect(self._open_driver_store)
         self._undo_all_updates_btn.clicked.connect(self._undo_all_updates_this_session)
         wu_btn.clicked.connect(self._open_windows_update_settings)
         self._backup_btn.clicked.connect(self._backup_drivers)
@@ -1989,6 +1992,11 @@ class DriverModule(BaseModule):
 
     def _open_devmgr(self) -> None:
         subprocess.Popen(["mmc", "devmgmt.msc"])
+
+    def _open_driver_store(self) -> None:
+        from modules.driver_manager.driver_store_dialog import DriverStoreDialog
+        dlg = DriverStoreDialog(self._widget)
+        dlg.exec()
 
     def _check_rollback_and_open_devmgr(self, driver: Optional[DriverInfo]) -> None:
         """The "Roll back to previous version..." context menu action.

@@ -51,12 +51,48 @@ def pawnio_installed() -> bool:
         return False
 
 
+def pawnio_setup_path() -> str:
+    from app import _get_resource_dir
+    return os.path.join(_get_resource_dir(), "vendor", "pawnio", "PawnIO_setup.exe")
+
+
+def ensure_pawnio_installed() -> Tuple[bool, str]:
+    """Install the bundled PawnIO driver silently if missing and running elevated."""
+    if pawnio_installed():
+        return True, ""
+    from core.admin_utils import is_admin
+    if not is_admin():
+        return False, "CPU, motherboard and fan readings need the app to run as administrator"
+    setup = pawnio_setup_path()
+    if not os.path.isfile(setup):
+        return False, "the PawnIO driver is not installed (winget install namazso.PawnIO)"
+    import subprocess
+    try:
+        logger.info("Installing bundled PawnIO driver silently from %s", setup)
+        res = subprocess.run(
+            [setup, "-install", "-silent"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if pawnio_installed():
+            logger.info("Bundled PawnIO driver installed successfully (exit %d)", res.returncode)
+            return True, ""
+        return False, f"PawnIO installer exited with code {res.returncode}; a reboot may be required"
+    except Exception as e:
+        logger.warning("Failed running bundled PawnIO setup: %s", e)
+        return False, f"could not install bundled PawnIO driver: {e}"
+
+
 def unavailable_reason() -> str:
     """'' when the full sensor set can be read; otherwise why not."""
     from core.admin_utils import is_admin
     if not os.path.exists(os.path.join(vendor_dir(), "LibreHardwareMonitorLib.dll")):
         return "the hardware-monitoring library is missing from this build"
     if not pawnio_installed():
+        if is_admin() and os.path.isfile(pawnio_setup_path()):
+            return ""
         return "the PawnIO driver is not installed (winget install namazso.PawnIO)"
     if not is_admin():
         return "CPU, motherboard and fan readings need the app to run as administrator"

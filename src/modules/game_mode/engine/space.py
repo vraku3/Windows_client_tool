@@ -370,13 +370,14 @@ class CleanupBackend:
     def servicing_busy(self) -> tuple[bool | None, str]:
         """(busy, why). None = could not tell, which callers treat as busy."""
         try:
-            import pythoncom
-            import win32com.client
-            pythoncom.CoInitialize()
+            import ctypes
+            hr = ctypes.windll.ole32.CoInitialize(None)
             try:
+                import win32com.client
                 busy = bool(win32com.client.Dispatch("Microsoft.Update.Installer").IsBusy)
             finally:
-                pythoncom.CoUninitialize()
+                if hr >= 0:
+                    ctypes.windll.ole32.CoUninitialize()
         except Exception as error:      # a COM failure is a com_error, not an OSError
             logger.warning("optimise OS: Windows Update installer unreadable: %s", error)
             return None, f"Windows Update's installer state could not be read ({error})"

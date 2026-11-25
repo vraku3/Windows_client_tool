@@ -75,8 +75,8 @@ def desktop_account() -> Optional[str]:
 
 def _call(program: str, args: str, cwd: str, out: List[Optional[str]],
           show: int = SHOW_NORMAL) -> None:
-    import pythoncom
-    pythoncom.CoInitialize()
+    import ctypes
+    hr = ctypes.windll.ole32.CoInitialize(None)
     try:
         app = _desktop_shell()
         app.ShellExecute(program, args, cwd, "", show)
@@ -86,7 +86,8 @@ def _call(program: str, args: str, cwd: str, out: List[Optional[str]],
         logger.warning("game mode: unelevated launch of %s failed: %s", program, error)
         out.append(f"the shell refused to start it ({error})")
     finally:
-        pythoncom.CoUninitialize()
+        if hr >= 0:
+            ctypes.windll.ole32.CoUninitialize()
 
 
 def launch(program: str, args: str = "", cwd: str = "", timeout: float = TIMEOUT_S,

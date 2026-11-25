@@ -73,10 +73,23 @@ class _RunAllTab(QWidget):
         )
         desc.setWordWrap(True)
         layout.addWidget(desc)
+        self._checkpoint_bar = QWidget()
+        chk_layout = QHBoxLayout(self._checkpoint_bar)
+        chk_layout.setContentsMargins(0, 0, 0, 0)
         self._checkpoint_lbl = QLabel()
         self._checkpoint_lbl.setWordWrap(True)
+        self._checkpoint_resume_btn = QPushButton("Resume remaining stages")
+        self._checkpoint_resume_btn.setToolTip("Select remaining uncompleted stages and continue the run")
+        self._checkpoint_resume_btn.clicked.connect(self._on_resume_checkpoint)
+        self._checkpoint_dismiss_btn = QPushButton("Dismiss")
+        self._checkpoint_dismiss_btn.setToolTip("Dismiss this notice and clear the previous run checkpoint")
+        self._checkpoint_dismiss_btn.clicked.connect(self._on_dismiss_checkpoint)
+        chk_layout.addWidget(self._checkpoint_lbl, 1)
+        chk_layout.addWidget(self._checkpoint_resume_btn, 0)
+        chk_layout.addWidget(self._checkpoint_dismiss_btn, 0)
+        self._checkpoint_bar.setVisible(False)
         self._checkpoint_lbl.setVisible(False)
-        layout.addWidget(self._checkpoint_lbl)
+        layout.addWidget(self._checkpoint_bar)
 
         checks_row = QHBoxLayout()
         self._chk_wu = QCheckBox("Windows Update")
@@ -136,19 +149,71 @@ class _RunAllTab(QWidget):
             stages.append("dism")
         return stages
 
+    def _on_resume_checkpoint(self) -> None:
+        folder = getattr(self.app, "app_data_dir", None)
+        run = run_checkpoint.unfinished(folder)
+        if not run:
+            return
+        remaining = run_checkpoint.remaining_stages(run)
+        if not remaining:
+            self._on_dismiss_checkpoint()
+            return
+        stage_checkboxes = {
+            "wu": self._chk_wu,
+            "winget": self._chk_winget,
+            "store": self._chk_store,
+            "cleanup": self._chk_cleanup,
+            "dism": self._chk_dism,
+        }
+        for s, chk in stage_checkboxes.items():
+            chk.setChecked(s in remaining)
+        run_checkpoint.clear(folder)
+        self.refresh_checkpoint_note()
+        self._do_run()
+
+    def _on_dismiss_checkpoint(self) -> None:
+        folder = getattr(self.app, "app_data_dir", None)
+        if folder:
+            run_checkpoint.clear(folder)
+        self.refresh_checkpoint_note()
+
     def refresh_checkpoint_note(self) -> None:
         """Say so when the last run never finished, without blocking anything."""
-        run = run_checkpoint.unfinished(getattr(self.app, "app_data_dir", None))
+        folder = getattr(self.app, "app_data_dir", None)
+        run = run_checkpoint.unfinished(folder)
         if run is None:
             self._checkpoint_lbl.setVisible(False)
+            if hasattr(self, "_checkpoint_bar"):
+                self._checkpoint_bar.setVisible(False)
             return
-        rows = run_checkpoint.item_summary(run)[-5:]
-        self._checkpoint_lbl.setText(
+
+        remaining = run_checkpoint.remaining_stages(run)
+        from modules.updates.stage_runners import STAGE_LABELS
+        remaining_names = [STAGE_LABELS.get(s, s) for s in remaining]
+
+        rows = run_checkpoint.item_summary(run)[-3:]
+        base_text = (
             f"A previous maintenance run did not finish (context: {run.get('context') or 'unknown'}, "
             f"started {run.get('started') or 'unknown'})."
-            + (" Last recorded: " + "; ".join(rows) if rows else ""))
+        )
+        if rows:
+            base_text += " Last recorded: " + "; ".join(rows) + "."
+        if remaining_names:
+            base_text += f" Remaining stages: {', '.join(remaining_names)}."
+            if hasattr(self, "_checkpoint_resume_btn"):
+                self._checkpoint_resume_btn.setVisible(True)
+                self._checkpoint_resume_btn.setText(
+                    f"Resume {len(remaining_names)} stage{'s' if len(remaining_names) > 1 else ''}"
+                )
+        else:
+            if hasattr(self, "_checkpoint_resume_btn"):
+                self._checkpoint_resume_btn.setVisible(False)
+
+        self._checkpoint_lbl.setText(base_text)
         set_role(self._checkpoint_lbl, "statusWarning")
         self._checkpoint_lbl.setVisible(True)
+        if hasattr(self, "_checkpoint_bar"):
+            self._checkpoint_bar.setVisible(True)
 
     def _confirm_preflight(self) -> bool:
         """Show restart and previous-run evidence before anything installs."""
@@ -163,15 +228,40 @@ class _RunAllTab(QWidget):
             return True
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Restart evidence")
-        box.setText("A restart is pending." if preflight.reasons
-                    else "A previous maintenance run did not finish.")
+        if preflight.reasons and preflight.unfinished_run:
+            box.setWindowTitle("Pending Restart & Incomplete Run")
+            box.setText("A restart is pending, and a previous maintenance run did not finish.")
+        elif preflight.reasons:
+            box.setWindowTitle("Pending Restart Detected")
+            box.setText("A Windows restart is pending.")
+        else:
+            box.setWindowTitle("Previous Run Incomplete")
+            box.setText("A previous maintenance run did not finish.")
         box.setInformativeText("\n".join(preflight.evidence_lines()))
-        run_anyway = box.addButton("Run anyway", QMessageBox.ButtonRole.AcceptRole)
+
+        resume_btn = None
+        remaining = run_checkpoint.remaining_stages(preflight.unfinished_run) if preflight.unfinished_run else []
+        if remaining and not preflight.reasons:
+            from modules.updates.stage_runners import STAGE_LABELS
+            lbl = ", ".join(STAGE_LABELS.get(s, s) for s in remaining)
+            resume_btn = box.addButton(f"Resume remaining ({lbl})", QMessageBox.ButtonRole.ActionRole)
+
+        run_anyway = box.addButton("Run all selected", QMessageBox.ButtonRole.AcceptRole)
+        dismiss_btn = None
+        if preflight.unfinished_run:
+            dismiss_btn = box.addButton("Dismiss previous run", QMessageBox.ButtonRole.DestructiveRole)
         box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.setDefaultButton(run_anyway)
+        box.setDefaultButton(resume_btn or run_anyway)
         box.exec()
-        return box.clickedButton() is run_anyway
+        clicked = box.clickedButton()
+        if clicked is resume_btn:
+            self._on_resume_checkpoint()
+            return False
+        if clicked is dismiss_btn:
+            run_checkpoint.clear(folder)
+            self.refresh_checkpoint_note()
+            return False
+        return clicked is run_anyway
 
     def _do_run(self):
         if self.app is None:
@@ -215,6 +305,7 @@ class _RunAllTab(QWidget):
                     log("Cancelled.")
                     break
                 log(f"--- stage: {STAGE_LABELS.get(stage, stage)} ---")
+                run_checkpoint.stage_start(app.app_data_dir, stage)
                 fn = STAGE_RUNNERS[stage]
                 try:
                     data[stage] = fn(
@@ -222,6 +313,7 @@ class _RunAllTab(QWidget):
                         log,
                         lambda: worker.is_cancelled,
                     )
+                    run_checkpoint.stage_complete(app.app_data_dir, stage)
                 except Exception as e:
                     logger.exception("Stage %s failed", stage)
                     log(f"Stage {stage} failed: {e}")

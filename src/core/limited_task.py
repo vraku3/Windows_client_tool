@@ -50,14 +50,17 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
     Delete the registration even on failure. Do not stop an installer when
     waiting expires: removing a running task's registration leaves it running.
     """
-    import win32com.client
-    import pythoncom
-    pythoncom.CoInitialize()
+    import ctypes
+    hr = ctypes.windll.ole32.CoInitialize(None)
     name = TASK_PREFIX + uuid.uuid4().hex
     service = folder = task = action = entry = None
     registered = False
     launch_attempted = False
     try:
+        try:
+            import win32com.client
+        except (ImportError, OSError) as exc:
+            return None, f"failed before launch: pywin32 unavailable ({exc})"
         service = win32com.client.Dispatch("Schedule.Service")
         service.Connect()
         folder = service.GetFolder("\\")
@@ -107,4 +110,5 @@ def run_limited(executable: str, args: list, timeout_s: float = 600) -> tuple:
         # on a real reinstall (2026-10-22) -- a release into a torn-down
         # apartment, which on a worker thread can take the process down.
         service = folder = task = action = entry = None
-        pythoncom.CoUninitialize()
+        if hr >= 0:
+            ctypes.windll.ole32.CoUninitialize()

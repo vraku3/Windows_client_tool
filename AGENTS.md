@@ -6,6 +6,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Windows desktop optimization and diagnostics utility — a PyQt6 GUI application with 40+ plugin modules. Targets Windows 10/11 (64-bit), Python 3.12+.
 
+**Windows Client Scope (user, 2026-11-24):**
+Whenever the user refers to "Windows client" (or client-side troubleshooting/features), it means strictly standalone, workgroup, local power-user, enthusiast, and gaming PCs. NEVER assume or include domain-joined enterprise infrastructure, Active Directory, Entra ID (Azure AD), Intune, or corporate MDM dependencies unless explicitly asked.
+
 ## Development Commands
 
 **Activate environment** (always needed before running or building):
@@ -22,6 +25,15 @@ python src/main.py
 use an Administrator process for source runs and built executables. An
 unelevated launch disables Tweaks and other admin-gated modules, so it is not a
 valid end-to-end test. Syntax checks and read-only unit tests need no elevation.
+
+**User launches elevated / Run as administrator (user, 2026-11-19, corrected 2026-11-20):**
+The user runs WinClientTool with Administrator privileges ("Run as administrator").
+CRITICAL: Never set `uac_admin=True` in PyInstaller spec files. Embedding
+`requestedExecutionLevel="requireAdministrator"` in an unsigned binary's manifest triggers
+an immediate block by Windows 11 Smart App Control (SAC policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`,
+Event IDs 3077 and 3118 via `svchost.exe` / AppInfo) on launch. Spec files must omit `uac_admin`
+(retaining `requestedExecutionLevel="asInvoker"`), allowing SAC to permit execution while still
+enabling the user to run elevated via "Run as administrator" (Verb RunAs) or via elevated launcher scripts.
 
 **Keep one app instance during runtime tests** (user, 2026-10-31): before
 opening a source run or new build, identify any running WinClientTool instance
@@ -65,6 +77,43 @@ been removed from the machine. `tools/sign_build_local.ps1` and
 of the build. Smart App Control learns new unsigned hashes after a few days of
 use on the same machine. Do not re-introduce signing unless a real CA cert is
 obtained.
+
+**Smart App Control (SAC) & pywin32 / COM Safety (user, 2026-11-19).**
+Smart App Control (Windows Code Integrity policy `{0283ac0f-fff1-49ae-ada1-8a933130cad6}`)
+monitors and blocks unsigned binaries extracted to user-writable `%TEMP%` by PyInstaller
+onefile builds (Event IDs 3118, 3077, 3033 in `Microsoft-Windows-CodeIntegrity/Operational`).
+Upstream pywin32 DLLs (`pythoncom312.dll`, `pywintypes312.dll`) are `NotSigned`.
+To prevent SAC block popups and unhandled `ImportError` crashes:
+1. **Never import `pythoncom` for COM apartment initialization.** `COMWorker` in
+   `src/core/worker.py` must use native Windows `ctypes.windll.ole32.CoInitialize(None)`
+   and `ctypes.windll.ole32.CoUninitialize()`. Native `ole32.dll` is Microsoft-signed,
+   in-box, and immune to SAC blocks. Do not revert `COMWorker` to `import pythoncom`.
+2. **Delay-load pywin32 imports.** Any use of `win32com.client` or `pythoncom` must be
+   scoped inside the specific function that needs it (never at top-level module scope),
+   and wrapped in `try...except (ImportError, OSError):` with graceful fallback.
+3. **Normalize PyInstaller binaries.** Spec files must run `normalize_pywin32_binaries()`
+   from `pyinstaller_common.py` to position `pythoncom*.dll` and `pywintypes*.dll` directly
+   at the application root (`sys._MEIPASS`) in addition to `pywin32_system32/`.
+4. **Verification.** During runtime tests, monitor `Microsoft-Windows-CodeIntegrity/Operational`
+   to ensure zero block events occur.
+
+**PowerShell Constrained Language Mode & SAC Detection (user, 2026-11-19).**
+Windows 11 Smart App Control automatically restricts Windows PowerShell 5.1 to
+`ConstrainedLanguage` mode, triggering system toasts such as *"Some features of
+Windows PowerShell 5.1 may not work in this environment"*.
+To handle and detect this safely:
+1. **Scripting constraints**: Any PowerShell command invoked by WinClientTool must
+   be fully compatible with ConstrainedLanguage mode: never use `Add-Type`, inline C#
+   compilation, direct reflection, or arbitrary unapproved .NET types. Prefer CIM
+   cmdlets (`Get-CimInstance`), native binaries (`sc.exe`, `netsh`, `wevtutil`),
+   `winreg`, or native Win32 APIs via `ctypes`. Always catch `PSSecurityException`
+   and execution policy rejections cleanly.
+2. **Diagnostic event detection**: Diagnose and Event Viewer modules must catch and
+   surface PowerShell SAC restrictions across:
+   - `Microsoft-Windows-PowerShell/Operational` (Event IDs 4100, 4104 ScriptBlockLogging)
+   - `Microsoft-Windows-AppLocker/MSI and Script` (Event IDs 8006, 8007)
+   - `Microsoft-Windows-CodeIntegrity/Operational` (Event IDs 3077, 3118)
+   Group and report them with actionable explanations rather than unhandled script errors.
 
 **Syntax check** (without running):
 ```
@@ -132,7 +181,7 @@ def _cancel_all(self) -> None:
     self._workers.clear()
 ```
 
-For WMI/COM operations use `COMWorker` (calls `pythoncom.CoInitialize()` automatically) instead of plain `Worker`.
+For WMI/COM operations use `COMWorker` (calls native `ctypes.windll.ole32.CoInitialize(None)` / `CoUninitialize()` automatically) instead of plain `Worker`. Never import `pythoncom` directly inside `COMWorker`.
 
 **First-load guard pattern** — trigger data load on first `on_activate()`, not in `create_widget()`:
 

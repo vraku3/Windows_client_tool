@@ -33,9 +33,16 @@ _HEX = re.compile(r"#[0-9a-fA-F]{6}\b")
 
 #: Colours that mean something. value = ramp position 0..1, or a semantic role.
 _EXPLICIT = {
+    "#0d1117": 0.0, "#141920": 0.04, "#161b22": 0.07, "#21262d": 0.11,
+    "#1c2d3e": 0.16, "#292f38": 0.15, "#1f242c": 0.10, "#1c2128": 0.09,
+    "#30363d": 0.20, "#3b434d": 0.25, "#484f58": 0.30,
+    "#6e7681": 0.45, "#9ea7b3": 0.72, "#c9d1d9": 0.85, "#e6edf3": 0.96,
     "#007acc": 0.42, "#0a5a8f": 0.34, "#094771": 0.24, "#264f78": 0.28,
-    "#4ec9b0": "success", "#f44747": "error", "#f44336": "error",
-    "#e5c07b": "warning", "#4fc3f7": "info",
+    "#2f81f7": 0.45, "#388bfd": 0.50, "#1f6feb": 0.36, "#1c3d6e": 0.26, "#0078d4": 0.42,
+    "#4ec9b0": "success", "#3fb950": "success",
+    "#f44747": "error", "#f44336": "error", "#f85149": "error", "#c42b1c": "error",
+    "#e5c07b": "warning", "#e3b341": "warning",
+    "#4fc3f7": "info", "#58a6ff": "info",
 }
 
 #: Status colours shared by every phosphor theme; success follows the hue.

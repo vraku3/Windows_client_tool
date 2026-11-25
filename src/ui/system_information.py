@@ -208,9 +208,8 @@ class SystemInformationDialog(QDialog):
         self.cancel_all()
 
     def cancel_all(self) -> None:
-        for worker in self._workers:
-            worker.cancel()
-        self._workers.clear()
+        from core.worker import retire
+        retire(self._workers)
 
     # ---- the reading ----------------------------------------------------
 

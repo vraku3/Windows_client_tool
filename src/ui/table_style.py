@@ -29,10 +29,13 @@ def apply_table_style(view, numeric_columns=(), *, size_columns=(), date_columns
     header = view.horizontalHeader()
     header.setTextElideMode(Qt.TextElideMode.ElideRight)
     header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    if header.minimumSectionSize() < 44:
+        header.setMinimumSectionSize(44)
     header.setToolTip("Column headings. Drag a divider to resize; select a heading to sort when sorting is enabled.")
     vertical = view.verticalHeader()
     vertical.setDefaultSectionSize(row_height)
-    vertical.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+    vertical.setMinimumSectionSize(22)
+    vertical.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
     if not view.toolTip():
         view.setToolTip("Results table. Select a row to inspect it; numeric values are aligned for comparison.")
     view.style().unpolish(view)

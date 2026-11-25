@@ -73,8 +73,8 @@ def _run_unattended_locked(valid_stages: List[str]) -> int:
     detect_reboot(app.app_data_dir)
     record(app.app_data_dir, "system", "app_start", "Unattended maintenance started")
 
-    import pythoncom
-    pythoncom.CoInitialize()
+    import ctypes
+    hr = ctypes.windll.ole32.CoInitialize(None)
     exit_code = 0
     try:
         from modules.updates.history_writer import append_run, load_history
@@ -136,7 +136,8 @@ def _run_unattended_locked(valid_stages: List[str]) -> int:
         logger.exception("Unattended run failed")
         exit_code = 1
     finally:
-        pythoncom.CoUninitialize()
+        if hr >= 0:
+            ctypes.windll.ole32.CoUninitialize()
 
     try:
         app.shutdown()

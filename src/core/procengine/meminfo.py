@@ -172,14 +172,14 @@ def memory_modules() -> List[MemoryModule]:
     panel asks, never on the refresh path.
     """
     try:
-        import pythoncom
         import wmi
-    except ImportError:  # pragma: no cover
+    except (ImportError, OSError):  # pragma: no cover
         logger.debug("WMI is not available for the memory module list")
         return []
 
     try:
-        pythoncom.CoInitialize()
+        import ctypes
+        ctypes.windll.ole32.CoInitialize(None)
     except Exception:  # noqa: BLE001 - already initialised is fine
         logger.debug("memory_modules: giving up on this read", exc_info=True)
         pass

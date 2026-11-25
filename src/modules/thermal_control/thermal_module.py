@@ -240,7 +240,7 @@ class ThermalWidget(QWidget):
             item = QListWidgetItem(row.detail)
             item.setToolTip(row.detail)
             item.setData(Qt.ItemDataRole.UserRole, row.key)
-            if row.on:
+            if getattr(row, "on_curve", getattr(row, "on", False)):
                 item.setForeground(QColor(semantic("success")))
             self._headers.addItem(item)
             if row.key == current:

@@ -55,6 +55,41 @@ in `Aplicații/` and `Aplicații/old/` before (cleaned up 2026-08-14).
    cp -r "dist/WinClientTool" "C:/Users/iorda/OneDrive/1 Personal/Aplicații/WinClientTool"
    ```
 
+## Smart App Control (SAC) & pywin32 Prevention Rules
+
+Under Windows 11 Smart App Control (Code Integrity policy), unsigned binaries
+extracted into user-writable `%TEMP%` by PyInstaller onefile builds will be blocked
+(Event IDs 3118, 3077, 3033 in `Microsoft-Windows-CodeIntegrity/Operational`).
+Upstream `pythoncom312.dll` and `pywintypes312.dll` in pywin32 wheels are `NotSigned`.
+
+To guarantee that builds never trigger Smart App Control blocks:
+1. **PyInstaller Binary Normalization**:
+   All `.spec` files (`WinClientTool-portable.spec`, `WinClientTool.spec`, `WinClientTool-console.spec`)
+   call `normalize_pywin32_binaries(a.binaries)` from `pyinstaller_common.py`. This ensures
+   `pythoncom*.dll` and `pywintypes*.dll` reside directly in the root directory (`sys._MEIPASS`)
+   as well as `pywin32_system32/`.
+2. **Native COM Initialization**:
+   Never use `import pythoncom; pythoncom.CoInitialize()`. All background COM initialization
+   (e.g. `COMWorker` in `src/core/worker.py`) uses native `ctypes.windll.ole32.CoInitialize(None)`.
+   Native `ole32.dll` is Microsoft-signed, in-box, and cannot be blocked by SAC.
+3. **Delay-Load and Guard pywin32**:
+   Any module requiring `win32com.client` or `pythoncom` must delay-load it inside the function
+   (never at module top-level) and wrap the import in `try...except (ImportError, OSError):` with
+   graceful fallback.
+4. **Post-Build SAC Check**:
+   After launching the deployed executable elevated, inspect the Code Integrity event log:
+   ```powershell
+   Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-CodeIntegrity/Operational'; StartTime=(Get-Date).AddMinutes(-5)} | Where-Object { $_.Id -in 3077, 3118, 3033 }
+   ```
+   Ensure 0 block events are recorded.
+
+5. **Manifest Execution Level (`asInvoker` vs SAC)**:
+   Never set `uac_admin=True` in PyInstaller spec files (`WinClientTool-portable.spec`, `WinClientTool.spec`).
+   Embedding `requireAdministrator` into an unsigned binary's manifest triggers an immediate kernel/AppInfo
+   block under Windows 11 Smart App Control (SAC Event IDs 3077 and 3118). Leaving the manifest at the default
+   `asInvoker` allows SAC to permit execution without interference, while the user can launch elevated via
+   "Run as administrator" (Verb RunAs) or launcher scripts.
+
 ## Notes
 
 - Don't ask before doing the deploy copy or the two-version share rotation —

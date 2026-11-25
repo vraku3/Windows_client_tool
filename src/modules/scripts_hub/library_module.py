@@ -31,6 +31,8 @@ from . import console_style, library, modules_catalog, output_style, support_bun
 logger = logging.getLogger(__name__)
 
 _SCRIPT_ROLE = Qt.ItemDataRole.UserRole
+_FOLDER_ROLE = Qt.ItemDataRole.UserRole + 1
+_ACTION_ROLE = Qt.ItemDataRole.UserRole + 2
 _FOLDER_KEY = "modules.scripts.folder"
 _MAX_OUTPUT_LINES = 20_000
 
@@ -136,10 +138,12 @@ class ScriptLibraryModule(BaseModule):
         split = QSplitter(Qt.Orientation.Horizontal, w)
         self._tree = QTreeWidget(w)
         self._tree.setHeaderHidden(True)
-        self._tree.headerItem().setToolTip(0, "Scripts grouped by purpose; select to read the description, double-click to run after any required confirmation.")
+        self._tree.headerItem().setToolTip(0, "Scripts grouped by purpose; select to read the description, double-click to run or manage folder.")
         self._tree.setMinimumWidth(360)
         self._tree.currentItemChanged.connect(lambda *_: self._select())
-        self._tree.itemDoubleClicked.connect(lambda *_: self._run())
+        self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._tree_context_menu)
         split.addWidget(self._tree)
         split.addWidget(self._build_detail(w))
         split.setStretchFactor(0, 1)
@@ -156,8 +160,13 @@ class ScriptLibraryModule(BaseModule):
         self._folder_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         set_role(self._folder_label, "statusInfo")
         row.addWidget(self._folder_label, 1)
-        for label, fn in (("Change…", self._change_folder), ("Reset to default", self._reset_folder)):
+        for label, fn, tip in (
+            ("📁 Choose folder…", self._change_folder, "Choose where your custom .ps1/.cmd/.bat scripts are located"),
+            ("📂 Open folder", self._open_user_folder, "Open the scripts folder in File Explorer"),
+            ("Reset to default", self._reset_folder, "Reset back to default scripts folder (%APPDATA%\\WindowsTweaker\\scripts)")
+        ):
             b = QPushButton(label, parent)
+            b.setToolTip(tip)
             b.clicked.connect(fn)
             row.addWidget(b)
         self._show_folder()
@@ -179,12 +188,14 @@ class ScriptLibraryModule(BaseModule):
         self._config_set(_FOLDER_KEY, folder)
         self._show_folder()
         self._reload()
+        self._show_folder_info()
 
     def _reset_folder(self) -> None:
         library.set_user_scripts_dir(None)
         self._config_set(_FOLDER_KEY, "")
         self._show_folder()
         self._reload()
+        self._show_folder_info()
 
     def _build_toolbar(self, parent: QWidget) -> QHBoxLayout:
         bar = QHBoxLayout()
@@ -214,22 +225,53 @@ class ScriptLibraryModule(BaseModule):
         self._desc = QLabel("", box)
         self._desc.setWordWrap(True)
         self._desc.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        row = QHBoxLayout()
+
+        # Folder management actions (shown when My scripts folder is selected)
+        self._folder_row_widget = QWidget(box)
+        folder_act_lay = QHBoxLayout(self._folder_row_widget)
+        folder_act_lay.setContentsMargins(0, 0, 0, 0)
+
+        self._detail_choose_btn = QPushButton("📁 Choose scripts folder…", self._folder_row_widget)
+        self._detail_choose_btn.setToolTip("Select a directory on your PC containing your .ps1, .cmd, or .bat scripts")
+        self._detail_choose_btn.clicked.connect(self._change_folder)
+        set_role(self._detail_choose_btn, "accentButton")
+        folder_act_lay.addWidget(self._detail_choose_btn)
+
+        self._detail_open_btn = QPushButton("📂 Open in File Explorer", self._folder_row_widget)
+        self._detail_open_btn.setToolTip("Open the current scripts folder in Windows File Explorer")
+        self._detail_open_btn.clicked.connect(self._open_user_folder)
+        folder_act_lay.addWidget(self._detail_open_btn)
+
+        self._detail_new_btn = QPushButton("➕ New script…", self._folder_row_widget)
+        self._detail_new_btn.setToolTip("Create a new PowerShell script template in this folder")
+        self._detail_new_btn.clicked.connect(self._new_script)
+        folder_act_lay.addWidget(self._detail_new_btn)
+
+        self._detail_reset_btn = QPushButton("🔄 Reset to default", self._folder_row_widget)
+        self._detail_reset_btn.setToolTip("Reset scripts directory back to %APPDATA%\\WindowsTweaker\\scripts")
+        self._detail_reset_btn.clicked.connect(self._reset_folder)
+        folder_act_lay.addWidget(self._detail_reset_btn)
+
+        folder_act_lay.addStretch(1)
+        self._folder_row_widget.hide()
+
+        # Script execution actions (shown when a script is selected)
+        self._script_btn_widget = QWidget(box)
+        script_btn_lay = QHBoxLayout(self._script_btn_widget)
+        script_btn_lay.setContentsMargins(0, 0, 0, 0)
         self._btn: Dict[str, QPushButton] = {}
         for key, label, fn in (("run", "Run", self._run), ("stop", "Stop", self._stop),
                                ("view", "View script", self._view_script),
                                ("copy", "Copy output", self._copy_output),
                                ("save", "Save output…", self._save_output),
                                ("console", "Console colors…", self._console_dialog)):
-            b = QPushButton(label, box)
+            b = QPushButton(label, self._script_btn_widget)
             b.clicked.connect(fn)
             b.setEnabled(False)
             self._btn[key] = b
-            row.addWidget(b)
-        # A plain button with a menu, so it looks like its neighbours; the
-        # first entry is the preferred editor (PowerShell ISE when present).
+            script_btn_lay.addWidget(b)
         self._btn["console"].setEnabled(True)    # always available, unlike the run buttons
-        self._edit = QPushButton("Edit", box)
+        self._edit = QPushButton("Edit", self._script_btn_widget)
         self._edit.setToolTip("Open the script in an editor. A built-in is copied to your scripts "
                               "folder first -- the copy is yours to change, the original stays.")
         menu = QMenu(self._edit)
@@ -237,18 +279,24 @@ class ScriptLibraryModule(BaseModule):
             menu.addAction(f"Edit in {label}", lambda checked=False, lb=label: self._edit_current(lb))
         self._edit.setMenu(menu)
         self._edit.setEnabled(False)
-        row.insertWidget(3, self._edit)
-        row.addStretch(1)
+        script_btn_lay.insertWidget(3, self._edit)
+
+        self._schedule_btn = QPushButton("⏰ Schedule…", self._script_btn_widget)
+        self._schedule_btn.setToolTip("Create a Windows Scheduled Task to run this script automatically.")
+        self._schedule_btn.clicked.connect(self._schedule_current)
+        self._schedule_btn.setEnabled(False)
+        script_btn_lay.insertWidget(4, self._schedule_btn)
+
+        script_btn_lay.addStretch(1)
+
         self._status = QLabel("", box)
         set_role(self._status, "statusInfo")
         self._output = QPlainTextEdit(box)
         self._output.setReadOnly(True)
         self._output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._output.setMaximumBlockCount(_MAX_OUTPUT_LINES)
-        # Font and colours come from the `iseConsole` role: an application
-        # stylesheet overrides setFont(), which is why columns did not line up.
         set_role(self._output, "iseConsole")
-        self._history: list = []          # (line, plain) -- redrawn when the colours change
+        self._history: list = []
         self._apply_console(_console)
         self._output.setPlaceholderText("Output appears here as the script runs.")
         need_row = QHBoxLayout()
@@ -262,7 +310,8 @@ class ScriptLibraryModule(BaseModule):
         for widget in (self._title, self._badges, self._desc):
             lay.addWidget(widget)
         lay.addLayout(need_row)
-        lay.addLayout(row)
+        lay.addWidget(self._folder_row_widget)
+        lay.addWidget(self._script_btn_widget)
         lay.addWidget(self._status)
         lay.addWidget(self._output, 1)
         return box
@@ -314,12 +363,30 @@ class ScriptLibraryModule(BaseModule):
             mine = [s for s in shown if belongs(s)]
             branch = QTreeWidgetItem([f"{label} ({len(mine)})"])
             if label == library.USER_CATEGORY:
+                branch.setData(0, _FOLDER_ROLE, True)
+                branch.setToolTip(0, "Your own .ps1, .cmd, and .bat scripts — click to view folder settings, right-click for options.")
                 for s in mine:
                     branch.addChild(self._leaf(s))
                 if not mine and not needle:
-                    hint = QTreeWidgetItem(["(put .ps1 / .cmd files in your scripts folder)"])
-                    hint.setDisabled(True)
+                    hint = QTreeWidgetItem(["📁 (put .ps1 / .cmd files in your scripts folder)"])
+                    hint.setData(0, _FOLDER_ROLE, True)
+                    hint.setToolTip(0, "Click to manage scripts folder, double-click to choose folder.")
                     branch.addChild(hint)
+
+                    choose_item = QTreeWidgetItem(["  📂 Choose scripts folder…"])
+                    choose_item.setData(0, _ACTION_ROLE, "choose_folder")
+                    choose_item.setToolTip(0, "Select an existing folder with your .ps1/.cmd scripts.")
+                    branch.addChild(choose_item)
+
+                    open_item = QTreeWidgetItem(["  🔍 Open folder in File Explorer"])
+                    open_item.setData(0, _ACTION_ROLE, "open_folder")
+                    open_item.setToolTip(0, "Open the current scripts folder in Windows Explorer.")
+                    branch.addChild(open_item)
+                elif not needle:
+                    choose_item = QTreeWidgetItem(["  📂 Choose scripts folder…"])
+                    choose_item.setData(0, _ACTION_ROLE, "choose_folder")
+                    choose_item.setToolTip(0, "Change the active scripts folder.")
+                    branch.addChild(choose_item)
             else:
                 for cat in library.CATEGORIES:
                     in_cat = [s for s in mine if s.category == cat]
@@ -341,17 +408,129 @@ class ScriptLibraryModule(BaseModule):
         item.setToolTip(0, s.description)
         return item
 
+    def _on_item_double_clicked(self, item: QTreeWidgetItem, column: int = 0) -> None:
+        if item is None:
+            return
+        action = item.data(0, _ACTION_ROLE)
+        if action == "choose_folder":
+            self._change_folder()
+            return
+        elif action == "open_folder":
+            self._open_user_folder()
+            return
+        if item.data(0, _FOLDER_ROLE):
+            self._change_folder()
+            return
+        script = item.data(0, _SCRIPT_ROLE)
+        if script is not None:
+            self._run()
+
     def _select(self) -> None:
         item = self._tree.currentItem()
-        script = item.data(0, _SCRIPT_ROLE) if item is not None else None
+        if item is None:
+            return
+        action = item.data(0, _ACTION_ROLE)
+        if action in ("choose_folder", "open_folder") or item.data(0, _FOLDER_ROLE):
+            self._show_folder_info()
+            return
+        script = item.data(0, _SCRIPT_ROLE)
         if script is None:
             return
+        self._show_script_info(script)
+
+    def _show_script_info(self, script: library.Script) -> None:
         self._current = script
+        self._folder_row_widget.hide()
+        self._script_btn_widget.show()
         self._title.setText(script.title)
         self._badges.setText(badges(script, self._elevated))
         self._desc.setText(script.description + (f"\n\nFile: {script.path}" if script.path else ""))
         self._show_requirement(script)
         self._update_buttons()
+
+    def _show_folder_info(self) -> None:
+        self._current = None
+        folder = library.user_scripts_dir()
+        is_default = folder == library.default_user_scripts_dir()
+        self._title.setText("My Scripts Folder")
+        self._badges.setText(f"Location: {folder}  ·  {'Default folder' if is_default else 'Custom folder'}")
+        self._desc.setText("Choose any folder on this PC where you keep your custom scripts (.ps1, .cmd, .bat).\n\n"
+                           "• Any script placed in this folder will automatically appear under 'My scripts' on the left.\n"
+                           "• You can run them with live output, stop running scripts, and save or copy results.\n"
+                           "• Built-in checks edited via 'Edit' are also copied here so your changes are preserved.\n"
+                           "• Click 'Choose scripts folder…' below to select your folder, or 'Open in Explorer' to add files.")
+        self._need.clear()
+        self._install_req.hide()
+        self._status.setText(f"Active scripts folder: {folder}")
+        self._script_btn_widget.hide()
+        self._folder_row_widget.show()
+        self._detail_reset_btn.setEnabled(not is_default)
+
+        try:
+            if os.path.exists(folder):
+                files = [f for f in os.listdir(folder) if f.lower().endswith((".ps1", ".cmd", ".bat", ".txt"))]
+                if files:
+                    lines = [f"Directory: {folder}", f"Found {len(files)} script / config file(s):", ""]
+                    for f in sorted(files, key=str.lower):
+                        try:
+                            sz = os.path.getsize(os.path.join(folder, f))
+                            lines.append(f"  {f:<35} ({sz:,} bytes)")
+                        except OSError as err:
+                            logger.debug("Error reading file stat: %s", err)
+                            lines.append(f"  {f:<35} (error reading file)")
+                    lines.append("")
+                    lines.append("Click on any script in the tree on the left to inspect and run it.")
+                    self._output.setPlainText("\n".join(lines))
+                else:
+                    self._output.setPlainText(
+                        f"Directory: {folder}\n\n"
+                        "(Folder is currently empty)\n\n"
+                        "To add and run scripts:\n"
+                        "1. Click 'Choose scripts folder…' to select an existing folder containing your .ps1 or .cmd files.\n"
+                        "2. Or click 'Open in Explorer' to open this folder and paste your scripts here.\n"
+                        "3. Or click 'New script…' to create a new PowerShell script template here."
+                    )
+            else:
+                self._output.setPlainText(
+                    f"Folder does not exist yet: {folder}\n"
+                    "Click 'Choose scripts folder…' or 'Open in Explorer' to create it."
+                )
+        except Exception as e:
+            logger.debug("Error listing user scripts folder %s: %s", folder, e)
+            self._output.setPlainText(f"Could not read folder {folder}: {e}")
+
+    def _tree_context_menu(self, pos) -> None:
+        item = self._tree.itemAt(pos)
+        if item is None:
+            return
+        menu = QMenu(self._tree)
+        action = item.data(0, _ACTION_ROLE)
+        is_folder = item.data(0, _FOLDER_ROLE)
+        if action or is_folder:
+            menu.addAction("📁 Choose scripts folder…", self._change_folder)
+            menu.addAction("📂 Open folder in Explorer", self._open_user_folder)
+            menu.addAction("➕ New script…", self._new_script)
+            if library.user_scripts_dir() != library.default_user_scripts_dir():
+                menu.addAction("🔄 Reset to default folder", self._reset_folder)
+            menu.addSeparator()
+            menu.addAction("🔃 Reload scripts", self._reload)
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+            return
+
+        script = item.data(0, _SCRIPT_ROLE)
+        if script is not None:
+            menu.addAction("▶ Run", self._run)
+            menu.addAction("👁 View script", self._view_script)
+            menu.addAction("⏰ Schedule in Windows Task Scheduler…", self._schedule_current)
+            if script.category == library.USER_CATEGORY:
+                menu.addAction("📂 Open containing folder", lambda: os.startfile(os.path.dirname(script.path) if script.path else library.user_scripts_dir()))
+                menu.addSeparator()
+                menu.addAction("📁 Change scripts folder…", self._change_folder)
+            else:
+                menu.addAction("✏ Edit (copy to My Scripts)", lambda: self._edit_current(library.editors()[0][0]))
+            menu.addSeparator()
+            menu.addAction("🔃 Reload scripts", self._reload)
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
 
     def _show_requirement(self, script: library.Script) -> None:
         """Which module this script needs and whether this PC has it."""
@@ -394,6 +573,8 @@ class ScriptLibraryModule(BaseModule):
         self._btn["stop"].setEnabled(running)
         self._btn["view"].setEnabled(self._current is not None)
         self._edit.setEnabled(self._current is not None)
+        if hasattr(self, "_schedule_btn"):
+            self._schedule_btn.setEnabled(self._current is not None and not running)
         has_output = bool(self._output.toPlainText())
         self._btn["copy"].setEnabled(has_output)
         self._btn["save"].setEnabled(has_output)
@@ -555,6 +736,17 @@ class ScriptLibraryModule(BaseModule):
         self._open_in_editor(path, editor, note)
         self._reload()
         self._select_path(path)
+
+    def _schedule_current(self) -> None:
+        if self._current is None:
+            return
+        try:
+            from modules.scripts_hub.schedule_dialog import ScheduleScriptDialog
+            dlg = ScheduleScriptDialog(self._current, self._widget)
+            dlg.exec()
+        except Exception as e:
+            logger.exception("Could not open schedule dialog: %s", e)
+            self._status.setText(f"Schedule error: {e}")
 
     def _open_in_editor(self, path: str, editor: Optional[str], note: str) -> None:
         argv = library.editor_command(path, editor)

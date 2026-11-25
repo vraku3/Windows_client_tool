@@ -1,18 +1,39 @@
-"""The Script Library's catalogs, one module per area. Qt-free.
-
-`CATALOG` is every catalog script in display order. Client scripts were run
-on a real Windows 11 machine, elevated and as a standard user, before they
-shipped (`tools/script_library_check.py`); a script with `requires` set
-needs a role or module that machine does not have, so it was syntax-checked
-by PowerShell's parser only -- the pane says so on its card.
-"""
+"""The Script Library's catalogs, curated into deep, multi-stage sysadmin & diagnostic suites. Qt-free."""
 from typing import List
 
 from ..library import Script
-from . import (client_logs_network, client_mgmt, client_more, client_security, client_system,
-               server, server_ad, server_infra, server_ops)
+from . import (
+    deep_ad_identity,
+    deep_client_cpu_kernel,
+    deep_client_gaming_power,
+    deep_client_hw_storage,
+    deep_client_media_gpu,
+    deep_client_profile_boot_gdi,
+    deep_crash_postmortem,
+    deep_hardware_firmware,
+    deep_network_dns,
+    deep_printing,
+    deep_security_persistence,
+    deep_server_infra,
+    deep_servicing_cbs,
+    deep_storage_vss,
+    deep_system_perf,
+)
 
-CATALOG: List[Script] = (client_system.SCRIPTS + client_logs_network.SCRIPTS
-                         + client_security.SCRIPTS + client_mgmt.SCRIPTS + client_more.SCRIPTS
-                         + server.SCRIPTS + server_ad.SCRIPTS + server_infra.SCRIPTS
-                         + server_ops.SCRIPTS)
+CATALOG: List[Script] = (
+    deep_system_perf.SCRIPTS
+    + deep_security_persistence.SCRIPTS
+    + deep_hardware_firmware.SCRIPTS
+    + deep_storage_vss.SCRIPTS
+    + deep_network_dns.SCRIPTS
+    + deep_servicing_cbs.SCRIPTS
+    + deep_crash_postmortem.SCRIPTS
+    + deep_printing.SCRIPTS
+    + deep_ad_identity.SCRIPTS
+    + deep_server_infra.SCRIPTS
+    + deep_client_profile_boot_gdi.SCRIPTS
+    + deep_client_gaming_power.SCRIPTS
+    + deep_client_media_gpu.SCRIPTS
+    + deep_client_cpu_kernel.SCRIPTS
+    + deep_client_hw_storage.SCRIPTS
+)

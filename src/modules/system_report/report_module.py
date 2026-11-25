@@ -187,12 +187,12 @@ def _render_html(data: dict) -> str:
 <meta charset="utf-8">
 <title>System Report — {data.get('hostname','')}</title>
 <style>
-  body {{font-family:Segoe UI,Arial,sans-serif;background:#1e1e1e;color:#ccc;margin:20px;}}
-  h1 {{color:#fff;}} h2 {{color:#3498db;border-bottom:1px solid #333;padding-bottom:4px;}}
+  body {{font-family:Segoe UI,Arial,sans-serif;background:#0d1117;color:#e6edf3;margin:20px;}}
+  h1 {{color:#ffffff;}} h2 {{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:4px;}}
   table {{border-collapse:collapse;width:100%;margin-bottom:16px;}}
-  th {{background:#2c2c2c;color:#aaa;text-align:left;padding:6px 10px;}}
-  td {{padding:5px 10px;border-bottom:1px solid #2c2c2c;}}
-  .kv td:first-child {{color:#aaa;width:220px;}} .badge {{background:#2c2c2c;border-radius:4px;padding:2px 8px;}}
+  th {{background:#21262d;color:#c9d1d9;text-align:left;padding:6px 10px;}}
+  td {{padding:5px 10px;border-bottom:1px solid #21262d;}}
+  .kv td:first-child {{color:#9ea7b3;width:220px;}} .badge {{background:#21262d;border-radius:4px;padding:2px 8px;}}
 </style>
 </head>
 <body>

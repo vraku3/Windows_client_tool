@@ -46,7 +46,8 @@ class ErrorLookupDialog(QDialog):
             # Silence beats a guess, which is why `describe` returns "" --
             # but the person asked, so say that nothing is known rather
             # than showing them a blank box.
-            lines.append(f"0x{code:08X}  —  "
+            header = f"0x{code:08X} ({code})  —  " if 0 < code <= 65535 else f"0x{code:08X}  —  "
+            lines.append(f"{header}"
                          f"{meaning or 'not a code this tool knows.'}")
             # Only for the few codes with a documented cause. Every other
             # code keeps the name-only answer: a plausible-sounding fix for

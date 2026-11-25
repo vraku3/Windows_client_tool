@@ -1,8 +1,7 @@
 """Self-contained HTML maintenance report — Windows Update / winget / Store /
 cleanup results plus run history, in one file. Styling matches the app's
-existing system_report/report_module.py conventions (dark, #1e1e1e / #3498db)
-so it looks consistent with the rest of the app rather than importing a new
-palette.
+existing system_report conventions so it looks consistent with the rest of
+the app rather than importing a new palette.
 """
 import html
 import logging
@@ -10,10 +9,29 @@ import os
 import socket
 import re
 from core.formatting import format_size as _fmt_size
+from core.semantic_colors import CHROME_PALETTES, SEMANTIC_PALETTES
 from datetime import datetime
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+_CHR_DARK = CHROME_PALETTES["dark"]
+_SEM_DARK = SEMANTIC_PALETTES["dark"]
+
+UPDATE_REPORT_CSS = f"""
+  body {{font-family:Segoe UI,Arial,sans-serif;background:{_CHR_DARK['surface_inactive']};color:{_CHR_DARK['text']};margin:20px;}}
+  h1 {{color:{_CHR_DARK['text']};margin-bottom:4px;}} h2 {{color:{_SEM_DARK['info']};border-bottom:1px solid {_CHR_DARK['outline']};padding-bottom:4px;margin-top:28px;}}
+  .sub {{color:{_CHR_DARK['text_muted']};margin-bottom:20px;}}
+  .cards {{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;}}
+  .card {{background:{_CHR_DARK['surface']};border:1px solid {_CHR_DARK['outline']};border-radius:8px;padding:12px 18px;min-width:180px;}}
+  .card .k {{font-size:11px;color:{_CHR_DARK['text_muted']};text-transform:uppercase;letter-spacing:.04em;}}
+  .card .v {{font-size:17px;font-weight:600;margin-top:4px;}}
+  table {{border-collapse:collapse;width:100%;margin-bottom:16px;}}
+  th {{background:{_CHR_DARK['surface_inactive']};color:{_CHR_DARK['text_muted']};text-align:left;padding:6px 10px;}}
+  td {{padding:5px 10px;border-bottom:1px solid {_CHR_DARK['outline']};}}
+  .ok {{color:{_SEM_DARK['success']};}} .warn {{color:{_SEM_DARK['warning']};}} .held {{opacity:.7;}}
+  pre {{background:{_CHR_DARK['surface_inactive']};border:1px solid {_CHR_DARK['outline']};border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;}}
+"""
 
 
 def _esc(v) -> str:
@@ -28,6 +46,46 @@ def _restart(value) -> str:
     return "-" if value is None else "yes" if value else "no"
 
 
+def _render_deferred_section(wu_deferred: dict) -> tuple[str, str]:
+    try:
+        from modules.updates.wu_categories import LABELS
+    except Exception:
+        LABELS = {}
+    deferred_items = sorted(
+        ((LABELS.get(cat, cat), int(count)) for cat, count in wu_deferred.items() if count),
+        key=lambda item: (-item[1], item[0]))
+    deferred_total = sum(count for _label, count in deferred_items)
+    deferred_text = ", ".join(f"{label} {count}" for label, count in deferred_items)
+    deferred_card = (f'<div class="card"><div class="k">Deferred by settings</div>'
+                     f'<div class="v warn">{deferred_total} - {_esc(deferred_text)}</div></div>'
+                     if deferred_total else "")
+    deferred_section = ("<h2>Deferred by settings</h2>"
+                        "<table><tr><th>Category</th><th>Offers skipped</th></tr>"
+                        + "".join(f"<tr><td>{_esc(label)}</td><td>{count}</td></tr>"
+                                  for label, count in deferred_items)
+                        + "</table><p>These offers were not installed because the category "
+                          "gate is off in Updates - Settings.</p>") if deferred_total else ""
+    return deferred_card, deferred_section
+
+
+def _render_store_section(store_read_refused: bool, store_changed: list, store_previous_at: Optional[str], store_triggered: bool) -> tuple[str, str]:
+    if store_read_refused:
+        store_text = "scan triggered; installed versions unreadable"
+    elif store_changed:
+        store_text = (f"{len(store_changed)} app(s) changed since "
+                      f"{store_previous_at or 'the previous run'}")
+    elif store_triggered and store_previous_at:
+        store_text = f"scan triggered; no version change since {store_previous_at}"
+    elif store_triggered:
+        store_text = "scan triggered; first version snapshot"
+    else:
+        store_text = "not run"
+    store_section = ("<h2>Microsoft Store changes since the previous run</h2><ul>"
+                     + "".join(f"<li>{_esc(line)}</li>" for line in store_changed)
+                     + "</ul>") if store_changed else ""
+    return store_text, store_section
+
+
 def render_update_report_html(data: dict, history: List[dict]) -> str:
     """data keys (all optional): wu_results, wu_held, winget_results, store_triggered,
     cleanup_freed, cleanup_deleted, dism_output — see stage_runners.py outputs."""
@@ -35,9 +93,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
     generated = data.get("generated") or datetime.now().strftime("%A, %d %B %Y, %H:%M")
 
     wu_results = data.get("wu_results") or []
-    #: AMD display drivers the hold kept back: listed as held, never installed.
     wu_held = data.get("wu_held") or []
-    #: Categories Run All skipped by policy (feature/optional/driver gates).
     wu_deferred = data.get("wu_deferred") or {}
     winget_results = data.get("winget_results") or []
     store_triggered = data.get("store_triggered")
@@ -75,39 +131,8 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
         for e in list(history)[-20:][::-1]
     ) or "<tr><td colspan=7>No prior runs recorded.</td></tr>"
 
-    try:
-        from modules.updates.wu_categories import LABELS
-    except Exception:
-        LABELS = {}
-    deferred_items = sorted(
-        ((LABELS.get(cat, cat), int(count)) for cat, count in wu_deferred.items() if count),
-        key=lambda item: (-item[1], item[0]))
-    deferred_total = sum(count for _label, count in deferred_items)
-    deferred_text = ", ".join(f"{label} {count}" for label, count in deferred_items)
-    deferred_card = (f'<div class="card"><div class="k">Deferred by settings</div>'
-                     f'<div class="v warn">{deferred_total} - {_esc(deferred_text)}</div></div>'
-                     if deferred_total else "")
-    deferred_section = ("<h2>Deferred by settings</h2>"
-                        "<table><tr><th>Category</th><th>Offers skipped</th></tr>"
-                        + "".join(f"<tr><td>{_esc(label)}</td><td>{count}</td></tr>"
-                                  for label, count in deferred_items)
-                        + "</table><p>These offers were not installed because the category "
-                          "gate is off in Updates - Settings.</p>") if deferred_total else ""
-
-    if store_read_refused:
-        store_text = "scan triggered; installed versions unreadable"
-    elif store_changed:
-        store_text = (f"{len(store_changed)} app(s) changed since "
-                      f"{store_previous_at or 'the previous run'}")
-    elif store_triggered and store_previous_at:
-        store_text = f"scan triggered; no version change since {store_previous_at}"
-    elif store_triggered:
-        store_text = "scan triggered; first version snapshot"
-    else:
-        store_text = "not run"
-    store_section = ("<h2>Microsoft Store changes since the previous run</h2><ul>"
-                     + "".join(f"<li>{_esc(line)}</li>" for line in store_changed)
-                     + "</ul>") if store_changed else ""
+    deferred_card, deferred_section = _render_deferred_section(wu_deferred)
+    store_text, store_section = _render_store_section(store_read_refused, store_changed, store_previous_at, store_triggered)
 
     held_suffix = f", {len(wu_held)} held" if wu_held else ""
     cards = f"""
@@ -149,18 +174,7 @@ def render_update_report_html(data: dict, history: List[dict]) -> str:
 <meta charset="utf-8">
 <title>Maintenance Report — {_esc(hostname)}</title>
 <style>
-  body {{font-family:Segoe UI,Arial,sans-serif;background:#1e1e1e;color:#ccc;margin:20px;}}
-  h1 {{color:#fff;margin-bottom:4px;}} h2 {{color:#3498db;border-bottom:1px solid #333;padding-bottom:4px;margin-top:28px;}}
-  .sub {{color:#888;margin-bottom:20px;}}
-  .cards {{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;}}
-  .card {{background:#252526;border:1px solid #3c3c3c;border-radius:8px;padding:12px 18px;min-width:180px;}}
-  .card .k {{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;}}
-  .card .v {{font-size:17px;font-weight:600;margin-top:4px;}}
-  table {{border-collapse:collapse;width:100%;margin-bottom:16px;}}
-  th {{background:#2c2c2c;color:#aaa;text-align:left;padding:6px 10px;}}
-  td {{padding:5px 10px;border-bottom:1px solid #2c2c2c;}}
-  .ok {{color:#4ec9b0;}} .warn {{color:#e5c07b;}} .held {{opacity:.7;}}
-  pre {{background:#151515;border:1px solid #2c2c2c;border-radius:6px;padding:10px;overflow-x:auto;white-space:pre-wrap;}}
+{UPDATE_REPORT_CSS}
 </style>
 </head>
 <body>

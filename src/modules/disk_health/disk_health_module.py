@@ -482,9 +482,8 @@ class _DiskHealthWidget(QWidget):
         self._scroll.setVisible(cards > 0)
 
     def cancel_all_workers(self) -> None:
-        for w in self._workers:
-            w.cancel()
-        self._workers.clear()
+        from core.worker import retire
+        retire(self._workers)
         self._scanning = False
         self._progress.hide()
         self._scan_btn.setEnabled(True)

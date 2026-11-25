@@ -14,8 +14,8 @@ damage on this dev machine that nothing else in the app currently surfaces.
 """
 from core.system_paths import powershell_exe
 import logging
-
 import os
+import subprocess
 
 from PyQt6.QtWidgets import QMessageBox, QPushButton
 
@@ -28,6 +28,7 @@ from core.worker import Worker
 from modules.dism_log import checkhealth
 from modules.dism_log.dism_parser import DISMParser
 from modules.dism_log.dism_search_provider import DISMSearchProvider
+from ui.glance import GlanceTile
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +60,71 @@ class DISMLogModule(LogReaderModule):
     requires_admin = False
     provider_class = DISMSearchProvider
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._dism_ops_tile: Optional[GlanceTile] = None
+        self._scratch_tile: Optional[GlanceTile] = None
+
     def pane_options(self) -> dict:
         from core import servicing_summary as ss
 
+        self._dism_ops_tile = GlanceTile(
+            "DISM Operations",
+            tooltip="DISM servicing operations recorded in dism.log.",
+        )
+        self._dism_ops_tile.set("0 Operations", "No commands", severity="ok")
+
+        self._scratch_tile = GlanceTile(
+            "Scratch Buffer",
+            tooltip="DISM scratch directory and temporary space status.",
+        )
+        self._scratch_tile.set("OK", "Standard", severity="ok")
+
         def summarise(entries):
             if entries and all(e.source == "DISM/HotFix" for e in entries):
+                if self._dism_ops_tile:
+                    self._dism_ops_tile.set(f"{len(entries)} Hotfixes", "Get-HotFix fallback", severity="info")
+                if self._scratch_tile:
+                    self._scratch_tile.set("N/A", "dism.log absent", severity="ok")
                 return ("dism.log does not exist on this machine, so this shows installed "
                         "hotfixes (Get-HotFix) instead; there is no servicing log to summarise.")
+
+            if not entries:
+                if self._dism_ops_tile:
+                    self._dism_ops_tile.set("—", "No records", severity="ok")
+                if self._scratch_tile:
+                    self._scratch_tile.set("—", "No records", severity="ok")
+                return ss.summarize(entries, "dism")
+
+            dism_ops = ss.dism_operations_summary(entries)
+            if self._dism_ops_tile:
+                if dism_ops["total_operations"]:
+                    self._dism_ops_tile.set(
+                        f"{dism_ops['total_operations']} Ops",
+                        f"Latest: {dism_ops['latest_operation'] or 'None'}",
+                        severity="warning" if dism_ops["has_errors"] else "info",
+                    )
+                else:
+                    self._dism_ops_tile.set("0 Ops", "No commands", severity="ok")
+
+            if self._scratch_tile:
+                if dism_ops["scratch_warnings"]:
+                    self._scratch_tile.set("Warning", "Low space (<1GB)", severity="warning")
+                elif dism_ops["scratch_directory"]:
+                    path_disp = dism_ops["scratch_directory"]
+                    if len(path_disp) > 20:
+                        path_disp = "..." + path_disp[-17:]
+                    self._scratch_tile.set("OK", path_disp, severity="ok")
+                else:
+                    self._scratch_tile.set("OK", "Standard", severity="ok")
+
             return ss.summarize(entries, "dism")
 
-        return {"detail_enricher": ss.detail_html, "summarizer": summarise}
+        return {
+            "detail_enricher": ss.detail_html,
+            "summarizer": summarise,
+            "glance_tiles": [self._dism_ops_tile, self._scratch_tile],
+        }
 
     def on_deactivate(self) -> None:
         # A reader's tab page is permanent (CompositeModule never destroys
@@ -94,6 +150,32 @@ class DISMLogModule(LogReaderModule):
         btn.clicked.connect(self._on_check_health)
         toolbar.addWidget(btn)
         extra["check_health_btn"] = btn
+
+        folder_btn = QPushButton("Open DISM Folder")
+        folder_btn.setToolTip("Open DISM servicing directory containing dism.log records.")
+        folder_btn.clicked.connect(lambda: subprocess.Popen(["explorer.exe", os.path.dirname(DISM_LOG_PATH)]))
+        toolbar.addWidget(folder_btn)
+        extra["folder_btn"] = folder_btn
+
+        cmtrace_btn = QPushButton("📄 Open in CMTrace")
+        cmtrace_btn.setToolTip("Open dism.log in integrated Log Viewer with live tailing and CMTrace syntax.")
+        cmtrace_btn.clicked.connect(self._open_in_log_viewer)
+        toolbar.addWidget(cmtrace_btn)
+        extra["cmtrace_btn"] = cmtrace_btn
+
+    def _open_in_log_viewer(self) -> None:
+        if self.app and hasattr(self.app, "main_window") and self.app.main_window:
+            self.app.main_window.navigate_to("Log Viewer")
+            target = DISM_LOG_PATH if os.path.exists(DISM_LOG_PATH) else os.path.dirname(DISM_LOG_PATH)
+            diag = next((m for m in getattr(self.app.module_registry, "_modules", []) if m.name == "Diagnose"), None)
+            if diag and len(diag.children) > 7:
+                lv = diag.children[7]
+                w = getattr(lv, "_widget", None)
+                if w is not None:
+                    if os.path.isdir(target):
+                        w.open_folder(target)
+                    else:
+                        w.open(target)
 
     def _on_check_health(self) -> None:
         btn = self._control("check_health_btn")

@@ -1709,6 +1709,11 @@ class QuickCleanupTab(QWidget):
             "game_bar":     (cs.scan_windows_game_bar_cache,   "safe"),
             "yarn":         (cs.scan_yarn_cache,               "safe"),
             "pnpm":         (cs.scan_pnpm_cache,               "safe"),
+            "pip":          (cs.scan_pip_cache,                "safe"),
+            "npm":          (cs.scan_npm_cache,                "safe"),
+            "nuget":        (cs.scan_nuget_cache,              "caution"),
+            "gradle":       (cs.scan_gradle_cache,             "safe"),
+            "cargo":        (cs.scan_cargo_cache,              "safe"),
             # Smart Finders
             "empty_folders": (cs.scan_empty_folders,          "safe"),
             # Catalog-backed (see the matching comment on ADVANCED_CATEGORIES

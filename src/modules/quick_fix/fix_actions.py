@@ -410,7 +410,8 @@ def reset_perf_counters(output_cb: Callable[[str], None]) -> None:
 
 def clear_prefetch(output_cb: Callable[[str], None]) -> None:
     """Clear the Windows Prefetch folder."""
-    prefetch_dir = r"C:\Windows\Prefetch"
+    from core import windows_utils
+    prefetch_dir = os.path.join(windows_utils.system_root(), "Prefetch")
     output_cb(f"Clearing Prefetch folder: {prefetch_dir}")
     count = 0
     for f in _glob.glob(os.path.join(prefetch_dir, "*.pf")):
@@ -753,6 +754,80 @@ def fix_unquoted_service_paths(output_cb: Callable[[str], None]) -> None:
         output_cb("All Windows service executable paths are already properly quoted. No changes needed.")
 
 
+def reset_delivery_optimization(output_cb: Callable[[str], None]) -> None:
+    """Reset Delivery Optimization cache and BranchCache."""
+    output_cb("Stopping Delivery Optimization service (dosvc)...")
+    _stop_service("dosvc", output_cb)
+    from core.windows_utils import system_root
+    do_cache = os.path.join(
+        system_root(), "ServiceProfiles", "NetworkService",
+        "AppData", "Local", "Microsoft", "Windows", "DeliveryOptimization", "Cache"
+    )
+    purged = 0
+    if os.path.isdir(do_cache):
+        for root, dirs, files in os.walk(do_cache, topdown=False):
+            for f in files:
+                try:
+                    os.remove(os.path.join(root, f))
+                    purged += 1
+                except OSError as exc:
+                    logger.debug("Could not remove DO cache file %s: %s", f, exc)
+            for d in dirs:
+                try:
+                    os.rmdir(os.path.join(root, d))
+                except OSError as exc:
+                    logger.debug("Could not remove DO cache dir %s: %s", d, exc)
+    output_cb(f"Cleared Delivery Optimization cache ({purged} files removed).")
+    output_cb("Restarting Delivery Optimization service...")
+    _start_service("dosvc", output_cb)
+    output_cb("Resetting BranchCache via netsh...")
+    _run_cmd(["netsh", "branchcache", "reset"], output_cb, tolerate_failure=True)
+    output_cb("Delivery Optimization and BranchCache reset complete.")
+
+
+def purge_bits_jobs(output_cb: Callable[[str], None]) -> None:
+    """Purge and cancel all stuck background BITS transfer jobs."""
+    output_cb("Purging BITS transfer queues via bitsadmin...")
+    _run_cmd(["bitsadmin", "/reset", "/allusers"], output_cb, tolerate_failure=True)
+    output_cb("Clearing PowerShell BITS transfers...")
+    script = "Get-BitsTransfer -AllUsers -ErrorAction SilentlyContinue | Remove-BitsTransfer -ErrorAction SilentlyContinue"
+    _run_cmd([powershell_exe(), "-NoProfile", "-Command", script], output_cb, tolerate_failure=True)
+    output_cb("Restarting BITS service...")
+    _stop_service("BITS", output_cb)
+    _start_service("BITS", output_cb)
+    output_cb("Stuck BITS jobs purged and service restarted.")
+
+
+def reregister_shell_components(output_cb: Callable[[str], None]) -> None:
+    """Re-register core Windows Shell and ActiveX COM components."""
+    output_cb("Re-registering core Shell and System COM libraries...")
+    dlls = [
+        "shell32.dll", "ole32.dll", "oleaut32.dll", "actxprxy.dll",
+        "atl.dll", "shdocvw.dll", "urlmon.dll", "mshtml.dll"
+    ]
+    registered = 0
+    for dll in dlls:
+        rc = _run_cmd(["regsvr32.exe", "/s", dll], output_cb, tolerate_failure=True)
+        if rc == 0:
+            registered += 1
+    output_cb(f"Re-registered {registered}/{len(dlls)} core Shell libraries.")
+
+
+def reset_w32tm(output_cb: Callable[[str], None]) -> None:
+    """Complete re-registration and forced resynchronization of Windows Time service."""
+    output_cb("Stopping Windows Time service (w32time)...")
+    _stop_service("w32time", output_cb)
+    output_cb("Unregistering Windows Time service...")
+    _run_cmd(["w32tm", "/unregister"], output_cb, tolerate_failure=True)
+    output_cb("Registering Windows Time service...")
+    _run_cmd(["w32tm", "/register"], output_cb, tolerate_failure=True)
+    output_cb("Starting Windows Time service...")
+    _start_service("w32time", output_cb)
+    output_cb("Forcing immediate time synchronization...")
+    _run_cmd(["w32tm", "/resync", "/force"], output_cb, tolerate_failure=True)
+    output_cb("Windows Time service reset and resynced.")
+
+
 def enable_winre(output_cb: Callable[[str], None]) -> None:
     """Enable Windows Recovery Environment (reagentc /enable)."""
     output_cb("Enabling Windows Recovery Environment (reagentc /enable)...")
@@ -879,6 +954,9 @@ ALL_ACTIONS: List[FixAction] = [
               "Reset Windows Store cache with wsreset to fix stuck app downloads",
               "Cache & UI", fn=clear_store_cache,
               confirm_text="This runs wsreset to clear the Microsoft Store cache. Continue?"),
+    FixAction("reregister_shell", "Re-register Core Shell Libraries",
+              "Re-register core Windows Shell and ActiveX COM runtime components",
+              "Cache & UI", fn=reregister_shell_components),
     # Network
     FixAction("flush_dns", "Flush DNS", "Clear the DNS resolver cache",
               "Network", fn=flush_dns),
@@ -911,6 +989,10 @@ ALL_ACTIONS: List[FixAction] = [
     FixAction("sync_time", "Synchronize System Clock",
               "Force immediate time synchronization with NTP time server via w32tm",
               "Network", fn=sync_system_clock),
+    FixAction("reset_w32tm", "Reset Windows Time Service",
+              "Unregister, re-register, restart w32time and force time resynchronization",
+              "Network", fn=reset_w32tm,
+              confirm_text="This will re-register the Windows Time service and force an immediate clock resynchronization with the configured NTP server. Continue?"),
     FixAction("enable_tcp_autotuning", "Enable TCP Auto-Tuning",
               "Set TCP Window Auto-Tuning to normal to restore full broadband throughput",
               "Network", reboot_required=False, fn=enable_tcp_autotuning),
@@ -927,6 +1009,14 @@ ALL_ACTIONS: List[FixAction] = [
               "Windows Update", fn=reregister_wu_dlls),
     FixAction("wu_scan", "Check for Updates", "Manually trigger Windows Update scan",
               "Windows Update", fn=check_wu_updates),
+    FixAction("reset_do_branchcache", "Reset Delivery Optimization & BranchCache",
+              "Purge Delivery Optimization cache and reset BranchCache configuration",
+              "Windows Update", fn=reset_delivery_optimization,
+              confirm_text="This will stop the Delivery Optimization service, clear its local peer cache, and reset BranchCache. In-progress peer downloads will restart from source. Continue?"),
+    FixAction("purge_bits_jobs", "Purge Stuck BITS Jobs",
+              "Cancel all pending background BITS transfers across all users and restart service",
+              "Windows Update", fn=purge_bits_jobs,
+              confirm_text="This will cancel and purge all currently queued BITS transfers across all user accounts and restart BITS. Continue?"),
     # Print
     FixAction("print_queue", "Clear Print Queue",
               "Stop Spooler, delete print jobs, restart",

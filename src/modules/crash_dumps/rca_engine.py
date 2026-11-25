@@ -20,6 +20,7 @@ from typing import Dict, List, Optional, Tuple
 
 from core.diag_knowledge import bugcheck_info, bugcheck_label
 from core.types import LogEntry
+from modules.crash_dumps.driver_fingerprint import extract_driver_culprit, get_driver_info, is_third_party_driver
 
 logger = logging.getLogger(__name__)
 
@@ -76,16 +77,233 @@ class RcaOverview:
     core_whea_counts: Dict[int, int] = field(default_factory=dict)
 
 
+_EXC_CODES: Dict[int, str] = {
+    0xC0000005: "STATUS_ACCESS_VIOLATION (Memory access violation)",
+    0xC000001D: "STATUS_ILLEGAL_INSTRUCTION",
+    0xC0000094: "STATUS_INTEGER_DIVIDE_BY_ZERO",
+    0x80000003: "STATUS_BREAKPOINT",
+    0xC0000006: "STATUS_IN_PAGE_ERROR (Disk or paging read failure)",
+    0xC0000409: "STATUS_STACK_BUFFER_OVERRUN (Fast fail security violation)",
+    0xC00000FD: "STATUS_STACK_OVERFLOW",
+    0xC0000022: "STATUS_ACCESS_DENIED",
+}
+
+_IRQL_NAMES: Dict[int, str] = {
+    0: "PASSIVE_LEVEL",
+    1: "APC_LEVEL",
+    2: "DISPATCH_LEVEL",
+    12: "SYNCH_LEVEL",
+    15: "HIGH_LEVEL",
+}
+
+_SEC_CHECK_TYPES: Dict[int, str] = {
+    0: "Stack-based buffer overrun detected (GS check failure)",
+    1: "VTGuard check failure",
+    2: "Stack cookie (canary) corrupted",
+    3: "LIST_ENTRY doubly-linked list corruption (corrupted pointers during remove)",
+    4: "Reserved",
+    5: "Invalid parameter passed to security check",
+    6: "Stack cookie initialization failure",
+    7: "Fatal exception handler list corrupted",
+    8: "Single-bit error detected in pool allocation (indicates bad RAM)",
+    9: "Fast fail range check failure",
+    10: "Kernel Control Flow Guard (CFG/XFG) check failure",
+    12: "Long jump buffer corruption",
+    13: "Protected memory corruption",
+    14: "Critical object type corruption",
+    20: "Corrupted linked list entry",
+    21: "Corrupted pool list entry",
+    25: "Bad list entry insertion",
+}
+
+_FAULT_50_TYPES: Dict[int, str] = {
+    0: "Read or write on nonpaged memory / freed pool",
+    1: "Page not present",
+    2: "Transition fault",
+    3: "Prototype PTE fault",
+    16: "Execute fault on non-executable memory",
+}
+
+
+def get_bugcheck_sysadmin_explanation(code: int, params: Tuple[int, ...] = ()) -> str:
+    """Return an authoritative, plain-English explanation and diagnostic direction for top bugchecks."""
+    c = code & 0xFFFFFFFF
+    if c == 0x0A:
+        return (
+            "A kernel routine or driver tried to access pageable (or invalid) memory while running at an elevated "
+            "IRQL (typically DISPATCH_LEVEL). Page faults cannot be serviced at elevated IRQL. Usually caused by a "
+            "buggy third-party driver dereferencing an invalid pointer, pool corruption, or faulty RAM."
+        )
+    elif c == 0x1E:
+        return (
+            "A kernel-mode program or driver generated an exception that was not caught by an error handler (most often "
+            "Access Violation 0xC0000005). The driver attempted an illegal operation such as dereferencing a NULL or freed "
+            "pointer. Usually caused by incompatible or outdated hardware drivers, system filter drivers, or memory corruption."
+        )
+    elif c == 0x3B:
+        return (
+            "An unhandled exception occurred during execution of a system service routine transitioning from user to kernel mode. "
+            "Most commonly an Access Violation (0xC0000005) inside graphics display drivers (GPU), DirectX, filesystem filter "
+            "drivers, or security/antivirus hooks."
+        )
+    elif c == 0x50:
+        return (
+            "Invalid system memory was referenced that cannot be found or paged in. Commonly caused by a buggy driver "
+            "referencing freed pool memory or an invalid pointer, defective or mismatched RAM modules, faulty CPU cache, "
+            "or filesystem/antivirus corruption."
+        )
+    elif c == 0x7E:
+        return (
+            "A background system thread generated an unhandled exception. This frequently occurs after hardware or driver "
+            "updates. The faulting instruction pointer or stack trace almost always points directly to the problematic third-party driver."
+        )
+    elif c == 0x9F:
+        return (
+            "A device driver failed to handle or complete a sleep, hibernate, or wake power state transition IRP within the "
+            "timeout period. Very common with USB hubs/controllers, Wi-Fi/Bluetooth adapters, NVMe storage controllers, and GPU "
+            "drivers failing to enter or wake from low-power states."
+        )
+    elif c == 0xD1:
+        return (
+            "A driver accessed pageable memory (or an invalid memory address) at an elevated IRQL (typically DISPATCH_LEVEL). "
+            "Unlike 0x0A, 0xD1 almost always specifically points to a third-party driver bug (especially network, Wi-Fi, VPN virtual "
+            "NICs, audio, or storage drivers)."
+        )
+    elif c == 0x124:
+        return (
+            "A fatal hardware error detected by the CPU or platform chipset via WHEA. Typically caused by unstable CPU/RAM "
+            "overclocking/undervolting (insufficient Vcore/curve optimizer), inadequate power delivery, overheating, or a failing "
+            "PCIe peripheral/NVMe drive."
+        )
+    elif c == 0x133:
+        return (
+            "A device driver held execution at DISPATCH_LEVEL (DPC) longer than the kernel watchdog threshold (typically 10-30 seconds). "
+            "Most frequently caused by SSD/NVMe controller firmware hangs, outdated storage (storport/iaStor) or Wi-Fi/NIC drivers, "
+            "or hardware bus stalls."
+        )
+    elif c == 0x139:
+        return (
+            "A critical kernel security integrity check failed because internal data structures (such as a stack canary cookie or "
+            "kernel doubly-linked list) were corrupted. Typically caused by a buggy driver overrunning a memory buffer, bad RAM modifying "
+            "kernel pointers, or conflicting low-level security/antivirus drivers."
+        )
+    known = bugcheck_info(code)
+    return known.cause if known else f"Kernel stopped with bugcheck code 0x{code:X}."
+
+
 def decode_bugcheck_params(code: int, params: Tuple[int, ...]) -> List[str]:
-    """Provide specific plain-English meaning for bugcheck parameters."""
+    """Provide specific plain-English meaning for bugcheck parameters for all top bugchecks."""
     if not params:
         return []
     p1 = params[0] if len(params) > 0 else 0
     p2 = params[1] if len(params) > 1 else 0
     p3 = params[2] if len(params) > 2 else 0
     p4 = params[3] if len(params) > 3 else 0
+    c = code & 0xFFFFFFFF
 
-    if code == 0x133:  # DPC_WATCHDOG_VIOLATION
+    res = _decode_params_irql_kmode(c, p1, p2, p3, p4)
+    if res is not None:
+        return res
+    res = _decode_params_power_whea_dpc(c, p1, p2, p3, p4)
+    if res is not None:
+        return res
+    return [f"Param {i+1}: 0x{p:X}" for i, p in enumerate(params)]
+
+
+def _decode_params_irql_kmode(c: int, p1: int, p2: int, p3: int, p4: int) -> Optional[List[str]]:
+    if c == 0x0A:
+        irql_str = _IRQL_NAMES.get(p2, f"IRQL {p2}")
+        access_str = "Execute" if p3 == 8 else ("Write" if p3 == 1 else "Read")
+        return [
+            f"Param 1: 0x{p1:X} — Memory address referenced",
+            f"Param 2: 0x{p2:X} — IRQL at the time: {irql_str}",
+            f"Param 3: 0x{p3:X} — Operation: {access_str}",
+            f"Param 4: 0x{p4:X} — Instruction address attempting the reference",
+        ]
+    if c == 0x1E:
+        exc_name = _EXC_CODES.get(p1, f"Exception 0x{p1:X}")
+        sub_info = "Access type (0=Read, 1=Write, 8=Execute)" if p1 == 0xC0000005 else "Exception sub-parameter 0"
+        target_info = "Target address referenced" if p1 == 0xC0000005 else "Exception sub-parameter 1"
+        return [
+            f"Param 1: 0x{p1:X} — Unhandled exception code: {exc_name}",
+            f"Param 2: 0x{p2:X} — Faulting instruction address (RIP/EIP)",
+            f"Param 3: 0x{p3:X} — {sub_info}",
+            f"Param 4: 0x{p4:X} — {target_info}",
+        ]
+    if c == 0x3B:
+        exc_name = _EXC_CODES.get(p1, f"Exception 0x{p1:X}")
+        return [
+            f"Param 1: 0x{p1:X} — Exception code: {exc_name}",
+            f"Param 2: 0x{p2:X} — Faulting instruction address (RIP/EIP)",
+            f"Param 3: 0x{p3:X} — Exception context record pointer (WinDbg: .cxr 0x{p3:X})",
+            f"Param 4: 0x{p4:X} — Reserved (0)",
+        ]
+    if c == 0x50:
+        access_str = "Execute" if p2 in (2, 8) else ("Write" if p2 == 1 else "Read")
+        fault_desc = _FAULT_50_TYPES.get(p4, f"Fault code {p4}")
+        return [
+            f"Param 1: 0x{p1:X} — Invalid memory address referenced",
+            f"Param 2: 0x{p2:X} — Operation: {access_str}",
+            f"Param 3: 0x{p3:X} — Faulting instruction address (RIP/EIP)",
+            f"Param 4: 0x{p4:X} — Fault type: {fault_desc}",
+        ]
+    if c == 0x7E:
+        exc_name = _EXC_CODES.get(p1, f"Exception 0x{p1:X}")
+        return [
+            f"Param 1: 0x{p1:X} — Exception code: {exc_name}",
+            f"Param 2: 0x{p2:X} — Faulting instruction address (RIP/EIP)",
+            f"Param 3: 0x{p3:X} — Exception record pointer (WinDbg: .exr 0x{p3:X})",
+            f"Param 4: 0x{p4:X} — Context record pointer (WinDbg: .cxr 0x{p4:X})",
+        ]
+    return None
+
+
+def _decode_params_power_whea_dpc(c: int, p1: int, p2: int, p3: int, p4: int) -> Optional[List[str]]:
+    if c == 0x9F:
+        subtypes = {
+            1: "A device object being freed still has pending power IRPs",
+            2: "Driver failed to complete a power IRP in the allotted time",
+            3: "A device object has been blocking a power IRP for too long (>90% of cases)",
+            4: "The power manager timed out waiting for a power request",
+            5: "Failure to complete a directed power transition",
+        }
+        sub_desc = subtypes.get(p1, f"Subtype {p1}")
+        if p1 in (3, 4):
+            return [
+                f"Param 1: 0x{p1:X} — Subtype: {sub_desc}",
+                f"Param 2: 0x{p2:X} — Target device object pointer (WinDbg: !devobj 0x{p2:X})",
+                f"Param 3: 0x{p3:X} — Blocking IRP pointer (WinDbg: !irp 0x{p3:X})",
+                f"Param 4: 0x{p4:X} — Blocking driver object pointer (WinDbg: !drvobj 0x{p4:X})",
+            ]
+        return [
+            f"Param 1: 0x{p1:X} — Subtype: {sub_desc}",
+            f"Param 2: 0x{p2:X} — Device object / Context pointer",
+            f"Param 3: 0x{p3:X} — IRP / Request pointer",
+            f"Param 4: 0x{p4:X} — Driver object / Status",
+        ]
+    if c == 0xD1:
+        irql_str = _IRQL_NAMES.get(p2, f"IRQL {p2}")
+        access_str = "Execute" if p3 == 8 else ("Write" if p3 == 1 else "Read")
+        return [
+            f"Param 1: 0x{p1:X} — Memory address referenced",
+            f"Param 2: 0x{p2:X} — IRQL at the time: {irql_str}",
+            f"Param 3: 0x{p3:X} — Operation: {access_str}",
+            f"Param 4: 0x{p4:X} — Code address which attempted the reference",
+        ]
+    if c == 0x124:
+        whea_types = {
+            0: "Machine Check Exception (MCE)", 1: "Corrected Machine Check (CMC)",
+            2: "Corrected Platform Error (CPE)", 3: "Non-Maskable Interrupt (NMI)",
+            4: "PCI Express Error (AER)", 5: "Generic Hardware Error",
+        }
+        name = whea_types.get(p1, f"Hardware Error Type {p1}")
+        return [
+            f"Param 1: 0x{p1:X} — Error Source: {name}",
+            f"Param 2: 0x{p2:X} — Pointer to WHEA_ERROR_RECORD structure (WinDbg: !errrec 0x{p2:X})",
+            f"Param 3: 0x{p3:X} — MCi_STATUS high bits / error payload",
+            f"Param 4: 0x{p4:X} — MCi_STATUS low bits / error payload",
+        ]
+    if c == 0x133:
         if p1 == 0:
             return [
                 "Param 1: 0x0 — Single DPC watchdog timeout (one DPC routine ran too long)",
@@ -93,56 +311,29 @@ def decode_bugcheck_params(code: int, params: Tuple[int, ...]) -> List[str]:
                 f"Param 3: 0x{p3:X} — Watchdog sequence count",
                 f"Param 4: 0x{p4:X} — Reserved",
             ]
-        elif p1 == 1:
+        if p1 == 1:
             return [
                 "Param 1: 0x1 — Cumulative DPC watchdog timeout (total time at DISPATCH_LEVEL exceeded limit)",
                 f"Param 2: 0x{p2:X} — Watchdog time limit",
                 f"Param 3: 0x{p3:X} — Watchdog sequence count",
                 f"Param 4: 0x{p4:X} — Reserved",
             ]
-    elif code == 0x9F:  # DRIVER_POWER_STATE_FAILURE
-        if p1 == 3:
+        if p1 == 2:
             return [
-                "Param 1: 0x3 — A device object has been blocking a power IRP for too long",
-                f"Param 2: 0x{p2:X} — Target device object pointer",
-                f"Param 3: 0x{p3:X} — Blocking IRP pointer",
-                f"Param 4: 0x{p4:X} — Blocking driver object pointer",
+                "Param 1: 0x2 — DPC watchdog detected a hang during an interrupt handler",
+                f"Param 2: 0x{p2:X} — Watchdog ticks",
+                f"Param 3: 0x{p3:X} — Reserved",
+                f"Param 4: 0x{p4:X} — Reserved",
             ]
-        elif p1 == 4:
-            return [
-                "Param 1: 0x4 — The power manager timed out waiting for a power request",
-                f"Param 2: 0x{p2:X} — Target device object pointer",
-                f"Param 3: 0x{p3:X} — Blocking IRP pointer",
-                f"Param 4: 0x{p4:X} — Blocking driver object pointer",
-            ]
-    elif code == 0x124:  # WHEA_UNCORRECTABLE_ERROR
-        whea_types = {
-            0: "Machine Check Exception (MCE)",
-            1: "Corrected Machine Check (CMC)",
-            2: "Corrected Platform Error (CPE)",
-            3: "Non-Maskable Interrupt (NMI)",
-            4: "PCI Express Error (AER)",
-            5: "Generic Hardware Error",
-        }
-        name = whea_types.get(p1, f"Hardware Error Type {p1}")
+    if c == 0x139:
+        check_name = _SEC_CHECK_TYPES.get(p1, f"Security check failure {p1}")
         return [
-            f"Param 1: 0x{p1:X} — Error Source: {name}",
-            f"Param 2: 0x{p2:X} — Pointer to WHEA_ERROR_RECORD structure",
-            f"Param 3: 0x{p3:X} — MCi_STATUS high bits / error payload",
-            f"Param 4: 0x{p4:X} — MCi_STATUS low bits / error payload",
+            f"Param 1: 0x{p1:X} — Corruption type: {check_name}",
+            f"Param 2: 0x{p2:X} — Exception / instruction address (RIP)",
+            f"Param 3: 0x{p3:X} — Context record pointer (WinDbg: .cxr 0x{p3:X})",
+            f"Param 4: 0x{p4:X} — Sub-type details / Reserved",
         ]
-    elif code == 0xD1:  # DRIVER_IRQL_NOT_LESS_OR_EQUAL
-        irql_names = {0: "PASSIVE_LEVEL", 1: "APC_LEVEL", 2: "DISPATCH_LEVEL", 12: "SYNCH_LEVEL", 15: "HIGH_LEVEL"}
-        irql_str = irql_names.get(p2, f"IRQL {p2}")
-        access_str = "Execute" if p3 == 8 else ("Write" if p3 == 1 else "Read")
-        return [
-            f"Param 1: 0x{p1:X} — Memory address referenced",
-            f"Param 2: 0x{p2:X} — {irql_str} at time of access",
-            f"Param 3: 0x{p3:X} — Operation: {access_str}",
-            f"Param 4: 0x{p4:X} — Code address which attempted the reference",
-        ]
-
-    return [f"Param {i+1}: 0x{p:X}" for i, p in enumerate(params)]
+    return None
 
 
 def parse_kernel_power_41(raw_data: dict, timestamp: datetime) -> KernelPowerRecord:
@@ -178,9 +369,8 @@ def parse_kernel_power_41(raw_data: dict, timestamp: datetime) -> KernelPowerRec
     else:
         is_power_cut = False
         lbl = bugcheck_label(code)
-        known = bugcheck_info(code)
         diag = f"Kernel BugCheck {lbl} (0x{code:X})"
-        cause = known.cause if known else f"Kernel stopped with bugcheck code 0x{code:X}."
+        cause = get_bugcheck_sysadmin_explanation(code, (p1, p2, p3, p4))
 
     return KernelPowerRecord(
         timestamp=timestamp,
@@ -353,15 +543,27 @@ def correlate_incidents(
         # 3. LiveKernelReports (Watchdog hangs)
         if "livekernelreports" in source or raw.get("live_kind"):
             live_hang_count += 1
+            culprit = extract_driver_culprit(raw) or extract_driver_culprit(entry.message)
+            title = f"Driver Timeout / Live Recovery ({raw.get('live_kind', 'Watchdog')})"
+            advice = "Windows recovered without rebooting. Frequently caused by GPU TDR (driver hang)."
+            fault_mod = raw.get("faulting_module", "")
+            if culprit:
+                fault_mod = culprit.filename
+                if culprit.is_third_party:
+                    title += f" [Culprit: {culprit.display_tag}]"
+                if culprit.remedy:
+                    advice = f"{culprit.description}: {culprit.remedy}"
+
             incident = CrashIncident(
                 timestamp=t,
                 category="live_hang",
-                title=f"Driver Timeout / Live Recovery ({raw.get('live_kind', 'Watchdog')})",
+                title=title,
                 summary=entry.message,
                 bugcheck_code=raw.get("bugcheck_code"),
                 bugcheck_label=raw.get("bug_check", "Live Kernel Report"),
+                faulting_module=fault_mod,
                 evidence_sources=["LiveKernelReports"],
-                actionable_advice="Windows recovered without rebooting. Frequently caused by GPU TDR (driver hang).",
+                actionable_advice=advice,
             )
             incidents.append(incident)
             used_timestamps.append((t, incident))
@@ -379,6 +581,7 @@ def correlate_incidents(
 
             label = raw.get("bug_check") or (bugcheck_label(code_int) if code_int else "BugCheck")
             src_name = "Minidump" if "minidump" in source else ("MEMORY.DMP" if "memory" in source else "BugCheck 1001")
+            culprit = extract_driver_culprit(raw) or extract_driver_culprit(entry.message)
 
             if matched_incident:
                 matched_incident.evidence_sources.append(src_name)
@@ -386,19 +589,33 @@ def correlate_incidents(
                     matched_incident.bugcheck_label = label
                 if code_int and not matched_incident.bugcheck_code:
                     matched_incident.bugcheck_code = code_int
+                if culprit and not matched_incident.faulting_module:
+                    matched_incident.faulting_module = culprit.filename
+                    if culprit.is_third_party and "[Culprit:" not in matched_incident.title:
+                        matched_incident.title += f" [Culprit: {culprit.display_tag}]"
                 continue
 
             bsod_count += 1
+            title = f"BSOD: {label}"
+            advice = get_bugcheck_sysadmin_explanation(code_int, tuple(raw.get("params", ()))) if code_int else "Kernel crash dump captured."
+            fault_mod = raw.get("faulting_module", "")
+            if culprit:
+                fault_mod = culprit.filename
+                if culprit.is_third_party:
+                    title += f" [Culprit: {culprit.display_tag}]"
+                if culprit.remedy:
+                    advice += f" Suspect culprit: {culprit.filename} ({culprit.vendor}) — {culprit.remedy}"
+
             incident = CrashIncident(
                 timestamp=t,
                 category="bsod",
-                title=f"BSOD: {label}",
+                title=title,
                 summary=raw.get("cause") or entry.message,
                 bugcheck_code=code_int,
                 bugcheck_label=label,
-                faulting_module=raw.get("faulting_module", ""),
+                faulting_module=fault_mod,
                 evidence_sources=[src_name],
-                actionable_advice="Kernel crash dump captured.",
+                actionable_advice=advice,
             )
             incidents.append(incident)
             used_timestamps.append((t, incident))

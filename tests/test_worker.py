@@ -24,3 +24,19 @@ def test_worker_callable_receives_worker_ref():
     w.run()
     assert len(received_ref) == 1
     assert received_ref[0] is w
+
+def test_com_worker_initializes_com_without_pythoncom():
+    import sys
+    from core.worker import COMWorker
+    sys.modules.pop("pythoncom", None)
+    ran = []
+    result_val = []
+    def task(worker):
+        ran.append(True)
+        return "ok"
+    cw = COMWorker(task)
+    cw.signals.result.connect(result_val.append)
+    cw.run()
+    assert ran == [True]
+    assert result_val == ["ok"]
+    assert "pythoncom" not in sys.modules

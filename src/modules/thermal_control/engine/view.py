@@ -138,6 +138,11 @@ class FanRow:
         self.on_curve, self.pump, self.gpu, self.detail = on_curve, pump, gpu, detail
 
     @property
+    def on(self) -> bool:
+        """Alias for on_curve for backward compatibility."""
+        return self.on_curve
+
+    @property
     def connected(self) -> bool:
         """Spinning, or a GPU (its fan may be parked by zero-RPM and still be there)."""
         return self.gpu or bool(self.rpm)

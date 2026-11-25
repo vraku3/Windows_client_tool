@@ -586,8 +586,10 @@ class SessionTab(QWidget):
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(str(value))
                 if column == 3 and value != "ok":
-                    cell.setForeground(Qt.GlobalColor.yellow if value == "drift"
-                                       else Qt.GlobalColor.gray)
+                    from PyQt6.QtGui import QColor
+                    from core.semantic_colors import chrome, semantic
+                    cell.setForeground(QColor(semantic("warning")) if value == "drift"
+                                       else QColor(chrome("text_muted")))
                 self._health_table.setItem(row, column, cell)
 
     def _repair(self) -> None:

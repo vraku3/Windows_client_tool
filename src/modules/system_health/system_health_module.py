@@ -77,20 +77,25 @@ class SystemHealthModule(BaseModule):
         super().__init__()
         self._last_scan_health_clean = False
         self._findings_worker = None
+        self._storage_boot_tab = None
 
     def on_start(self, app) -> None:
         self.app = app
 
     def create_widget(self) -> QWidget:
         from PyQt6.QtWidgets import QTabWidget
+        from modules.system_health.storage_boot_tab import StorageBootTab
         outer = QWidget()
         layout = QVBoxLayout(outer)
         self._tabs = QTabWidget()
         layout.addWidget(self._tabs)
 
+        self._storage_boot_tab = StorageBootTab()
         self._tabs.addTab(self._build_findings_tab(), "Findings")
         self._tabs.addTab(self._build_servicing_tab(), "Servicing")
         self._tabs.addTab(self._build_latency_tab(), "Latency & Timers")
+        self._tabs.addTab(self._storage_boot_tab, "Storage & Boot Health")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         explain(outer, INTRO, CONTROLS, HEADERS, TABS)
         return outer
@@ -115,26 +120,36 @@ class SystemHealthModule(BaseModule):
 
         self._copy_finding_btn = QPushButton("Copy finding")
         self._jump_btn = QPushButton("Open related tab")
+        self._export_report_btn = QPushButton("Export Audit Report...")
         self._copy_finding_btn.setEnabled(False)
         self._jump_btn.setEnabled(False)
         self._copy_finding_btn.clicked.connect(self._copy_finding)
         self._jump_btn.clicked.connect(self._jump_to_finding)
+        self._export_report_btn.setToolTip("Export a standalone HTML / Markdown system health audit report")
+        self._export_report_btn.clicked.connect(self._export_audit_report)
         toolbar.insertWidget(1, self._copy_finding_btn)
         toolbar.insertWidget(2, self._jump_btn)
+        toolbar.insertWidget(3, self._export_report_btn)
 
         # Filter bar: Search + Severity filter pills
         filter_bar = QHBoxLayout()
         self._findings_search = QLineEdit()
         self._findings_search.setPlaceholderText("Filter findings by title, detail, or evidence…")
+        self._findings_search.setToolTip("Filter findings by keyword in title, details, or evidence.")
         self._findings_search.setClearButtonEnabled(True)
         self._findings_search.textChanged.connect(self._apply_findings_filter)
         filter_bar.addWidget(self._findings_search, 1)
 
         self._severity_filter = "all"
         self._filter_all_btn = QPushButton("All (0)")
+        self._filter_all_btn.setToolTip("Show all system health findings.")
         self._filter_errors_btn = QPushButton("Errors (0)")
+        self._filter_errors_btn.setToolTip("Filter to show critical errors only.")
         self._filter_warnings_btn = QPushButton("Warnings (0)")
+        self._filter_warnings_btn.setToolTip("Filter to show warnings only.")
         self._filter_info_btn = QPushButton("Info (0)")
+        self._filter_info_btn.setToolTip("Filter to show informational findings only.")
+        self._filter_info_btn.setToolTip("Filter to show informational findings.")
 
         for btn in (self._filter_all_btn, self._filter_errors_btn, self._filter_warnings_btn, self._filter_info_btn):
             btn.setCheckable(True)
@@ -457,6 +472,38 @@ class SystemHealthModule(BaseModule):
         finding = self._current_finding()
         if finding and finding.jump:
             self.app.event_bus.publish(NAV_REQUEST_MODULE, NavRequestData(module_name=finding.jump))
+
+    def _export_audit_report(self) -> None:
+        if not self._findings_data:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self._widget, "Export Report", "Run Refresh Findings first before exporting.")
+            return
+
+        from modules.system_health.report_generator import (
+            render_health_report_html,
+            render_health_report_markdown,
+            write_health_report,
+        )
+        import os
+
+        app_data = getattr(self.app, "app_data_dir", None)
+        html_text = render_health_report_html(self._findings_data)
+        md_text = render_health_report_markdown(self._findings_data)
+
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app:
+            app.clipboard().setText(md_text)
+
+        path = write_health_report(app_data, html_text)
+        if path:
+            try:
+                os.startfile(path)
+            except Exception:
+                logger.warning("Could not open health report: %s", path, exc_info=True)
+            self._findings_status_lbl.setText(f"Exported to {os.path.basename(path)} (Markdown copied)")
+        else:
+            self._findings_status_lbl.setText("Markdown summary copied to clipboard")
 
     # ── Servicing tab ────────────────────────────────────────────────
 
@@ -802,11 +849,18 @@ class SystemHealthModule(BaseModule):
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
+    def _on_tab_changed(self, index: int) -> None:
+        if self._storage_boot_tab is not None and self._tabs.widget(index) is self._storage_boot_tab:
+            if not self._storage_boot_tab.loaded:
+                self._storage_boot_tab.load()
+
     def on_activate(self) -> None:
         self._refresh_findings()
 
     def on_stop(self) -> None:
         self.cancel_all_workers()
+        if hasattr(self, "_storage_boot_tab") and self._storage_boot_tab is not None:
+            self._storage_boot_tab.cancel()
 
     def get_status_info(self) -> str:
         return "System Health"

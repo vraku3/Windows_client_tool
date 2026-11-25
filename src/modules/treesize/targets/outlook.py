@@ -49,13 +49,13 @@ class OutlookTarget(ScanTarget):
         ok, why = self.is_available()
         if not ok:
             raise TargetError(why)
-        import pythoncom
+        import ctypes
         import win32com.client
 
         try:
             # A worker thread has no apartment of its own; MAPI is COM, and
             # Dispatch on an uninitialised thread fails with a bare HRESULT.
-            pythoncom.CoInitialize()
+            ctypes.windll.ole32.CoInitialize(None)
             namespace = win32com.client.Dispatch(
                 "Outlook.Application").GetNamespace("MAPI")
             store_name = self.credentials.host

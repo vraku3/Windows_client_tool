@@ -13,11 +13,13 @@ one of them can be missing:
 Every dump is opened read-only and only its header is parsed (`dump_parser`).
 An unreadable directory is REPORTED, never the same as an empty one.
 """
+from __future__ import annotations
+
 import logging
 import os
 import re
 from datetime import datetime, timedelta
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from core.types import LogEntry
 from core.windows_utils import system_root
@@ -25,8 +27,16 @@ from core.windows_utils import system_root
 from modules.crash_dumps.dump_parser import DumpInfo, read_dump_info
 from modules.crash_dumps.rca_engine import (
     correlate_incidents,
+    decode_bugcheck_params,
+    get_bugcheck_sysadmin_explanation,
     parse_kernel_power_41,
     parse_whea_record,
+)
+from modules.crash_dumps.driver_fingerprint import (
+    CulpritInfo,
+    extract_driver_culprit,
+    get_driver_info,
+    is_third_party_driver,
 )
 from core.diag_knowledge import bugcheck_info, bugcheck_label, is_live_kernel_event
 
@@ -48,6 +58,23 @@ def _hex(v: int) -> str:
 def describe(info: DumpInfo, filename: str, size: int, live_kind: str = "") -> Tuple[str, str, dict]:
     """(level, message, raw) for one parsed dump."""
     raw = {"filename": filename, "file_size": size, "kind": info.kind}
+    culprit = (
+        extract_driver_culprit(info.faulting_module)
+        or extract_driver_culprit(filename)
+        or extract_driver_culprit(live_kind)
+    )
+    if culprit:
+        raw["culprit_driver"] = culprit.filename
+        raw["faulting_module"] = culprit.filename
+        raw["is_third_party"] = culprit.is_third_party
+        raw["vendor"] = culprit.vendor
+        raw["category"] = culprit.category
+        raw["remedy"] = culprit.remedy
+    elif info.faulting_module:
+        raw["faulting_module"] = info.faulting_module
+
+    culprit_suffix = f" [Culprit: {culprit.display_tag}]" if (culprit and culprit.is_third_party) else ""
+
     if info.kind in ("kernel64", "kernel32") and info.bugcheck_code is not None:
         code = info.bugcheck_code
         label = bugcheck_label(code)
@@ -57,17 +84,15 @@ def describe(info: DumpInfo, filename: str, size: int, live_kind: str = "") -> T
                    params=[_hex(p) for p in info.params], exception_code=_hex(info.exception_code or 0),
                    exception_address=_hex(info.exception_address or 0),
                    machine=info.machine, processors=info.processors, build=info.build)
+        explanation = get_bugcheck_sysadmin_explanation(code, tuple(info.params))
         if live:
-            known = bugcheck_info(code)
-            what = f"{label}" if known else f"live kernel event {_hex(code)}"
-            raw["cause"] = ((known.cause + " ") if known else "") + (
+            what = f"{label}" if bugcheck_info(code) else f"live kernel event {_hex(code)}"
+            raw["cause"] = ((explanation + " ") if explanation else "") + (
                 f"This is a LIVE dump ({live_kind or 'unnamed'}): Windows captured it while the system kept "
                 f"running, because a driver reported a watchdog/timeout. It is not a blue screen.")
-            return "Warning", f"{filename} ({size // 1024} KB) - live dump, {what}", raw
-        known = bugcheck_info(code)
-        if known:
-            raw["cause"] = known.cause
-        return "Error", f"{filename} ({size // 1024} KB) - {label}", raw
+            return "Warning", f"{filename} ({size // 1024} KB) - live dump, {what}{culprit_suffix}", raw
+        raw["cause"] = explanation
+        return "Error", f"{filename} ({size // 1024} KB) - {label}{culprit_suffix}", raw
     if info.kind == "user":
         raw.update(bug_check="User-mode dump")
         detail = f" faulting module {info.faulting_module}" if info.faulting_module else ""
@@ -153,7 +178,13 @@ def parse_bugcheck_event(message: str) -> Optional[dict]:
         return None
     params = [p.strip() for p in m.group(2).split(",")]
     path = _DUMP_PATH.search(message or "")
-    return {"code": code, "params": params, "dump_path": path.group(1) if path else ""}
+    culprit = extract_driver_culprit(message or "")
+    return {
+        "code": code,
+        "params": params,
+        "dump_path": path.group(1) if path else "",
+        "culprit": culprit,
+    }
 
 
 def _bugcheck_events(days: int = 90) -> Tuple[List[LogEntry], Optional[str]]:
@@ -169,15 +200,109 @@ def _bugcheck_events(days: int = 90) -> Tuple[List[LogEntry], Optional[str]]:
         parsed = parse_bugcheck_event(ev.message)
         if parsed is None:
             continue
-        label = bugcheck_label(parsed["code"])
-        known = bugcheck_info(parsed["code"])
-        raw = {"bug_check": label, "bugcheck_code": _hex(parsed["code"]), "params": parsed["params"],
-               "dump_path": parsed["dump_path"], "kind": "event"}
-        if known:
-            raw["cause"] = known.cause
-        out.append(LogEntry(timestamp=ev.timestamp, source="BugCheck event", level="Error",
-                            message=f"System restarted after bugcheck {label}", raw=raw))
+        code = parsed["code"]
+        label = bugcheck_label(code)
+        explanation = get_bugcheck_sysadmin_explanation(code, tuple(parsed["params"]))
+        culprit = parsed.get("culprit")
+        culprit_suffix = f" [Culprit: {culprit.display_tag}]" if (culprit and culprit.is_third_party) else ""
+
+        raw = {
+            "bug_check": label,
+            "bugcheck_code": _hex(code),
+            "params": parsed["params"],
+            "dump_path": parsed["dump_path"],
+            "kind": "event",
+            "cause": explanation,
+        }
+        if culprit:
+            raw["culprit_driver"] = culprit.filename
+            raw["faulting_module"] = culprit.filename
+            raw["is_third_party"] = culprit.is_third_party
+            raw["vendor"] = culprit.vendor
+            raw["category"] = culprit.category
+            raw["remedy"] = culprit.remedy
+
+        out.append(LogEntry(
+            timestamp=ev.timestamp,
+            source="BugCheck event",
+            level="Error",
+            message=f"System restarted after bugcheck {label}{culprit_suffix}",
+            raw=raw,
+        ))
     return out, None
+
+
+def _wer_application_events(days: int = 90) -> Tuple[List[LogEntry], Dict[str, CulpritInfo]]:
+    """Query Application log for Windows Error Reporting Event 1001 BlueScreen / LiveKernelEvent."""
+    from modules.event_viewer import event_query
+
+    xpath = ("*[System[Provider[@Name='Windows Error Reporting'] and EventID=1001 "
+             f"and TimeCreated[timediff(@SystemTime) <= {days * 86400 * 1000}]]]")
+    result = event_query.query_log("Application", None, 100, xpath=xpath)
+    if result.error is not None:
+        return [], {}
+    out: List[LogEntry] = []
+    dump_map: Dict[str, CulpritInfo] = {}
+
+    for ev in result.entries:
+        msg = ev.message or ""
+        raw_data = ev.raw.get("data", {}) if ev.raw else {}
+        event_name = raw_data.get("EventName") or ""
+        if not event_name:
+            if "BlueScreen" in msg:
+                event_name = "BlueScreen"
+            elif "LiveKernelEvent" in msg:
+                event_name = "LiveKernelEvent"
+        if event_name not in ("BlueScreen", "LiveKernelEvent"):
+            continue
+
+        culprit = extract_driver_culprit(raw_data) or extract_driver_culprit(msg)
+
+        # Index any referenced dump file names
+        attached = raw_data.get("AttachedFiles") or ""
+        dump_names = re.findall(r"([a-zA-Z0-9_\-]+\.dmp)", f"{attached} {msg}", re.IGNORECASE)
+        if culprit:
+            for dm in dump_names:
+                dump_map[dm.lower()] = culprit
+
+        p1 = raw_data.get("P1")
+        code_int = None
+        if p1:
+            try:
+                code_int = int(str(p1), 16)
+            except (ValueError, TypeError) as exc:
+                logger.debug("WER P1 could not be parsed as hex: %s", exc)
+
+        label = bugcheck_label(code_int) if code_int else f"WER {event_name}"
+        culprit_suffix = f" [Culprit: {culprit.display_tag}]" if (culprit and culprit.is_third_party) else ""
+
+        raw_entry = {
+            "bug_check": label,
+            "kind": "wer_report",
+            "event_name": event_name,
+            "data": raw_data,
+        }
+        if code_int is not None:
+            raw_entry["bugcheck_code"] = _hex(code_int)
+            raw_entry["cause"] = get_bugcheck_sysadmin_explanation(code_int)
+        if culprit:
+            raw_entry["culprit_driver"] = culprit.filename
+            raw_entry["faulting_module"] = culprit.filename
+            raw_entry["is_third_party"] = culprit.is_third_party
+            raw_entry["vendor"] = culprit.vendor
+            raw_entry["category"] = culprit.category
+            raw_entry["remedy"] = culprit.remedy
+
+        level = "Warning" if event_name == "LiveKernelEvent" else "Error"
+        out.append(LogEntry(
+            timestamp=ev.timestamp,
+            source="Windows Error Reporting",
+            level=level,
+            message=f"{event_name}: {label}{culprit_suffix}",
+            raw=raw_entry,
+        ))
+
+    return out, dump_map
 
 
 def _kernel_power_events(days: int = 90) -> Tuple[List[LogEntry], Optional[str]]:
@@ -262,21 +387,43 @@ def read_crash_evidence(progress_callback: Optional[Callable[[int], None]] = Non
     entries.extend(mini)
     if note:
         notes.append(note)
-    step(20)
+    step(15)
     if os.path.isfile(MEMORY_DMP):
         entry = _entry_for_file(MEMORY_DMP, "MEMORY.DMP")
         if entry is not None:
             entries.append(entry)
-    step(35)
+    step(30)
     live, live_notes = _scan_live_reports(LIVE_REPORTS_DIR)
     entries.extend(live)
     notes.extend(live_notes)
-    step(55)
+    step(45)
     events, note = _bugcheck_events()
     entries.extend(events)
     if note:
         notes.append(note)
-    step(70)
+    step(60)
+    wer_events, dump_culprits = _wer_application_events()
+    if wer_events:
+        # Avoid duplicating if already recorded by System 1001 BugCheck event
+        existing_times = [e.timestamp for e in entries if e.source == "BugCheck event"]
+        for we in wer_events:
+            if not any(abs((we.timestamp - et).total_seconds()) < 5 for et in existing_times):
+                entries.append(we)
+    # Correlate dump files with dump_culprits from WER
+    if dump_culprits:
+        for e in entries:
+            fn = (e.raw or {}).get("filename", "").lower()
+            if fn in dump_culprits and not (e.raw or {}).get("culprit_driver"):
+                c = dump_culprits[fn]
+                e.raw["culprit_driver"] = c.filename
+                e.raw["faulting_module"] = c.filename
+                e.raw["is_third_party"] = c.is_third_party
+                e.raw["vendor"] = c.vendor
+                e.raw["category"] = c.category
+                e.raw["remedy"] = c.remedy
+                if c.is_third_party and "[Culprit:" not in e.message:
+                    e.message += f" [Culprit: {c.display_tag}]"
+    step(75)
     kp_events, note = _kernel_power_events()
     entries.extend(kp_events)
     if note:
@@ -338,12 +485,12 @@ def crash_frequency_trend(entries: List[LogEntry], now: Optional[datetime] = Non
 
 
 def summary_text(entries: List[LogEntry], notes: List[str]) -> str:
-    crashes = [e for e in entries if e.source in ("Minidump", "MEMORY.DMP", "BugCheck event")]
+    crashes = [e for e in entries if e.source in ("Minidump", "MEMORY.DMP", "BugCheck event", "Windows Error Reporting")]
     live = [e for e in entries if e.source.startswith("LiveKernelReports")]
     rca = correlate_incidents(entries)
     if not entries:
         base = ("No crash records were found in the places that could be read." if notes
-                else "No crash dumps, bugchecks, or dirty shutdowns on record.")
+                else "No crash dumps, bugchecks, or dirty shutdowns on record (no blue screen).")
     else:
         base = f"{len(crashes)} crash dump/bugcheck record(s), {rca.power_cut_count} sudden power cut/reset(s), {rca.whea_count} WHEA hardware error(s), and {len(live)} live kernel report(s)."
         if rca.suspect_summary:
@@ -369,24 +516,24 @@ def detail_html(entry: LogEntry) -> str:
     params = raw.get("params") or []
     if code and params and code != "0x0":
         try:
-            info = bugcheck_info(int(code, 16))
+            code_num = int(code, 16)
         except ValueError:
-            info = None
-        meanings = info.params if info else ()
-        from modules.crash_dumps.rca_engine import decode_bugcheck_params
+            code_num = None
         numeric_params = []
         for p in params:
             try:
                 numeric_params.append(int(str(p), 16) if str(p).startswith("0x") else int(str(p)))
             except (ValueError, TypeError):
                 numeric_params.append(0)
-        detailed_decoded = decode_bugcheck_params(int(code, 16), tuple(numeric_params))
+        detailed_decoded = decode_bugcheck_params(code_num, tuple(numeric_params)) if code_num is not None else []
 
         out.append("<i>Parameters:</i><br>")
         if detailed_decoded:
             for line in detailed_decoded:
                 out.append(f"&nbsp;&nbsp;{html.escape(line)}<br>")
         else:
+            info = bugcheck_info(code_num) if code_num else None
+            meanings = info.params if info else ()
             for i, value in enumerate(params):
                 note = meanings[i] if i < len(meanings) and meanings[i] else ""
                 out.append(f"&nbsp;&nbsp;{i + 1}: {html.escape(str(value))}"
@@ -395,7 +542,36 @@ def detail_html(entry: LogEntry) -> str:
         out.append(f"<i>Processor APIC ID (Logical Core):</i> {raw['apic_id']}<br>")
     if raw.get("bank") is not None:
         out.append(f"<i>Hardware Bank:</i> {raw['bank']}<br>")
-    if raw.get("faulting_module"):
+
+    # Driver Culprit Fingerprinting
+    culprit = None
+    if raw.get("culprit_driver") or raw.get("faulting_module"):
+        target_name = raw.get("culprit_driver") or raw.get("faulting_module")
+        culprit = extract_driver_culprit(target_name) or extract_driver_culprit(raw)
+    else:
+        culprit = extract_driver_culprit(raw) or extract_driver_culprit(entry.message)
+
+    if culprit:
+        from core.semantic_colors import chrome, semantic
+        err_col = semantic("error")
+        info_col = semantic("info")
+        surf_col = chrome("surface")
+        text_col = chrome("text")
+        badge = (
+            f'<span style="background-color: {err_col}; color: #ffffff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;">THIRD-PARTY DRIVER</span>'
+            if culprit.is_third_party else
+            f'<span style="background-color: {info_col}; color: #ffffff; padding: 2px 6px; border-radius: 3px; font-size: 11px;">OS COMPONENT</span>'
+        )
+        vendor_html = f"<b>Vendor:</b> {html.escape(culprit.vendor)} &nbsp;|&nbsp; <b>Category:</b> {html.escape(culprit.category)}<br>" if culprit.vendor else (f"<b>Category:</b> {html.escape(culprit.category)}<br>" if culprit.category != "Unknown" else "")
+        desc_html = f"<i>Description:</i> {html.escape(culprit.description)}<br>" if culprit.description else ""
+        remedy_html = f"<b>Sysadmin Action:</b> {html.escape(culprit.remedy)}<br>" if culprit.remedy else ""
+        out.append(
+            f'<div style="background-color: {surf_col}; color: {text_col}; border-left: 4px solid {err_col}; padding: 8px 10px; margin: 8px 0; border-radius: 4px;">'
+            f'<b>🚨 Suspect Driver Culprit:</b> <code style="color: {err_col}; font-size: 13px; font-weight: bold;">{html.escape(culprit.filename)}</code> &nbsp;{badge}<br>'
+            f'{vendor_html}{desc_html}{remedy_html}'
+            f'</div>'
+        )
+    elif raw.get("faulting_module"):
         out.append(f"<i>Faulting module:</i> {html.escape(raw['faulting_module'])}<br>")
     elif raw.get("kind") in ("kernel64", "kernel32"):
         out.append("<i>Faulting driver:</i> not stated in a kernel dump's header; it needs a "

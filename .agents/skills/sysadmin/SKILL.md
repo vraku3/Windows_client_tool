@@ -47,6 +47,18 @@ actually asks when they open that tool on someone's machine:
   friendly-name registry default value that isn't a CLSID; a WMI namespace
   that costs 5 seconds to refuse. Assume one exists in whatever you're
   touching until you've actually checked.
+- **Smart App Control & PowerShell Constrained Language Mode**:
+  When Smart App Control (SAC) or WDAC is enabled on Windows 11, PowerShell 5.1
+  is locked into `ConstrainedLanguage` mode. Scripts attempting `Add-Type`,
+  unapproved .NET reflection, or unsigned binary loads trigger system toasts
+  (*"Some features of Windows PowerShell 5.1 may not work in this environment"*)
+  and record events: `Microsoft-Windows-PowerShell/Operational` (4100, 4104),
+  `Microsoft-Windows-AppLocker/MSI and Script` (8006, 8007), and Code Integrity
+  (3077, 3118). When writing probe scripts or tooling, strictly adhere to
+  ConstrainedLanguage (use CIM cmdlets, native binaries `sc`/`netsh`/`wevtutil`,
+  `winreg`, or Win32 `ctypes` — never inline C# compilation). When building
+  diagnostics or triage views, explicitly capture and explain these events so
+  the admin understands what policy blocked what script.
 - **Is this finding actionable, or just alarming?** A real admin wants "how
   many, how bad, most recent occurrence, and what tab fixes it" — not a
   wall of raw log lines. Group repeats (see

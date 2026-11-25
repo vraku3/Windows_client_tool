@@ -58,7 +58,25 @@ ACTIONS = {'cleanmgr': 'Open Windows Disk Cleanup for C:. Windows presents its o
                      'text; this implementation does not delete font files or cache files.',
  'resize_hibernation': 'Ask powercfg to resize the hibernation file to 50% of RAM. Requires '
                        'elevation and an existing hibernation file; there is no app restore of the '
-                       'previous size.'}
+                       'previous size.',
+ 'wmi_salvage': 'Run winmgmt /salvagerepository to verify and salvage WMI repository consistency.',
+ 'audio_restart': 'Stop and restart the Windows Audio and AudioEndpointBuilder services to recover audio output.',
+ 'reset_crypto_bits': 'Restart Cryptographic Services and BITS services used for Windows background downloads.',
+ 'reset_vss_writers': 'Restart the Volume Shadow Copy service and re-query VSS writers to recover backup functionality.',
+ 'quote_service_paths': 'Inspect and enclose unquoted Windows service binary paths containing spaces in double quotes.',
+ 'enable_winre': 'Run reagentc /enable to ensure Windows Recovery Environment is configured and active.',
+ 'enable_task_history': 'Enable the Microsoft-Windows-TaskScheduler/Operational event log channel.',
+ 'flush_register_dns': 'Flush DNS client resolver cache and trigger reregistration of DNS names with ipconfig /registerdns.',
+ 'enable_tcp_autotuning': 'Set TCP receive window auto-tuning level to normal using netsh interface tcp.',
+ 'reset_firewall': 'Reset Windows Defender Firewall to default policy using netsh advfirewall reset.',
+ 'flush_arp': 'Flush the ARP routing cache to clear stale IP-to-MAC resolution entries.',
+ 'sync_time': 'Force an immediate Windows time synchronization against configured NTP servers using w32tm.',
+ 'reset_w32tm': 'Stop w32time service, unregister and re-register w32tm, restart service, and force immediate clock resync.',
+ 'reregister_shell': 'Re-register core Windows Shell and ActiveX COM runtime components using regsvr32.',
+ 'reset_do_branchcache': 'Stop Delivery Optimization service, clear local peer download cache files, restart service, and reset BranchCache.',
+ 'purge_bits_jobs': 'Cancel and purge all queued background BITS transfer jobs across all users and restart the BITS service.',
+ 'wsreset': 'Run wsreset.exe to clear the Windows Store cache without altering installed apps.',
+ 'clear_wer_queue': 'Purge pending crash reports and minidumps from Windows Error Reporting queue folders.'}
 
 CONTROLS = {'View History': "Open this app's recorded repair outcomes without running a repair or changing "
                  'Windows settings.',

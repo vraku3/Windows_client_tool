@@ -18,21 +18,21 @@ from typing import Dict, List
 
 #: What each theme paints a pane, and therefore what these colours sit on.
 PANE_BACKGROUND: Dict[str, str] = {
-    "dark": "#1e1e1e",
+    "dark": "#0d1117",
     "light": "#f5f5f5",
 }
 
 SEMANTIC_PALETTES: Dict[str, Dict[str, str]] = {
     "dark": {
-        "success": "#4ec9b0",
-        "warning": "#e5c07b",
-        "error": "#f44747",
-        "info": "#4fc3f7",
+        "success": "#3fb950",
+        "warning": "#e3b341",
+        "error": "#f85149",
+        "info": "#58a6ff",
         # What the Filter or Find box is looking for, picked out inside the
         # message. Violet on purpose: far enough from the error red, warning
         # amber, info blue and success teal that a match never reads as a
-        # severity. 5.99:1 here, 5.97:1 on the light pane.
-        "match": "#c586c0",
+        # severity.
+        "match": "#bc8cff",
     },
     # Darkened rather than recoloured: the same hues, taken down until they
     # clear 4.5:1 on a light pane. A light-theme "OK" should still read green.
@@ -56,22 +56,18 @@ SEMANTIC_PALETTES: Dict[str, Dict[str, str]] = {
 #: two text roles here ARE held to it, by the test that covers this dict.
 CHROME_PALETTES: Dict[str, Dict[str, str]] = {
     "dark": {
-        "surface": "#2b2b2b",
-        "surface_selected": "#2f3b33",
-        "surface_inactive": "#262626",
-        "outline": "#5a5a5a",
-        "text": "#e0e0e0",
-        # Lighter than QLabel#muted's #858585, and deliberately: that value
-        # is chosen against the PANE (#1e1e1e), where it reads 4.70:1. On a
-        # card surface (#2b2b2b) the same grey is 3.84:1 and fails. Measured,
-        # not guessed — the chrome test computes the ratio.
-        "text_muted": "#949494",
+        "surface": "#161b22",
+        "surface_selected": "#1c2d3e",
+        "surface_inactive": "#12161c",
+        "outline": "#30363d",
+        "text": "#e6edf3",
+        "text_muted": "#9ea7b3",
         # The identify/countdown overlay is a HUD drawn over whatever is on
         # screen, so it stays dark in both themes on purpose.
-        "overlay_surface": "#141414",
-        "overlay_text": "#f0f0f0",
-        "overlay_text_muted": "#b0b0b0",
-        "notice_border": "#4a4335",
+        "overlay_surface": "#0d1117",
+        "overlay_text": "#f0f6fc",
+        "overlay_text_muted": "#9ea7b3",
+        "notice_border": "#4d3e22",
     },
     "light": {
         "surface": "#ffffff",

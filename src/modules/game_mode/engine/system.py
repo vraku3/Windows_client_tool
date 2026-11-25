@@ -910,18 +910,22 @@ class WinSystem:
     # ---- scheduled tasks -----------------------------------------------------------------------
     def tasks(self) -> List[Tuple[str, bool]]:
         """Every scheduled task as (path, enabled), hidden ones included."""
-        import pythoncom
-        import win32com.client
-        pythoncom.CoInitialize()
-        service = win32com.client.Dispatch("Schedule.Service")
-        service.Connect()
-        out: List[Tuple[str, bool]] = []
-        stack = [service.GetFolder("\\")]
-        while stack:
-            folder = stack.pop()
-            out.extend((t.Path, bool(t.Enabled)) for t in folder.GetTasks(1))
-            stack.extend(folder.GetFolders(0))
-        return out
+        import ctypes
+        hr = ctypes.windll.ole32.CoInitialize(None)
+        try:
+            import win32com.client
+            service = win32com.client.Dispatch("Schedule.Service")
+            service.Connect()
+            out: List[Tuple[str, bool]] = []
+            stack = [service.GetFolder("\\")]
+            while stack:
+                folder = stack.pop()
+                out.extend((t.Path, bool(t.Enabled)) for t in folder.GetTasks(1))
+                stack.extend(folder.GetFolders(0))
+            return out
+        finally:
+            if hr >= 0:
+                ctypes.windll.ole32.CoUninitialize()
 
     def task_enabled(self, path: str) -> Optional[bool]:
         task = self._task(path)
@@ -977,9 +981,9 @@ class WinSystem:
 
     @staticmethod
     def _task(path: str):
-        import pythoncom
+        import ctypes
+        ctypes.windll.ole32.CoInitialize(None)
         import win32com.client
-        pythoncom.CoInitialize()
         service = win32com.client.Dispatch("Schedule.Service")
         service.Connect()
         folder, _, name = path.rpartition("\\")

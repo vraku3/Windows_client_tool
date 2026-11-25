@@ -160,36 +160,40 @@ class Worker(QRunnable):
         Emits progress updates, result, errors via signals.
         Always emits finished, even when cancelled before execution starts.
         """
+        sig = self.signals
         import threading
         self._running_thread_ident = threading.get_ident()
         with self._cancel_lock:
             if self._cancelled:
-                _emit(self.signals, "cancelled")
+                _emit(sig, "cancelled")
                 self.finished_emitted = True
-                _emit(self.signals, "finished")
+                _emit(sig, "finished")
                 self._running_thread_ident = None
                 return
 
         try:
             result = self.fn(self, *self.args, **self.kwargs)
             if not self._cancelled:
-                _emit(self.signals, "result", result)
+                _emit(sig, "result", result)
             else:
-                _emit(self.signals, "cancelled")
+                _emit(sig, "cancelled")
         except PermissionError as e:
             # The OS said no. The caller handles it and shows it; a full
             # ERROR traceback in the session log makes a routine refusal
             # read as a crash, and that log is the first thing read when
             # picking this project back up.
             logger.warning("Worker refused: %s", e)
-            _emit(self.signals, "error", str(e))
+            _emit(sig, "error", str(e))
         except Exception as e:
-            logger.exception("Worker error: %s", e)
-            _emit(self.signals, "error", str(e))
+            if "has been deleted" in str(e):
+                logger.debug("WorkerSignals deleted during worker execution: %s", e)
+            else:
+                logger.exception("Worker error: %s", e)
+                _emit(sig, "error", str(e))
         finally:
             self._running_thread_ident = None
             self.finished_emitted = True
-            _emit(self.signals, "finished")
+            _emit(sig, "finished")
 
     def cancel(self) -> bool:
         """Cancel worker and prevent future result emission.
@@ -219,17 +223,18 @@ class COMWorker(Worker):
     def run(self) -> Any:
         """Run COM-backed worker function.
 
-        Initializes COM with CoInitialize before calling super().run()
-        and uninitializes with CoUninitialize in finally block.
+        Initializes COM with native CoInitialize before calling super().run()
+        and uninitializes with CoUninitialize in a finally block.
 
         Returns:
             The result from the worker function (preserved from super().run()).
         """
-        import pythoncom
+        import ctypes
 
-        pythoncom.CoInitialize()
+        hr = ctypes.windll.ole32.CoInitialize(None)
         try:
             return super().run()
         finally:
-            pythoncom.CoUninitialize()
+            if hr >= 0:
+                ctypes.windll.ole32.CoUninitialize()
 

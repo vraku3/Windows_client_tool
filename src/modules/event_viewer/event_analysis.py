@@ -7,9 +7,9 @@ fabricated entries and run against real ones.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from core.types import LogEntry
 
@@ -299,3 +299,204 @@ def summary_text(entries: List[LogEntry], notes: List[str], range_label: str = "
     if notes:
         base += " " + " ".join(notes)
     return base
+
+
+# -- Burst Analysis & Storm Detection ----------------------------------------
+
+@dataclass(frozen=True)
+class EventStorm:
+    """A runaway provider or event stream generating rapid bursts (>30 events/min)."""
+    provider: str
+    total_count: int
+    peak_burst_count: int
+    rate_per_minute: float
+    burst_start: Optional[datetime] = None
+    burst_end: Optional[datetime] = None
+    top_event_ids: Dict[int, int] = field(default_factory=dict)
+    sample_message: str = ""
+    event_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class StormReport:
+    """Analysis of event bursts, runaway storms, and top noisy providers/IDs."""
+    storms: List[EventStorm] = field(default_factory=list)
+    noisy_providers: List[Tuple[str, int]] = field(default_factory=list)
+    noisy_event_ids: List[Tuple[str, Optional[int], int]] = field(default_factory=list)
+    total_burst_events: int = 0
+    has_storm: bool = False
+
+
+def detect_event_storms(entries: List[LogEntry], burst_threshold: int = 30) -> StormReport:
+    """Identify event storms / runaway providers generating bursts (>30 events/minute).
+
+    Uses a sliding 60-second window across timestamps to measure peak bursts.
+    Also compiles top noisy providers and top noisy (provider, event_id) combinations.
+    """
+    if not entries:
+        return StormReport()
+
+    by_provider: Dict[str, List[LogEntry]] = defaultdict(list)
+    provider_id_counts: Counter = Counter()
+
+    for e in entries:
+        prov = provider_of(e)
+        by_provider[prov].append(e)
+        provider_id_counts[(prov, event_id(e))] += 1
+
+    storms: List[EventStorm] = []
+
+    for prov, p_entries in by_provider.items():
+        sorted_entries = sorted(p_entries, key=lambda x: x.timestamp)
+        n = len(sorted_entries)
+        if n == 0:
+            continue
+
+        # Sliding 60-second window
+        peak_count = 0
+        burst_start: Optional[datetime] = None
+        burst_end: Optional[datetime] = None
+        left = 0
+
+        for right in range(n):
+            while (sorted_entries[right].timestamp - sorted_entries[left].timestamp).total_seconds() > 60:
+                left += 1
+            current_window_len = right - left + 1
+            if current_window_len > peak_count:
+                peak_count = current_window_len
+                burst_start = sorted_entries[left].timestamp
+                burst_end = sorted_entries[right].timestamp
+
+        timespan_s = (sorted_entries[-1].timestamp - sorted_entries[0].timestamp).total_seconds()
+        if timespan_s > 0:
+            rate_per_min = (n / timespan_s) * 60.0
+        else:
+            rate_per_min = float(n)
+
+        # Storm condition: > burst_threshold in any 60-second window, or rate > burst_threshold
+        is_storm = (peak_count > burst_threshold) or (rate_per_min > burst_threshold and n > burst_threshold)
+
+        if is_storm:
+            id_counts = Counter(event_id(e) for e in p_entries if event_id(e) is not None)
+            top_ids = dict(id_counts.most_common(5))
+            sample_msg = (sorted_entries[-1].message or "").strip().splitlines()[0] if sorted_entries[-1].message else ""
+            primary_id = id_counts.most_common(1)[0][0] if id_counts else None
+
+            storms.append(EventStorm(
+                provider=prov,
+                total_count=n,
+                peak_burst_count=peak_count,
+                rate_per_minute=max(float(peak_count), round(rate_per_min, 1)),
+                burst_start=burst_start,
+                burst_end=burst_end,
+                top_event_ids=top_ids,
+                sample_message=sample_msg,
+                event_id=primary_id,
+            ))
+
+    storms.sort(key=lambda s: (-s.peak_burst_count, -s.total_count))
+
+    noisy_providers = Counter({prov: len(p_entries) for prov, p_entries in by_provider.items()}).most_common(10)
+    noisy_event_ids = [(p, eid, cnt) for (p, eid), cnt in provider_id_counts.most_common(10)]
+    total_burst_events = sum(s.total_count for s in storms)
+
+    return StormReport(
+        storms=storms,
+        noisy_providers=noisy_providers,
+        noisy_event_ids=noisy_event_ids,
+        total_burst_events=total_burst_events,
+        has_storm=bool(storms),
+    )
+
+
+# -- Benign Background Noise Filtering --------------------------------------
+
+def is_benign_noise(entry: LogEntry) -> bool:
+    """Determine whether an event is routine, benign background noise.
+
+    Targets:
+    - DCOM 10016 (classic benign permission chatter on all Windows installs)
+    - Benign Kerberos 4768 (TGT requests with success/0x0 result code, informational)
+    - Routine time syncs (W32Time / Time-Service 35, 37, 158 or Info level syncs)
+    - Routine Service Control Manager 7036 (service state changes, informational)
+    - Routine Group Policy 1500/1501 (policy applied successfully, informational)
+    """
+    prov = provider_of(entry).lower()
+    eid = event_id(entry)
+    raw = entry.raw if isinstance(entry.raw, dict) else {}
+    raw_data = raw.get("data", {}) if isinstance(raw, dict) else {}
+    if not isinstance(raw_data, dict):
+        raw_data = {}
+
+    # 1. DCOM 10016
+    if ("dcom" in prov or "distributedcom" in prov or entry.source == "DCOM") and eid == 10016:
+        return True
+
+    # 2. Benign Kerberos 4768 (Success / informational)
+    if ("security" in prov or "security-auditing" in prov) and eid == 4768:
+        result_code = raw_data.get("ResultCode", "0x0")
+        if entry.level in ("Info", "Verbose", "LogAlways", 0, 4, 5) and result_code in ("0x0", "0", ""):
+            return True
+
+    # 3. Routine time syncs (W32Time / Time-Service)
+    if "time-service" in prov or "w32time" in prov or "time" in prov:
+        if eid in (35, 37, 158):
+            return True
+        if entry.level in ("Info", "Verbose", "LogAlways", 0, 4, 5) and entry.level not in ("Critical", "Error", "Warning"):
+            return True
+
+    # 4. Routine SCM 7036 informational service state changes
+    if "service control manager" in prov and eid == 7036:
+        if entry.level in ("Info", "Verbose", 0, 4, 5):
+            return True
+
+    # 5. Routine Group Policy success
+    if "grouppolicy" in prov and eid in (1500, 1501):
+        if entry.level in ("Info", "Verbose", 0, 4, 5):
+            return True
+
+    return False
+
+
+def filter_noise(entries: List[LogEntry], hide_noise: bool = True) -> List[LogEntry]:
+    """Hide known benign background noise when `hide_noise` is True."""
+    if not hide_noise:
+        return list(entries)
+    return [e for e in entries if not is_benign_noise(e)]
+
+
+# -- Provider Muting & Isolating ---------------------------------------------
+
+def filter_providers(
+    entries: List[LogEntry],
+    muted: Optional[Set[str]] = None,
+    isolated: Optional[str] = None,
+) -> List[LogEntry]:
+    """Filter entries by muted or isolated provider names.
+
+    - isolated: if given, ONLY entries matching this provider are kept.
+    - muted: if given, entries matching any of these providers are excluded.
+    """
+    if not muted and not isolated:
+        return list(entries)
+
+    isolated_lower = isolated.strip().lower() if isolated else None
+    muted_lower = {m.strip().lower() for m in muted} if muted else set()
+
+    out = []
+    for e in entries:
+        prov = provider_of(e).strip().lower()
+        src = (e.source or "").strip().lower()
+
+        if isolated_lower:
+            if prov != isolated_lower and src != isolated_lower:
+                continue
+
+        if muted_lower:
+            if prov in muted_lower or src in muted_lower:
+                continue
+
+        out.append(e)
+
+    return out
+

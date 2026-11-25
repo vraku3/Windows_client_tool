@@ -149,3 +149,14 @@ def test_export_takes_what_is_on_screen_in_order(qapp):
     assert rows[0][0] == "Nuvoton NCT6799D"                 # the hardware comes from the group
 
 
+def test_fan_row_on_property_alias():
+    row_on = view.FanRow("key1", "Fan 1", 1200.0, 50.0, on_curve=True)
+    assert row_on.on is True
+    assert row_on.on_curve is True
+
+    row_off = view.FanRow("key2", "Fan 2", 0.0, 0.0, on_curve=False)
+    assert row_off.on is False
+    assert row_off.on_curve is False
+
+
+

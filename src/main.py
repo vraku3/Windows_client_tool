@@ -143,12 +143,10 @@ def register_all_modules(app) -> None:
     from modules.system_report.report_module import SystemReportModule
     from modules.about.about_module import AboutModule
     from modules.diagnose.diagnose_module import DiagnoseModule
-    from modules.log_viewer.log_viewer_module import LogViewerModule
 
     app.module_registry.register(DashboardModule())
     app.module_registry.register(DiagnoseModule())
-    app.module_registry.register(LogViewerModule())
-    # EventViewer, CBS, DISM, WU, Reliability, CrashDumps — embedded in DiagnoseModule
+    # EventViewer, CBS, DISM, WU, Reliability, CrashDumps, Timeline, LogViewer — embedded in DiagnoseModule
     # PerfMon is a Dashboard tab, not its own sidebar entry: one place for the
     # live performance picture. See modules/dashboard/dashboard_module.py.
     app.module_registry.register(TweaksModule())
@@ -261,6 +259,10 @@ def main():
         sys.exit(run_from_file(args.apply_security_batch, args.result))
 
     qt_app = QApplication(sys.argv)
+    from ui.dialog_enhancer import install_dialog_enhancer
+    from ui.table_resizer import install_table_resizer
+    install_dialog_enhancer(qt_app)
+    install_table_resizer(qt_app)
 
     # Initialize App singleton (wires all core services)
     app = App()
@@ -291,7 +293,47 @@ def main():
     qt_app.aboutToQuit.connect(app.shutdown)
 
     window.show()
-    sys.exit(qt_app.exec())
+    exit_code = qt_app.exec()
+
+    # Ensure orderly shutdown before interpreter finalization
+    try:
+        app.shutdown()
+    except Exception as e:
+        logger.warning("Error during final app.shutdown: %s", e)
+
+    try:
+        from ui.dialog_enhancer import uninstall_dialog_enhancer
+        from ui.table_resizer import uninstall_table_resizer
+        uninstall_table_resizer(qt_app)
+        uninstall_dialog_enhancer(qt_app)
+    except Exception as e:
+        logger.debug("Error uninstalling dialog/table enhancers: %s", e)
+
+    try:
+        from core.worker import _RETIRING
+        _RETIRING.clear()
+    except Exception as e:
+        logger.debug("Error clearing retiring workers: %s", e)
+
+    try:
+        window.deleteLater()
+        qt_app.processEvents()
+        del window
+        del app
+    except Exception as e:
+        logger.debug("Error during window/app deletion: %s", e)
+
+    try:
+        if sys.stdout:
+            sys.stdout.flush()
+        if sys.stderr:
+            sys.stderr.flush()
+    except Exception as e:
+        logger.debug("Error flushing stdout/stderr: %s", e)
+
+    # os._exit terminates immediately and cleanly without allowing Python's
+    # post-mortem cyclic GC to touch freed Qt C++ object wrappers in sip.pyd.
+    os._exit(exit_code)
 
 
 if __name__ == "__main__":

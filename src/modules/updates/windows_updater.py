@@ -606,6 +606,58 @@ def uninstall_updates(
     return results
 
 
+def _install_single_update(u: WindowsUpdate, downloader, installer, _log: Callable[[str], None], _result: Callable[[InstallResult], None]) -> None:
+    import win32com.client
+    from core.wu_error_codes import decode_wu_error, hresult_from_com_error
+
+    coll = win32com.client.Dispatch("Microsoft.Update.UpdateColl")
+    coll.Add(u.identity)
+    try:
+        if not u.identity.EulaAccepted:
+            u.identity.AcceptEula()
+    except Exception:
+        logger.warning("Could not check/accept EULA for %s", u.title, exc_info=True)
+
+    try:
+        if _com_bool(u.identity, "IsDownloaded") is not True:
+            downloader.Updates = coll
+            dl_result = downloader.Download()
+            dl_code = int(dl_result.ResultCode)
+            _log(f"  download: {_RESULT_TEXT.get(dl_code, dl_code)}")
+            if dl_code != 2:
+                msg = f"download {_RESULT_TEXT.get(dl_code, dl_code)} — {decode_wu_error(dl_result.HResult)}"
+                _result(InstallResult(u.kb, u.title, False, dl_result.HResult, msg))
+                return
+        else:
+            _log("  already downloaded")
+
+        installer.Updates = coll
+        install_result = installer.Install()
+        code = int(install_result.ResultCode)
+        reboot_required = _com_bool(install_result, "RebootRequired") is True
+        try:
+            reboot_required = (_com_bool(install_result.GetUpdateResult(0), "RebootRequired") is True
+                               or reboot_required)
+        except Exception:
+            logger.debug("Per-update install result unreadable", exc_info=True)
+        success = code == 2 and not reboot_required
+        msg = {2: "installed -- restart to finish" if reboot_required else "success",
+               3: "installed with errors" + (" -- restart to finish" if reboot_required else ""),
+               4: "failed", 5: "aborted"}.get(code, _RESULT_TEXT.get(code, str(code)))
+        if code != 2:
+            msg += " — " + decode_wu_error(install_result.HResult)
+            if reboot_required and code != 3:
+                msg += "; a restart is also required"
+        _log(f"  install: {msg}")
+        _result(InstallResult(u.kb, u.title, success, install_result.HResult, msg,
+                              reboot_required, code))
+    except Exception as e:
+        detail = _explain(e)
+        _log(f"  error: {detail}")
+        _result(InstallResult(u.kb, u.title, False,
+                              hresult_from_com_error(e), detail))
+
+
 def install_updates_iter(
     updates: List[WindowsUpdate],
     progress_cb: Optional[Callable[[int, int, str], None]] = None,
@@ -623,7 +675,7 @@ def install_updates_iter(
     is not interrupted mid-way (matches Worker.cancel() semantics elsewhere).
     """
     import win32com.client
-    from core.wu_error_codes import decode_wu_error, hresult_from_com_error
+    from core.wu_error_codes import hresult_from_com_error
 
     def _log(line: str) -> None:
         if output_cb:
@@ -655,18 +707,14 @@ def install_updates_iter(
         u.downloaded = u.downloaded or _com_bool(u.identity, "IsDownloaded") is True
         _log(f"[{i + 1}/{total}] {u.title}  ({size_text(u)})")
 
-        # Defence in depth: the scan already keeps these out, but a held driver
-        # is never installed whatever list it arrives in.
         try:
             held = u.held or (u.identity is not None and is_held_amd_display_driver(u.identity))
         except Exception as e:
-            # A COM refusal here used to escape the loop and lose every result
-            # already collected. Unsure means not installed.
             detail = _explain(e)
             _log(f"  not installed: could not confirm it is not a held AMD driver ({detail})")
             _result(InstallResult(u.kb, u.title, False, hresult_from_com_error(e),
-                                         "not installed: the AMD driver hold could not be "
-                                         f"checked ({detail})"))
+                                  "not installed: the AMD driver hold could not be "
+                                  f"checked ({detail})"))
             continue
         if held:
             _log(f"  {HELD_TEXT}")
@@ -681,52 +729,11 @@ def install_updates_iter(
             _result(InstallResult(u.kb, u.title, False, None, "stale scan — no COM identity, re-scan first"))
             continue
 
-        coll = win32com.client.Dispatch("Microsoft.Update.UpdateColl")
-        coll.Add(u.identity)
-        try:
-            if not u.identity.EulaAccepted:
-                u.identity.AcceptEula()
-        except Exception:
-            logger.warning("Could not check/accept EULA for %s", u.title, exc_info=True)
+        _install_single_update(u, downloader, installer, _log, _result)
 
-        try:
-            if _com_bool(u.identity, "IsDownloaded") is not True:
-                downloader.Updates = coll
-                dl_result = downloader.Download()
-                dl_code = int(dl_result.ResultCode)
-                _log(f"  download: {_RESULT_TEXT.get(dl_code, dl_code)}")
-                if dl_code != 2:
-                    msg = f"download {_RESULT_TEXT.get(dl_code, dl_code)} — {decode_wu_error(dl_result.HResult)}"
-                    _result(InstallResult(u.kb, u.title, False, dl_result.HResult, msg))
-                    continue
-            else:
-                _log("  already downloaded")
-
-            installer.Updates = coll
-            install_result = installer.Install()
-            code = int(install_result.ResultCode)
-            reboot_required = _com_bool(install_result, "RebootRequired") is True
-            try:
-                reboot_required = (_com_bool(install_result.GetUpdateResult(0), "RebootRequired") is True
-                                   or reboot_required)
-            except Exception:
-                logger.debug("Per-update install result unreadable", exc_info=True)
-            success = code == 2 and not reboot_required
-            msg = {2: "installed -- restart to finish" if reboot_required else "success",
-                   3: "installed with errors" + (" -- restart to finish" if reboot_required else ""),
-                   4: "failed", 5: "aborted"}.get(code, _RESULT_TEXT.get(code, str(code)))
-            if code != 2:
-                msg += " — " + decode_wu_error(install_result.HResult)
-                if reboot_required and code != 3:
-                    msg += "; a restart is also required"
-            _log(f"  install: {msg}")
-            _result(InstallResult(u.kb, u.title, success, install_result.HResult, msg,
-                                         reboot_required, code))
-        except Exception as e:
-            detail = _explain(e)
-            _log(f"  error: {detail}")
-            _result(InstallResult(u.kb, u.title, False,
-                                         hresult_from_com_error(e), detail))
+    if progress_cb:
+        progress_cb(total, total, "")
+    return results
 
     if progress_cb:
         progress_cb(total, total, "")

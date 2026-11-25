@@ -47,6 +47,7 @@ from modules.security_dashboard.profile import (
     read_profile, write_profile)
 from modules.security_dashboard.reverting import revert_batch
 from modules.security_dashboard.staging import ChangeSet
+from modules.security_dashboard.app_control_tab import AppControlTab
 from modules.security_dashboard.triage_tab import TriageTab
 from modules.security_dashboard.security_reader import (
     get_overview_status,
@@ -865,6 +866,7 @@ class SecurityDashboardModule(BaseModule):
         self._history_rows: List[Any] = []
         self._last_baseline_plan: Optional[dict] = None
         self._triage: Optional[TriageTab] = None
+        self._app_control: Optional[AppControlTab] = None
 
     def get_refresh_interval(self) -> Optional[int]:
         """No timer. Refresh is a button.
@@ -958,6 +960,8 @@ class SecurityDashboardModule(BaseModule):
         self._tabs.addTab(self._build_history_tab(), "History")
         self._triage = TriageTab()
         self._tabs.addTab(self._triage, "Incident Triage")
+        self._app_control = AppControlTab()
+        self._tabs.addTab(self._app_control, "App Control (SAC)")
         # Connected AFTER the addTab loop: addTab fires currentChanged
         # synchronously for the first tab added, which would kick off a read
         # during create_widget.
@@ -1251,6 +1255,10 @@ class SecurityDashboardModule(BaseModule):
             if not self._triage.loaded:
                 self._load_events()
             return
+        if self._tabs.widget(index) is self._app_control and self._app_control is not None:
+            if not self._app_control.loaded:
+                self._app_control.load()
+            return
         tab = self._category_tabs.get(self._tab_names.get(index))
         if tab is not None:
             self._read_category(tab)
@@ -1277,16 +1285,22 @@ class SecurityDashboardModule(BaseModule):
             self._read_category(current, force=True, invalidate_first=True)
         if self._triage is not None and self._triage.loaded:
             self._load_events()
+        if self._app_control is not None and self._app_control.loaded:
+            self._app_control.load()
 
     def on_deactivate(self) -> None:
         self.cancel_all_workers()
         if self._triage is not None:
             self._triage._cancel_all()
+        if self._app_control is not None:
+            self._app_control._cancel_all()
 
     def on_stop(self) -> None:
         self.cancel_all_workers()
         if self._triage is not None:
             self._triage._cancel_all()
+        if self._app_control is not None:
+            self._app_control._cancel_all()
 
 
 

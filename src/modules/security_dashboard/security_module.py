@@ -374,11 +374,13 @@ class _StatusCard(QFrame):
         return QSize(hint.width(), max(self._MIN_HEIGHT, hint.height()))
 
     def update_status(self, data: dict):
-        color = COLOR_MAP.get(data.get("color", "amber"), "#888")
+        from core.semantic_colors import chrome
+        c_key = data.get("color", "amber")
+        role_map = {"green": "statusSuccess", "amber": "statusWarning", "red": "statusError", "blue": "statusInfo"}
+        color = COLOR_MAP.get(c_key, chrome("text_muted"))
         status = data.get("status", "Unknown")
         self._status_lbl.setText(status)
-        self._status_lbl.setStyleSheet(
-            f"font-size: 13px; font-weight: bold; color: {color};")
+        set_role(self._status_lbl, role_map.get(c_key, "muted"))
         self.setStyleSheet(f"QFrame {{ border-left: 4px solid {color}; }}")
 
         # Clear and rebuild detail rows

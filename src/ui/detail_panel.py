@@ -414,9 +414,12 @@ class DetailPanel(QWidget):
     def _populate_overview(self, entry: LogEntry, extra_html: str, esc) -> None:
         doc = extra_html
         if entry.raw and "_user_note" in entry.raw:
+            from core.semantic_colors import chrome
             info_col = semantic("info")
+            surf_col = chrome("surface")
+            txt_col = chrome("text")
             doc += f"""
-            <div style="background-color: rgba(30, 58, 95, 0.4); border-left: 4px solid {info_col}; padding: 8px; margin-bottom: 8px; border-radius: 4px;">
+            <div style="background-color: {surf_col}; color: {txt_col}; border-left: 4px solid {info_col}; padding: 8px; margin-bottom: 8px; border-radius: 4px;">
                 <b>📝 User Annotation:</b> {esc(str(entry.raw['_user_note']))}
             </div>
             """

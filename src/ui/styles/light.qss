@@ -787,3 +787,13 @@ QTableCornerButton::section {
     border-right: 1px solid #d4d4d4;
     border-bottom: 1px solid #d4d4d4;
 }
+
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {
+    background-color: #ededed;
+    border-color: #c8c8c8;
+}
+
+QTableView::item:selected, QTreeView::item:selected, QListView::item:selected {
+    background-color: #cce4f7;
+    color: #1e1e1e;
+}

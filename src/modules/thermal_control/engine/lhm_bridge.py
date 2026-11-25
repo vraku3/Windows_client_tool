@@ -254,8 +254,14 @@ class LhmBridge:
         self._touched.discard(control_id)
 
     def close(self) -> None:
-        self.release_all()
-        if self._computer is not None:
-            with self._lock:
-                self._computer.Close()
-            self._computer = None
+        try:
+            self.release_all()
+        except Exception as e:
+            logger.debug("LhmBridge release_all during close: %s", e)
+        with self._lock:
+            if self._computer is not None:
+                try:
+                    self._computer.Close()
+                except Exception as e:
+                    logger.debug("LhmBridge computer.Close failed: %s", e)
+                self._computer = None

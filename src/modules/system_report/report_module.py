@@ -181,18 +181,29 @@ def _render_html(data: dict) -> str:
     findings_block = rs.findings_html(data.get("findings", []))
     extra_html = rs.sections_html(data.get("sections", []))
 
+    from core.semantic_colors import CHROME_PALETTES, PANE_BACKGROUND, SEMANTIC_PALETTES, current_theme
+    t = current_theme()
+    bg = PANE_BACKGROUND.get(t, "#0d1117")
+    chr_p = CHROME_PALETTES.get(t, CHROME_PALETTES["dark"])
+    sem_p = SEMANTIC_PALETTES.get(t, SEMANTIC_PALETTES["dark"])
+    elevated = chr_p["surface"]
+    text = chr_p["text"]
+    muted = chr_p["text_muted"]
+    border = chr_p["outline"]
+    accent = sem_p["info"]
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>System Report — {data.get('hostname','')}</title>
 <style>
-  body {{font-family:Segoe UI,Arial,sans-serif;background:#0d1117;color:#e6edf3;margin:20px;}}
-  h1 {{color:#ffffff;}} h2 {{color:#58a6ff;border-bottom:1px solid #30363d;padding-bottom:4px;}}
+  body {{font-family:Segoe UI,Arial,sans-serif;background:{bg};color:{text};margin:20px;}}
+  h1 {{color:{text};}} h2 {{color:{accent};border-bottom:1px solid {border};padding-bottom:4px;}}
   table {{border-collapse:collapse;width:100%;margin-bottom:16px;}}
-  th {{background:#21262d;color:#c9d1d9;text-align:left;padding:6px 10px;}}
-  td {{padding:5px 10px;border-bottom:1px solid #21262d;}}
-  .kv td:first-child {{color:#9ea7b3;width:220px;}} .badge {{background:#21262d;border-radius:4px;padding:2px 8px;}}
+  th {{background:{elevated};color:{text};text-align:left;padding:6px 10px;border-bottom:1px solid {border};}}
+  td {{padding:5px 10px;border-bottom:1px solid {border};}}
+  .kv td:first-child {{color:{muted};width:220px;}} .badge {{background:{elevated};border:1px solid {border};border-radius:4px;padding:2px 8px;}}
 </style>
 </head>
 <body>

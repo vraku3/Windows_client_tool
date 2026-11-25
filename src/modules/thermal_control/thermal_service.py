@@ -422,6 +422,14 @@ class ThermalService(QObject):
         gpus, why = adlx.read_gpus(self.adlx_dir)
         for name in list((self._config_get(GPU_IDENTIFY_KEY, {}) or {})):
             if name not in self._identify_names():
+                # If GPU is already back at factory, just clear the stale marker without calling reset_to_factory.
+                restore_map = dict(self._config_get(GPU_IDENTIFY_KEY, {}) or {})
+                before = restore_map.get(name) or {}
+                live_gpu = next((g for g in (gpus or []) if g.name == name), None)
+                if before.get("factory") and live_gpu is not None and live_gpu.at_factory:
+                    restore_map.pop(name, None)
+                    self._config_set(GPU_IDENTIFY_KEY, restore_map)
+                    continue
                 logger.warning("thermal: %s was left at 100%% by an Identify that never ended; "
                                "putting it back", name)
                 try:

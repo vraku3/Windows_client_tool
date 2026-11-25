@@ -4,9 +4,10 @@ from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem
 
 from core.memory_standby import get_memory_snapshot
 from core.wmi_cache import WmiCache
+from modules.hardware_info.pcie_nvme_auditor import audit_nvme_reliability, audit_pcie_links
 from modules.quick_fix.fix_actions import ALL_ACTIONS
 from modules.thermal_control.engine import nvml
-from ui.table_resizer import _table_persist_key
+from ui.table_resizer import _table_persist_key, enhance_splitter
 
 
 def test_wmi_cache_ttl_and_invalidate():
@@ -66,3 +67,21 @@ def test_table_persist_key_is_stable(qapp):
 
     assert _table_persist_key(t1) is not None
     assert _table_persist_key(t1) == _table_persist_key(t2)
+
+
+def test_pcie_nvme_auditor_runs_cleanly():
+    nvme = audit_nvme_reliability()
+    pcie = audit_pcie_links()
+    assert isinstance(nvme, list)
+    assert isinstance(pcie, list)
+
+
+def test_enhance_splitter_hooks_cleanly(qapp):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QSplitter, QWidget
+    sp = QSplitter(Qt.Orientation.Horizontal)
+    sp.setObjectName("testSplitter")
+    sp.addWidget(QWidget())
+    sp.addWidget(QWidget())
+    enhance_splitter(sp)
+    assert getattr(sp, "_splitter_hooked", False) is True

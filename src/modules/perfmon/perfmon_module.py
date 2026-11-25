@@ -126,10 +126,23 @@ class PerfMonModule(BaseModule):
         live_layout.addWidget(net_label, 2, 1)
         live_layout.addWidget(self._net_bar, 3, 1)
 
+        # Standby RAM strip
+        standby_row = QHBoxLayout()
+        self._standby_lbl = QLabel("Standby / Cache: —")
+        set_role(self._standby_lbl, "muted")
+        self._purge_standby_btn = QPushButton("Purge Standby RAM")
+        self._purge_standby_btn.setToolTip(
+            "Flush cached Standby RAM pages (requires Administrator; helpful before gaming or benchmarking)."
+        )
+        self._purge_standby_btn.clicked.connect(self._on_purge_standby_ram)
+        standby_row.addWidget(self._standby_lbl, 1)
+        standby_row.addWidget(self._purge_standby_btn)
+        live_layout.addLayout(standby_row, 4, 0, 1, 2)
+
         # Top processes table
         proc_label = QLabel("Top Processes by CPU")
         set_role(proc_label, "heading")
-        live_layout.addWidget(proc_label, 4, 0, 1, 2)
+        live_layout.addWidget(proc_label, 5, 0, 1, 2)
 
         self._proc_table = QTableWidget()
         self._proc_table.setColumnCount(3)
@@ -145,7 +158,7 @@ class PerfMonModule(BaseModule):
         self._proc_table.setAlternatingRowColors(True)
         center_header(self._proc_table)
         apply_table_style(self._proc_table)
-        live_layout.addWidget(self._proc_table, 5, 0, 1, 2)
+        live_layout.addWidget(self._proc_table, 6, 0, 1, 2)
 
         self._tabs.addTab(live_widget, "Live Monitor")
 
@@ -485,6 +498,12 @@ class PerfMonModule(BaseModule):
                     chart._data.clear()
                     chart._times.clear()
 
+    def _on_purge_standby_ram(self) -> None:
+        from core.memory_standby import purge_standby_list
+        ok, msg, _ = purge_standby_list()
+        set_role(self._standby_lbl, "statusSuccess" if ok else "statusWarning")
+        self._standby_lbl.setText(msg)
+
     def _update_live_monitor(self) -> None:
         try:
             import psutil
@@ -512,6 +531,17 @@ class PerfMonModule(BaseModule):
                 f"QProgressBar::chunk {{ background: {color}; border-radius: 3px; }}"
             )
             self._mem_bar.setFormat(f"{mem.used / 1024**3:.1f} / {mem.total / 1024**3:.1f} GB")
+
+            try:
+                from core.memory_standby import get_memory_snapshot
+                snap = get_memory_snapshot()
+                self._standby_lbl.setText(
+                    f"System Cache: {snap.system_cache_mb:,.0f} MB  |  "
+                    f"Kernel Paged / Non-Paged: {snap.kernel_paged_mb:,.0f} / {snap.kernel_nonpaged_mb:,.0f} MB  |  "
+                    f"Commit: {snap.commit_total_mb:,.0f} / {snap.commit_limit_mb:,.0f} MB"
+                )
+            except Exception:
+                pass
 
             # Disk I/O delta
             disk = psutil.disk_io_counters()

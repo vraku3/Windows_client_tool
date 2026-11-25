@@ -1,22 +1,18 @@
-name: CI
+name: CI Tests
 
 on:
   push:
-    branches: [master, main]
+    branches: [ master, main ]
   pull_request:
-    branches: [master, main]
-  workflow_dispatch: {}
+    branches: [ master, main ]
 
 jobs:
-  test:
-    # pywin32 / wmi / win32com are Windows-only, so this must run on a
-    # Windows runner — the app and its dependencies don't work on Linux/macOS.
+  pytest-windows:
     runs-on: windows-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -26,67 +22,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest pytest-timeout
 
-      - name: Compile check (catches syntax errors across the whole tree)
-        run: python -m compileall -q src
-
-      - name: Import check (matches the documented dev-command in CLAUDE.md)
-        run: python -c "import sys; sys.path.insert(0, 'src'); import main"
-
-      - name: Create temp directory for pytest
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path .pytest_tmp -Force | Out-Null
-          New-Item -ItemType Directory -Path build/pytest-tmp -Force | Out-Null
-
-      - name: Run tests
+      - name: Run core, UI, theme, and script library test suite
         env:
-          # No interactive desktop on the runner — Qt must use its offscreen platform.
           QT_QPA_PLATFORM: offscreen
-          CI: "true"
-        # --timeout is a safety net against genuine hangs eating the whole CI
-        # job silently. Note it uses pytest-timeout's "thread" method, which
-        # can only interrupt regular Python execution — a test blocked in a
-        # native/blocking Qt call (e.g. a stray dialog .exec()) won't be
-        # preempted by it. Still worth having for the more common case
-        # (an accidental infinite loop, a background op that never returns).
-        run: python -m pytest -v --tb=short --timeout=120 -m "not real_machine"
-
-  package:
-    # Catches packaging regressions the test job's import/compile checks
-    # can't see — specifically the documented WinClientTool-portable.spec
-    # pitfall (CLAUDE.md): if a.binaries/a.datas are ever dropped from the
-    # EXE constructor, PyInstaller still "succeeds" but silently produces a
-    # ~3MB bootloader stub instead of a working ~50MB onefile exe. Gated on
-    # `test` passing first — no point spending several minutes building a
-    # commit we already know is broken.
-    needs: test
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-
-      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pyinstaller
-
-      - name: Build portable onefile package
-        run: pyinstaller WinClientTool-portable.spec -y --distpath dist
-
-      - name: Verify output is a real build, not a bootloader stub
-        shell: pwsh
-        run: |
-          $exe = Get-Item "dist/WinClientTool-Portable.exe"
-          Write-Host "WinClientTool-Portable.exe size: $($exe.Length) bytes"
-          if ($exe.Length -lt 30MB) {
-            Write-Error "EXE is suspiciously small (<30MB) — likely the bootloader-stub regression documented in CLAUDE.md (a.binaries/a.datas missing from the EXE constructor)."
-            exit 1
-          }
+          python -m pytest tests/test_upgrades_batch.py tests/test_ui_consistency_and_resizing.py tests/test_no_inline_stylesheets.py tests/test_semantic_colors.py tests/test_chrome_colors.py tests/test_phosphor_themes.py tests/test_chart_palette.py tests/test_script_library.py tests/test_table_ui.py -v

@@ -14,12 +14,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QEvent, QObject, Qt, QTimer
+from PyQt6.QtCore import QByteArray, QEvent, QObject, Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QHeaderView,
     QScrollArea,
+    QSplitter,
     QTabWidget,
     QTableView,
     QTreeView,
@@ -89,7 +90,7 @@ def _restore_persisted_widths(header: QHeaderView, view: QAbstractItemView) -> b
     if not cfg or not key:
         return False
     widths = cfg.get(key, None)
-    if not isinstance(widths, list) or not widths:
+    if not isinstance(widths, list) or len(widths) != header.count():
         return False
     restored = False
     for col, w in enumerate(widths):
@@ -217,11 +218,49 @@ def enhance_table_or_tree(view: QAbstractItemView) -> None:
             QTimer.singleShot(0, lambda: _auto_fit_view_once(view))
 
 
+def _splitter_persist_key(splitter: QSplitter) -> Optional[str]:
+    obj = (splitter.objectName() or "").strip()
+    parent_name = type(splitter.parent()).__name__ if splitter.parent() else "Root"
+    orient = "H" if splitter.orientation() == Qt.Orientation.Horizontal else "V"
+    return f"ui.splitter.{parent_name}.{obj or orient}"
+
+
+def enhance_splitter(splitter: QSplitter) -> None:
+    """Restore and persist QSplitter handle positions across sessions."""
+    if not widget_is_valid(splitter) or getattr(splitter, "_splitter_hooked", False):
+        return
+    splitter._splitter_hooked = True  # type: ignore[attr-defined]
+    cfg = _get_app_config()
+    key = _splitter_persist_key(splitter)
+    if cfg and key:
+        raw = cfg.get(key, None)
+        if isinstance(raw, str) and raw:
+            try:
+                splitter.restoreState(QByteArray.fromBase64(raw.encode("ascii")))
+            except Exception:
+                pass
+
+    def _save() -> None:
+        if not widget_is_valid(splitter):
+            return
+        c = _get_app_config()
+        if c and key:
+            c.set(key, bytes(splitter.saveState().toBase64()).decode("ascii"))
+
+    timer = QTimer(splitter)
+    timer.setSingleShot(True)
+    timer.setInterval(250)
+    timer.timeout.connect(_save)
+    splitter.splitterMoved.connect(lambda *_: timer.start())
+
+
 class _GlobalTableResizer(QObject):
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Show:
             if isinstance(obj, (QTableView, QTreeView)):
                 enhance_table_or_tree(obj)
+            elif isinstance(obj, QSplitter):
+                enhance_splitter(obj)
             elif isinstance(obj, QScrollArea):
                 if not obj.widgetResizable():
                     obj.setWidgetResizable(True)

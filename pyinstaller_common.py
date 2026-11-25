@@ -392,6 +392,7 @@ HIDDEN_IMPORTS = [
     "modules.thermal_control.engine.lhm_bridge",
     "core.memory_standby",
     "core.wmi_cache",
+    "modules.hardware_info.pcie_nvme_auditor",
     "modules.thermal_control.engine.curves",
     "modules.thermal_control.engine.controller",
     "modules.thermal_control.engine.view",

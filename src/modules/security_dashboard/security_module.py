@@ -275,12 +275,12 @@ class ControlCard(QFrame):
                  ("On" if to_value is True else
                   "Off" if to_value is False else str(to_value)))
         self.staged_label.setText(f"Staged: will be {shown}")
-        self.staged_label.setStyleSheet(f"color: {semantic('info')};")
+        set_role(self.staged_label, "statusInfo")
 
     def clear_staged(self) -> None:
         self._staged_to = self._UNREAD
         self.staged_label.setText("")
-        self.staged_label.setStyleSheet("")
+        set_role(self.staged_label, "")
 
     def set_result(self, result) -> None:
         """Render what came back from `apply_batch` or `revert_batch`.
@@ -308,7 +308,7 @@ class ControlCard(QFrame):
 
         self.result_label.setText(text)
         self.result_label.setToolTip(result.reason or "")
-        self.result_label.setStyleSheet(f"color: {semantic(meaning)};")
+        set_role(self.result_label, f"status{meaning.capitalize()}")
         self.result_label.setVisible(True)
         self.clear_staged()
         # `observed` is a reading taken after the write, so it is now the

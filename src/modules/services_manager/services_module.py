@@ -122,26 +122,31 @@ def _score_impact(name: str, display_name: str, description: str) -> str:
 
 
 def get_services() -> List[Dict]:
-    import wmi
-    c = wmi.WMI()
-    services = []
-    for svc in c.Win32_Service():
-        name = svc.Name or ""
-        disp = svc.DisplayName or ""
-        desc = getattr(svc, "Description", "") or ""
-        services.append({
-            "Name": name,
-            "Display Name": disp,
-            "Status": svc.State or "",
-            "Start Type": svc.StartMode or "",
-            "PID": str(svc.ProcessId) if svc.ProcessId else "",
-            "Description": desc,
-            "Impact": _score_impact(name, disp, desc),
-            "Path": getattr(svc, "PathName", "") or "",
-            "ServiceType": getattr(svc, "ServiceType", "") or "",
-            "StartName": getattr(svc, "StartName", "") or "",
-        })
-    return sorted(services, key=lambda s: s["Display Name"].lower())
+    from core.wmi_cache import shared_wmi_cache
+
+    def _fetch():
+        import wmi
+        c = wmi.WMI()
+        services = []
+        for svc in c.Win32_Service():
+            name = svc.Name or ""
+            disp = svc.DisplayName or ""
+            desc = getattr(svc, "Description", "") or ""
+            services.append({
+                "Name": name,
+                "Display Name": disp,
+                "Status": svc.State or "",
+                "Start Type": svc.StartMode or "",
+                "PID": str(svc.ProcessId) if svc.ProcessId else "",
+                "Description": desc,
+                "Impact": _score_impact(name, disp, desc),
+                "Path": getattr(svc, "PathName", "") or "",
+                "ServiceType": getattr(svc, "ServiceType", "") or "",
+                "StartName": getattr(svc, "StartName", "") or "",
+            })
+        return sorted(services, key=lambda s: s["Display Name"].lower())
+
+    return shared_wmi_cache().get_or_query("wmi.Win32_Service", _fetch, ttl=10.0)
 
 
 def query_service_config(name: str) -> Dict:

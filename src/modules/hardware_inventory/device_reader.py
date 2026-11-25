@@ -48,26 +48,43 @@ def _vendor(device_id: str, name: str, manufacturer: str) -> str:
                                   "(standard disk drives)") else text
 
 
+def _cached_pnp_entities():
+    from core.wmi_cache import shared_wmi_cache
+
+    def _fetch():
+        import wmi
+        return [
+            (
+                str(d.PNPDeviceID or ""),
+                (d.Name or "").strip(),
+                (d.Manufacturer or "").strip(),
+                d.PNPClass or "",
+                d.Status or "",
+            )
+            for d in wmi.WMI().Win32_PnPEntity()
+        ]
+
+    return shared_wmi_cache().get_or_query("wmi.Win32_PnPEntity.tuples", _fetch, ttl=15.0)
+
+
 def read_usb_devices() -> Optional[List[Device]]:
     """Real USB peripherals, one row per physical device. None if WMI refused."""
     try:
-        import wmi
-        entities = wmi.WMI().Win32_PnPEntity()
+        entities = _cached_pnp_entities()
     except Exception as e:
         logger.warning("USB device read failed: %s", e)
         return None
     found = []
-    for d in entities:
-        pid = str(d.PNPDeviceID or "")
+    for pid, name, mfg, raw_class, status in entities:
         if not pid.startswith("USB") or _COMPOSITE_CHILD.search(pid):
             continue
-        pnp_class = d.PNPClass or ("USB" if pid.startswith("USB4") else "")
+        pnp_class = raw_class or ("USB" if pid.startswith("USB4") else "")
         if pnp_class in _USB_BUS_CLASSES:
             continue
         ids = _USB_IDS.search(pid)
         found.append(Device(
-            name=(d.Name or "").strip(), vendor=_vendor(pid, d.Name or "", d.Manufacturer or ""),
-            pnp_class=pnp_class or "Unknown", device_id=pid, status=d.Status or "",
+            name=name, vendor=_vendor(pid, name, mfg),
+            pnp_class=pnp_class or "Unknown", device_id=pid, status=status,
             vendor_id=ids.group(1).upper() if ids else None,
             product_id=ids.group(2).upper() if ids else None))
     return sorted(found, key=lambda x: x.name.lower())
@@ -76,20 +93,18 @@ def read_usb_devices() -> Optional[List[Device]]:
 def read_pci_devices() -> Optional[List[Device]]:
     """Every PCI/PCIe function: chipset, GPU, storage and network controllers."""
     try:
-        import wmi
-        entities = wmi.WMI().Win32_PnPEntity()
+        entities = _cached_pnp_entities()
     except Exception as e:
         logger.warning("PCI device read failed: %s", e)
         return None
     found = []
-    for d in entities:
-        pid = str(d.PNPDeviceID or "")
+    for pid, name, mfg, raw_class, status in entities:
         if not pid.startswith("PCI"):
             continue
         ids = _PCI_IDS.search(pid)
         found.append(Device(
-            name=(d.Name or "").strip(), vendor=_vendor(pid, d.Name or "", d.Manufacturer or ""),
-            pnp_class=d.PNPClass or "Unknown", device_id=pid, status=d.Status or "",
+            name=name, vendor=_vendor(pid, name, mfg),
+            pnp_class=raw_class or "Unknown", device_id=pid, status=status,
             vendor_id=ids.group(1).upper() if ids else None,
             product_id=ids.group(2).upper() if ids else None))
     return sorted(found, key=lambda x: (x.pnp_class, x.name.lower()))

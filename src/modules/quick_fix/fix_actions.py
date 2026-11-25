@@ -898,6 +898,20 @@ def _wu_reset_precondition() -> Optional[str]:
     return None
 
 
+def purge_standby_ram(output_cb: Callable[[str], None]) -> None:
+    """Purge Windows Standby Memory List via NtSetSystemInformation."""
+    from core.memory_standby import get_memory_snapshot, purge_standby_list
+    before = get_memory_snapshot()
+    output_cb(
+        f"Before: Total {before.total_mb:,.0f} MB | In-Use {before.in_use_mb:,.0f} MB ({before.load_pct}%) | "
+        f"Available {before.available_mb:,.0f} MB | System Cache {before.system_cache_mb:,.0f} MB"
+    )
+    ok, msg, _reclaimed = purge_standby_list()
+    output_cb(msg)
+    if not ok:
+        _note_failure(msg)
+
+
 ALL_ACTIONS: List[FixAction] = [
     # System Repairs
     FixAction("cleanmgr", "Disk Cleanup", "Run Windows Disk Cleanup on C: drive",
@@ -1067,4 +1081,7 @@ ALL_ACTIONS: List[FixAction] = [
               "Clear pending crash reports and minidumps from Windows Error Reporting",
               "Cleanup", fn=clear_wer_queue, precondition=_wer_queue_precondition,
               confirm_text="This will delete pending crash report packages and minidumps from the Windows Error Reporting queue and archive. Continue?"),
+    FixAction("purge_standby_ram", "Purge Standby Memory List",
+              "Flush cached Standby RAM pages (useful before gaming or benchmarking)",
+              "Performance", fn=purge_standby_ram),
 ]

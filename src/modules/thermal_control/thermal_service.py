@@ -85,6 +85,8 @@ class ThermalService(QObject):
             self.state_changed.emit(f"GPU only: {self.reason}.")
             self._reschedule()
             return
+        if not lhm_bridge.pawnio_installed():
+            self.state_changed.emit("Installing bundled PawnIO hardware sensor driver…")
         self._run(self._open, self._opened)
 
     def _open(self, _worker):

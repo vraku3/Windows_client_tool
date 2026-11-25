@@ -83,6 +83,15 @@ def read_gpus() -> List[Sensor]:
     seen = set()
     for adapter in adapters[:enum.NumAdapters]:
         out += _adapter_sensors(gdi, adapter, seen)
+    try:
+        from . import nvml
+        nv_sensors = nvml.read_sensors()
+        existing_ids = {s.id for s in out}
+        for s in nv_sensors:
+            if s.id not in existing_ids:
+                out.append(s)
+    except Exception as e:
+        logger.debug("NVML sensor supplement skipped: %s", e)
     return out
 
 

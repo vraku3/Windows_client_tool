@@ -55,6 +55,78 @@ def _make_columns_interactive(header: QHeaderView, view: QAbstractItemView) -> N
         header.setStretchLastSection(True)
 
 
+def _table_persist_key(view: QAbstractItemView) -> Optional[str]:
+    """Build a stable config key for persisting column widths across restarts."""
+    model = view.model()
+    if model is None:
+        return None
+    cols = model.columnCount()
+    if cols <= 0:
+        return None
+    headers = []
+    for c in range(cols):
+        val = model.headerData(c, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole)
+        headers.append(str(val or c).strip())
+    obj = (view.objectName() or type(view).__name__).strip()
+    sig = "|".join(headers)
+    import hashlib
+    digest = hashlib.md5(f"{obj}:{sig}".encode("utf-8", errors="ignore")).hexdigest()[:10]
+    return f"ui.table_widths.{obj}.{digest}"
+
+
+def _get_app_config():
+    try:
+        from app import App
+        inst = App._instance if hasattr(App, "_instance") else None
+        return getattr(inst, "config", None) if inst is not None else None
+    except Exception:
+        return None
+
+
+def _restore_persisted_widths(header: QHeaderView, view: QAbstractItemView) -> bool:
+    cfg = _get_app_config()
+    key = _table_persist_key(view) if cfg is not None else None
+    if not cfg or not key:
+        return False
+    widths = cfg.get(key, None)
+    if not isinstance(widths, list) or not widths:
+        return False
+    restored = False
+    for col, w in enumerate(widths):
+        if col < header.count() and isinstance(w, int) and w >= 24:
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            header.resizeSection(col, w)
+            restored = True
+    return restored
+
+
+def _hook_width_persistence(header: QHeaderView, view: QAbstractItemView) -> None:
+    if getattr(view, "_width_persist_hooked", False):
+        return
+    view._width_persist_hooked = True  # type: ignore[attr-defined]
+
+    def _save_now() -> None:
+        if not widget_is_valid(view) or not widget_is_valid(header):
+            return
+        cfg = _get_app_config()
+        key = _table_persist_key(view) if cfg is not None else None
+        if cfg and key and header.count() > 0:
+            cfg.set(key, [header.sectionSize(c) for c in range(header.count())])
+
+    timer = QTimer(view)
+    timer.setSingleShot(True)
+    timer.setInterval(250)
+    timer.timeout.connect(_save_now)
+
+    def _on_resized(_idx: int, _old: int, _new: int) -> None:
+        if getattr(view, "_auto_fitted_once", False) and not timer.isActive():
+            timer.start()
+        elif getattr(view, "_auto_fitted_once", False):
+            timer.start()
+
+    header.sectionResized.connect(_on_resized)
+
+
 def _auto_fit_view_once(view: QAbstractItemView) -> None:
     """Fit columns (and multi-line rows) to content once after rows are populated."""
     if not widget_is_valid(view):
@@ -70,7 +142,7 @@ def _auto_fit_view_once(view: QAbstractItemView) -> None:
         header = view.horizontalHeader()
         # Only auto-size columns that haven't been explicitly sized wide already
         # (preserves custom width logic such as FirewallManagerModule / LogTableWidget).
-        if not getattr(view, "_custom_column_fit", False):
+        if not getattr(view, "_custom_column_fit", False) and not _restore_persisted_widths(header, view):
             saved_modes = [header.sectionResizeMode(c) for c in range(header.count())]
             view.resizeColumnsToContents()
             for col in range(header.count()):
@@ -81,6 +153,7 @@ def _auto_fit_view_once(view: QAbstractItemView) -> None:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
                 header.resizeSection(col, clamped)
         _make_columns_interactive(header, view)
+        _hook_width_persistence(header, view)
 
         vertical = view.verticalHeader()
         if vertical is not None:
@@ -92,7 +165,7 @@ def _auto_fit_view_once(view: QAbstractItemView) -> None:
 
     elif isinstance(view, QTreeView):
         header = view.header()
-        if not getattr(view, "_custom_column_fit", False):
+        if not getattr(view, "_custom_column_fit", False) and not _restore_persisted_widths(header, view):
             for col in range(header.count()):
                 if header.sectionResizeMode(col) == QHeaderView.ResizeMode.Fixed and header.sectionSize(col) <= 36:
                     continue
@@ -102,6 +175,7 @@ def _auto_fit_view_once(view: QAbstractItemView) -> None:
                 header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
                 header.resizeSection(col, clamped)
         _make_columns_interactive(header, view)
+        _hook_width_persistence(header, view)
 
 
 def enhance_table_or_tree(view: QAbstractItemView) -> None:

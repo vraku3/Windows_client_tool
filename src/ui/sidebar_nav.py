@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
     QVBoxLayout, QWidget,
 )
 
@@ -12,7 +12,7 @@ class SidebarNav(QWidget):
     """Vertical navigation sidebar.
 
     Emits module_selected(module_name: str) when a module button is clicked.
-    Groups are displayed as bold QLabel headers; modules are QPushButton items.
+    Groups are collapsible headers; includes a quick filter box.
     Collapsed mode shows icon-only (48 px wide).
     """
 
@@ -24,6 +24,8 @@ class SidebarNav(QWidget):
         self._collapsed = False
         self._is_admin = False
         self._module_buttons: Dict[str, List[Tuple[str, QPushButton]]] = {}
+        self._group_headers: Dict[str, QPushButton] = {}
+        self._collapsed_groups: set[str] = set()
         self._btn_map: Dict[str, QPushButton] = {}
         self._group_order: List[str] = []
         self._active_name: Optional[str] = None
@@ -42,6 +44,13 @@ class SidebarNav(QWidget):
         self._toggle_btn.setToolTip("Collapse sidebar")
         self._toggle_btn.clicked.connect(self._toggle_collapse)
         outer.addWidget(self._toggle_btn)
+
+        self._filter_edit = QLineEdit()
+        self._filter_edit.setPlaceholderText("Filter tools...")
+        self._filter_edit.setClearButtonEnabled(True)
+        self._filter_edit.setContentsMargins(6, 4, 6, 4)
+        self._filter_edit.textChanged.connect(self._apply_filter)
+        outer.addWidget(self._filter_edit)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -73,11 +82,12 @@ class SidebarNav(QWidget):
             self._module_buttons[group] = []
             self._group_order.append(group)
             stretch_idx = self._nav_layout.count() - 1
-            header = QLabel(group)
+            header = QPushButton(f"▾ {group}")
             header.setObjectName("sidebarGroupHeader")
-            header.setAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            header.setFlat(True)
+            header.clicked.connect(lambda _=False, g=group: self._toggle_group(g))
             self._nav_layout.insertWidget(stretch_idx, header)
+            self._group_headers[group] = header
 
         stretch_idx = self._nav_layout.count() - 1
         btn = QPushButton(f"{icon}  {display}" if not self._collapsed else icon)
@@ -115,9 +125,36 @@ class SidebarNav(QWidget):
         self.select(name)
         self.module_selected.emit(name)
 
+    def _toggle_group(self, group: str) -> None:
+        if group in self._collapsed_groups:
+            self._collapsed_groups.remove(group)
+        else:
+            self._collapsed_groups.add(group)
+        hdr = self._group_headers.get(group)
+        if hdr is not None:
+            hdr.setText(f"▸ {group}" if group in self._collapsed_groups else f"▾ {group}")
+        self._apply_filter(self._filter_edit.text())
+
+    def _apply_filter(self, text: str) -> None:
+        q = (text or "").strip().lower()
+        for group, items in self._module_buttons.items():
+            any_visible = False
+            group_collapsed = (group in self._collapsed_groups) and not q and not self._collapsed
+            for name, btn in items:
+                display = (btn.property("display_name") or name).lower()
+                matches = not q or (q in display or q in group.lower())
+                visible = matches and not group_collapsed
+                btn.setVisible(visible)
+                if matches:
+                    any_visible = True
+            hdr = self._group_headers.get(group)
+            if hdr is not None:
+                hdr.setVisible((not self._collapsed) and any_visible)
+
     def _toggle_collapse(self) -> None:
         self._collapsed = not self._collapsed
         self.collapsed_changed.emit(self._collapsed)
+        self._filter_edit.setVisible(not self._collapsed)
         if self._collapsed:
             self.setMaximumWidth(48)
             self.setMinimumWidth(48)
@@ -133,3 +170,4 @@ class SidebarNav(QWidget):
                 icon = btn.property("icon_char") or ""
                 display = btn.property("display_name") or name
                 btn.setText(f"{icon}  {display}")
+        self._apply_filter(self._filter_edit.text())

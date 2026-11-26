@@ -288,8 +288,14 @@ def test_the_sidebar_is_31_entries(registered):
     still reachable -- as tabs, which `_all_composite_children` covers. The
     new Scripts hub (docs/superpowers/specs/
     2026-09-18-scripts-file-forensics-design.md) is a genuinely new sidebar
-    entry, not a fold of existing ones: 28 + 1 = 29."""
-    assert len(registered) == 31
+    entry, not a fold of existing ones: 28 + 1 = 29.
+
+    22 (2026-11-26): UI Consolidation into 3 new CompositeModule hubs:
+    - Security & Policies (5 -> 1): -4
+    - Hardware & Tuning (4 -> 1): -3
+    - System Utilities (3 -> 1): -2
+    31 - 9 = 22."""
+    assert len(registered) == 22
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

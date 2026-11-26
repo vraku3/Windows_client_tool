@@ -104,3 +104,26 @@ def test_global_table_resizer_handles_scroll_area_and_table_on_show(qapp):
         table.close()
     finally:
         uninstall_table_resizer(qapp)
+
+
+def test_sidebar_filter_and_collapsible_groups(qapp):
+    from ui.sidebar_nav import SidebarNav
+    nav = SidebarNav()
+    nav.add_module("SYSTEM", "Hardware & Tuning", "🖥️", "Hardware & Tuning", False)
+    nav.add_module("TOOLS", "System Utilities", "🧰", "System Utilities", False)
+    nav.show()
+    qapp.processEvents()
+
+    nav._filter_edit.setText("hardware")
+    qapp.processEvents()
+    assert nav._btn_map["Hardware & Tuning"].isVisible()
+    assert not nav._btn_map["System Utilities"].isVisible()
+
+    nav._filter_edit.setText("")
+    nav._toggle_group("TOOLS")
+    qapp.processEvents()
+    assert not nav._btn_map["System Utilities"].isVisible()
+    nav._toggle_group("TOOLS")
+    qapp.processEvents()
+    assert nav._btn_map["System Utilities"].isVisible()
+    nav.close()

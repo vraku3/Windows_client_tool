@@ -885,6 +885,8 @@ class SecurityDashboardModule(BaseModule):
         return SecuritySearchProvider()
 
     def refresh_data(self) -> None:
+        if not hasattr(self, "_error_banner"):
+            return
         self._refresh_overview()
 
     def on_start(self, app) -> None:

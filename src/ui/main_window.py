@@ -147,6 +147,13 @@ class MainWindow(QMainWindow):
         self._pause_refresh_action.triggered.connect(self._toggle_auto_refresh_pause)
         self._toolbar.addAction(self._pause_refresh_action)
 
+        theme_mgr = getattr(self._app, "theme", None)
+        is_light = getattr(theme_mgr, "current_theme", "dark") == "light"
+        self._theme_toggle_action = QAction("☀️ Light" if is_light else "🌙 Dark", self)
+        self._theme_toggle_action.setToolTip("Switch between Dark and Light themes")
+        self._theme_toggle_action.triggered.connect(self._quick_toggle_theme)
+        self._toolbar.addAction(self._theme_toggle_action)
+
         self._filter_panel = FilterPanel(self)
         self._filter_panel.setAccessibleName("Search filters")
         self._filter_panel.setVisible(False)
@@ -171,6 +178,14 @@ class MainWindow(QMainWindow):
         self._app.event_bus.subscribe(CONFIG_SAVE_FAILED, self._on_config_save_failed)
         self._schedule_update_check()
         self._show_module_warnings()
+
+    def _quick_toggle_theme(self) -> None:
+        theme_mgr = getattr(self._app, "theme", None)
+        if theme_mgr is None:
+            return
+        new_theme = theme_mgr.toggle()
+        if hasattr(self, "_theme_toggle_action"):
+            self._theme_toggle_action.setText("☀️ Light" if new_theme == "light" else "🌙 Dark")
 
     def _on_notify_balloon(self, data) -> None:
         """Modules publish NOTIFY_BALLOON instead of reaching into MainWindow

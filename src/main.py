@@ -111,36 +111,26 @@ def register_all_modules(app) -> None:
     from modules.dashboard.dashboard_module import DashboardModule
     from modules.tweaks.tweaks_module import TweaksModule
     from modules.cleanup.cleanup_module import CleanupModule
-    from modules.monitor_control.monitor_module import MonitorControlModule
-    from modules.thermal_control.thermal_module import ThermalControlModule
     from modules.debloat.debloat_module import DebloatModule
     from modules.treesize.treesize_module import TreeSizeModule
     from modules.quick_fix.quick_fix_module import QuickFixModule
     from modules.game_mode.game_mode_module import GameModeModule
     from modules.updates.updates_module import UpdatesModule
     # Batch B — System group
-    from modules.hardware_inventory.hardware_module import HardwareModule
+    from modules.hardware_hub.hardware_hub_module import HardwareHubModule
     from modules.network_diagnostics.network_module import NetworkDiagnosticsModule
-    from modules.security_dashboard.security_module import SecurityDashboardModule
     from modules.driver_manager.driver_module import DriverModule
     from modules.system_health.system_health_module import SystemHealthModule
     # Batch B — Manage group
     from modules.startup_manager.startup_module import StartupBootModule
     from modules.system_management.system_management_module import SystemManagementModule
-    from modules.certificate_viewer.cert_module import CertModule
-    from modules.gpresult.gpresult_module import GPResultModule
+    from modules.security_hub.security_hub_module import SecurityHubModule
     # Batch C — Tools group
-    from modules.env_vars.env_vars_module import EnvVarsModule
-    from modules.registry_explorer.registry_module import RegistryExplorerModule
     from modules.software_inventory.software_module import SoftwareModule
     from modules.disk_health.disk_health_module import DiskHealthModule
     from modules.restore_manager.restore_module import RestoreManagerModule
     from modules.scripts_hub.scripts_hub_module import ScriptsModule
-    from modules.stress_test.stress_module import StressModule
-    # Track 2 — New Tool Modules
-    from modules.firewall_rules.firewall_manager_module import FirewallManagerModule
-    from modules.local_users.users_module import LocalUsersModule
-    from modules.system_report.report_module import SystemReportModule
+    from modules.utilities_hub.utilities_hub_module import UtilitiesHubModule
     from modules.about.about_module import AboutModule
     from modules.diagnose.diagnose_module import DiagnoseModule
 
@@ -156,31 +146,22 @@ def register_all_modules(app) -> None:
     app.module_registry.register(QuickFixModule())
     app.module_registry.register(GameModeModule())
     app.module_registry.register(UpdatesModule())
-    app.module_registry.register(HardwareModule())
-    app.module_registry.register(MonitorControlModule())
-    app.module_registry.register(ThermalControlModule())
+    # Hardware Info, Thermal Control, Monitor Control, Stress Test — folded into HardwareHubModule
+    app.module_registry.register(HardwareHubModule())
     app.module_registry.register(SystemHealthModule())
     app.module_registry.register(NetworkDiagnosticsModule())
-    app.module_registry.register(SecurityDashboardModule())
+    # Security Dashboard, Firewall, Certificates, GPResult, Local Users — folded into SecurityHubModule
+    app.module_registry.register(SecurityHubModule())
     app.module_registry.register(DriverModule())
     app.module_registry.register(StartupBootModule())
     app.module_registry.register(SystemManagementModule())
-    app.module_registry.register(CertModule())
-    app.module_registry.register(GPResultModule())
-    # Batch C
     # SharesModule, RemoteToolsModule — folded into NetworkDiagnosticsModule
-    # as tabs (Management + Network consolidation, part 2).
-    app.module_registry.register(EnvVarsModule())
-    app.module_registry.register(RegistryExplorerModule())
     app.module_registry.register(SoftwareModule())
     app.module_registry.register(DiskHealthModule())
     app.module_registry.register(RestoreManagerModule())
     app.module_registry.register(ScriptsModule())
-    app.module_registry.register(StressModule())
-    # Track 2
-    app.module_registry.register(FirewallManagerModule())
-    app.module_registry.register(LocalUsersModule())
-    app.module_registry.register(SystemReportModule())
+    # EnvVars, RegistryExplorer, SystemReport — folded into UtilitiesHubModule
+    app.module_registry.register(UtilitiesHubModule())
     app.module_registry.register(AboutModule())
 
 

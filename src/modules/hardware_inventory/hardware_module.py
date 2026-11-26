@@ -148,6 +148,15 @@ class _LoadingTab(QWidget):
         return self._status.text() == LOADING_TEXT
 
 
+def _load_pcie_nvme_audit(worker=None):
+    from modules.hardware_info.pcie_nvme_auditor import audit_nvme_reliability, audit_pcie_links
+    rows = audit_pcie_links() + audit_nvme_reliability()
+    return [
+        {"Component": r.component, "Category": r.category, "Status": r.status, "Details": r.detail}
+        for r in rows
+    ]
+
+
 def _tab_specs(app_data_dir=None):
     """(title, loader, setup) for every tab, in display order.
 
@@ -166,6 +175,7 @@ def _tab_specs(app_data_dir=None):
         ("Monitors", ht.load_monitors, ht.setup_monitors),
         ("Network Adapters", hr.get_network_info, ht.setup_dict(["Name", "IP", "MAC", "Speed", "Up"])),
         ("Devices", ht.load_devices, ht.setup_devices),
+        ("PCIe & NVMe Audit", _load_pcie_nvme_audit, ht.setup_dict(["Component", "Category", "Status", "Details"])),
         ("Firmware and Security", ht.load_firmware, ht.setup_firmware),
         ("Asset Record", lambda worker=None, _dir=app_data_dir: ht.load_asset(worker, _dir), ht.setup_asset),
     ]

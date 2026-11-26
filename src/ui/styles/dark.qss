@@ -291,6 +291,20 @@ QTableCornerButton::section {
     border-bottom: 1px solid #30363d;
 }
 
+QPushButton#sidebarGroupHeader {
+    background: transparent;
+    border: none;
+    color: #9ea7b3;
+    font-weight: bold;
+    font-size: 11px;
+    text-align: left;
+    padding: 8px 10px 4px 10px;
+}
+
+QPushButton#sidebarGroupHeader:hover {
+    color: #e6edf3;
+}
+
 /* ---- Progress bar ---- */
 QProgressBar {
     background-color: #30363d;

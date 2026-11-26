@@ -1001,6 +1001,8 @@ class GPResultModule(BaseModule):
         self.cancel_all_workers()
 
     def refresh_data(self) -> None:
+        if not hasattr(self, "_refresh_btn"):
+            return
         self._do_refresh()
 
     def get_refresh_interval(self) -> Optional[int]:

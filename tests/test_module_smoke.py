@@ -70,7 +70,7 @@ def test_registers_a_substantial_module_set():
     # composite (32 -> 30 -> 28 registered modules); see
     # tests/test_module_inventory.py's test_the_sidebar_is_28_entries for
     # the exact count and its history.
-    assert len(_MODULE_CLASSES) >= 25
+    assert len(_MODULE_CLASSES) >= 20
 
 
 @pytest.mark.parametrize("module_cls", _MODULE_CLASSES, ids=[c.__name__ for c in _MODULE_CLASSES])

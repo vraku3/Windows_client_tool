@@ -1925,6 +1925,8 @@ class FirewallManagerModule(BaseModule):
         return 60_000
 
     def refresh_data(self) -> None:
+        if not hasattr(self, "_refresh_btn"):
+            return
         self._do_refresh()
 
     def on_activate(self) -> None:

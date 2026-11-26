@@ -797,3 +797,17 @@ QTableView::item:selected, QTreeView::item:selected, QListView::item:selected {
     background-color: #cce4f7;
     color: #1e1e1e;
 }
+
+QPushButton#sidebarGroupHeader {
+    background: transparent;
+    border: none;
+    color: #5f5f5f;
+    font-weight: bold;
+    font-size: 11px;
+    text-align: left;
+    padding: 8px 10px 4px 10px;
+}
+
+QPushButton#sidebarGroupHeader:hover {
+    color: #1e1e1e;
+}

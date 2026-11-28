@@ -33,16 +33,6 @@ class _AppletCard(QFrame):
         self.setObjectName("controlPanelCard")
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(
-            "QFrame#controlPanelCard {"
-            "  border: 1px solid rgba(128, 128, 128, 0.28);"
-            "  border-radius: 6px;"
-            "  padding: 2px;"
-            "}"
-            "QFrame#controlPanelCard:hover {"
-            "  border: 1px solid rgba(56, 139, 253, 0.7);"
-            "}"
-        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 8, 10, 8)
@@ -79,17 +69,17 @@ class _AppletCard(QFrame):
         footer.addWidget(cmd_lbl, 1)
 
         copy_btn = QPushButton("Copy")
+        copy_btn.setObjectName("compactBtn")
         copy_btn.setFixedHeight(24)
         copy_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        copy_btn.setStyleSheet("padding: 2px 8px; min-height: 20px; max-height: 24px; font-size: 11px;")
         copy_btn.setToolTip(f"Copy '{item.command_label}' to clipboard")
         copy_btn.clicked.connect(lambda: on_copy(item))
         footer.addWidget(copy_btn)
 
         open_btn = QPushButton("Open")
+        open_btn.setObjectName("compactBtn")
         open_btn.setFixedHeight(24)
         open_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        open_btn.setStyleSheet("padding: 2px 10px; min-height: 20px; max-height: 24px; font-size: 11px;")
         open_btn.setToolTip(f"Launch {item.name} ({item.command_label})")
         open_btn.clicked.connect(lambda: on_launch(item))
         footer.addWidget(open_btn)

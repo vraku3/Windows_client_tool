@@ -44,18 +44,17 @@ def _secret_row(table, row, name, values, columns, action_column, *, copy_column
     table.removeCellWidget(row, action_column)
     table.setRowHeight(row, 38)
     actions = QWidget()
-    actions.setStyleSheet("background: transparent;")
+    actions.setObjectName("cellActionContainer")
     layout = QHBoxLayout(actions)
     layout.setContentsMargins(4, 1, 4, 1)
     layout.setSpacing(6)
     layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    _btn_style = "padding: 2px 10px; min-height: 20px; max-height: 24px; font-size: 11px;"
     if secret:
         show = QPushButton("Show")
+        show.setObjectName("compactBtn")
         show.setCheckable(True)
         show.setFixedHeight(24)
         show.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        show.setStyleSheet(_btn_style)
         show.setToolTip("Reveal this row's sensitive values on screen. Hide conceals them again; refreshing also hides them.")
         def toggle(checked):
             render(checked)
@@ -64,9 +63,9 @@ def _secret_row(table, row, name, values, columns, action_column, *, copy_column
         layout.addWidget(show)
     if copy_column is not None:
         copy = QPushButton("Copy value")
+        copy.setObjectName("compactBtn")
         copy.setFixedHeight(24)
         copy.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        copy.setStyleSheet(_btn_style)
         copy.setToolTip("Copy the original value to the clipboard. Sensitive values require confirmation first.")
         def copy_value():
             if secret and not _allow_secret(table, "Copy sensitive value", "Copy this sensitive value to the clipboard?"):

@@ -20,7 +20,7 @@ from ui.empty_state import EmptyState
 from ui.table_style import apply_table_style
 from core.module_groups import ModuleGroup
 from core.semantic_colors import chrome, semantic
-from core.table_ui import centered_item, center_header, set_role
+from core.table_ui import centered_item, fit_table, set_role
 from core.worker import Worker
 from modules.registry_explorer import registry_acl, registry_scan
 from modules.registry_explorer.registry_model import RegistryTreeModel
@@ -55,11 +55,12 @@ class RegistryExplorerModule(BaseModule):
     def create_widget(self) -> QWidget:
         root = QWidget()
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         # Toolbar
         tb = QHBoxLayout()
-        tb.setContentsMargins(4, 4, 4, 4)
+        tb.setContentsMargins(0, 0, 0, 0)
 
         self._path_bar = QLineEdit()
         describe_control(self._path_bar, '_path_bar')
@@ -103,6 +104,7 @@ class RegistryExplorerModule(BaseModule):
 
         # Main splitter: tree (left) + values (right)
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setChildrenCollapsible(False)
 
         self._model = RegistryTreeModel()
         self._tree = QTreeView()
@@ -115,7 +117,7 @@ class RegistryExplorerModule(BaseModule):
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(6, 0, 0, 0)
         self._last_write_label = QLabel("")
         set_role(self._last_write_label, "muted")
         right_layout.addWidget(self._last_write_label)
@@ -126,13 +128,11 @@ class RegistryExplorerModule(BaseModule):
         self._values_table = QTableWidget(0, 3)
         self._values_table.setHorizontalHeaderLabels(["Name", "Type", "Data"])
         describe_headers(self._values_table)
-        hdr = self._values_table.horizontalHeader()
-        for c in range(3):
-            hdr.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
-        self._values_table.setColumnWidth(0, 180)
+        apply_table_style(self._values_table)
+        fit_table(self._values_table, stretch=(2,))
+        self._values_table.setColumnWidth(0, 200)
         self._values_table.setColumnWidth(1, 120)
-        self._values_table.setColumnWidth(2, 320)
-        center_header(self._values_table)
+        self._values_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._values_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._values_table.verticalHeader().setVisible(False)
         right_layout.addWidget(self._values_table)
@@ -153,7 +153,7 @@ class RegistryExplorerModule(BaseModule):
     def _build_search_bar(self, layout):
         # Search bar
         search_row = QHBoxLayout()
-        search_row.setContentsMargins(4, 0, 4, 0)
+        search_row.setContentsMargins(0, 0, 0, 0)
         self._search_input = QLineEdit()
         describe_control(self._search_input, '_search_input')
         self._search_input.setPlaceholderText("Search text (under the current key)...")
@@ -173,6 +173,7 @@ class RegistryExplorerModule(BaseModule):
         search_btn.clicked.connect(self._run_search)
         search_row.addWidget(search_btn)
         self._search_status = QLabel("")
+        set_role(self._search_status, "muted")
         search_row.addWidget(self._search_status)
         layout.addLayout(search_row)
         self._results = QListWidget()

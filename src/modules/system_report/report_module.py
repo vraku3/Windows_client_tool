@@ -151,9 +151,22 @@ def _collect_report_data(_worker) -> dict:
 
 
 def _render_html(data: dict) -> str:
-    def _bar(pct, color="#3498db"):
+    from core.semantic_colors import CHROME_PALETTES, PANE_BACKGROUND, SEMANTIC_PALETTES, current_theme
+    t = current_theme()
+    bg = PANE_BACKGROUND.get(t, "#0d1117")
+    chr_p = CHROME_PALETTES.get(t, CHROME_PALETTES["dark"])
+    sem_p = SEMANTIC_PALETTES.get(t, SEMANTIC_PALETTES["dark"])
+    elevated = chr_p["surface"]
+    text = chr_p["text"]
+    muted = chr_p["text_muted"]
+    border = chr_p["outline"]
+    accent = sem_p["info"]
+    warn_color = sem_p["warning"]
+    track_bg = chr_p["surface_inactive"]
+
+    def _bar(pct, color=accent):
         return (
-            f'<div style="background:#333;border-radius:4px;height:12px;width:200px;display:inline-block;">'
+            f'<div style="background:{track_bg};border:1px solid {border};border-radius:4px;height:12px;width:200px;display:inline-block;">'
             f'<div style="background:{color};width:{pct}%;height:12px;border-radius:4px;"></div></div>'
             f' <span>{pct}%</span>'
         )
@@ -180,17 +193,6 @@ def _render_html(data: dict) -> str:
     from modules.system_report import report_sections as rs
     findings_block = rs.findings_html(data.get("findings", []))
     extra_html = rs.sections_html(data.get("sections", []))
-
-    from core.semantic_colors import CHROME_PALETTES, PANE_BACKGROUND, SEMANTIC_PALETTES, current_theme
-    t = current_theme()
-    bg = PANE_BACKGROUND.get(t, "#0d1117")
-    chr_p = CHROME_PALETTES.get(t, CHROME_PALETTES["dark"])
-    sem_p = SEMANTIC_PALETTES.get(t, SEMANTIC_PALETTES["dark"])
-    elevated = chr_p["surface"]
-    text = chr_p["text"]
-    muted = chr_p["text_muted"]
-    border = chr_p["outline"]
-    accent = sem_p["info"]
 
     return f"""<!DOCTYPE html>
 <html>
@@ -226,7 +228,7 @@ def _render_html(data: dict) -> str:
 <h2>Memory</h2>
 <table class="kv">
 <tr><td>Total RAM</td><td>{data.get('ram_total_gb',0)} GB</td></tr>
-<tr><td>Used</td><td>{data.get('ram_used_gb',0)} GB &nbsp; {_bar(data.get('ram_percent',0),'#e67e22')}</td></tr>
+<tr><td>Used</td><td>{data.get('ram_used_gb',0)} GB &nbsp; {_bar(data.get('ram_percent',0), warn_color)}</td></tr>
 </table>
 <h2>Storage</h2>
 <table><tr><th>Mount</th><th>Total</th><th>Used</th><th>Free</th><th>Usage</th></tr>
@@ -284,6 +286,7 @@ class SystemReportModule(BaseModule):
 
         self._build_report_start(layout)
         self._preview = QTextEdit()
+        self._preview.setObjectName("detailPane")
         self._preview.setReadOnly(True)
         self._preview.setPlaceholderText("Press Generate Report; the report appears here.")
         layout.addWidget(self._preview, 1)

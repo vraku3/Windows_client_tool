@@ -261,6 +261,15 @@ def is_global_v6(ip: str) -> bool:
                                    or a in ipaddress.ip_network("fec0::/10")) and a.is_global
 
 
+def is_sitelocal_v6_dns(ip: str) -> bool:
+    """True for Windows' deprecated site-local IPv6 DNS placeholders (fec0:0:0:ffff::/64)."""
+    try:
+        a = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return a.version == 6 and a in ipaddress.ip_network("fec0:0:0:ffff::/64")
+
+
 def dns_servers_in_use(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Unique (server, adapter) for DNS servers on adapters that are up."""
     up = up_indexes(snap)
@@ -364,6 +373,8 @@ def _probe_tasks(snap: Dict[str, Any]) -> Dict[str, Callable[[], Any]]:
         tasks[f"gw:{gw}"] = (lambda g=gw: ping_once(g))
     for d in dns_servers_in_use(snap):
         s = d["server"]
+        if is_sitelocal_v6_dns(s):
+            continue
         tasks[f"dns:{s}"] = (lambda x=s: dns_client.query(x, DNS_TEST_NAME, "A", 2.0))
     if routes:
         tasks["mtu"] = _mtu_probe
@@ -462,32 +473,34 @@ def _f_dns(snap: Dict[str, Any], probes: Dict[str, Any]) -> List[Finding]:
     servers = dns_servers_in_use(snap)
     if not snap.get("dns") or _unread(snap, "dns", "adapters"):
         return []
-    if not servers:
-        return [Finding("dns", ERROR, "No DNS server configured on any connected adapter")]
+    dep = [f"{d['server']} ({d['adapter']})" for d in servers if is_sitelocal_v6_dns(d["server"])]
+    real_servers = [d for d in servers if not is_sitelocal_v6_dns(d["server"])]
     out, times, failed = [], [], []
-    for d in servers:
-        r = probes.get(f"dns:{d['server']}")
-        if r is None:
-            continue
-        if not r.ok or not r.resolved:
-            why = r.error or f"answered {r.rcode} with no address"
-            failed.append(f"{d['server']} ({d['adapter']}): {why}")
-        else:
-            times.append((d["server"], r.rtt_ms, d["adapter"]))
-    if failed and not times:
-        out.append(Finding("dns", ERROR, f"No DNS server resolved {DNS_TEST_NAME}",
-                           "Name resolution is broken for every configured server.", items=failed))
-    elif failed:
-        out.append(Finding("dns-partial", WARNING, f"{len(failed)} of {len(servers)} DNS servers failed",
-                           "Clients fall back to the next server only after a timeout, so every lookup can stall.", items=failed))
-    if times:
-        slow = [f"{s} ({a}): {t:.0f} ms" for s, t, a in times if t > DNS_SLOW_MS]
-        line = ", ".join(f"{s} {t:.0f} ms" for s, t, _a in times)
-        if slow:
-            out.append(Finding("dns-slow", WARNING, f"Slow DNS response (over {DNS_SLOW_MS:.0f} ms)", "", fix=None, items=slow))
-        else:
-            out.append(Finding("dns", OK, "DNS resolving", line))
-    dep = [f"{d['server']} ({d['adapter']})" for d in servers if d["server"].lower().startswith("fec0:")]
+    if not real_servers:
+        out.append(Finding("dns", ERROR, "No DNS server configured on any connected adapter"))
+    else:
+        for d in real_servers:
+            r = probes.get(f"dns:{d['server']}")
+            if r is None:
+                continue
+            if not r.ok or not r.resolved:
+                why = r.error or f"answered {r.rcode} with no address"
+                failed.append(f"{d['server']} ({d['adapter']}): {why}")
+            else:
+                times.append((d["server"], r.rtt_ms, d["adapter"]))
+        if failed and not times:
+            out.append(Finding("dns", ERROR, f"No DNS server resolved {DNS_TEST_NAME}",
+                               "Name resolution is broken for every configured server.", items=failed))
+        elif failed:
+            out.append(Finding("dns-partial", WARNING, f"{len(failed)} of {len(real_servers)} DNS servers failed",
+                               "Clients fall back to the next server only after a timeout, so every lookup can stall.", items=failed))
+        if times:
+            slow = [f"{s} ({a}): {t:.0f} ms" for s, t, a in times if t > DNS_SLOW_MS]
+            line = ", ".join(f"{s} {t:.0f} ms" for s, t, _a in times)
+            if slow:
+                out.append(Finding("dns-slow", WARNING, f"Slow DNS response (over {DNS_SLOW_MS:.0f} ms)", "", fix=None, items=slow))
+            else:
+                out.append(Finding("dns", OK, "DNS resolving", line))
     if dep:
         out.append(Finding("dns-sitelocal", INFO, "Deprecated site-local DNS addresses (fec0:0:0:ffff::)",
                            "Windows' placeholder for IPv6 DNS; nothing answers there. Harmless if IPv4 DNS works.", items=dep))
@@ -798,6 +811,13 @@ def build_report(snap: Dict[str, Any], probes: Dict[str, Any], findings: List[Fi
     lines += ["", "DNS servers"]
     for d in dns_servers_in_use(snap):
         r = probes.get(f"dns:{d['server']}")
-        t = f"{r.rtt_ms:.0f} ms" if r is not None and r.rtt_ms is not None else (r.error if r is not None else "not probed")
+        if r is not None and r.rtt_ms is not None:
+            t = f"{r.rtt_ms:.0f} ms"
+        elif r is not None:
+            t = r.error
+        elif is_sitelocal_v6_dns(d["server"]):
+            t = "Windows placeholder (not probed)"
+        else:
+            t = "not probed"
         lines.append(f"  {d['server']} ({d['adapter']}): {t}")
     return "\n".join(lines)

@@ -88,4 +88,6 @@ def test_the_three_children_are_no_longer_registered_on_their_own(registered):
     assert "Scheduled Tasks" not in names
     assert "Services" not in names
     assert "Windows Features" not in names
-    assert "System Management" in names
+    assert "System Management" not in names
+    utilities = next(m for m in registered if m.name == "System Utilities")
+    assert "System Management" in [c.name for c in utilities.children]

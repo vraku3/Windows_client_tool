@@ -123,10 +123,8 @@ def register_all_modules(app) -> None:
     from modules.system_health.system_health_module import SystemHealthModule
     # Batch B — Manage group
     from modules.startup_manager.startup_module import StartupBootModule
-    from modules.system_management.system_management_module import SystemManagementModule
     from modules.security_hub.security_hub_module import SecurityHubModule
     # Batch C — Tools group
-    from modules.software_inventory.software_module import SoftwareModule
     from modules.disk_health.disk_health_module import DiskHealthModule
     from modules.restore_manager.restore_module import RestoreManagerModule
     from modules.scripts_hub.scripts_hub_module import ScriptsModule
@@ -154,13 +152,11 @@ def register_all_modules(app) -> None:
     app.module_registry.register(SecurityHubModule())
     app.module_registry.register(DriverModule())
     app.module_registry.register(StartupBootModule())
-    app.module_registry.register(SystemManagementModule())
     # SharesModule, RemoteToolsModule — folded into NetworkDiagnosticsModule
-    app.module_registry.register(SoftwareModule())
     app.module_registry.register(DiskHealthModule())
     app.module_registry.register(RestoreManagerModule())
     app.module_registry.register(ScriptsModule())
-    # EnvVars, RegistryExplorer, SystemReport — folded into UtilitiesHubModule
+    # SoftwareInventory, SystemManagement, ControlPanel, EnvVars, RegistryExplorer, SystemReport — folded into UtilitiesHubModule
     app.module_registry.register(UtilitiesHubModule())
     app.module_registry.register(AboutModule())
 

@@ -181,7 +181,9 @@ def test_system_management_hosts_the_three_managed_modules(registered):
     assert "Scheduled Tasks" not in names
     assert "Services" not in names
     assert "Windows Features" not in names
-    host = next(m for m in registered if m.name == "System Management")
+    assert "System Management" not in names
+    utilities = next(m for m in registered if m.name == "System Utilities")
+    host = next(c for c in utilities.children if c.name == "System Management")
     assert [c.name for c in host.children] == [
         "Scheduled Tasks", "Services", "Windows Features",
     ]
@@ -192,10 +194,10 @@ def test_services_the_composite_child_wins_the_route_over_the_dashboard_tab(
 ):
     """dashboard/services_module.py and services_manager/services_module.py
     both declare name = "Services" -- one a Dashboard-internal process-view
-    tab, one the real System Management child. route_map() resolves
-    same-name collisions by registration order in main.py; this pins the
-    current, correct outcome so reordering main.py doesn't silently
-    misroute global "Services" navigation to the wrong pane."""
+    tab, one the real System Management child (now nested inside System
+    Utilities). route_map() resolves same-name collisions by registration order
+    in main.py; this pins the current, correct outcome so reordering main.py
+    doesn't silently misroute global "Services" navigation to the wrong pane."""
     from core.module_registry import ModuleRegistry
     from modules.services_manager.services_module import (
         ServicesModule as RealServicesModule,
@@ -206,9 +208,11 @@ def test_services_the_composite_child_wins_the_route_over_the_dashboard_tab(
         registry.register(module)
 
     host_name, tab_index = registry.route_map()["Services"]
-    assert host_name == "System Management"
+    assert host_name == "System Utilities"
     host = next(m for m in registered if m.name == host_name)
-    assert isinstance(host.children[tab_index], RealServicesModule)
+    sys_mgmt = host.children[tab_index]
+    assert sys_mgmt.name == "System Management"
+    assert any(isinstance(c, RealServicesModule) for c in sys_mgmt.children)
 
 
 def test_the_network_tools_are_tabs_of_network_diagnostics(registered):
@@ -294,8 +298,28 @@ def test_the_sidebar_is_31_entries(registered):
     - Security & Policies (5 -> 1): -4
     - Hardware & Tuning (4 -> 1): -3
     - System Utilities (3 -> 1): -2
-    31 - 9 = 22."""
-    assert len(registered) == 22
+    31 - 9 = 22.
+
+    21 (2026-11-27): Software Inventory merged into System Utilities
+    (alongside the new Classic Control Panel tab): 22 - 1 = 21.
+
+    20 (2026-11-27): System Management merged into System Utilities as a tab:
+    21 - 1 = 20."""
+    assert len(registered) == 20
+
+
+def test_software_inventory_and_control_panel_are_in_system_utilities(registered):
+    """Merged into System Utilities, not standalone sidebar entries."""
+    names = {m.name for m in registered}
+    assert "Software Inventory" not in names
+    assert "System Management" not in names
+    assert "Control Panel" not in names
+    hub = next(m for m in registered if m.name == "System Utilities")
+    child_names = [c.name for c in hub.children]
+    assert "Software Inventory" in child_names
+    assert "System Management" in child_names
+    assert "Control Panel" in child_names
+    assert "Environment Variables" in child_names
 
 
 def test_process_explorer_is_reachable_as_a_dashboard_tab(registered):

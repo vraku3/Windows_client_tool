@@ -99,6 +99,33 @@ def test_slow_dns_warns():
     assert by_id(h.evaluate(snap(), ok_probes(**{"dns:192.168.1.1": slow})))["dns-slow"].severity == h.WARNING
 
 
+def test_sitelocal_v6_dns_placeholders_are_info_not_failed_servers():
+    s = snap(
+        adapters=[adapter(1, "Ethernet"), adapter(2, "vEthernet (WSL (Hyper-V firewall))")],
+        dns=[
+            {"InterfaceIndex": 1, "AddressFamily": 2, "ServerAddresses": ["192.168.1.1"]},
+            {"InterfaceIndex": 2, "AddressFamily": 23, "ServerAddresses": ["fec0:0:0:ffff::1", "fec0:0:0:ffff::2", "fec0:0:0:ffff::3"]},
+        ],
+    )
+    tasks = h._probe_tasks(s)
+    assert "dns:192.168.1.1" in tasks
+    assert not any(k.startswith("dns:fec0:") for k in tasks)
+
+    findings = by_id(h.evaluate(s, ok_probes()))
+    assert "dns-partial" not in findings
+    assert findings["dns"].severity == h.OK
+    assert findings["dns-sitelocal"].severity == h.INFO
+    assert len(findings["dns-sitelocal"].items) == 3
+
+    only_placeholders = snap(
+        adapters=[adapter(2, "vEthernet (WSL (Hyper-V firewall))")],
+        dns=[{"InterfaceIndex": 2, "AddressFamily": 23, "ServerAddresses": ["fec0:0:0:ffff::1"]}],
+    )
+    only_f = by_id(h.evaluate(only_placeholders, {}))
+    assert only_f["dns"].severity == h.ERROR
+    assert only_f["dns-sitelocal"].severity == h.INFO
+
+
 def test_unreadable_proxy_and_hosts_are_unknown_not_ok():
     f = by_id(h.evaluate(snap(winhttp_proxy=None, user_proxy=None, hosts=None), ok_probes()))
     assert f["proxy-winhttp"].severity == h.UNKNOWN and f["proxy-user"].severity == h.UNKNOWN

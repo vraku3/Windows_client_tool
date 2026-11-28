@@ -285,8 +285,20 @@ class CompositeModule(BaseModule):
         return providers
 
     def route_map(self) -> Dict[str, Tuple[str, int]]:
-        """`{child name: (this host's name, tab index)}` for name-based nav."""
-        return {child.name: (self.name, i) for i, child in enumerate(self.children)}
+        """`{child name: (this host's name, tab index)}` for name-based nav.
+
+        Recursively includes grandchildren when a child is itself a
+        `CompositeModule` so jumps to deeply hosted tabs still resolve to this
+        top-level sidebar entry and tab index.
+        """
+        routes: Dict[str, Tuple[str, int]] = {}
+        for i, child in enumerate(self.children):
+            routes[child.name] = (self.name, i)
+            child_routes = getattr(child, "route_map", None)
+            if callable(child_routes):
+                for sub_name in child_routes():
+                    routes[sub_name] = (self.name, i)
+        return routes
 
     def select_child(self, name: str) -> bool:
         for index, child in enumerate(self.children):
@@ -294,4 +306,11 @@ class CompositeModule(BaseModule):
                 if self._tabs is not None:
                     self._tabs.setCurrentIndex(index)
                 return True
+        for index, child in enumerate(self.children):
+            child_routes = getattr(child, "route_map", None)
+            child_select = getattr(child, "select_child", None)
+            if callable(child_routes) and callable(child_select) and name in child_routes():
+                if self._tabs is not None:
+                    self._tabs.setCurrentIndex(index)
+                return child_select(name)
         return False

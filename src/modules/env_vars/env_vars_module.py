@@ -12,8 +12,8 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-    QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter, QTableWidget,
+    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from modules.env_vars.secret_values import HIDDEN, is_secret, display_value, redact_snapshot, snapshot_differences
@@ -42,12 +42,20 @@ def _secret_row(table, row, name, values, columns, action_column, *, copy_column
     render()
     # Clear old buttons as filtering can put another variable into this row.
     table.removeCellWidget(row, action_column)
+    table.setRowHeight(row, 38)
     actions = QWidget()
+    actions.setStyleSheet("background: transparent;")
     layout = QHBoxLayout(actions)
-    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setContentsMargins(4, 1, 4, 1)
+    layout.setSpacing(6)
+    layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    _btn_style = "padding: 2px 10px; min-height: 20px; max-height: 24px; font-size: 11px;"
     if secret:
         show = QPushButton("Show")
         show.setCheckable(True)
+        show.setFixedHeight(24)
+        show.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        show.setStyleSheet(_btn_style)
         show.setToolTip("Reveal this row's sensitive values on screen. Hide conceals them again; refreshing also hides them.")
         def toggle(checked):
             render(checked)
@@ -56,6 +64,9 @@ def _secret_row(table, row, name, values, columns, action_column, *, copy_column
         layout.addWidget(show)
     if copy_column is not None:
         copy = QPushButton("Copy value")
+        copy.setFixedHeight(24)
+        copy.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        copy.setStyleSheet(_btn_style)
         copy.setToolTip("Copy the original value to the clipboard. Sensitive values require confirmation first.")
         def copy_value():
             if secret and not _allow_secret(table, "Copy sensitive value", "Copy this sensitive value to the clipboard?"):
@@ -100,6 +111,7 @@ class _EnvPanel(QWidget):
         self._search = QLineEdit()
         describe_control(self._search, '_search')
         self._search.setPlaceholderText("Filter name or value...")
+        self._search.setClearButtonEnabled(True)
         self._search.setMaximumWidth(240)
         self._search.textChanged.connect(self._apply_filter)
         header.addWidget(self._search)
@@ -108,17 +120,20 @@ class _EnvPanel(QWidget):
         self._table = QTableWidget(0, 5)
         self._table.setHorizontalHeaderLabels(["Name", "Type", "Value", "Expanded", "Actions"])
         describe_headers(self._table)
-        self._table.horizontalHeader().setStretchLastSection(False)
-        for c in range(5):
-            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 160)
-        self._table.setColumnWidth(1, 100)
-        self._table.setColumnWidth(2, 260)
-        self._table.setColumnWidth(3, 260)
-        self._table.setColumnWidth(4, 100)
+        apply_table_style(self._table, row_height=38)
+        fit_table(self._table, stretch=(2, 3))
+        self._table._custom_column_fit = True
+        self._table._no_stretch_last = True
+        self._table._keep_hidden_vertical_header = True
+        self._table.setColumnWidth(0, 190)
+        self._table.setColumnWidth(1, 95)
+        self._table.setColumnWidth(2, 380)
+        self._table.setColumnWidth(3, 280)
+        self._table.setColumnWidth(4, 165)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
+        self._table.cellDoubleClicked.connect(lambda _r, _c: self._edit())
         layout.addWidget(self._table)
 
         btn_row = QHBoxLayout()
@@ -158,7 +173,7 @@ class _EnvPanel(QWidget):
     def _apply_filter(self, text: str) -> None:
         q = text.lower()
         rows = [v for v in self._all_rows if not q or q in v.name.lower() or q in v.value.lower()]
-        apply_table_style(self._table)
+        apply_table_style(self._table, row_height=38)
         self._table.setRowCount(len(rows))
         for r, v in enumerate(rows):
             kind = "Expandable" if v.kind == winreg.REG_EXPAND_SZ else "String"
@@ -242,7 +257,7 @@ class _PathPane(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         head = QHBoxLayout()
         head.addWidget(QLabel("<b>PATH analysis</b>"))
-        self._status = QLabel("Analyse checks missing folders, duplicates, shadowed executables and "
+        self._status = QLabel("Checks missing folders, duplicates, shadowed executables and "
                               "user-writable folders early in the system PATH.")
         set_role(self._status, "muted")
         head.addWidget(self._status, 1)
@@ -250,7 +265,8 @@ class _PathPane(QWidget):
         self._search = QLineEdit()
         self._search.setObjectName("_search")
         self._search.setPlaceholderText("Filter findings...")
-        self._search.setMaximumWidth(180)
+        self._search.setClearButtonEnabled(True)
+        self._search.setMaximumWidth(200)
         self._search.textChanged.connect(self._render_rows)
         describe_control(self._search, '_search')
         head.addWidget(self._search)
@@ -262,13 +278,13 @@ class _PathPane(QWidget):
         self._table = QTableWidget(0, 4)
         self._table.setHorizontalHeaderLabels(["Scope", "Entry", "Finding", "Detail"])
         describe_headers(self._table)
-        self._table.horizontalHeader().setStretchLastSection(False)
-        for c in range(4):
-            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 90)
-        self._table.setColumnWidth(1, 240)
-        self._table.setColumnWidth(2, 120)
-        self._table.setColumnWidth(3, 260)
+        apply_table_style(self._table)
+        fit_table(self._table, stretch=(3,))
+        self._table._keep_hidden_vertical_header = True
+        self._table.setColumnWidth(0, 80)
+        self._table.setColumnWidth(1, 200)
+        self._table.setColumnWidth(2, 110)
+        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.verticalHeader().setVisible(False)
         layout.addWidget(self._table)
@@ -323,7 +339,7 @@ class _PathPane(QWidget):
         self._table.setRowCount(len(filtered))
         for r, row in enumerate(filtered):
             for c, txt in enumerate(row):
-                item = QTableWidgetItem(txt)
+                item = centered_item(txt)
                 if row[2] in ("writable", "missing"):
                     item.setForeground(QColor(semantic("error")))
                 elif row[2] in ("unexpanded", "duplicate"):
@@ -353,49 +369,53 @@ class _EffectivePane(QWidget):
         head = QHBoxLayout()
         head.addWidget(QLabel("<b>Effective (this process)</b>"))
         self._status = QLabel(
-            "What this running app actually inherited, vs. the registry. A row marked "
-            "stale needs a new process (log off/on, or a restart) to pick up the change "
-            "— the registry write is not live in anything already running.")
+            "If marked stale, the value needs a new process to take effect.")
         set_role(self._status, "muted")
         self._status.setWordWrap(True)
         head.addWidget(self._status, 1)
+        layout.addLayout(head)
+        toolbar = QHBoxLayout()
         self._search = QLineEdit()
         self._search.setObjectName("_search")
         self._search.setPlaceholderText("Filter variable...")
-        self._search.setMaximumWidth(180)
+        self._search.setClearButtonEnabled(True)
+        self._search.setMaximumWidth(220)
         self._search.textChanged.connect(self._refresh)
         describe_control(self._search, '_search')
-        head.addWidget(self._search)
+        toolbar.addWidget(self._search)
         self._only_stale = QPushButton("Show only stale")
         describe_control(self._only_stale, '_only_stale')
         self._only_stale.setCheckable(True)
         self._only_stale.toggled.connect(self._refresh)
-        head.addWidget(self._only_stale)
+        toolbar.addWidget(self._only_stale)
         self._scan_btn = QPushButton("Scan running processes...")
         describe_control(self._scan_btn, '_scan_btn')
         self._scan_btn.setToolTip(
             "Select a variable row, then check every OTHER running process (not just this "
             "app) for whether it still has the current registry value.")
         self._scan_btn.clicked.connect(self._scan_selected)
-        head.addWidget(self._scan_btn)
+        toolbar.addWidget(self._scan_btn)
         refresh_btn = QPushButton("Refresh")
         describe_control(refresh_btn, 'refresh_btn')
         refresh_btn.clicked.connect(self._refresh)
-        head.addWidget(refresh_btn)
-        layout.addLayout(head)
+        toolbar.addWidget(refresh_btn)
+        toolbar.addStretch()
+        layout.addLayout(toolbar)
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
             ["Name", "System", "User", "This process has", "State", "Actions"])
         describe_headers(self._table)
-        self._table.horizontalHeader().setStretchLastSection(False)
-        for c in range(6):
-            self._table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
-        self._table.setColumnWidth(0, 140)
-        self._table.setColumnWidth(1, 180)
-        self._table.setColumnWidth(2, 180)
-        self._table.setColumnWidth(3, 180)
-        self._table.setColumnWidth(4, 90)
-        self._table.setColumnWidth(5, 100)
+        apply_table_style(self._table, row_height=38)
+        fit_table(self._table, stretch=(1, 2, 3))
+        self._table._custom_column_fit = True
+        self._table._no_stretch_last = True
+        self._table._keep_hidden_vertical_header = True
+        self._table.setColumnWidth(0, 170)
+        self._table.setColumnWidth(1, 260)
+        self._table.setColumnWidth(2, 240)
+        self._table.setColumnWidth(3, 260)
+        self._table.setColumnWidth(4, 120)
+        self._table.setColumnWidth(5, 110)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.verticalHeader().setVisible(False)
@@ -484,15 +504,18 @@ class _EffectivePane(QWidget):
         table = QTableWidget(0, 6)
         table.setHorizontalHeaderLabels(["PID", "Process", "User", "Value", "State", "Actions"])
         describe_headers(table)
-        table.horizontalHeader().setStretchLastSection(False)
-        for c in range(6):
-            table.horizontalHeader().setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
-        table.setColumnWidth(0, 80)
-        table.setColumnWidth(1, 180)
+        apply_table_style(table, row_height=36)
+        fit_table(table, stretch=(3,))
+        table._custom_column_fit = True
+        table._no_stretch_last = True
+        table._keep_hidden_vertical_header = True
+        table.setColumnWidth(0, 75)
+        table.setColumnWidth(1, 160)
         table.setColumnWidth(2, 120)
-        table.setColumnWidth(3, 220)
-        table.setColumnWidth(4, 90)
-        table.setColumnWidth(5, 100)
+        table.setColumnWidth(3, 240)
+        table.setColumnWidth(4, 100)
+        table.setColumnWidth(5, 165)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.verticalHeader().setVisible(False)
         shown = [r for r in rows if r.value is not None or not r.readable]
@@ -538,10 +561,11 @@ class EnvVarsModule(BaseModule):
     def create_widget(self) -> QWidget:
         root = QWidget()
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         bar = QHBoxLayout()
-        bar.setContentsMargins(8, 4, 8, 0)
+        bar.setContentsMargins(0, 0, 0, 0)
         save_btn = QPushButton("Save snapshot...")
         describe_control(save_btn, 'save_btn')
         cmp_btn = QPushButton("Compare with snapshot...")
@@ -560,7 +584,6 @@ class EnvVarsModule(BaseModule):
         for tile in self._glance.values():
             tile.set_unreadable("Not read yet")
         layout.addWidget(GlanceStrip(self._glance.values()))
-        splitter = QSplitter(Qt.Orientation.Vertical)
         self._sys_panel = _EnvPanel(winreg.HKEY_LOCAL_MACHINE, _SYS_PATH, "System", requires_admin=True)
         self._usr_panel = _EnvPanel(winreg.HKEY_CURRENT_USER, _USR_PATH, "User", requires_admin=False)
         self._sys_panel.read_finished.connect(lambda rows, why: self._update_glance("System", rows, why))
@@ -569,12 +592,18 @@ class EnvVarsModule(BaseModule):
         self._usr_panel.set_duplicate_target(self._sys_panel)
         self._path_pane = _PathPane(self.thread_pool)
         self._effective_pane = _EffectivePane(self._sys_panel, self._usr_panel, self.thread_pool)
-        splitter.addWidget(self._sys_panel)
-        splitter.addWidget(self._usr_panel)
-        splitter.addWidget(self._effective_pane)
-        splitter.addWidget(self._path_pane)
-        splitter.setSizes([260, 260, 220, 220])
-        layout.addWidget(splitter, 1)
+
+        vars_splitter = QSplitter(Qt.Orientation.Vertical)
+        vars_splitter.setChildrenCollapsible(False)
+        vars_splitter.addWidget(self._sys_panel)
+        vars_splitter.addWidget(self._usr_panel)
+        vars_splitter.setSizes([340, 260])
+
+        self._subtabs = QTabWidget()
+        self._subtabs.addTab(vars_splitter, "System & User Variables")
+        self._subtabs.addTab(self._effective_pane, "Effective (This Process)")
+        self._subtabs.addTab(self._path_pane, "PATH Analysis")
+        layout.addWidget(self._subtabs, 1)
         self._widget = root
         explain_widget(root, introduction=True)
         return root
